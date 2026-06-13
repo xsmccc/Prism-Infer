@@ -15,7 +15,7 @@
 
 ### Day 1-2 (周末): 理解 + 准备
 - [ ] 用 HF 加载 Qwen3-VL-8B，trace 前向，画出数据流图
-- [ ] 对比 nano-vllm 源码，列出所有需要改的文件
+- [ ] 对比 prism_infer 源码，列出所有需要改的文件
 - [ ] 搭建 prism-infer 项目框架
 
 ### Day 3-4: Vision Encoder + Projector
@@ -56,7 +56,7 @@
 
 - [ ] 用 Triton 写 visual token KV fused-merge kernel
 - [ ] profiling + roofline 分析
-- [ ] 集成到 nano-vllm attention 层
+- [ ] 集成到 prism_infer attention 层
 
 ---
 
