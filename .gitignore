@@ -9,6 +9,7 @@ debug_*.py
 trace_*.py
 .venv/
 data/
-models/
+models/           # 排除下载的模型权重
+!prism_infer/models/  # 但保留项目源码
 *.safetensors
 *.bin
