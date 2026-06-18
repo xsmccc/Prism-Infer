@@ -22,7 +22,10 @@ from multiprocessing.shared_memory import SharedMemory  # 进程间共享内存
 
 from prism_infer.config import Config
 from prism_infer.engine.sequence import Sequence
-from prism_infer.models.qwen3 import Qwen3ForCausalLM     # Qwen3 模型
+try:
+    from prism_infer.models.qwen3 import Qwen3ForCausalLM     # Qwen3 纯文本模型 (legacy)
+except ImportError:
+    Qwen3ForCausalLM = None  # VL 项目中纯文本模型可能不存在, 用 VL 版替代
 from prism_infer.layers.sampler import Sampler              # 采样器 (温度采样/贪婪)
 from prism_infer.utils.context import set_context, get_context, reset_context  # 全局上下文
 from prism_infer.utils.loader import load_model             # 权重加载

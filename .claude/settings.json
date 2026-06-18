@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "Bash(pip3 *)",
+      "Bash(git *)",
+      "Bash(nvidia-smi *)",
+      "Bash(timeout *)",
+      "Edit(/data/Prism-Infer/**)",
+      "Write(/data/Prism-Infer/**)",
+      "Read(/data/Prism-Infer/**)"
+    ],
+    "defaultMode": "default"
+  },
+  "env": {
+    "HF_HUB_OFFLINE": "1"
+  }
+}
