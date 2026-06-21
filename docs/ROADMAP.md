@@ -112,19 +112,23 @@ Plan -> Implement -> Verify -> Teach -> Document -> Gate Review
 
 ### 小任务
 
-- [ ] 扩展 `Sequence` 或请求结构，携带单图输入或预处理后的 `pixel_values` / `image_grid_thw`。
-- [ ] 集成 processor/tokenizer 路径，并说明第三方预处理使用理由。
-- [ ] 在 `model_runner.prepare_prefill` 中生成 VL 所需 3D position_ids。
-- [ ] 支持视觉占位 token 的 embedding 替换。
-- [ ] 保证 decode 阶段无图像输入时正确复用 KV cache。
-- [ ] 扩展 `LLM.generate` 或等价接口，支持单图输入。
-- [ ] 增加纯文本回归测试，确保 VL 改动不破坏原路径。
+- [x] P2.0 设计门禁: 明确单图 VL 数据流、关键风险、验证标准和不做范围，见 `docs/P2_ENGINE_VL_DESIGN.md`。
+- [x] P2.1 Processor pipeline: 建立 prompt + image 到 `input_ids` / `pixel_values` / `image_grid_thw` 的稳定入口，并说明 HF processor 作为非核心工具的使用理由。
+- [ ] P2.2 多模态 `Sequence`: 携带单图预处理结果、3D position ids / rope delta，并保证跨进程序列化不丢失必要字段。
+- [ ] P2.3 自实现 Qwen3-VL 3D position ids: 对齐 HF `get_rope_index` 的单图逻辑，输出 `[3, batch, seqlen]` position ids 和 rope delta。
+- [ ] P2.4 KV-aware Qwen3-VL attention + Prefill: 让 Qwen3-VL LLM attention 接入 engine KV cache，并把 VL payload 从 `ModelRunner.prepare_prefill` 传到模型 forward。
+- [ ] P2.5 Decode eager 对齐: decode 阶段不重复传图像，只用 last token、KV cache 和 rope delta 延续 position ids。
+- [ ] P2.6 Greedy sampler 和 `LLM.generate_vl`: 支持 deterministic greedy，用单图公开 API 对齐 HF tokens。
+- [ ] P2.7 P1/P2 回归和阶段 Review: 新增纯文本回归测试，更新问题记录和阶段状态。
 
 ### 出口标准
 
 - 单图 prompt 能从 `LLM` 层跑通。
 - greedy `temperature=0` 输出 tokens 与 HF 一致。
 - 纯文本 prompt 不回归。
+- Qwen3-VL attention 必须在 engine prefill/decode 中正确写入和读取 KV cache；仅把图像字段传入模型 forward 不能算 P2 完成。
+- 当前 P2 第一版以 `enforce_eager=True` 完成 correctness；VL CUDA Graph decode 未验证前必须列为风险。
+- 多图、视频、batch 混合图文不属于 P2 完成范围；未实现时必须显式报错或在文档中标为未支持。
 - 若 P1 full logits 未 strict PASS，P2 不能宣称严格精度完成，只能作为功能 smoke。
 
 ## P3: KV Cache 分析
@@ -216,8 +220,8 @@ Plan -> Implement -> Verify -> Teach -> Document -> Gate Review
 
 当前应优先执行:
 
-1. P2 设计: 明确 `Sequence` 图像字段、processor 边界、3D position_ids、Prefill/Decode 数据流。
-2. P2 第一实现: 建立 processor pipeline 和 `prepare_prefill` 单图测试。
-3. P2 第二实现: 打通 `LLM.generate` 单图 greedy 路径，并与 HF tokens 对齐。
+1. P2.2/P2.3: 扩展 `Sequence` 并实现单图 3D position ids / rope delta。
+2. P2.4/P2.5: 接入 KV-aware attention、prefill 和 eager decode。
+3. P2.6/P2.7: 打通 `LLM.generate_vl` greedy tokens 对齐，并跑 P1/P2 回归。
 
 在 P2 图文端到端 greedy tokens 未达标前，不进入 KV Cache 压缩实现。

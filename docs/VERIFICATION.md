@@ -142,22 +142,133 @@ P1-001 结论:
 
 ## P2: Engine 端到端验证
 
-计划新增或完善测试:
+P2 分阶段验证。任何单项 PASS 都不能替代最终 greedy tokens 对齐。
+
+### 1. Processor pipeline
+
+```bash
+.venv-local/bin/python -m pytest -q tests/test_processor_pipeline.py
+```
+
+PASS 标准:
+
+- processor 输出的 `input_ids`、`pixel_values`、`image_grid_thw` 与参考一致。
+- 输出包含 input ids shape、pixel values shape、image grid shape、image token 数量、max diff 或 exact match、PASS/FAIL。
+- HF processor 只作为非核心预处理工具或 ground truth 使用，不能替代 Prism-Infer 核心模型。
+
+当前状态:
+
+- 2026-06-21 已验证 PASS。
+- 命令:
+
+```bash
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+.venv-local/bin/python -m pytest -q tests/test_processor_pipeline.py -s
+```
+
+- 输出摘要:
+  - `input_ids shape: [1, 210]`
+  - `pixel_values shape: [784, 1536]`
+  - `image_grid_thw shape: [1, 3]`
+  - `image tokens: 196 / expected 196`
+  - `pixel_values max diff: 0.000000e+00`
+  - `3 passed in 6.23s`
+
+### 2. 多模态请求和 3D position ids
 
 ```bash
 .venv-local/bin/python -m pytest -q \
-  tests/test_processor_pipeline.py \
-  tests/test_model_runner_vl_prefill.py \
+  tests/test_sequence_multimodal.py \
+  tests/test_vl_rope_index.py
+```
+
+PASS 标准:
+
+- 纯文本 `Sequence` 行为不变。
+- 单图 `Sequence` 序列化后保留 `pixel_values`、`image_grid_thw`、`position_ids` 或可重建 position ids 的必要元数据。
+- 单图 `position_ids` shape 为 `[3, 1, seqlen]`。
+- `rope_delta` shape 为 `[1, 1]`。
+- 与 HF `get_rope_index` exact match，max diff `0`。
+
+### 3. KV-aware attention 和 VL Prefill
+
+```bash
+.venv-local/bin/python -m pytest -q \
+  tests/test_qwen3_vl_attention_kv.py \
+  tests/test_model_runner_vl_prefill.py
+```
+
+PASS 标准:
+
+- Qwen3-VL LLM attention 在 engine prefill 中写入 KV cache。
+- `prepare_prefill` 传递 `input_ids`、`position_ids`、`pixel_values`、`image_grid_thw` 到模型 forward。
+- 视觉 token 数量与 Vision Encoder 输出数量一致；不一致必须显式报错。
+- 单图 prefill next-token logits 与 HF 参考达到对应测试门槛，并输出 shape、max diff、mean/std、PASS/FAIL。
+
+### 4. Decode eager 和 greedy sampler
+
+```bash
+.venv-local/bin/python -m pytest -q \
+  tests/test_vl_decode_position.py \
+  tests/test_sampler_greedy.py
+```
+
+PASS 标准:
+
+- decode 阶段不重复运行 Vision Encoder。
+- decode position ids 使用 prefill rope delta 延续，前两步与 HF 逻辑一致。
+- `temperature=0` 或显式 greedy 模式走 deterministic argmax。
+- 随机采样路径不回归。
+
+### 5. 端到端 VL generate 和纯文本回归
+
+```bash
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+.venv-local/bin/python -m pytest -q \
   tests/test_llm_vl_generate.py \
   tests/test_text_only_regression.py
 ```
 
 PASS 标准:
 
-- processor 输出的 `input_ids`、`pixel_values`、`image_grid_thw` 与参考一致。
-- `prepare_prefill` 生成的 position_ids shape 和语义正确。
-- 单图 greedy tokens 与 HF 一致。
+- 单图 `LLM.generate_vl` 或等价公开 API 能从用户入口跑通。
+- greedy tokens 与 HF 完全一致。
 - 纯文本请求不回归。
+
+### 6. P2 Gate Review
+
+P2 完成前必须运行:
+
+```bash
+.venv-local/bin/python -m compileall prism_infer tests
+```
+
+```bash
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+.venv-local/bin/python -m pytest -q \
+  tests/test_processor_pipeline.py \
+  tests/test_sequence_multimodal.py \
+  tests/test_vl_rope_index.py \
+  tests/test_qwen3_vl_attention_kv.py \
+  tests/test_model_runner_vl_prefill.py \
+  tests/test_vl_decode_position.py \
+  tests/test_sampler_greedy.py \
+  tests/test_llm_vl_generate.py \
+  tests/test_text_only_regression.py
+```
+
+```bash
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+.venv-local/bin/python tests/test_full_model.py
+```
+
+PASS 标准:
+
+- `compileall` 无错误。
+- P2 全部测试 PASS。
+- P1 full logits 仍 PASS。
+- 单图 greedy tokens 与 HF 完全一致。
+- 未支持的多图、视频、VL CUDA Graph decode 在交付说明中标为未验证风险。
 
 在这些测试文件实现前，P2 只能通过手动 smoke 验证，不能标记为完成。
 

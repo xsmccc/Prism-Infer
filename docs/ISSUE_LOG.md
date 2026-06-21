@@ -148,3 +148,79 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 
 - 当前纯文本 full logits 已严格 PASS。
 - 仍需在 P2 阶段验证图文输入、视觉 token 替换、DeepStack 注入和端到端 generate tokens。
+
+## P2-001: Processor pipeline 输入边界建立
+
+状态: Verified
+
+发现方式:
+
+- P2.1 阶段任务拆分。
+
+影响范围:
+
+- 为后续 P2.2 多模态 `Sequence` 和 P2.3 3D position ids 提供稳定的单图输入数据结构。
+- 当前不改变 engine、scheduler、模型 forward 或 KV cache 行为。
+
+证据:
+
+- HF processor 源码显示 `Qwen3VLProcessor.__call__` 返回 `input_ids`、`pixel_values`、`image_grid_thw`，并按 `image_grid_thw.prod() // merge_size**2` 展开 image token:
+  `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/processing_qwen3_vl.py:146-194`。
+- P2 设计文档已将 HF processor 定义为非核心预处理工具，不能替代 Prism-Infer 核心模型。
+
+定位过程:
+
+- 现有测试中 `tests/test_patch_embed.py` 和 `tests/test_vit_attention_rope.py` 已直接使用 HF `AutoProcessor` 生成 `pixel_values`。
+- P2 需要把该逻辑从测试散落用法收敛到 engine 边界模块，避免后续 `Sequence` 和 `ModelRunner` 直接依赖临时脚本代码。
+
+根因:
+
+- 这不是 bug 修复，而是 P2 输入边界建设。此前项目没有统一的单图 VL request 数据结构。
+
+修复:
+
+- 新增 `prism_infer/engine/vl_inputs.py`:
+  - `SingleImageInputs` 保存 `input_ids`、`attention_mask`、`pixel_values`、`image_grid_thw`、`image_token_id`、视觉 token 数和展开后的 prompt。
+  - `load_vl_processor` 延迟加载 HF processor，避免非 VL 单元测试被第三方依赖阻塞。
+  - `prepare_single_image_inputs` 只支持单图单请求，生成 P2 后续模块可消费的数据。
+  - `validate_single_image_inputs` 校验 shape、raw patch count、merge 后 image token 数，失败时显式报错。
+- 新增 `tests/test_processor_pipeline.py`:
+  - 对比 Prism-Infer 边界函数输出与 HF processor reference 是否 exact match。
+  - 验证 `token_ids` 属性可用于后续 `Sequence` 构造。
+  - 验证视觉 token 数不匹配时抛出 `ValueError`。
+
+验证命令:
+
+```bash
+cd /data/Prism-Infer && \
+.venv-local/bin/python -m compileall \
+  prism_infer/engine/vl_inputs.py \
+  tests/test_processor_pipeline.py
+```
+
+```bash
+cd /data/Prism-Infer && \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+.venv-local/bin/python -m pytest -q tests/test_processor_pipeline.py -s
+```
+
+验证结果:
+
+- `compileall`: PASS。
+- `tests/test_processor_pipeline.py`: `3 passed in 6.23s`。
+- 输出摘要:
+  - `input_ids shape: [1, 210]`
+  - `pixel_values shape: [784, 1536]`
+  - `image_grid_thw shape: [1, 3]`
+  - `image tokens: 196 / expected 196`
+  - `pixel_values max diff: 0.000000e+00`
+
+经验:
+
+- Processor pipeline 必须验证 token 数，而不能只验证 shape。Qwen3-VL 的 LLM 视觉 token 数是 `image_grid_thw.prod() // merge_size**2`，原始 patch 数 `784` 对应 LLM image token 数 `196`。
+- 将 HF processor 限定在预处理边界，可以复用成熟 tokenizer/image processor，同时不污染 Prism-Infer 核心模型、attention 和 KV cache 自实现原则。
+
+剩余风险:
+
+- 当前只支持单图单请求，不支持多图、视频和 batch 混合图文。
+- 当前只验证 processor 输出，不代表 `Sequence`、3D position ids、Prefill、Decode 或端到端 greedy tokens 已完成。
