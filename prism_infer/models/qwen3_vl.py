@@ -11,6 +11,43 @@ from prism_infer.vision.vision_encoder import VisionEncoder
 from prism_infer.vision.mrope import MRope, apply_mrope
 
 
+def _cfg_get(config, *names, default=None):
+    """Read an attribute/key from a HF config-like object without importing transformers."""
+    if config is None:
+        return default
+    for name in names:
+        if isinstance(config, dict) and name in config:
+            return config[name]
+        if hasattr(config, name):
+            return getattr(config, name)
+    return default
+
+
+def _normalize_dtype(dtype):
+    if dtype is None:
+        return torch.bfloat16
+    if isinstance(dtype, str):
+        return getattr(torch, dtype.replace("torch.", ""))
+    return dtype
+
+
+def _text_config(config):
+    return _cfg_get(config, "text_config", default=config)
+
+
+def _vision_config(config):
+    return _cfg_get(config, "vision_config", "vision_config_dict", default=None)
+
+
+def _mrope_section(text_config):
+    rope_scaling = _cfg_get(text_config, "rope_scaling", default=None)
+    if isinstance(rope_scaling, dict):
+        return rope_scaling.get("mrope_section", [24, 20, 20])
+    if rope_scaling is not None and hasattr(rope_scaling, "mrope_section"):
+        return rope_scaling.mrope_section
+    return _cfg_get(text_config, "mrope_section", default=[24, 20, 20])
+
+
 # ═══════════════════════════════════════════════════════════════
 # Qwen3VLTextRMSNorm
 # ═══════════════════════════════════════════════════════════════
@@ -64,34 +101,34 @@ class Qwen3VLTextAttention(nn.Module):
         k = self.k_proj(hidden_states)
         v = self.v_proj(hidden_states)
 
-        q = q.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k = k.view(bsz, q_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        q = q.view(bsz, q_len, self.num_heads, self.head_dim)
+        k = k.view(bsz, q_len, self.num_kv_heads, self.head_dim)
         v = v.view(bsz, q_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
 
-        # M-RoPE (先 RoPE 再 QK-Norm, 与 HF 顺序一致)
+        # QK-Norm: HF 4.57.1 是先 QK-Norm 再 M-RoPE.
+        q = self.q_norm(q).transpose(1, 2)
+        k = self.k_norm(k).transpose(1, 2)
+
+        # M-RoPE
         if position_embeddings is not None:
             cos, sin = position_embeddings
             q, k = apply_mrope(q, k, cos, sin)
 
-        # QK-Norm: 对 Q 和 K 沿 head_dim 做 L2 归一化
-        q = self.q_norm(q)
-        k = self.k_norm(k)
-
-        # GQA: 将 KV head 复制以匹配 Q head 数
-        # (nump_key_value_groups=32/8=4, 每个 KV head 服务 4 个 Q head)
-        k = k.repeat_interleave(self.num_key_value_groups, dim=1)
-        v = v.repeat_interleave(self.num_key_value_groups, dim=1)
-
-        # Scaled Dot-Product Attention
-        # 如果没有显式 mask, 用 causal; 如果有, 只用 mask (避免 is_causal 被忽略)
         sdpa_kwargs = {"scale": self.scale}
         if attention_mask is not None:
+            k = k.repeat_interleave(self.num_key_value_groups, dim=1)
+            v = v.repeat_interleave(self.num_key_value_groups, dim=1)
             sdpa_kwargs["attn_mask"] = attention_mask
         else:
+            if q.is_cuda:
+                sdpa_kwargs["enable_gqa"] = True
+            else:
+                k = k.repeat_interleave(self.num_key_value_groups, dim=1)
+                v = v.repeat_interleave(self.num_key_value_groups, dim=1)
             sdpa_kwargs["is_causal"] = True
         o = F.scaled_dot_product_attention(q, k, v, **sdpa_kwargs)
 
-        o = o.transpose(1, 2).reshape(bsz, q_len, -1)
+        o = o.transpose(1, 2).contiguous().reshape(bsz, q_len, -1).contiguous()
         return self.o_proj(o)
 
 
@@ -120,11 +157,11 @@ class Qwen3VLTextDecoderLayer(nn.Module):
 
     def __init__(self, hidden_size: int = 4096, num_heads: int = 32,
                  num_kv_heads: int = 8, intermediate_size: int = 12288,
-                 dtype: torch.dtype = torch.bfloat16):
+                 dtype: torch.dtype = torch.bfloat16, head_dim: int = 128):
         super().__init__()
         self.input_layernorm = Qwen3VLTextRMSNorm(hidden_size, dtype=dtype)
         self.self_attn = Qwen3VLTextAttention(
-            hidden_size, num_heads, num_kv_heads, dtype=dtype)
+            hidden_size, num_heads, num_kv_heads, head_dim, dtype=dtype)
         self.post_attention_layernorm = Qwen3VLTextRMSNorm(hidden_size, dtype=dtype)
         self.mlp = Qwen3VLTextMLP(hidden_size, intermediate_size, dtype=dtype)
 
@@ -161,18 +198,49 @@ class Qwen3VLTextModel(nn.Module):
     def __init__(self, vocab_size: int = 151936, hidden_size: int = 4096,
                  num_heads: int = 32, num_kv_heads: int = 8,
                  num_layers: int = 36, intermediate_size: int = 12288,
-                 dtype: torch.dtype = torch.bfloat16):
+                 dtype: torch.dtype = torch.bfloat16,
+                 head_dim: int = 128, rope_theta: float = 5000000.0,
+                 mrope_section: list[int] | None = None):
         super().__init__()
+        dtype = _normalize_dtype(dtype)
         self.embed_tokens = nn.Embedding(vocab_size, hidden_size, dtype=dtype)
         self.layers = nn.ModuleList([
             Qwen3VLTextDecoderLayer(hidden_size, num_heads, num_kv_heads,
-                                     intermediate_size, dtype)
+                                     intermediate_size, dtype, head_dim)
             for _ in range(num_layers)
         ])
         self.norm = Qwen3VLTextRMSNorm(hidden_size, dtype=dtype)
         # M-RoPE: LLM 3D 位置编码 (head_dim=128, theta=5M, mrope_section=[24,20,20])
-        self.rotary_emb = MRope(head_dim=128, theta=5000000.0,
-                                mrope_section=[24, 20, 20])
+        self.rotary_emb = MRope(head_dim=head_dim, theta=rope_theta,
+                                mrope_section=mrope_section or [24, 20, 20])
+
+    @classmethod
+    def from_config(cls, config, dtype: torch.dtype | None = None):
+        text_config = _text_config(config)
+        dtype = _normalize_dtype(dtype or _cfg_get(
+            text_config, "torch_dtype", default=_cfg_get(config, "torch_dtype",
+                                                         default=torch.bfloat16)))
+        hidden_size = _cfg_get(text_config, "hidden_size", default=4096)
+        num_heads = _cfg_get(text_config, "num_attention_heads", default=32)
+        num_kv_heads = _cfg_get(text_config, "num_key_value_heads", default=8)
+        head_dim = _cfg_get(
+            text_config, "head_dim", default=hidden_size // num_heads)
+        return cls(
+            vocab_size=_cfg_get(text_config, "vocab_size",
+                                default=_cfg_get(config, "vocab_size",
+                                                 default=151936)),
+            hidden_size=hidden_size,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            num_layers=_cfg_get(text_config, "num_hidden_layers",
+                                "num_layers", default=36),
+            intermediate_size=_cfg_get(text_config, "intermediate_size",
+                                       default=12288),
+            dtype=dtype,
+            head_dim=head_dim,
+            rope_theta=_cfg_get(text_config, "rope_theta", default=5000000.0),
+            mrope_section=_mrope_section(text_config),
+        )
 
     def forward(self, input_ids: torch.Tensor | None = None,
                 position_embeddings: tuple | None = None,
@@ -250,18 +318,29 @@ class Qwen3VLModel(nn.Module):
       4. LLM forward (每 layer 之后检查是否需要注入 deepstack)
     """
 
-    def __init__(self, dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, config=None, dtype: torch.dtype | None = None):
         super().__init__()
-        self.visual = VisionEncoder(dtype)
-        self.language_model = Qwen3VLTextModel(dtype=dtype)
+        text_config = _text_config(config)
+        dtype = _normalize_dtype(dtype or _cfg_get(
+            config, "torch_dtype", "dtype",
+            default=_cfg_get(text_config, "torch_dtype", "dtype",
+                             default=torch.bfloat16)))
+        vision_config = _vision_config(config)
+        self.visual = VisionEncoder(vision_config, dtype=dtype)
+        self.language_model = (
+            Qwen3VLTextModel.from_config(config, dtype=dtype)
+            if config is not None else Qwen3VLTextModel(dtype=dtype)
+        )
         # <|image_pad|> token ID (HF config.image_token_id)
-        self.image_token_id = 151655
+        self.image_token_id = _cfg_get(config, "image_token_id",
+                                       default=151655)
 
     def forward(self, input_ids: torch.Tensor,
                 pixel_values: torch.Tensor | None = None,
                 image_grid_thw: torch.Tensor | None = None,
                 position_embeddings: tuple | None = None,
-                attention_mask: torch.Tensor | None = None) -> torch.Tensor:
+                attention_mask: torch.Tensor | None = None,
+                position_ids: torch.Tensor | None = None) -> torch.Tensor:
         """
         input_ids: [batch, seqlen]
         pixel_values: [N_patches, 1536] or None
@@ -308,6 +387,7 @@ class Qwen3VLModel(nn.Module):
             inputs_embeds=inputs_embeds,
             position_embeddings=position_embeddings,
             attention_mask=attention_mask,
+            position_ids=position_ids,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
         )
@@ -320,19 +400,42 @@ class Qwen3VLModel(nn.Module):
 class Qwen3VLForCausalLM(nn.Module):
     """Qwen3-VL-8B 完整模型."""
 
-    def __init__(self, dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, config=None, dtype: torch.dtype | None = None):
+        # Backward compatibility: Qwen3VLForCausalLM(torch.bfloat16)
+        if isinstance(config, torch.dtype):
+            dtype = config
+            config = None
         super().__init__()
-        self.model = Qwen3VLModel(dtype)
-        self.lm_head = nn.Linear(4096, 151936, bias=False, dtype=dtype)
-        self.lm_head.weight = self.model.language_model.embed_tokens.weight  # tie weights
+        text_config = _text_config(config)
+        dtype = _normalize_dtype(dtype or _cfg_get(
+            config, "torch_dtype", "dtype",
+            default=_cfg_get(text_config, "torch_dtype", "dtype",
+                             default=torch.bfloat16)))
+        hidden_size = _cfg_get(text_config, "hidden_size", default=4096)
+        vocab_size = _cfg_get(text_config, "vocab_size",
+                              default=_cfg_get(config, "vocab_size",
+                                               default=151936))
+        self.model = Qwen3VLModel(config, dtype=dtype)
+        self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False, dtype=dtype)
+        tie_word_embeddings = _cfg_get(
+            config, "tie_word_embeddings",
+            default=_cfg_get(text_config, "tie_word_embeddings", default=False),
+        )
+        if tie_word_embeddings:
+            self.lm_head.weight = self.model.language_model.embed_tokens.weight
 
     def forward(self, input_ids: torch.Tensor,
                 pixel_values: torch.Tensor | None = None,
                 image_grid_thw: torch.Tensor | None = None,
                 position_embeddings: tuple | None = None,
-                attention_mask: torch.Tensor | None = None) -> torch.Tensor:
-        return self.model(input_ids, pixel_values, image_grid_thw,
-                          position_embeddings, attention_mask)
+                attention_mask: torch.Tensor | None = None,
+                position_ids: torch.Tensor | None = None) -> torch.Tensor:
+        return self.model(input_ids=input_ids,
+                          pixel_values=pixel_values,
+                          image_grid_thw=image_grid_thw,
+                          position_embeddings=position_embeddings,
+                          attention_mask=attention_mask,
+                          position_ids=position_ids)
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         return self.lm_head(hidden_states)

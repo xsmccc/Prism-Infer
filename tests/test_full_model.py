@@ -6,8 +6,9 @@
 import gc, torch
 import sys
 sys.path.insert(0, '/data/Prism-Infer')
+from conftest import get_model_path
 
-MODEL_PATH = '/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b'
+MODEL_PATH = get_model_path()
 DTYPE = torch.bfloat16
 DEVICE = 'cuda'
 VOCAB_SIZE = 151936
@@ -46,9 +47,14 @@ def run_our_forward(input_ids):
     # 放在 CPU 上, 不占 GPU
     hf_cpu.eval()
 
-    # 2. 创建我们的模型 (GPU)
+    # 2. 直接在 GPU 上创建我们的模型，避免 CPU 同时持有两份 8B 权重。
     print(f"  创建 Prism-Infer 模型到 GPU...")
-    our = Qwen3VLForCausalLM(dtype=DTYPE).to(DEVICE).eval()
+    default_device = torch.get_default_device()
+    torch.set_default_device(DEVICE)
+    try:
+        our = Qwen3VLForCausalLM(config=hf_cpu.config, dtype=DTYPE).eval()
+    finally:
+        torch.set_default_device(default_device)
 
     # 3. 逐参数复制: HF(CPU) → Our(GPU)
     our_sd = our.state_dict()
@@ -56,7 +62,7 @@ def run_our_forward(input_ids):
     loaded, missing = 0, []
     for key in our_sd:
         if key in hf_sd:
-            our_sd[key].copy_(hf_sd[key].to(DEVICE))
+            our_sd[key].copy_(hf_sd[key].to(DEVICE), non_blocking=True)
             loaded += 1
         else:
             missing.append(key)

@@ -1,132 +1,223 @@
-# Prism-Infer Roadmap
+# Prism-Infer 项目路线图
 
-> 修订 2026-06-14: Vision Encoder 改为自实现（参照 vLLM `qwen3_vl.py`），非 HF wrapper。
+> 修订日期: 2026-06-21
+> 目标模型: Qwen3-VL-8B-Instruct
+> 项目目标: 自实现 Qwen3-VL 多模态推理引擎，并在可靠 FP baseline 上完成视觉 token KV Cache 分析与压缩研究。
 
-## 总览
+## 项目总目标
 
-| 月份 | 阶段 | 目标 |
-|------|------|------|
-| **6月** | 地基 | Qwen3-VL-8B 完整跑通 (全模块自实现) |
-| **7月上** | 分析+压缩 | KV Cache 分析 + 压缩策略 |
-| **7月下** | 优化 | Triton kernel + 多卡 TP |
-| **8月** | 收尾 | MoE offload(可选) + 技术报告 + 投递 |
+Prism-Infer 的交付目标不是单个 demo，而是一套可验证、可复现、可解释的多模态推理与 KV Cache 压缩研究工程:
 
----
+- 跑通 Qwen3-VL-8B-Instruct 的自实现推理路径，核心模块不使用 HF/vLLM/SGLang wrapper 替代。
+- 建立与独立参考实现的模块级、全模型级、端到端级数值对齐验证。
+- 基于可靠 baseline 分析视觉 token 的 KV Cache 行为，再实现压缩策略。
+- 用实测 benchmark 证明压缩率、质量退化、显存收益和吞吐/延迟变化。
+- 输出可复现实验、技术报告、README 和面试/投递材料。
 
-## 6月 W1 (6/14-6/20)：Vision Encoder + 项目基建
+## 当前真实状态
 
-### Day 1-2 (6/14-15): 架构分析 + 改动清单 ✅
-- [x] 项目框架搭建, 改名 prism-infer, 配置 CLAUDE.md
-- [x] Qwen3-VL-8B 数据流 trace
-- [x] CHANGES.md 改动清单
-- [x] 知识库: 架构深度解析
+| 领域 | 状态 | 说明 |
+|---|---|---|
+| 项目治理 | 已建立 | `CLAUDE.md` 和 `prism-infer-rigor` Codex plugin 已配置。 |
+| Vision Encoder | 已实现，需持续回归 | `prism_infer/vision/vision_encoder.py` 已存在，已有 PatchEmbed/ViT/DeepStack 相关测试。 |
+| M-RoPE | 已实现，需持续回归 | `prism_infer/vision/mrope.py` 已存在，已有 M-RoPE 测试。 |
+| Qwen3-VL Text Model | 纯文本 full logits 已严格对齐 | `prism_infer/models/qwen3_vl.py` 已存在，组件测试已建立。 |
+| 模块对齐套件 | PASS | 2026-06-21 重新验证: `20 passed in 82.17s`。后续改动必须重新跑。 |
+| Full logits | PASS | 2026-06-21 修复 P1-001 后，`tests/test_full_model.py` 输出 max diff `0.000000e+00`, mean diff `0.000000e+00`。 |
+| Engine 端到端 VL 推理 | 未完成 | 仍需完善图像输入、3D position_ids、Prefill/Decode 和 `LLM.generate` 接口。 |
+| KV Cache 分析与压缩 | 未开始 | 必须等图文端到端路径可靠后进入。 |
 
-### Day 3 (6/16): PatchEmbed + ViTMLP
-- [ ] 实现 `PatchEmbed`: Conv3d(kernel=(3,16,16), stride=(2,16,16))
-- [ ] 实现 `ViTMLP`: GELU-Tanh + Linear(1152→4304→1152)
-- [ ] 验证: 与 HF 对应子模块输出误差 < 1e-5
-- 参考: vLLM `qwen3_vl.py` L348-L411
+## 阶段门禁总览
 
-### Day 4 (6/17): ViT Attention + 2D RoPE
-- [ ] 实现 `ViTAttention`: 合并 QKV + 16 heads + 2D RoPE
-- [ ] 实现 `rot_pos_emb`: ViT 专用 2D 旋转位置编码
-- [ ] 验证: 与 HF 对应层输出误差 < 1e-5
-- 参考: vLLM `qwen3_vl.py` L430-L465 (block), L660-L675 (RoPE)
+| 阶段 | 名称 | 目标 | 出口标准 |
+|---|---|---|---|
+| P0 | 治理与基线 | 固化工程流程、验证入口和当前真实状态 | 文档、插件、验证命令可用，当前风险清楚 |
+| P1 | 模型地基严格对齐 | Vision/M-RoPE/Text/Full logits 对齐 | 纯文本 full logits 已 PASS；图文路径进入 P2 |
+| P2 | Engine 单图端到端推理 | 从 `LLM` 层接收图文输入并生成 | 单图 greedy tokens 与 HF 一致，纯文本不回归 |
+| P3 | KV Cache 分析 | 捕获和量化 visual token KV/attention 行为 | trace 可复现，输出分析报告 |
+| P4 | KV Cache 压缩策略 | 实现至少一个视觉 token 压缩策略 | 有压缩率、质量退化、显存/性能实测 |
+| P5 | 性能优化与扩展 | Triton/多卡/长序列优化 | correctness 不回归，benchmark 可复现 |
+| P6 | 项目交付 | README、技术报告、复现实验和投递材料 | 外部用户能按文档复现核心结果 |
 
-### Day 5 (6/18): ViTBlock + PatchMerger
-- [ ] 实现 `ViTBlock`: Pre-LayerNorm + 残差连接
-- [ ] 实现 `PatchMerger`: 空间合并(4→1) + MLP(4608→4608→4096)
-- [ ] 验证: 每模块与 HF 误差 < 1e-5
-- 参考: vLLM `qwen3_vl.py` L414-L517
+每个阶段必须遵循:
 
-### Day 6 (6/19): Position Embed + Full VisionTransformer
-- [ ] 实现 `fast_pos_embed_interpolate`: 动态分辨率位置编码插值
-- [ ] 组装 `VisionTransformer`: 含 DeepStack 四路输出
-- [ ] 验证: 完整 ViT 输出与 HF 误差 < 1e-5
-- 参考: vLLM `qwen3_vl.py` L520-L700+, L678-L693
+```text
+Plan -> Implement -> Verify -> Teach -> Document -> Gate Review
+```
 
-### Day 7 (6/20): 周总结
-- [ ] 完整 VisionEncoder 端到端验证
-- [ ] 知识库: ViT 实现笔记
-- [x] 输出: `prism_infer/vision/vision_encoder.py`
+任一阶段的 PASS 声明必须绑定实际验证命令和输出。验证缺失时只能标注为未验证风险，不能写成完成。
 
----
+## P0: 治理与基线
 
-## 6月 W2 (6/21-6/27)：M-RoPE + LLM 模型
+### 目标
 
-### Day 8-9 (6/21-22): M-RoPE
-- [ ] 实现 `MRope`: Interleaved M-RoPE for LLM (mrope_section=[24,20,20])
-- [ ] 验证: 与 HF 的 M-RoPE 输出误差 < 1e-5
-- 参考: vLLM `qwen3_vl.py` M-RoPE 实现
+把项目从临时开发状态整理成可持续推进的工程状态，保证后续每个模块都有清晰的入口、出口和验证标准。
 
-### Day 10-11 (6/23-24): LLM Attention + DecoderLayer
-- [ ] 实现 `Qwen3VLTextAttention`: 分开 QKV + QK-Norm (RMSNorm)
-- [ ] 实现 `Qwen3VLTextMLP`: SiLU + Gate-Up-Down
-- [ ] 实现 `Qwen3VLTextDecoderLayer`
-- [ ] 验证: 每模块与 HF 误差 < 1e-5
+### 小任务
 
-### Day 12-13 (6/25-26): Full Model Assembly
-- [ ] 实现 `Qwen3VLTextModel` (36层)
-- [ ] 实现 `Qwen3VLForCausalLM`: 含 DeepStack 注入 (Layer 8/16/24)
-- [ ] 验证: 端到端 logits 与 HF 误差 < 1e-5
+- [x] 安装项目专用 Codex plugin: `prism-infer-rigor`。
+- [x] 记录当前模型路径和 full logits 风险。
+- [x] 将路线图改为阶段门禁结构。
+- [x] 建立统一验证文档: `docs/VERIFICATION.md`。
+- [ ] 将历史 `DAY_*.md` 文档标注为历史记录，避免与主路线图冲突。
+- [ ] 建立每阶段交付模板: 目标、改动范围、验证输出、风险、下一步。
 
-### Day 14 (6/27): 周总结
-- [ ] 知识库: M-RoPE + LLM 架构笔记
-- [x] 输出: `prism_infer/models/qwen3_vl.py`
+### 出口标准
 
----
+- `docs/ROADMAP.md` 能回答“项目现在在哪个阶段、下一步做什么、怎样算完成”。
+- `docs/VERIFICATION.md` 能回答“每阶段跑哪些命令、PASS 标准是什么”。
+- 新任务开始前先读取 `CLAUDE.md`、`ROADMAP.md`、`VERIFICATION.md` 和 `git status`。
 
-## 6月 W3 (6/28-7/4)：Engine 集成 + 端到端推理
+## P1: Qwen3-VL 模型地基严格对齐
 
-### Day 15-16 (6/28-29): Input Pipeline
-- [ ] Processor 集成: image → pixel_values + input_ids
-- [ ] model_runner.prepare_prefill: 支持图像输入, 生成 3D position_ids
-- [ ] 验证: 预处理输出与 HF processor 一致
+### 目标
 
-### Day 17-18 (6/30-7/1): Config + Loader + Engine
-- [ ] config.py: 支持 VL 模型配置
-- [ ] loader.py: 加载 VL 权重 (分开的 QKV, ViT 权重)
-- [ ] llm_engine.py: add_request 支持图像参数
+完成 Qwen3-VL 核心模型地基的自实现和数值对齐，包括 Vision Encoder、M-RoPE、Text Model、DeepStack 注入、权重加载和 full logits。
 
-### Day 19-20 (7/2-7/3): End-to-End
-- [ ] 端到端单图推理 (Prefill + Decode 完整流程)
-- [ ] 验证: generate 输出与 HF 一致
-- [ ] Benchmark: 本地 4070 上的延迟/吞吐基线
+### 小任务
 
-### Day 21 (7/4): 周总结
-- [ ] 知识库: Engine 集成笔记
+- [x] 重新跑语法和模块对齐基线，确认当前 `20 passed` 仍成立。
+- [x] 固化 Vision Encoder 回归测试，覆盖 PatchEmbed、ViT MLP、ViT Attention、RoPE、完整 VisionEncoder。
+- [x] 固化 M-RoPE 回归测试，覆盖 `[batch, seqlen]`、`[3, batch, seqlen]` 和兼容输入形态。
+- [x] 固化 Qwen3-VL Text Model 组件测试，覆盖 RMSNorm、MLP、DecoderLayer、权重 key。
+- [x] 修复 full logits `MARGINAL` 问题，不允许通过放宽阈值完成。
+- [x] 建立分层误差定位工具，记录 layerwise hidden/logits max diff 与 mean diff。
+- [x] 整理 P1-001 问题解决记录，解释 RoPE dtype、QK-Norm、attention 路径和验证结果。
 
----
+### 出口标准
 
-## 6月 W4 (7/5-7/11)：KV Cache 分析
+- `compileall` PASS。
+- 模块对齐套件 PASS。
+- full logits 达到严格门槛。
+- 权重加载 missing/unexpected keys 为 0，或每个差异有解释。
+- 文档中不得写“Qwen3-VL 全模型严格对齐完成”，除非 full logits 或 greedy tokens 已严格 PASS。
 
-- [ ] 截取每层 attention weights (visual vs text token 分开)
-- [ ] 可视化 visual token attention pattern
-- [ ] 量化 visual token KV 冗余度
-- [ ] 输出单图/多图场景分析报告
+### 当前验证结果
 
----
+- `compileall`: PASS。
+- P1 模块对齐套件: `20 passed in 82.17s`。
+- `tests/test_full_model.py`: PASS，logits max diff `0.000000e+00`, mean diff `0.000000e+00`。
+- P1-001 已记录在 `docs/ISSUE_LOG.md`，状态为 `Verified`。
+- 剩余风险: 以上 PASS 是纯文本 full logits；图文输入、视觉 token 替换、DeepStack 注入和端到端 generate 在 P2 验证。
 
-## 7月 W5-6 (7/12-7/25)：压缩策略 + 优化
+### 主要验证
 
-- [ ] Token-level importance scoring
-- [ ] Visual token pruning (基于 attention score)
-- [ ] Benchmark: 压缩率 vs perplexity
-- [ ] Triton kernel 优化关键算子
-- [ ] 与 vllm/sglang 对比评测
+详见 `docs/VERIFICATION.md` 的 P1。
 
----
+## P2: Engine 单图端到端推理
 
-## 7月 W7-8 (7/26-8/8)：多卡 + 收尾
+### 目标
 
-- [ ] 2卡 TP 支持
-- [ ] 长序列压力测试 (5090 32GB)
-- [ ] MoE offload 方案 (可选)
+把已对齐的模型接入 Prism-Infer engine，使系统能从用户侧接收图文输入，完成 Prefill + Decode，并保持纯文本路径不回归。
 
----
+### 小任务
 
-## 8月 (8/9-8/31)：投递准备
+- [ ] 扩展 `Sequence` 或请求结构，携带单图输入或预处理后的 `pixel_values` / `image_grid_thw`。
+- [ ] 集成 processor/tokenizer 路径，并说明第三方预处理使用理由。
+- [ ] 在 `model_runner.prepare_prefill` 中生成 VL 所需 3D position_ids。
+- [ ] 支持视觉占位 token 的 embedding 替换。
+- [ ] 保证 decode 阶段无图像输入时正确复用 KV cache。
+- [ ] 扩展 `LLM.generate` 或等价接口，支持单图输入。
+- [ ] 增加纯文本回归测试，确保 VL 改动不破坏原路径。
 
-- [ ] 技术博客 + GitHub README
-- [ ] 简历更新
-- [ ] 面试准备 + 开始投递
+### 出口标准
+
+- 单图 prompt 能从 `LLM` 层跑通。
+- greedy `temperature=0` 输出 tokens 与 HF 一致。
+- 纯文本 prompt 不回归。
+- 若 P1 full logits 未 strict PASS，P2 不能宣称严格精度完成，只能作为功能 smoke。
+
+## P3: KV Cache 分析
+
+### 目标
+
+先建立可观测能力，再讨论压缩。捕获每层 visual token 与 text token 的 attention/KV 行为，量化冗余与重要性。
+
+### 小任务
+
+- [ ] 设计 trace 数据 schema，包含模型配置、输入 shape、图像网格、层号、head、token 区间和统计量。
+- [ ] 实现 attention/KV trace 开关，默认关闭，不影响正常推理。
+- [ ] 验证 trace on/off 输出一致。
+- [ ] 计算 visual token attention mass、token importance、层间冗余、head 差异。
+- [ ] 输出离线可视化脚本和样例报告。
+
+### 出口标准
+
+- trace 文件可复现生成。
+- 开启 trace 不改变 greedy 输出。
+- 至少覆盖单图描述、细节问答、多图或长上下文中的 3 类输入。
+- 输出 `docs/KV_ANALYSIS_REPORT.md`，明确压缩假设。
+
+## P4: KV Cache 压缩策略
+
+### 目标
+
+在可靠 FP baseline 上实现视觉 token KV Cache 压缩，并用实测数据说明收益与退化。
+
+### 小任务
+
+- [ ] 设计 compression config，支持 off 和至少一个 active 策略。
+- [ ] 建立 compression off 等价 baseline。
+- [ ] 实现 token-level importance scoring。
+- [ ] 实现首个 visual token pruning 策略。
+- [ ] 保证失败时显式报错，不 silent fallback。
+- [ ] 评估压缩率、显存、延迟、吞吐、token 一致率和质量退化。
+
+### 出口标准
+
+- compression off 与 FP baseline 完全一致。
+- compression on 有明确压缩率和质量退化数字。
+- 至少一个策略在指定场景下显示可测收益。
+- 输出 `docs/COMPRESSION_REPORT.md` 和原始 benchmark 日志。
+
+## P5: 性能优化与扩展
+
+### 目标
+
+在 correctness 不回归的前提下推进 Triton kernel、多卡 TP、长序列压力测试和工程性能优化。
+
+### 小任务
+
+- [ ] 标准化 `bench.py` 参数和输出格式。
+- [ ] 建立 4070 / 4090 / 5090 三档硬件的 benchmark 记录模板。
+- [ ] 只针对已定位瓶颈实现 Triton/CUDA 优化。
+- [ ] 每个自定义 kernel 都有 correctness test 和 benchmark。
+- [ ] 设计并验证 2 卡 TP 路径。
+- [ ] 跑长序列和多图压力测试。
+
+### 出口标准
+
+- benchmark 包含 warmup、repeat、median、p90、min、max、显存和输入参数。
+- 优化前后有同条件对照。
+- 单卡/多卡输出一致性验证通过。
+- 输出 `docs/PERFORMANCE_REPORT.md`。
+
+## P6: 项目交付
+
+### 目标
+
+把工程结果整理成可以展示、复现和讲清楚的项目交付物。
+
+### 小任务
+
+- [ ] 重写 README，覆盖安装、模型准备、快速运行、验证和压缩实验。
+- [ ] 整理技术报告，覆盖模型自实现、M-RoPE、DeepStack、KV 分析、压缩和性能。
+- [ ] 固定最小复现实验命令和日志样例。
+- [ ] 整理 Known Issues，不把未验证内容写成完成。
+- [ ] 准备面试/投递材料。
+
+### 出口标准
+
+- 新环境能按 README 跑通最小 demo。
+- 所有关键 claim 都能追溯到验证输出、报告或源码。
+- 项目有清楚的限制说明和下一步方向。
+
+## 下一步执行顺序
+
+当前应优先执行:
+
+1. P2 设计: 明确 `Sequence` 图像字段、processor 边界、3D position_ids、Prefill/Decode 数据流。
+2. P2 第一实现: 建立 processor pipeline 和 `prepare_prefill` 单图测试。
+3. P2 第二实现: 打通 `LLM.generate` 单图 greedy 路径，并与 HF tokens 对齐。
+
+在 P2 图文端到端 greedy tokens 未达标前，不进入 KV Cache 压缩实现。

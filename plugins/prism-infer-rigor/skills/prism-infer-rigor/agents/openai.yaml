@@ -1,0 +1,7 @@
+interface:
+  display_name: "Prism-Infer Rigor"
+  short_description: "Rigorous Prism-Infer development checks"
+  default_prompt: "Use $prism-infer-rigor while working on Prism-Infer."
+
+policy:
+  allow_implicit_invocation: true

@@ -26,6 +26,7 @@ try:
     from prism_infer.models.qwen3 import Qwen3ForCausalLM     # Qwen3 纯文本模型 (legacy)
 except ImportError:
     Qwen3ForCausalLM = None  # VL 项目中纯文本模型可能不存在, 用 VL 版替代
+from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 from prism_infer.layers.sampler import Sampler              # 采样器 (温度采样/贪婪)
 from prism_infer.utils.context import set_context, get_context, reset_context  # 全局上下文
 from prism_infer.utils.loader import load_model             # 权重加载
@@ -58,7 +59,12 @@ class ModelRunner:
         default_dtype = torch.get_default_dtype()     # 保存原始默认类型 (float32)
         torch.set_default_dtype(hf_config.torch_dtype)  # 设为模型精度 (如 bfloat16)
         torch.set_default_device("cuda")              # 后续 torch.empty() 等默认在 GPU 上
-        self.model = Qwen3ForCausalLM(hf_config)      # 创建模型结构 (空的, 没有权重)
+        if self._is_vl_config(hf_config) or Qwen3ForCausalLM is None:
+            self.model = Qwen3VLForCausalLM(hf_config)  # Qwen3-VL 模型结构
+            self.is_vl_model = True
+        else:
+            self.model = Qwen3ForCausalLM(hf_config)    # legacy Qwen3 纯文本结构
+            self.is_vl_model = False
         load_model(self.model, config.model)           # 从文件加载权重到模型
         self.sampler = Sampler()                       # 创建采样器
 
@@ -150,6 +156,21 @@ class ModelRunner:
     # ═══════════════════════════════════════════════════════════
     # 初始化阶段: warmup + allocate_kv_cache
     # ═══════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _is_vl_config(hf_config) -> bool:
+        model_type = getattr(hf_config, "model_type", "")
+        return (
+            "vl" in str(model_type).lower()
+            or hasattr(hf_config, "vision_config")
+            or hasattr(hf_config, "image_token_id")
+        )
+
+    def _forward_model(self, input_ids: torch.Tensor, positions: torch.Tensor):
+        """Call either the new Qwen3-VL interface or the legacy text model."""
+        if self.is_vl_model:
+            return self.model(input_ids=input_ids, position_ids=positions)
+        return self.model(input_ids, positions)
 
     def warmup_model(self):
         """热身: 用最大尺寸输入跑一次模型, 触发 CUDA kernel 编译/分配"""
@@ -416,7 +437,7 @@ class ModelRunner:
         """执行模型前向推理, 返回 logits"""
         if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
             # ---- Prefill / Eager / batch 太大 → 直接跑模型 ----
-            return self.model.compute_logits(self.model(input_ids, positions))
+            return self.model.compute_logits(self._forward_model(input_ids, positions))
             # self.model(input_ids, positions): 前向传播, 返回 hidden_states
             # self.model.compute_logits(...): 乘以 lm_head 权重 → [batch, vocab_size]
         else:
@@ -536,11 +557,11 @@ class ModelRunner:
             # warmup: 先跑一次, 让 CUDA 编译 kernel
             set_context(False, slot_mapping=slot_mapping[:bs],
                        context_lens=context_lens[:bs], block_tables=block_tables[:bs])
-            outputs[:bs] = self.model(input_ids[:bs], positions[:bs])
+            outputs[:bs] = self._forward_model(input_ids[:bs], positions[:bs])
 
             # capture: 录制!
             with torch.cuda.graph(graph, self.graph_pool):
-                outputs[:bs] = self.model(input_ids[:bs], positions[:bs])
+                outputs[:bs] = self._forward_model(input_ids[:bs], positions[:bs])
             # torch.cuda.graph(graph, pool):
             #   pool: 共享内存池, 不同 bs 的 graph 共享 GPU workspace
             #   with 块内的所有 GPU 操作被录制到 graph 里

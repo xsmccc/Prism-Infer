@@ -1,21 +1,21 @@
 """Test Qwen3-VL model components (CPU-memory-safe)."""
-import os, sys, gc, torch
-os.environ['HF_HUB_OFFLINE'] = '1'
-sys.path.insert(0, '/home/xsmccc/nano-vllm')
+import gc
+
+import torch
 from prism_infer.models.qwen3_vl import (
     Qwen3VLTextRMSNorm, Qwen3VLTextMLP,
     Qwen3VLTextDecoderLayer, Qwen3VLTextModel,
 )
 from prism_infer.vision.mrope import MRope
-from transformers import Qwen3VLForConditionalGeneration
-
-CACHE = '/home/xsmccc/.cache/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b'
+from conftest import get_model_path, require_transformers
 
 
 def _get_hf_sd(key: str):
     """加载 HF 模型的 state_dict, 用完即释放."""
-    hf = Qwen3VLForConditionalGeneration.from_pretrained(
-        CACHE, dtype=torch.bfloat16, device_map='cpu',
+    transformers = require_transformers()
+    cache = get_model_path()
+    hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
+        cache, dtype=torch.bfloat16, device_map='cpu',
         trust_remote_code=True, local_files_only=True)
     sd = hf.state_dict()
     result = {k: v for k, v in sd.items() if k.startswith(key)}
@@ -74,8 +74,10 @@ def test_decoder_layer():
 
 def test_weight_keys():
     """仅验证 key 名称匹配, 不加载权重."""
-    hf = Qwen3VLForConditionalGeneration.from_pretrained(
-        CACHE, dtype=torch.bfloat16, device_map='cpu',
+    transformers = require_transformers()
+    cache = get_model_path()
+    hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
+        cache, dtype=torch.bfloat16, device_map='cpu',
         trust_remote_code=True, local_files_only=True)
     hf_keys = set(k for k in hf.state_dict().keys()
                   if k.startswith('model.language_model.'))

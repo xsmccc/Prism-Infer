@@ -16,14 +16,12 @@ def rotate_half(x: torch.Tensor) -> torch.Tensor:
 def apply_mrope(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor,
                 sin: torch.Tensor) -> tuple:
     """标准 RoPE: q*cos + rotate_half(q)*sin. cos/sin 已包含三轴交错."""
-    orig_dtype = q.dtype
-    q_f, k_f = q.float(), k.float()
     # cos/sin: [1, seqlen, head_dim] → [1, 1, seqlen, head_dim] 与 q:[B,Heads,S,D] 广播
-    c = cos.float().unsqueeze(1)  # [1, 1, S, D] or [B, 1, S, D]
-    s = sin.float().unsqueeze(1)
-    qr = q_f * c + rotate_half(q_f) * s
-    kr = k_f * c + rotate_half(k_f) * s
-    return qr.to(orig_dtype), kr.to(orig_dtype)
+    c = cos.unsqueeze(1)  # [1, 1, S, D] or [B, 1, S, D]
+    s = sin.unsqueeze(1)
+    qr = q * c + rotate_half(q) * s
+    kr = k * c + rotate_half(k) * s
+    return qr, kr
 
 
 class MRope(nn.Module):
@@ -44,46 +42,62 @@ class MRope(nn.Module):
     def _interleave(self, freqs: torch.Tensor) -> torch.Tensor:
         """三轴频率按 T-H-W 交错合并.
 
-        freqs: [3, 1, seqlen, head_dim/2]
-        返回: [1, seqlen, head_dim/2]
+        freqs: [3, batch, seqlen, head_dim/2]
+        返回: [batch, seqlen, head_dim/2]
         """
-        out = freqs[0].clone()  # [1, seqlen, dim/2] — 从 T 轴开始
+        out = freqs[0].clone()  # [batch, seqlen, dim/2] — 从 T 轴开始
         for dim, offset in enumerate((1, 2), start=1):
             length = self.mrope_section[dim] * 3
             idx = slice(offset, length, 3)
-            out[:, :, idx] = freqs[dim, :, :, idx]
+            out[..., idx] = freqs[dim, ..., idx]
         return out
 
     @torch.no_grad()
     def forward(self, x: torch.Tensor, position_ids: torch.LongTensor) -> tuple:
-        """生成 interleaved cos/sin: [1, seqlen, head_dim].
+        """生成 interleaved cos/sin: [batch, seqlen, head_dim].
 
-        position_ids: [3, seqlen] | [1, seqlen] | [3, batch, seqlen]
-        返回 cos/sin 不含 batch 维 (广播), 调用方自行 expand 到 batch.
+        position_ids:
+          - [batch, seqlen]: 纯文本 1D positions, 与 HF 行为一致
+          - [3, batch, seqlen]: 多模态 T/H/W positions, 与 HF 行为一致
+          - [3, seqlen]: 兼容调用，视为单 batch 的 T/H/W positions
         """
         device = position_ids.device
         dtype = x.dtype
-        seqlen = position_ids.shape[-1]
 
-        # 统一为 [3, seqlen]: 去掉 batch 维, 各样本位置相同
-        if position_ids.ndim == 3:
-            position_ids = position_ids[:, 0, :]   # [3, batch, seqlen] → [3, seqlen]
-        elif position_ids.ndim == 2 and position_ids.shape[0] != 3:
-            position_ids = position_ids.expand(3, -1)  # [1, seqlen] → [3, seqlen]
+        if position_ids.ndim == 1:
+            position_ids = position_ids.unsqueeze(0)
 
-        # inv_freq [dim/2] → [3, 1, seqlen, dim/2, 1]
-        inv_freq = self.inv_freq[None, None, None, :, None].expand(
-            3, 1, seqlen, -1, 1).to(device)
+        if position_ids.ndim == 2:
+            # HF treats [batch, seqlen] as text positions and expands to 3 axes.
+            # Keep the historical convenience form [3, seqlen] for one-sample
+            # multimodal positions when x is not batch=3.
+            if position_ids.shape[0] == 3 and x.shape[0] != 3:
+                position_ids = position_ids[:, None, :]
+            else:
+                position_ids = position_ids[None, ...].expand(
+                    3, position_ids.shape[0], -1)
+        elif position_ids.ndim != 3 or position_ids.shape[0] != 3:
+            raise ValueError(
+                "position_ids must have shape [batch, seqlen], "
+                "[3, seqlen], or [3, batch, seqlen]"
+            )
 
-        # positions [3, seqlen] → [3, 1, seqlen, 1, 1]
-        pos = position_ids.float()[:, None, :, None, None].to(device)
+        position_ids = position_ids.to(device)
+        batch, seqlen = position_ids.shape[1], position_ids.shape[2]
 
-        # freqs: [3, 1, seqlen, dim/2]
-        freqs = (inv_freq @ pos).squeeze(-1)
+        # Match HF Qwen3VLTextRotaryEmbedding exactly:
+        # inv_freq [dim/2] -> [3, batch, dim/2, 1]
+        # position_ids [3, batch, seqlen] -> [3, batch, 1, seqlen]
+        inv_freq = self.inv_freq[None, None, :, None].float().expand(
+            3, batch, -1, 1).to(device)
+        pos = position_ids[:, :, None, :].float()
 
-        # 三轴交错: [3, 1, seqlen, dim/2] → [1, seqlen, dim/2]
+        # freqs: [3, batch, seqlen, dim/2]
+        freqs = (inv_freq @ pos).transpose(2, 3)
+
+        # 三轴交错: [3, batch, seqlen, dim/2] → [batch, seqlen, dim/2]
         freqs = self._interleave(freqs)
 
-        # [1, seqlen, dim/2] → [1, seqlen, head_dim]
+        # [batch, seqlen, dim/2] → [batch, seqlen, head_dim]
         emb = torch.cat((freqs, freqs), dim=-1)
         return emb.cos().to(dtype=dtype), emb.sin().to(dtype=dtype)

@@ -2,8 +2,9 @@
 
 用 HF 生成的 cos/sin 作为 ground truth，验证我们的 apply_rotary_emb 输出。
 """
-import os, torch
-os.environ['HF_HUB_OFFLINE'] = '1'
+import os
+
+import torch
 
 import importlib.util
 spec = importlib.util.spec_from_file_location(
@@ -13,17 +14,18 @@ ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 ViTAttention = ve.ViTAttention
 
-from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+from conftest import get_model_path, require_transformers
 from PIL import Image
 
-CACHE = '/home/xsmccc/.cache/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b'
 THRESHOLD = 1e-5
 
 
 def test_attention_with_rope():
     """完整对比: 用 HF 的 cos/sin，验证我们的 attention 输出与 HF 一致"""
-    hf = Qwen3VLForConditionalGeneration.from_pretrained(
-        CACHE, dtype=torch.bfloat16, device_map='cpu',
+    transformers = require_transformers()
+    cache = get_model_path()
+    hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
+        cache, dtype=torch.bfloat16, device_map='cpu',
         trust_remote_code=True, local_files_only=True)
     hf_attn = hf.visual.blocks[0].attn
 
@@ -35,7 +37,8 @@ def test_attention_with_rope():
 
     # 生成真实图片的 RoPE cos/sin
     img = Image.new('RGB', (448, 448), color=(100, 150, 200))
-    p = AutoProcessor.from_pretrained(CACHE, trust_remote_code=True, local_files_only=True)
+    p = transformers.AutoProcessor.from_pretrained(
+        cache, trust_remote_code=True, local_files_only=True)
     pv = p(text=p.apply_chat_template(
         [{'role': 'user', 'content': [{'type': 'image', 'image': img}]}],
         tokenize=False, add_generation_prompt=True),

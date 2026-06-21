@@ -1,7 +1,14 @@
 """Test: bypass our MRope, use HF's RoPE directly in our model forward."""
+import sys
+
+if "pytest" in sys.modules:
+    import pytest
+    pytest.skip("manual GPU debug script", allow_module_level=True)
+
 import torch, gc; torch.manual_seed(42)
+from conftest import get_model_path
 from transformers import Qwen3VLForConditionalGeneration
-MODEL_PATH = '/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b'
+MODEL_PATH = get_model_path()
 
 input_ids_gpu = torch.randint(0, 5000, (1, 16)).cuda()  # shorter seq
 

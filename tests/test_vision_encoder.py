@@ -3,8 +3,9 @@
 测试: PatchEmbed + PosEmbed + 27 ViTBlock + 4 Merger + DeepStack
 Ground truth: HF Qwen3VLVisionModel (model.visual)
 """
-import os, torch
-os.environ['HF_HUB_OFFLINE'] = '1'
+import os
+
+import torch
 
 import importlib.util
 spec = importlib.util.spec_from_file_location(
@@ -14,9 +15,8 @@ ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 VisionEncoder = ve.VisionEncoder
 
-from transformers import Qwen3VLForConditionalGeneration
+from conftest import get_model_path, require_transformers
 
-CACHE = '/home/xsmccc/.cache/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b'
 THRESHOLD = 2e-2
 # 注: 单模块 diff < 1e-5, 但 27 层 ViT Block 链式传播导致 bf16 累积误差 ~0.016。
 # 根因: CPU LayerNorm 内部 float32 accum 不同实例并行度不一致。
@@ -25,8 +25,10 @@ THRESHOLD = 2e-2
 
 def test_vision_encoder():
     """完整对比 VisionEncoder vs HF model.visual"""
-    hf = Qwen3VLForConditionalGeneration.from_pretrained(
-        CACHE, dtype=torch.bfloat16, device_map='cpu',
+    transformers = require_transformers()
+    cache = get_model_path()
+    hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
+        cache, dtype=torch.bfloat16, device_map='cpu',
         trust_remote_code=True, local_files_only=True)
     hf_vis = hf.visual
 

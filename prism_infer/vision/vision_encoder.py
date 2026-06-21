@@ -12,6 +12,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def _cfg_get(config, *names, default=None):
+    """Read an attribute/key from a HF config-like object without importing transformers."""
+    if config is None:
+        return default
+    for name in names:
+        if isinstance(config, dict) and name in config:
+            return config[name]
+        if hasattr(config, name):
+            return getattr(config, name)
+    return default
+
+
 # ═══════════════════════════════════════════════════════════════
 # PatchEmbed — Conv3d Patch Embedding
 # Ref: vLLM qwen3_vl.py L348-L374
@@ -260,29 +272,60 @@ class VisionEncoder(nn.Module):
     参照 HF Qwen3VLVisionModel + vLLM Qwen3_VisionTransformer 实现。
     """
 
-    def __init__(self, dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, config=None, dtype: torch.dtype | None = None):
         super().__init__()
-        dim = 1152
+        # Backward compatibility: VisionEncoder(torch.bfloat16)
+        if isinstance(config, torch.dtype):
+            dtype = config
+            config = None
+
+        dtype = dtype or _cfg_get(config, "torch_dtype", "dtype",
+                                  default=torch.bfloat16)
+        if isinstance(dtype, str):
+            dtype = getattr(torch, dtype.replace("torch.", ""))
+
+        dim = _cfg_get(config, "hidden_size", "embed_dim", default=1152)
+        in_channels = _cfg_get(config, "in_channels", default=3)
+        temporal_patch_size = _cfg_get(config, "temporal_patch_size", default=2)
+        patch_size = _cfg_get(config, "patch_size", default=16)
+        num_heads = _cfg_get(config, "num_heads", "num_attention_heads", default=16)
+        mlp_hidden = _cfg_get(config, "intermediate_size", "mlp_hidden_size",
+                              default=4304)
+        num_layers = _cfg_get(config, "depth", "num_hidden_layers",
+                              "num_layers", default=27)
+        out_dim = _cfg_get(config, "out_hidden_size", "output_hidden_size",
+                           default=4096)
+        pos_embed_size = _cfg_get(config, "num_position_embeddings",
+                                  "max_position_embeddings", default=2304)
+        spatial_merge_size = _cfg_get(config, "spatial_merge_size", default=2)
+        deepstack_indexes = _cfg_get(config, "deepstack_visual_indexes",
+                                     "deepstack_visual_indices",
+                                     default=[8, 16, 24])
 
         # Patch Embed
-        self.patch_embed = PatchEmbed(3, dim, 2, 16, dtype)
+        self.patch_embed = PatchEmbed(
+            in_channels, dim, temporal_patch_size, patch_size, dtype)
 
         # 可学习位置编码 (最多 2304 个 patch)
-        self.pos_embed = nn.Embedding(2304, dim, dtype=dtype)
-        self.num_grid_per_side = int(2304 ** 0.5)  # 48
+        self.pos_embed = nn.Embedding(pos_embed_size, dim, dtype=dtype)
+        self.num_grid_per_side = int(pos_embed_size ** 0.5)  # 48 for Qwen3-VL-8B
 
         # 27 ViT Blocks
         self.blocks = nn.ModuleList([
-            ViTBlock(dim, 16, 4304, dtype) for _ in range(27)
+            ViTBlock(dim, num_heads, mlp_hidden, dtype) for _ in range(num_layers)
         ])
 
         # 4 Mergers: 1 主 (post_norm=False) + 3 DeepStack (post_norm=True)
-        self.merger = PatchMerger(dim, 4096, 2, post_norm=False, dtype=dtype)
+        self.merger = PatchMerger(dim, out_dim, spatial_merge_size,
+                                  post_norm=False, dtype=dtype)
         self.deepstack_merger_list = nn.ModuleList([
-            PatchMerger(dim, 4096, 2, post_norm=True, dtype=dtype) for _ in range(3)
+            PatchMerger(dim, out_dim, spatial_merge_size,
+                        post_norm=True, dtype=dtype)
+            for _ in range(len(deepstack_indexes))
         ])
-        self.deepstack_visual_indexes = [8, 16, 24]
-        self.spatial_merge_size = 2
+        self.deepstack_visual_indexes = list(deepstack_indexes)
+        self.spatial_merge_size = spatial_merge_size
+        self.head_dim = dim // num_heads
 
     def rot_pos_emb(self, grid_thw: torch.Tensor) -> torch.Tensor:
         """生成 2D RoPE 的频率 embedding (参照 HF rot_pos_emb).
@@ -291,7 +334,7 @@ class VisionEncoder(nn.Module):
         返回: [total_patches, head_dim/2] = [784, 36]
         """
         total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
-        dim = 36  # head_dim/2 (HF: rot_pos_emb 返回 36, visual.forward cat 到 72)
+        dim = self.head_dim // 2  # HF: rot_pos_emb 返回 head_dim/2
         pos_ids = torch.empty((total_tokens, 2), dtype=torch.long,
                               device=next(self.parameters()).device)
 

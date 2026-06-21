@@ -5,7 +5,6 @@ Ground truth: HF Qwen3-VL visual.blocks[0].mlp
 """
 import os, torch
 
-os.environ['HF_HUB_OFFLINE'] = '1'
 import importlib.util
 spec = importlib.util.spec_from_file_location(
     "vision_encoder", os.path.join(os.path.dirname(__file__),
@@ -14,9 +13,8 @@ ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 ViTMLP = ve.ViTMLP
 
-from transformers import Qwen3VLForConditionalGeneration
+from conftest import get_model_path, require_transformers
 
-CACHE = '/home/xsmccc/.cache/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b'
 THRESHOLD = 1e-5
 
 
@@ -30,8 +28,10 @@ def test_mlp_shape():
 
 
 def test_mlp_accuracy():
-    hf = Qwen3VLForConditionalGeneration.from_pretrained(
-        CACHE, dtype=torch.bfloat16, device_map='cpu',
+    transformers = require_transformers()
+    cache = get_model_path()
+    hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
+        cache, dtype=torch.bfloat16, device_map='cpu',
         trust_remote_code=True, local_files_only=True)
     hf_mlp = hf.visual.blocks[0].mlp
 

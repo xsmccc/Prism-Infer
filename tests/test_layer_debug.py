@@ -1,9 +1,17 @@
 """Single-layer debug: isolate which submodule causes the 27 max diff."""
+import sys
+
+if "pytest" in sys.modules:
+    import pytest
+    pytest.skip("manual GPU debug script", allow_module_level=True)
+
 import torch, gc
+from conftest import get_model_path
+
 torch.manual_seed(42)
 torch.cuda.empty_cache()
 
-MODEL_PATH = '/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b'
+MODEL_PATH = get_model_path()
 
 from transformers import Qwen3VLForConditionalGeneration
 

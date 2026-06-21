@@ -3,11 +3,9 @@
 Ref: prism_infer/vision/vision_encoder.py
 Ground truth: HF Qwen3VLForConditionalGeneration.model.visual.patch_embed
 """
-import os, sys
+import os
 import torch
 import importlib.util
-
-os.environ['HF_HUB_OFFLINE'] = '1'
 
 # 直接导入避免触发 flash_attn
 spec = importlib.util.spec_from_file_location(
@@ -17,10 +15,9 @@ ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 PatchEmbed = ve.PatchEmbed
 
-from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+from conftest import get_model_path, require_transformers
 from PIL import Image
 
-CACHE = '/home/xsmccc/.cache/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b'
 THRESHOLD = 1e-5
 
 
@@ -36,8 +33,10 @@ def test_patch_embed_shape():
 
 def test_patch_embed_accuracy():
     """验证输出值与 HF 一致"""
-    hf = Qwen3VLForConditionalGeneration.from_pretrained(
-        CACHE, dtype=torch.bfloat16, device_map='cpu',
+    transformers = require_transformers()
+    cache = get_model_path()
+    hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
+        cache, dtype=torch.bfloat16, device_map='cpu',
         trust_remote_code=True, local_files_only=True)
     hf_pe = hf.visual.patch_embed
 
@@ -46,7 +45,8 @@ def test_patch_embed_accuracy():
 
     # 用真实图片输入
     img = Image.new('RGB', (448, 448), color=(100, 150, 200))
-    p = AutoProcessor.from_pretrained(CACHE, trust_remote_code=True, local_files_only=True)
+    p = transformers.AutoProcessor.from_pretrained(
+        cache, trust_remote_code=True, local_files_only=True)
     pv = p(text=p.apply_chat_template(
         [{'role': 'user', 'content': [{'type': 'image', 'image': img}]}],
         tokenize=False, add_generation_prompt=True),

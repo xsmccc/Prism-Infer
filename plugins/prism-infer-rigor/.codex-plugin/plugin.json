@@ -1,0 +1,24 @@
+{
+  "name": "prism-infer-rigor",
+  "version": "0.1.0",
+  "description": "Project-local Codex rigor rules for Prism-Infer development.",
+  "author": {
+    "name": "Prism-Infer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Prism-Infer Rigor",
+    "shortDescription": "Evidence and verification guardrails for Prism-Infer.",
+    "longDescription": "Project-local Codex skill that enforces evidence, self-implementation, verification, benchmark integrity, and Chinese-first delivery rules for Prism-Infer development.",
+    "developerName": "Prism-Infer",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use Prism-Infer Rigor while modifying model code.",
+      "Audit this Prism-Infer change for verification gaps.",
+      "Plan the next Prism-Infer task with evidence checks."
+    ]
+  }
+}

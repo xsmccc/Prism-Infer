@@ -2,8 +2,10 @@
 
 验证 ViT Attention 完整 forward 与 HF Qwen3VLVisionAttention 一致。
 """
-import os, torch, torch.nn.functional as F
-os.environ['HF_HUB_OFFLINE'] = '1'
+import os
+
+import torch
+import torch.nn.functional as F
 
 import importlib.util
 spec = importlib.util.spec_from_file_location(
@@ -13,17 +15,19 @@ ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 ViTAttention = ve.ViTAttention
 
-from transformers import Qwen3VLForConditionalGeneration
-from transformers.models.qwen3_vl.modeling_qwen3_vl import apply_rotary_pos_emb_vision
+from conftest import get_model_path, require_transformers
 
-CACHE = '/home/xsmccc/.cache/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b'
 THRESHOLD = 1e-5
 
 
 def test_attention_full():
     """完整对比: QKV投影 + RoPE + SDPA + 输出投影"""
-    hf = Qwen3VLForConditionalGeneration.from_pretrained(
-        CACHE, dtype=torch.bfloat16, device_map='cpu',
+    transformers = require_transformers()
+    cache = get_model_path()
+    from transformers.models.qwen3_vl.modeling_qwen3_vl import apply_rotary_pos_emb_vision
+
+    hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
+        cache, dtype=torch.bfloat16, device_map='cpu',
         trust_remote_code=True, local_files_only=True)
     hf_attn = hf.visual.blocks[0].attn
 
