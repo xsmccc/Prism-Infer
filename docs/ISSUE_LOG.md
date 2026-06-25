@@ -147,7 +147,7 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 剩余风险:
 
 - 当前纯文本 full logits 已严格 PASS。
-- 仍需在 P2 阶段验证图文输入、视觉 token 替换、DeepStack 注入和端到端 generate tokens。
+- 该记录完成时仍需在 P2 阶段验证图文输入、视觉 token 替换、DeepStack 注入和端到端 generate tokens；后续 P2-004 已验证单图 1-token greedy，P2-005 已验证单图图文 full logits 和 layerwise strict 对齐。
 
 ## P2-001: Processor pipeline 输入边界建立
 
@@ -224,3 +224,1554 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 
 - 当前只支持单图单请求，不支持多图、视频和 batch 混合图文。
 - 当前只验证 processor 输出，不代表 `Sequence`、3D position ids、Prefill、Decode 或端到端 greedy tokens 已完成。
+
+## P2-002: 多模态 Sequence 与单图 3D position ids 对齐
+
+状态: Verified
+
+发现方式:
+
+- P2.2/P2.3 阶段任务。
+
+影响范围:
+
+- 为 P2.4 `ModelRunner.prepare_prefill` 接收 VL payload、P2.5 decode 使用 `rope_delta` 延续 3D position ids 建立前置数据结构。
+- 当前不改变模型 attention、KV cache 写入/读取、scheduler 或公开 `LLM.generate` 行为。
+
+证据:
+
+- 当前 `Sequence` 原本只保存 token、采样参数和 block table，没有图像字段。
+- HF 4.57.1 `Qwen3VLModel.get_rope_index` 在图文 prefill 中生成 `[3, batch, seqlen]` position ids 和 `[batch, 1]` rope delta，源码位置:
+  `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py:916-1033`。
+- HF forward 在 prefill 计算 rope index，在 decode 用 `cache_position + rope_deltas` 延续 position ids，源码位置:
+  `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py:1177-1221`。
+
+定位过程:
+
+- P2.1 已证明单图 processor 输出 `input_ids=[1, 210]`、`pixel_values=[784, 1536]`、`image_grid_thw=[1, 3]` 且 image token 数为 `196`。
+- P2.2 需要让 `Sequence` 能携带这些字段，并在多进程序列化时保留 prefill 必要信息。
+- P2.3 需要在 Prism-Infer 内自实现 rope index helper，而不是在运行时调用 HF model 方法。
+
+根因:
+
+- 这不是 bug 修复，而是 P2 engine 数据流建设。没有 `position_ids/rope_delta` 和 VL payload，后续 prefill/decode 无法严格对齐 Qwen3-VL。
+
+修复:
+
+- 新增 `prism_infer/models/qwen3_vl_position.py`:
+  - `get_qwen3_vl_rope_index` 自实现纯文本和单图图文 position ids。
+  - `get_qwen3_vl_rope_index_from_config` 从 config 读取 `image_token_id`、`video_token_id`、`vision_start_token_id` 和 `spatial_merge_size`。
+  - 当前 video token 显式报错，不 silent fallback。
+- 修改 `prism_infer/engine/sequence.py`:
+  - 构造函数新增 VL 字段。
+  - 新增 `Sequence.from_single_image_inputs`。
+  - 新增 `is_multimodal`。
+  - Prefill 序列化保留 `pixel_values/image_grid_thw/position_ids/rope_delta`。
+  - Decode 序列化省略 `pixel_values/image_grid_thw/position_ids`，保留 `rope_delta`。
+- 新增 `tests/test_vl_rope_index.py`:
+  - 单图 `position_ids/rope_delta` 与 HF `get_rope_index` exact match。
+  - 纯文本分支与 HF text-only 逻辑 exact match。
+  - `image_grid_thw` 数量不匹配时显式报错。
+- 新增 `tests/test_sequence_multimodal.py`:
+  - 纯文本 `Sequence` 行为不回归。
+  - 单图 prefill 序列化保留 VL payload。
+  - 单图 decode 序列化不重复传 pixel values，但保留 `rope_delta`。
+
+验证命令:
+
+```bash
+cd /data/Prism-Infer && \
+.venv-local/bin/python -m compileall \
+  prism_infer/engine/sequence.py \
+  prism_infer/models/qwen3_vl_position.py \
+  tests/test_sequence_multimodal.py \
+  tests/test_vl_rope_index.py
+```
+
+```bash
+cd /data/Prism-Infer && \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+.venv-local/bin/python -m pytest -q \
+  tests/test_processor_pipeline.py \
+  tests/test_vl_rope_index.py \
+  tests/test_sequence_multimodal.py -s
+```
+
+验证结果:
+
+- `compileall`: PASS。
+- P2.1-P2.3 组合测试: `9 passed in 9.15s`。
+- 输出摘要:
+  - `input_ids shape: [1, 210]`
+  - `position_ids shape: [3, 1, 210]`
+  - `rope_delta shape: [1, 1]`
+  - `position_ids max diff: 0.000000e+00`
+  - `rope_delta max diff: 0.000000e+00`
+  - `prefill position_ids shape: [3, 1, 210]`
+  - `decode rope_delta shape: [1, 1]`
+
+经验:
+
+- Qwen3-VL 图文 prefill 不能继续使用一维 position ids；视觉 token 区间必须使用 T/H/W 三维位置。
+- `rope_delta` 是 decode 正确延续 position ids 的关键状态，decode 阶段不需要重复传图像像素。
+- `Sequence` 序列化必须区分 prefill 和 decode，避免多进程 decode 每步重复传大体积 `pixel_values`。
+
+剩余风险:
+
+- 该记录完成时只覆盖数据结构和 rope index；后续 P2-003/P2-004 已完成 `ModelRunner.prepare_prefill` 消费、engine KV attention 和单图 `generate_vl` 入口。
+- 当前项目总体仍只支持 P2 单图 eager correctness；多图、视频和 batch 混合图文仍未支持。
+
+## P2-003: Qwen3-VL engine attention 接入 KV cache 时的 flash-attn API 不兼容
+
+状态: Verified
+
+发现方式:
+
+- P2.4/P2.5 新增 `tests/test_qwen3_vl_attention_kv.py` 后运行失败。
+
+影响范围:
+
+- 阻断 Qwen3-VL LLM attention 接入 engine KV cache。
+- 如果不修复，engine prefill 会在本地 flash-attn varlen 调用处直接报错；decode paged KV 也不能依赖 `flash_attn_with_kvcache(block_table=...)`。
+- 不影响 P1 full-sequence SDPA 路径，但会影响 P2 engine flatten 路径。
+
+证据:
+
+```text
+失败命令:
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_qwen3_vl_attention_kv.py -s
+
+失败摘要:
+TypeError: flash_attn_varlen_func() got an unexpected keyword argument 'block_table'
+```
+
+本地 flash-attn 函数签名证据:
+
+```text
+varlen:
+(q, k, v, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
+ dropout_p=0.0, softmax_scale=None, causal=False, ...)
+
+kvcache:
+(q, k_cache, v_cache, k=None, v=None, rotary_cos=None, rotary_sin=None,
+ cache_seqlens=None, cache_batch_idx=None, softmax_scale=None, causal=False, ...)
+```
+
+定位过程:
+
+- 先新增小模型 attention 对齐测试，构造 `hidden=[1, 7, 64]` 和 engine flatten `hidden=[7, 64]`。
+- 测试在 `Qwen3VLTextAttention._forward_engine -> Attention.forward -> flash_attn_varlen_func` 报错，证明问题发生在 engine attention 的 flash-attn 调用参数，而不是 Q/K/V shape 或权重加载。
+- 用 `inspect.signature` 检查本地 flash-attn API，确认当前版本的 `flash_attn_varlen_func` 和 `flash_attn_with_kvcache` 均不支持 `block_table` 参数。
+- 进一步补 decode paged KV 数值测试，避免只修 prefill 而忽略 decode 读取历史 KV 的正确性。
+
+根因:
+
+- `prism_infer/layers/attention.py` 原实现假设本地 flash-attn varlen/kvcache API 支持 paged `block_table` 参数。
+- 当前环境安装的 flash-attn API 是连续 KV cache 版本，不支持 `block_table`。这是依赖 API 能力不匹配，不是 Qwen3-VL 模型权重或 M-RoPE 数值问题。
+
+修复:
+
+- 修改 `prism_infer/layers/attention.py`:
+  - prefill 无 prefix-cache 时调用 `flash_attn_varlen_func` 的本地支持签名，不再传 `block_table`。
+  - paged prefix-cache prefill 当前显式报错，避免 silent incorrect。
+  - decode 在 `context.block_tables is not None` 时走可验证 eager fallback: 根据 `block_tables/context_lens` 从 paged KV cache 收集历史 K/V，再用单步 SDPA 计算。
+- 修改 `prism_infer/models/qwen3_vl.py`:
+  - `Qwen3VLTextAttention` 增加 engine flatten 路径，投影 Q/K/V 后接入 `Attention`。
+  - `Qwen3VLTextModel.forward` 对 engine flatten 的 `[3, num_tokens]` position ids 规范化为 `[3, 1, num_tokens]`，避免 `num_tokens == 3` 时被 `MRope` 误判。
+  - `Qwen3VLForCausalLM.compute_logits` 在 prefill flatten 输出中按 `cu_seqlens_q[1:] - 1` 选择每条序列最后 token logits。
+- 修改 `prism_infer/engine/model_runner.py`:
+  - 引入 `ModelInputs`，统一传递 `input_ids/position_ids/pixel_values/image_grid_thw`。
+  - VL prefill 传递单图 payload 和 `[3, seqlen]` position ids。
+  - VL decode 不传图像，只用 `rope_delta` 生成 `[3, 1]` position ids。
+  - P2 第一版显式拒绝跨多个 chunk 的 VL chunked prefill。
+
+验证命令:
+
+```bash
+/data/Prism-Infer/.venv-local/bin/python -m compileall \
+  /data/Prism-Infer/prism_infer \
+  /data/Prism-Infer/tests
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_processor_pipeline.py \
+  /data/Prism-Infer/tests/test_vl_rope_index.py \
+  /data/Prism-Infer/tests/test_sequence_multimodal.py \
+  /data/Prism-Infer/tests/test_model_runner_vl_prefill.py \
+  /data/Prism-Infer/tests/test_qwen3_vl_attention_kv.py -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_full_model_structure.py \
+  /data/Prism-Infer/tests/test_qwen3_vl.py -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tests/test_full_model.py
+```
+
+```bash
+git -C /data/Prism-Infer diff --check
+```
+
+验证结果:
+
+- `compileall`: PASS。
+- P2.1-P2.5 组合测试: `15 passed in 12.16s`。
+- engine attention prefill:
+  - `hidden input shape: [1, 7, 64]`
+  - `engine output shape: [7, 64]`
+  - `attention output max diff: 0.000000e+00`
+  - `attention output mean diff: 0.000000e+00`
+  - `k_cache max diff: 0.000000e+00`
+  - `v_cache max diff: 0.000000e+00`
+- engine attention decode paged KV:
+  - `decode q shape: [1, 4, 16]`
+  - `decode engine output shape: [1, 4, 16]`
+  - `decode output max diff: 0.000000e+00`
+  - `decode output mean diff: 0.000000e+00`
+- `ModelRunner.prepare_prefill`:
+  - `prefill input_ids shape: [210]`
+  - `prefill position_ids shape: [3, 210]`
+  - `prefill pixel_values shape: [784, 1536]`
+  - `prefill image_grid_thw shape: [1, 3]`
+- `ModelRunner.prepare_decode`:
+  - `decode input_ids shape: [1]`
+  - `decode position_ids shape: [3, 1]`
+  - `decode actual positions: [28, 28, 28]`
+- P1 轻量回归: `10 passed in 72.53s`。
+- P1 full logits 回归: `Result: PASS`; max diff `0.000000e+00`，mean diff `0.000000e+00`。
+- `git diff --check`: PASS。
+
+经验:
+
+- engine attention 接入不能只看模型 forward shape，必须检查 KV cache 写入和 decode 读取。
+- 外部依赖 API 不能按记忆假设。即使函数名相同，不同 flash-attn 版本是否支持 `block_table` 也必须用签名或源码确认。
+- 高性能 paged decode kernel 可以后续优化，但 P2 correctness 第一版必须有明确、可验证的 eager fallback。
+- VL chunked prefill 不能静默复用完整 `pixel_values` 去跑截断 token chunk；在没有设计跨 chunk 视觉 embedding 传递前必须显式拒绝。
+
+剩余风险:
+
+- 该记录完成时 P2.6 尚未完成；后续 P2-004 已验证 `LLM.generate_vl` 单图 1-token greedy 与 HF 完全一致。
+- 当前 paged decode fallback 是 correctness 实现，不代表性能优化完成。
+- paged prefix-cache prefill 当前显式不支持。
+- 该记录完成时多图、视频、batch 混合图文、VL CUDA Graph decode 均未完成；后续 P3.1/P3.2/P3.3/P3.5 已补齐。
+
+## P2-004: `LLM.generate_vl` 端到端接入中的 VL config 与生命周期问题
+
+状态: Verified
+
+发现方式:
+
+- P2.6/P2.7 真实端到端 smoke: 对比 HF `generate(max_new_tokens=1, do_sample=False)` 与 Prism-Infer `LLM.generate_vl(..., temperature=0.0, max_tokens=1)`。
+
+影响范围:
+
+- 阻断 Qwen3-VL 从 `LLM` 用户入口完成单图图文推理。
+- 影响 engine 初始化、KV cache 分配和测试进程退出清理。
+
+证据:
+
+第一次失败:
+
+```text
+AttributeError: 'Qwen3VLConfig' object has no attribute 'max_position_embeddings'
+```
+
+第二次失败:
+
+```text
+TypeError: invalid dtype object: only floating-point types are supported as the default type
+```
+
+第三次失败:
+
+```text
+AttributeError: 'Qwen3VLConfig' object has no attribute 'num_key_value_heads'
+AttributeError: 'Qwen3VLConfig' object has no attribute 'num_hidden_layers'
+```
+
+端到端 token 对齐最终证据:
+
+```text
+HF token_ids: [785]
+Prism token_ids: [785]
+LLM.generate_vl one-token greedy HF alignment: PASS
+```
+
+定位过程:
+
+- 用 1-token greedy 作为最小端到端验证，避免长输出掩盖 first-token logits/采样问题。
+- HF 参考路径使用本地模型、同一张 448x448 合成图、同一个 prompt 和 `do_sample=False`。
+- Prism-Infer 路径通过 `LLM(model_path, enforce_eager=True, ...)` 初始化完整 engine，再调用 `generate_vl`。
+- 逐个修复初始化失败后，才进入真正的 token 对齐验证。
+
+根因:
+
+- Qwen3-VL 的 LLM 配置字段位于 `hf_config.text_config`，而原 `Config`/`ModelRunner` 仍按纯文本 Qwen3 顶层 config 读取:
+  - `max_position_embeddings`
+  - `num_key_value_heads`
+  - `num_hidden_layers`
+  - `hidden_size`
+- `hf_config.torch_dtype` 对 Qwen3VLConfig 顶层可能为 `None`，真实 dtype 在 `text_config.torch_dtype`。
+- `LLMEngine.exit` 不是幂等的；测试中手动 `llm.exit()` 后，`atexit` 再次调用会访问已删除的 `model_runner`。
+
+修复:
+
+- 修改 `prism_infer/config.py`:
+  - `max_model_len` 优先使用顶层 `max_position_embeddings`，缺失时使用 `text_config.max_position_embeddings`。
+- 修改 `prism_infer/engine/model_runner.py`:
+  - 新增 `_resolve_model_dtype`，从顶层 config 或 `text_config` 解析 `torch.dtype`。
+  - 新增 `_text_hf_config`，KV cache 和 graph capture 的 LLM 维度统一从 text config 读取。
+  - KV cache 分配后断言分配到的 attention 层数等于 `text_config.num_hidden_layers`。
+- 修改 `prism_infer/engine/llm_engine.py`:
+  - 新增 `add_vl_request` 和 `generate_vl`。
+  - `generate_vl` 当前要求 `enforce_eager=True`，避免未验证的 VL CUDA Graph 路径。
+  - `exit` 改为幂等。
+- 修改 `prism_infer/sampling_params.py` 和 `prism_infer/layers/sampler.py`:
+  - 允许 `temperature=0.0`。
+  - `Sampler` 对 `temperature <= 1e-10` 使用 deterministic argmax。
+
+验证命令:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_sampler_greedy.py \
+  /data/Prism-Infer/tests/test_llm_vl_generate.py \
+  /data/Prism-Infer/tests/test_text_only_regression.py -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_processor_pipeline.py \
+  /data/Prism-Infer/tests/test_sequence_multimodal.py \
+  /data/Prism-Infer/tests/test_vl_rope_index.py \
+  /data/Prism-Infer/tests/test_qwen3_vl_attention_kv.py \
+  /data/Prism-Infer/tests/test_model_runner_vl_prefill.py \
+  /data/Prism-Infer/tests/test_sampler_greedy.py \
+  /data/Prism-Infer/tests/test_llm_vl_generate.py \
+  /data/Prism-Infer/tests/test_text_only_regression.py -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_full_model_structure.py \
+  /data/Prism-Infer/tests/test_qwen3_vl.py -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tests/test_full_model.py
+```
+
+验证结果:
+
+- P2.6/P2.7 新增测试: `7 passed`，其中:
+  - `greedy token_ids: [1, 2]`
+  - `HF token_ids: [785]`
+  - `Prism token_ids: [785]`
+  - `LLM.generate_vl one-token greedy HF alignment: PASS`
+  - `text output token_ids: [785]`
+- 该记录完成时的 P2 Gate 组合测试: `22 passed in 52.64s`；后续 P2-005 加入 vision strict 回归后为 `24 passed in 48.49s`。
+- 该记录完成时的 P1 轻量回归: `10 passed in 73.20s`；后续 P2-005 回归为 `10 passed in 74.68s`。
+- P1 full logits: `Result: PASS`，max diff `0.000000e+00`，mean diff `0.000000e+00`。
+- `compileall`: PASS。
+- `git diff --check`: PASS。
+
+经验:
+
+- 端到端验证必须从真实 `LLM` 用户入口开始，单测里直接调用模型 forward 不能覆盖 config、KV cache、processor、scheduler 和生命周期问题。
+- 多模态 config 经常把 LLM 子配置放在 `text_config`，engine 层不能假设所有字段在顶层。
+- `temperature=0` 不能通过随机采样近似；HF token 对齐必须走 deterministic argmax。
+- `exit` 这类生命周期接口要幂等，否则测试和用户手动释放会留下噪音异常。
+
+剩余风险:
+
+- 当前 P2 完成范围是单图、单请求、`enforce_eager=True` correctness。
+- 该记录完成时 HF token 对齐只覆盖 1-token greedy exact match；后续 P2-005 已补齐单图图文 last logits 和 full-model layerwise strict PASS。
+- 长输出、多轮、吞吐、延迟和显存 benchmark 还未评估。
+- 该记录完成时多图、视频、batch 混合图文、VL CUDA Graph decode、高性能 paged decode kernel、paged prefix-cache prefill 仍未完成；后续 P3 已补齐前五项，paged prefix-cache/chunked-prefill VL mixed batch 仍未支持。
+
+## P2-005: 图文 full logits 未严格对齐，根因在 VisionEncoder RoPE 初始化与 PatchMerger eps
+
+状态: Verified
+
+发现方式:
+
+- P2 Gate 后补充 `tests/test_full_model_vl.py`，对比 HF 与 Prism-Infer 单图图文最后 token logits。
+
+影响范围:
+
+- 阻断 P2 “每一层精度与 HF 对齐”的严格出口。
+- 修复前虽然 `LLM.generate_vl` 1-token greedy token id 与 HF 一致，但不能声明图文 full logits strict PASS。
+- 影响 VisionEncoder 输出、DeepStack visual embeds、后续 LLM hidden states 和图文 logits。
+
+证据:
+
+失败命令:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tests/test_full_model_vl.py
+```
+
+失败输出摘要:
+
+```text
+input_ids shape: [1, 210]
+pixel_values shape: [784, 1536]
+image_grid_thw shape: [1, 3]
+position_ids shape: [3, 1, 210]
+Shape: HF=[1, 151936], Our=[1, 151936]
+NaN: HF=0, Our=0
+HF mean/std:  -1.756945e+00 / 4.123917e+00
+Our mean/std: -1.762104e+00 / 4.144710e+00
+Max diff:  3.964844e-01
+Mean diff: 6.158398e-02
+Result: FAIL
+```
+
+分层失败摘要:
+
+```text
+visual                       2.109375e-01 4.801622e-03
+embed                        0.000000e+00 0.000000e+00
+rope                         0.000000e+00 0.000000e+00
+layer_00.input               2.109375e-01 4.481514e-03
+logits                       2.215869e+01 4.351552e-01
+```
+
+定位过程:
+
+- 先用 `tests/test_full_model_vl_layerwise_debug.py` 证明 embedding 和 LLM M-RoPE 为 exact match，首个差异已经出现在 `model.visual` 输出。
+- 再写临时 vision 内部分层检查，用同一个 processor 输入 `pixel_values=[784, 1536]` 和 `grid_thw=[[1, 28, 28]]` 对齐 HF 与 Prism-Infer。
+- 第一轮定位结果:
+  - `patch_embed`: max diff `0.000000e+00`。
+  - `pos_embed`: max diff `0.000000e+00`。
+  - `rot_pos_emb`: max diff `1.907349e-06`。
+  - `block_00`: max diff `6.250000e-02`。
+  - `main_merger`: max diff `2.109375e-01`。
+- 继续微定位 block 0:
+  - `block0.input/norm1/qkv_raw/q_pre_rope/k_pre_rope/v` 全部 max diff `0.000000e+00`。
+  - 第一处差异在 vision RoPE 后: `block0.q_rope` max diff `7.812500e-03`，`block0.k_rope` max diff `1.953125e-03`。
+- 检查 HF 源码:
+  - HF `Qwen3VLVisionRotaryEmbedding` 在构造时注册 `inv_freq` buffer，源码位置:
+    `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py:79-90`。
+  - HF `Qwen3VLVisionPatchMerger` 的 LayerNorm 使用 `eps=1e-6`，源码位置:
+    `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py:93-106`。
+  - HF `Qwen3VLVisionModel.rot_pos_emb/forward` 使用该 rotary buffer，并在 forward 中构造 position embeddings，源码位置:
+    `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py:603-753`。
+- 临时验证显示，如果使用 HF 保存的 `inv_freq` buffer 构造 vision RoPE，`rot_pos_emb` 与 HF exact match；如果每次在 CUDA 上动态重算，`inv_freq` max diff 只有 `5.960464e-08`，但 bf16 RoPE 后会跨量化边界并逐层放大。
+- 第一次修复后，单独构造 `VisionEncoder` 已 exact match；但完整 `Qwen3VLForCausalLM` 路径仍失败。进一步定位发现原因是测试用 `torch.set_default_device("cuda")` 构造 Prism-Infer 全模型，导致我们新加的 buffer 在 CUDA 上初始化；HF `from_pretrained(...).cuda()` 是先在 CPU 初始化再移动到 CUDA。
+
+根因:
+
+- `VisionEncoder.rot_pos_emb` 原实现每次 forward 动态计算 RoPE 频率表，并且在完整模型构造时可能走 CUDA 初始化/计算路径；HF 是在模块构造时用 CPU 数值路径生成 `inv_freq` buffer，再随模型移动到 GPU。
+- CPU 与 CUDA 计算 `theta ** (...)` 只有 `~5.96e-08` 级差异，但在 bf16 旋转中会触发舍入差异，layer 0 attention 开始分叉，最终影响图文 logits。
+- `PatchMerger` 原实现未显式传 `eps`，PyTorch 默认 `1e-5`；HF patch merger 使用 `eps=1e-6`。这会影响 main visual output 和 deepstack visual embeds 的严格对齐。
+
+修复:
+
+- 修改 `prism_infer/vision/vision_encoder.py`:
+  - 新增自实现 `VisionRotaryEmbedding`，在构造期注册 `inv_freq` buffer。
+  - `inv_freq` 强制按 CPU 数值路径生成，再移动到当前目标 device，匹配 HF `from_pretrained(...).cuda()` 的初始化语义。
+  - `VisionEncoder.rot_pos_emb` 改为使用 `self.rotary_pos_emb(max_hw)`，不再每次 forward 动态重算频率。
+  - `PatchMerger` 的 `nn.LayerNorm` 显式设置 `eps=1e-6`。
+  - 清理过期注释，删除不再使用的动态 `_compute_rope_freqs`。
+- 新增 `tests/test_vision_rope_init.py`:
+  - 覆盖默认 device 为 CUDA 时，`VisionEncoder` 的 `inv_freq/freq_table/rot_pos_emb` 仍与 HF exact match。
+  - 覆盖 main merger 与 3 个 deepstack merger 的 LayerNorm eps 全部为 `1e-6`。
+
+验证命令:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_vision_rope_init.py -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tests/test_full_model_vl.py
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tests/test_full_model_vl_layerwise_debug.py
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_processor_pipeline.py \
+  /data/Prism-Infer/tests/test_sequence_multimodal.py \
+  /data/Prism-Infer/tests/test_vl_rope_index.py \
+  /data/Prism-Infer/tests/test_qwen3_vl_attention_kv.py \
+  /data/Prism-Infer/tests/test_model_runner_vl_prefill.py \
+  /data/Prism-Infer/tests/test_sampler_greedy.py \
+  /data/Prism-Infer/tests/test_llm_vl_generate.py \
+  /data/Prism-Infer/tests/test_text_only_regression.py \
+  /data/Prism-Infer/tests/test_vision_rope_init.py -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_full_model_structure.py \
+  /data/Prism-Infer/tests/test_qwen3_vl.py -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tests/test_full_model.py
+```
+
+```bash
+/data/Prism-Infer/.venv-local/bin/python -m compileall \
+  /data/Prism-Infer/prism_infer \
+  /data/Prism-Infer/tests
+```
+
+验证结果:
+
+- `tests/test_vision_rope_init.py`: `2 passed in 8.71s`。
+  - `inv_freq shape: [18]`
+  - `rot_pos_emb shape: [784, 36]`
+  - `inv_freq max diff: 0.000000e+00`
+  - `freq_table max diff: 0.000000e+00`
+  - `rot_pos_emb max diff: 0.000000e+00`
+  - `merger eps values: [1e-06, 1e-06, 1e-06, 1e-06]`
+- `tests/test_full_model_vl.py`: `Result: PASS`。
+  - `Shape: HF=[1, 151936], Our=[1, 151936]`
+  - `NaN: HF=0, Our=0`
+  - `HF mean/std:  -1.756945e+00 / 4.123917e+00`
+  - `Our mean/std: -1.756945e+00 / 4.123917e+00`
+  - `Max diff:  0.000000e+00`
+  - `Mean diff: 0.000000e+00`
+- `tests/test_full_model_vl_layerwise_debug.py`: 从 `visual`、`embed`、`rope`、36 层 LLM、`final_norm` 到 `logits` 全部 max diff `0.000000e+00`，mean diff `0.000000e+00`。
+- P2 Gate + vision 回归: `24 passed in 48.49s`。
+  - `HF token_ids: [785]`
+  - `Prism token_ids: [785]`
+  - `LLM.generate_vl one-token greedy HF alignment: PASS`
+- P1 轻量回归: `10 passed in 74.68s`。
+- P1 full logits: `Result: PASS`，max diff `0.000000e+00`，mean diff `0.000000e+00`。
+- `compileall`: PASS。
+
+经验:
+
+- 端到端 token 一致不能替代 full logits。1-token greedy `[785]` 相同，只说明 argmax 没变，不说明分布严格对齐。
+- bf16 对齐中，`1e-7` 量级的频率表差异也可能跨过舍入边界，并在 27 层 ViT 和 36 层 LLM 中放大。
+- 默认 device 会改变模块初始化路径；对齐 HF 时要复现“CPU 初始化后搬到 GPU”的 buffer 数值语义，而不是只看最终 device。
+- LayerNorm `eps` 是数值语义的一部分，不能依赖 PyTorch 默认值。
+- full-model layerwise debug 的价值是先证明首个分叉点，再局部修复；这次从 logits diff 0.396 缩小到 vision RoPE 和 PatchMerger eps。
+
+剩余风险:
+
+- 当前图文 strict PASS 覆盖单图、单请求、`enforce_eager=True`、最后 token logits 和 1-token greedy。
+- 该记录完成时多图、视频、batch 混合图文、VL CUDA Graph decode、高性能 paged decode kernel、paged prefix-cache prefill、长输出分布/质量评估和吞吐/延迟 benchmark 仍未完成；后续 P3 已补齐多图、视频、mixed batch、32-token 长输出、logits/ppl 分布、VL CUDA Graph 和 paged decode baseline，paged prefix-cache/chunked-prefill VL mixed batch 仍未支持。
+
+## P3-001: 多图 full logits 不对齐，根因是 VisionEncoder 多图跨图 attention
+
+状态: Verified
+
+发现方式:
+
+- P3.1 新增 `tests/test_full_model_vl_multi_image.py`，对比 HF 与 Prism-Infer 在同一条请求包含两张图片时的最后 token logits。
+
+影响范围:
+
+- 阻断 P3.1 “多图输入 correctness” 的 full logits strict 门禁。
+- 单图图文 strict PASS 不暴露该问题，因为单图没有跨图 attention 的边界。
+- 若不修复，后续 multi-image generate、mixed batch 和视觉 KV 分析都会建立在错误的视觉 token 表征上。
+
+触发命令:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tests/test_full_model_vl_multi_image.py
+```
+
+修复前失败摘要:
+
+```text
+input_ids shape: [1, 408]
+pixel_values shape: [1568, 1536]
+image_grid_thw shape: [2, 3]
+image tokens: 392 / expected 392
+position_ids shape: [3, 1, 408]
+Shape: HF=[1, 151936], Our=[1, 151936]
+HF mean/std:  -1.318763e+00 / 4.206440e+00
+Our mean/std: -1.337387e+00 / 4.196328e+00
+Max diff:  2.125000e+00
+Mean diff: 2.093065e-01
+Result: FAIL
+```
+
+根因定位:
+
+- HF `Qwen3VLVisionModel.forward` 按每张图构造 `cu_seqlens`:
+  `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py:727-735`。
+- HF eager vision attention 在非 FA2 路径中按 `cu_seqlens` split 后逐段计算，不让不同图片 patch 互相 attention:
+  `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py:223-248`。
+- Prism-Infer 原 `ViTAttention.forward` 把两张图片的 patch 拼成一个序列后做全局双向 attention，导致跨图 attention。单图时 `cu_seqlens` 只有 `[0, N]`，所以不会暴露。
+
+修复:
+
+- 修改 `prism_infer/vision/vision_encoder.py`:
+  - `VisionEncoder.forward` 根据 `grid_thw` 构造 `cu_seqlens`。
+  - `ViTBlock.forward` 透传 `cu_seqlens`。
+  - `ViTAttention.forward` 在 `cu_seqlens.numel() > 2` 时按图片分段调用 SDPA，再按 token 维拼回。
+- 修改 `prism_infer/engine/vl_inputs.py`、`prism_infer/engine/sequence.py`、`prism_infer/engine/llm_engine.py`:
+  - `prepare_image_inputs` 支持单图或多图 list/tuple。
+  - 保留 `prepare_single_image_inputs` / `SingleImageInputs` 兼容 P2。
+  - `LLMEngine.add_vl_request` 和 `generate_vl` 支持多图输入。
+- 新增/扩展测试:
+  - `tests/test_processor_pipeline_multi_image.py`
+  - `tests/test_vl_rope_index_multi_image.py`
+  - `tests/test_full_model_vl_multi_image.py`
+  - `tests/test_llm_vl_generate.py::test_generate_vl_multi_image_one_token_matches_hf_greedy`
+
+拒绝的替代方案:
+
+- 不把多图拆成多条请求后在用户侧拼结果；这无法验证一条请求内多图 token span、M-RoPE 和 DeepStack 注入。
+- 不用 HF model wrapper 替代 Prism-Infer VisionEncoder；HF 只作为 processor 和 correctness reference。
+- 不通过放宽 full logits 阈值完成 P3.1；修复前 max diff `2.125000e+00` 已明显超过 `<1e-2` 门槛。
+
+验证命令:
+
+```bash
+/data/Prism-Infer/.venv-local/bin/python -m compileall \
+  /data/Prism-Infer/prism_infer \
+  /data/Prism-Infer/tests
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_processor_pipeline_multi_image.py \
+  /data/Prism-Infer/tests/test_vl_rope_index_multi_image.py \
+  /data/Prism-Infer/tests/test_llm_vl_generate.py::test_add_vl_request_builds_multi_image_sequence -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tests/test_full_model_vl_multi_image.py
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_llm_vl_generate.py::test_generate_vl_multi_image_one_token_matches_hf_greedy -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_processor_pipeline.py \
+  /data/Prism-Infer/tests/test_processor_pipeline_multi_image.py \
+  /data/Prism-Infer/tests/test_sequence_multimodal.py \
+  /data/Prism-Infer/tests/test_vl_rope_index.py \
+  /data/Prism-Infer/tests/test_vl_rope_index_multi_image.py \
+  /data/Prism-Infer/tests/test_qwen3_vl_attention_kv.py \
+  /data/Prism-Infer/tests/test_model_runner_vl_prefill.py \
+  /data/Prism-Infer/tests/test_sampler_greedy.py \
+  /data/Prism-Infer/tests/test_llm_vl_generate.py \
+  /data/Prism-Infer/tests/test_text_only_regression.py \
+  /data/Prism-Infer/tests/test_vision_rope_init.py -s
+```
+
+验证结果:
+
+- `compileall`: PASS。
+- P3.1 轻量门禁: `5 passed in 8.01s`。
+  - `multi input_ids shape: [1, 408]`
+  - `multi pixel_values shape: [1568, 1536]`
+  - `multi image_grid_thw shape: [2, 3]`
+  - `multi image_grid_thw: [[1, 28, 28], [1, 28, 28]]`
+  - `multi image tokens: 392 / expected 392`
+  - `multi pixel_values max diff: 0.000000e+00`
+  - `multi position_ids shape: [3, 1, 408]`
+  - `multi rope_delta shape: [1, 1]`
+  - `multi position_ids max diff: 0.000000e+00`
+  - `multi rope_delta max diff: 0.000000e+00`
+- 多图 full logits: `PASS (max diff < 0.01)`。
+  - `Shape: HF=[1, 151936], Our=[1, 151936]`
+  - `NaN: HF=0, Our=0`
+  - `HF mean/std:  -1.318763e+00 / 4.206440e+00`
+  - `Our mean/std: -1.318763e+00 / 4.206440e+00`
+  - `Max diff:  0.000000e+00`
+  - `Mean diff: 0.000000e+00`
+- 多图端到端 generate: `1 passed in 20.75s`。
+  - `HF multi-image token_ids: [785]`
+  - `Prism multi-image token_ids: [785]`
+  - `LLM.generate_vl multi-image one-token greedy HF alignment: PASS`
+- P2/P3.1 组合回归: `30 passed in 78.39s`。
+
+经验:
+
+- 多图 Vision Encoder 不能把所有 patch 当作一个完整双向 attention 序列；图片间 attention 边界是模型语义的一部分。
+- 单图 strict PASS 不能外推到多图。多图需要单独验证 processor、position ids、vision attention 和端到端 logits。
+- 多图问题的首个高价值检查是 full logits；如果只看 1-token greedy，argmax 可能仍然相同而掩盖分布错误。
+
+剩余风险:
+
+- 该记录完成时 P3.1 只覆盖单请求多图、`enforce_eager=True` correctness；后续 P3.3/P3.5 已覆盖 mixed batch 和 CUDA Graph decode。
+- 该记录完成时视频输入、batch 混合图文、长输出多 token 质量评估、VL CUDA Graph decode、高性能 paged decode kernel、paged prefix-cache prefill 和吞吐/延迟 benchmark 仍未完成；后续 P3 已补齐前五项和基础 benchmark，paged prefix-cache/chunked-prefill VL mixed batch 仍未支持。
+
+## P3-002: 视频输入 correctness 建立，核心风险是 video_grid_thw 的帧展开语义
+
+状态: Verified
+
+发现方式:
+
+- P3.2 阶段任务。先调查本地 HF processor/model 视频路径，再实现 Prism-Infer video payload、rope index、模型 forward 和公开 `LLM.generate_video` 入口。
+
+影响范围:
+
+- 补齐一条请求包含视频帧输入的 correctness baseline。
+- 为 P3.3 mixed batch、P3.4 长输出和后续视觉 KV 分析提供视频路径基础。
+- 不改变当前 P2/P3.1 image 单图/多图路径。
+
+外部参考证据:
+
+- HF processor 声明返回 `pixel_values_videos` 和 `video_grid_thw`:
+  `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/processing_qwen3_vl.py:146-155`。
+- HF processor 对视频 token 按 timestamp 和每帧 `<|vision_start|>...<|vision_end|>` 展开:
+  `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/processing_qwen3_vl.py:196-234`。
+- HF `get_rope_index` 先 `repeat_interleave(video_grid_thw, video_grid_thw[:, 0])`，再把 `T` 置为 1:
+  `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py:916-1033`。
+- HF `get_video_features` 复用 `get_image_features`，也就是视频 patch 仍走同一个 vision encoder:
+  `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py:1035-1048`。
+- HF forward 中 `pixel_values_videos/video_grid_thw` 会生成 video embeds，并替换 `video_token_id` 占位:
+  `/data/Prism-Infer/.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py:1145-1151`。
+
+processor 探测结果:
+
+```text
+prompt_text prefix: <|im_start|>user\n<|vision_start|><|video_pad|><|vision_end|>Describe this video.<|im_end|>\n<|im_start|>assistant\n
+video_token: <|video_pad|> 151656
+input_ids shape: [1, 420]
+pixel_values_videos shape: [1568, 1536]
+video_grid_thw shape: [1, 3]
+video_grid_thw: [[2, 28, 28]]
+video token count: 392
+expected video tokens: 392
+```
+
+根因/设计要点:
+
+- 视频不能用 image-only path 假装支持；processor 会插入 timestamp 文本 token，并把一个视频 grid 在 rope index 中按帧拆成多个 `T=1` visual span。
+- VisionEncoder 本身可以复用，因为 HF `get_video_features` 直接复用 image feature path；区别在 text token span 和 `video_token_id` 替换。
+- `rope_delta` 必须来自 video-aware 3D position ids，否则 decode 后续 position 会错。
+
+修复:
+
+- 修改 `prism_infer/engine/vl_inputs.py`:
+  - 新增 `VideoInputs`、`build_video_prompt`、`prepare_video_inputs`、`validate_video_inputs`。
+  - 校验 `pixel_values_videos=[num_patches,patch_dim]`、`video_grid_thw=[num_videos,3]`、video token count 和 grid 推导 token 数一致。
+- 修改 `prism_infer/models/qwen3_vl_position.py`:
+  - `get_qwen3_vl_rope_index` 增加 `video_grid_thw`。
+  - image/video span 按 token 顺序处理。
+  - 视频 grid 按 HF 语义 `repeat_interleave` 后 `T=1`。
+- 修改 `prism_infer/models/qwen3_vl.py`:
+  - `Qwen3VLModel.forward` 增加 `pixel_values_videos/video_grid_thw`。
+  - video payload 走自实现 `VisionEncoder`。
+  - 使用 `video_token_id` 替换 video token；image/video 同时存在时按 visual mask 合并 DeepStack。
+- 修改 `prism_infer/engine/sequence.py`、`prism_infer/engine/model_runner.py`、`prism_infer/engine/llm_engine.py`:
+  - `Sequence.from_video_inputs` 携带 video payload。
+  - `ModelRunner.prepare_prefill` 和 `_forward_model` 传递 video payload。
+  - 新增 `LLMEngine.add_video_request` 和 `generate_video`。
+- 新增测试:
+  - `tests/test_processor_pipeline_video.py`
+  - `tests/test_vl_rope_index_video.py`
+  - `tests/test_full_model_vl_video.py`
+  - `tests/test_llm_vl_generate.py::test_generate_video_one_token_matches_hf_greedy`
+
+拒绝的替代方案:
+
+- 不把 video frames 当作多张 image 走 image token；这会丢失 timestamp 文本展开和 video-specific rope index 语义。
+- 不在模型 forward 中调用 HF `get_video_features`；核心模型和 VisionEncoder 必须自实现。
+- 不用 1-token greedy 替代 full logits；P3.2 必须同时验证 processor、rope、full logits 和公开入口 token。
+
+验证命令:
+
+```bash
+/data/Prism-Infer/.venv-local/bin/python -m compileall \
+  /data/Prism-Infer/prism_infer \
+  /data/Prism-Infer/tests
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_processor_pipeline_video.py \
+  /data/Prism-Infer/tests/test_vl_rope_index_video.py \
+  /data/Prism-Infer/tests/test_llm_vl_generate.py::test_add_video_request_builds_video_sequence -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tests/test_full_model_vl_video.py
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_llm_vl_generate.py::test_generate_video_one_token_matches_hf_greedy -s
+```
+
+验证结果:
+
+- `compileall`: PASS。
+- P3.2 轻量门禁: `5 passed in 8.37s`。
+  - `video input_ids shape: [1, 420]`
+  - `video pixel_values_videos shape: [1568, 1536]`
+  - `video_grid_thw shape: [1, 3]`
+  - `video_grid_thw: [[2, 28, 28]]`
+  - `video tokens: 392 / expected 392`
+  - `video pixel_values max diff: 0.000000e+00`
+  - `video position_ids shape: [3, 1, 420]`
+  - `video rope_delta shape: [1, 1]`
+  - `video position_ids max diff: 0.000000e+00`
+  - `video rope_delta max diff: 0.000000e+00`
+- 视频 full logits: `PASS (max diff < 0.01)`。
+  - `Shape: HF=[1, 151936], Our=[1, 151936]`
+  - `NaN: HF=0, Our=0`
+  - `HF mean/std:  -1.130621e+00 / 4.290061e+00`
+  - `Our mean/std: -1.130621e+00 / 4.290061e+00`
+  - `Max diff:  0.000000e+00`
+  - `Mean diff: 0.000000e+00`
+- 视频端到端 generate: `1 passed in 21.99s`。
+  - `HF video token_ids: [785]`
+  - `Prism video token_ids: [785]`
+  - `LLM.generate_video one-token greedy HF alignment: PASS`
+
+经验:
+
+- 视频路径最容易错的是 position ids，不是 VisionEncoder。HF 用 timestamp 文本表达时间，所以 video grid 在 rope index 里被拆成每帧 `T=1`。
+- processor 探测要先做，否则容易把 `videos=frames` 和 `videos=[frames]` 的 batch 语义搞混。
+- full logits strict PASS 证明 video embeds 替换、DeepStack 注入和 LLM 后续路径没有引入可见误差。
+
+剩余风险:
+
+- 该记录完成时 P3.2 只覆盖单请求 synthetic video、`enforce_eager=True` correctness；后续 P3.3/P3.5 已覆盖 mixed batch 和 CUDA Graph decode。
+- 该记录完成时 batch 混合图文、长输出多 token 质量评估、VL CUDA Graph decode、高性能 paged decode kernel、真实视频文件采样策略、paged prefix-cache prefill 和吞吐/延迟 benchmark 仍未完成；后续 P3 已补齐 mixed batch、32-token 长输出、logits/ppl 分布、CUDA Graph、paged decode baseline 和基础 benchmark，真实视频文件采样策略与 paged prefix-cache/chunked-prefill VL mixed batch 仍未支持。
+
+## P3-003: mixed batch 单序列限制解除，prefix-cache 干扰需要明确排除
+
+状态: Verified
+
+发现方式:
+
+- P3.3 阶段任务。原 `ModelRunner.prepare_prefill/prepare_decode` 在 VL batch 中显式要求 `len(seqs) == 1`，导致 text-only、single-image、multi-image、video 无法同批执行。
+
+影响范围:
+
+- 补齐真实 VL engine 的 batch 混合图文 correctness 基线。
+- 涉及 scheduler 形成同批请求后的 flatten position ids、visual payload concat、slot mapping、decode position 延续。
+- 当前不覆盖 prefix-cache/chunked-prefill 的 VL mixed batch 优化，也不覆盖 CUDA Graph mixed decode。
+
+触发命令:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_llm_vl_mixed_batch_generate.py -s
+```
+
+修复前失败摘要:
+
+```text
+ValueError: P2 VL prefill currently supports exactly one sequence per batch
+```
+
+实现过程中新增测试后还暴露了一个测试设计问题:
+
+```text
+ValueError: P3 mixed VL prefill does not support prefix/chunk cache hits yet
+```
+
+该错误来自同一个 engine 先跑单请求，再跑完全相同 mixed batch，触发了 prefix cache hit。P3.3 的设计范围是 non-prefix mixed batch correctness；prefix-cache/chunked-prefill VL mixed batch 是后续风险，不能混入本阶段 PASS。
+
+根因:
+
+- `ModelRunner.prepare_prefill` 旧逻辑只支持一个携带 `position_ids` 的 VL sequence；mixed text/VL batch 直接报错。
+- `ModelRunner.prepare_decode` 旧逻辑只支持一个携带 `rope_delta` 的 VL sequence；mixed decode 直接报错。
+- mixed batch 中 text-only 请求原本是一维 positions，VL 请求是 `[3,seqlen]` positions；需要统一成模型可消费的 `[3,total_tokens]` flatten 形态。
+
+修复:
+
+- 修改 `prism_infer/engine/model_runner.py`:
+  - prefill 中只要 batch 内有任意 VL 请求，就把所有 sequence positions 统一为 `[3,seqlen]` chunk。
+  - text-only sequence 在 mixed VL batch 中用一维 position 扩展到三轴。
+  - image payload 按请求顺序 concat 为 `pixel_values`，image grid concat 为 `image_grid_thw`。
+  - video payload 按请求顺序 concat 为 `pixel_values_videos`，video grid concat 为 `video_grid_thw`。
+  - decode 中 text-only delta 取 `0`，VL 请求使用各自 `rope_delta`，统一输出 `[3,batch]`。
+  - prefix/chunk cache hit 仍显式报错，避免未验证路径 silent fallback。
+- 修改 `prism_infer/engine/llm_engine.py`:
+  - `add_request` 返回 `seq_id`。
+  - 新增 `generate_mixed`，支持 `text/image/images/video` 请求列表。
+- 新增测试:
+  - `tests/test_model_runner_vl_mixed_prefill.py`
+  - `tests/test_llm_vl_mixed_batch_generate.py`
+
+拒绝的替代方案:
+
+- 不把 mixed batch 拆成多次单请求执行后拼结果；这无法验证 scheduler batch、slot mapping、context_lens 和 KV cache 不串扰。
+- 不在 prefix-cache/chunked-prefill 未验证时把该组合算作 P3.3 PASS；测试改为 fresh 单请求 engine 与 fresh mixed engine 对比。
+- 不为 text-only 保持一维 positions 混入同一个 VL batch；统一 `[3,total_tokens]` 可以复用 Qwen3-VL M-RoPE flatten 路径。
+
+验证命令:
+
+```bash
+/data/Prism-Infer/.venv-local/bin/python -m compileall \
+  /data/Prism-Infer/prism_infer \
+  /data/Prism-Infer/tests
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_model_runner_vl_mixed_prefill.py -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_llm_vl_mixed_batch_generate.py -s
+```
+
+验证结果:
+
+- `compileall`: PASS。
+- mixed ModelRunner 输入准备: `2 passed in 8.20s`。
+  - `mixed prefill input_ids shape: [1043]`
+  - `mixed prefill position_ids shape: [3, 1043]`
+  - `mixed pixel_values shape: [2352, 1536]`
+  - `mixed image_grid_thw shape: [3, 3]`
+  - `mixed pixel_values_videos shape: [1568, 1536]`
+  - `mixed video_grid_thw shape: [1, 3]`
+  - `mixed cu_seqlens_q: [0, 5, 215, 623, 1043]`
+  - `mixed slot_mapping shape: [1043]`
+  - `mixed decode input_ids shape: [3]`
+  - `mixed decode position_ids shape: [3, 3]`
+  - `mixed decode positions: [[5, 28, 56], [5, 28, 56], [5, 28, 56]]`
+  - `mixed decode context_lens: [6, 211, 421]`
+- mixed 公开入口: `1 passed in 33.67s`。
+  - `single token_ids: [[11], [785], [785], [785]]`
+  - `mixed token_ids: [[11], [785], [785], [785]]`
+  - `mixed batch size: 4`
+  - `LLM.generate_mixed mixed batch single-run equivalence: PASS`
+
+经验:
+
+- mixed batch correctness 不能只看 API 不报错；必须检查 `cu_seqlens_q`、`slot_mapping`、payload concat shape 和 decode `context_lens`。
+- prefix cache 会改变 prefill 语义。测试若复用同一个 engine 跑相同 prompt，就可能把尚未支持的 prefix-cache 路径混进 mixed batch 门禁。
+- text-only 请求在 Qwen3-VL mixed batch 中也可以扩展为三轴同值 position ids；这与纯文本分支语义等价，并简化 flatten batch。
+
+剩余风险:
+
+- 该记录完成时 P3.3 只覆盖 non-prefix、non-chunked、`enforce_eager=True` mixed batch 1-token greedy correctness；后续 P3.4/P3.5 已覆盖 mixed batch VL rows 32-token、text row batch 数值敏感性解释和 CUDA Graph。
+- mixed batch full logits 对 HF batch reference、prefix-cache/chunked-prefill VL mixed batch 仍未完成；P3 已补齐 long greedy、VL CUDA Graph、高性能 paged decode baseline 和性能 benchmark。
+
+## P3-004: 长输出 32-token greedy 与 logits/ppl 分布门槛建立
+
+状态: Verified
+
+发现方式:
+
+- P3.4 阶段任务。P2/P3.1/P3.2/P3.3 之前主要验证 1-token greedy；需要证明多 token decode 中 KV cache、rope_delta 和 visual payload 只在 prefill 使用的逻辑不会在后续 token 中分叉。
+
+影响范围:
+
+- 覆盖 single-image、multi-image、video 的 `max_tokens=8/16/32` HF greedy exact。
+- 覆盖 single-image、multi-image、video 32-token teacher-forced logits 分布和 perplexity。
+- 覆盖 mixed batch 中 VL rows 的 `max_tokens=32` fresh 单请求等价。
+- 记录 text-only row 在 bf16 batch=1 与 batch=4 duplicate forward 中的数值敏感性；HF 与 Prism 具有完全相同的 max/mean diff，因此不把 text-only mixed 32-token exact 作为 VL mixed correctness 门槛。
+
+根因/风险:
+
+- 1-token greedy 只能证明 prefill logits argmax 一致，不能证明 decode 多步 KV cache 读取、rope_delta 延续和 sampler 在后续 token 中不分叉。
+- 长输出中一旦某一步 token 分叉，后续上下文不同，不能继续用最终文本“看起来合理”作为 correctness。
+- bf16 batch-size 数值敏感性会让 text-only long generation 在 batch=1 与 batch=4 中出现后续 token 分叉。HF 自身对相同 `Hello` duplicate batch 的最后 logits 也有 max diff `5.312500e-01`、mean diff `1.473503e-01`，因此该现象不能归因为 VL mixed batch 串扰。
+
+修复:
+
+- 新增 `tests/test_llm_vl_long_generate.py`:
+  - HF 先串行生成 single-image、multi-image、video 的 `max_new_tokens=32` greedy reference。
+  - Prism-Infer 通过公开 `generate_vl/generate_images/generate_video` 生成 32 token。
+  - 输出 prompt token 数、HF token ids、Prism token ids、first mismatch，以及 prefix@8/16/32。
+- 扩展 `tests/test_llm_vl_mixed_batch_generate.py`:
+  - `test_generate_mixed_batch_thirty_two_tokens_matches_single_request_outputs` 比较 fresh 单请求独立运行与 fresh mixed batch 的 32-token token ids。
+  - VL rows 要求 32-token exact；text-only row 要求 prefix@8 exact，并由 batch numeric sensitivity 测试解释后续分叉。
+- 新增 `tests/test_vl_logits_distribution.py`:
+  - 对 HF 生成的 32-token 轨迹做 teacher-forced forward。
+  - 比较 HF 与 Prism 的 logits shape、mean/std、max diff、mean diff、cross entropy 和 perplexity。
+- 新增 `tests/test_batch_numeric_sensitivity.py`:
+  - 对 HF 与 Prism 分别比较 `Hello` batch=1 vs batch=4 duplicate forward 的最后 logits。
+  - 证明两者数值差异完全一致，作为 mixed text row 长输出分叉的证据。
+
+拒绝的替代方案:
+
+- 不用“文本看起来合理”作为质量门槛。
+- 不用 1-token greedy PASS 外推到长输出。
+- 不把 mixed batch 与同一个 engine 先后运行相同请求作为 reference；那会混入 prefix-cache 语义。
+
+验证命令:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_llm_vl_long_generate.py -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_llm_vl_mixed_batch_generate.py::test_generate_mixed_batch_thirty_two_tokens_matches_single_request_outputs \
+  /data/Prism-Infer/tests/test_vl_logits_distribution.py \
+  /data/Prism-Infer/tests/test_batch_numeric_sensitivity.py -s
+```
+
+验证结果:
+
+- HF greedy 长输出: `1 passed in 26.76s`。
+  - single-image prompt tokens: `210`
+  - single-image prefix@8/16/32 match: `True / True / True`
+  - single-image first mismatch: `None`
+  - multi-image prompt tokens: `408`
+  - multi-image prefix@8/16/32 match: `True / True / True`
+  - multi-image first mismatch: `None`
+  - video prompt tokens: `420`
+  - video prefix@8/16/32 match: `True / True / True`
+  - video first mismatch: `None`
+- mixed batch / logits 分布 / batch 数值敏感性: `2 passed in 57.39s`，扩展关键回归中合计 `13 passed in 217.02s`。
+  - mixed text prefix@8 match: `True`
+  - `LLM.generate_mixed VL rows mixed batch 32-token equivalence: PASS`
+  - single-image/multi-image/video logits shape: `[1,32,151936]`
+  - single-image/multi-image/video logits max diff: `0.000000e+00`
+  - single-image/multi-image/video logits mean diff: `0.000000e+00`
+  - single-image/multi-image/video ppl diff: `0.000000e+00`
+  - HF duplicate batch max/mean diff: `5.312500e-01 / 1.473503e-01`
+  - Prism duplicate batch max/mean diff: `5.312500e-01 / 1.473503e-01`
+
+经验:
+
+- 长输出验证应该输出首个分叉点；这比最终文本更适合定位 decode/KV/position 问题。
+- mixed batch 长输出要用 fresh engine 对比，避免 prefix-cache 改变 prefill 路径。
+- 32-token greedy exact 与 teacher-forced logits/ppl exact 是比 8-token 更强的 P3.4 门槛。
+- mixed batch 中 text-only row 的 32-token 分叉来自 batch-size 数值敏感性，HF 和 Prism 证据一致；VL rows 仍要求 32-token exact。
+
+剩余风险:
+
+- P3.4 仍不覆盖随机采样输出文本一致性；采样模式只应比较分布或 ppl。
+- 长上下文压力和 prefix-cache/chunked-prefill VL mixed batch 仍未完成。
+
+## P3-005: VL CUDA Graph decode 支持 3D position ids 与非标准 batch 档位
+
+状态: Verified
+
+发现方式:
+
+- P3.5 阶段任务。`ModelRunner.capture_cudagraph` 原始 graph `positions` 占位为一维 `[max_bs]`，而 VL decode 需要 `[3,batch]`。
+- 新增 mixed benchmark sanity 后触发真实失败: `max_num_seqs=3` 时 `graph_bs=[1,2]`，decode batch=3 在 `next(x for x in self.graph_bs if x >= bs)` 处抛出 `StopIteration`。
+
+影响范围:
+
+- `enforce_eager=False` 的 single-image、multi-image、video 和 mixed batch decode。
+- CUDA Graph replay 的 `input_ids/position_ids/slot_mapping/context_lens/block_tables` 占位 shape 与地址稳定性。
+- 后续 graph-vs-eager latency benchmark 的可信度。
+
+根因:
+
+- 图文 decode position ids 已在 P2/P3.3 中扩展为三轴 `[3,batch]`，但 CUDA Graph capture/replay 仍按 text-only `[batch]` 写入。
+- graph 档位只包含 `[1,2,4,8]` 和 16 的倍数；当 `max_num_seqs` 是 3、5、17 等非标准值时，最大实际 batch 没有对应或更大的 graph。
+- paged decode 原 fallback 中有 `.item()`、`.tolist()`、动态 `cat` 等 Python 路径，不能作为稳定 CUDA Graph capture 路径；因此 P3.5 需要和 P3.6 kernel 一起推进。
+
+修复:
+
+- `ModelRunner._as_mrope_decode_positions`:
+  - text-only `[batch]` 显式扩展为 `[3,batch]`。
+  - VL `[3,batch]` 原样通过。
+- `capture_cudagraph`:
+  - graph `positions` 占位改为 `[3,max_bs]`。
+  - capture/replay 都用 `positions[:, :bs]` 调用模型。
+  - replay 前清理并拷贝 `block_tables`，避免上一次较长 table 残留。
+- `ModelRunner._cudagraph_batch_sizes(max_bs)`:
+  - 保留常用 1/2/4/8/16... 档位。
+  - 当 `max_bs` 不是标准档位时，额外加入 `max_bs`。
+- `LLMEngine.add_vl_request/add_video_request` 移除 `enforce_eager=True` 硬拒绝；公开 VL 入口只有在 graph correctness 通过后才放开。
+
+拒绝的替代方案:
+
+- 不把 VL decode 降级到 eager 后仍声明 graph PASS。
+- 不把 text-only graph PASS 外推成 VL graph PASS。
+- 不为 `max_num_seqs=3` 在 benchmark 脚本里绕开 batch=3；修复 graph 档位生成才是根因处理。
+
+验证命令:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_model_runner_vl_cudagraph.py -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_llm_vl_cuda_graph_decode.py::test_vl_cuda_graph_single_multi_video_match_eager -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_llm_vl_cuda_graph_decode.py::test_vl_cuda_graph_mixed_batch_matches_eager -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python benchmarks/bench_vl_cudagraph_decode.py \
+  --model /data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+  --case mixed \
+  --max-tokens 8 \
+  --warmup 2 \
+  --repeat 5 \
+  --kvcache-block-size 1024
+```
+
+验证结果:
+
+- `tests/test_model_runner_vl_cudagraph.py`: `2 passed in 3.83s`。
+  - `text decode input positions shape: [2]`
+  - `text graph positions shape: [3, 2]`
+  - `vl decode input positions shape: [3, 3]`
+  - `vl graph positions shape: [3, 3]`
+  - `max_bs=3, graph_bs=[1, 2, 3]`
+  - `max_bs=17, graph_bs=[1, 2, 4, 8, 16, 17]`
+- single/multi/video graph-vs-eager: `1 passed in 83.41s`。
+  - single-image eager/graph token ids: `[785, 2168]`
+  - multi-image eager/graph token ids: `[785, 1378]`
+  - video eager/graph token ids: `[785, 2766]`
+- mixed graph-vs-eager: `1 passed in 31.26s`。
+  - mixed eager token ids: `[[11, 358], [785, 1378], [785, 2766]]`
+  - mixed graph token ids: `[[11, 358], [785, 1378], [785, 2766]]`
+  - batch=3 覆盖非标准 graph 档位。
+- benchmark:
+  - commit: `45edd3a`
+  - GPU: NVIDIA GeForce RTX 5090
+  - torch: `2.6.0a0+ecf3bae40a.nv25.01`
+  - case: mixed, `max_tokens=8`, warmup=2, repeat=5, `kvcache_block_size=1024`
+  - correctness: PASS
+  - eager decode median/p90/min/max: `31.5488ms / 34.2537ms / 30.9992ms / 34.5397ms`
+  - graph decode median/p90/min/max: `16.4468ms / 16.5553ms / 16.4189ms / 16.6193ms`
+  - eager token/s: `93.96`; graph token/s: `182.14`
+  - peak memory: `27995.47MiB`
+
+经验:
+
+- CUDA Graph correctness 不只看 capture 成功，还要覆盖实际 replay batch 与录制档位的关系。
+- VL decode 的 3D position ids 必须作为 graph 输入形状的一部分固化；只在 eager path 支持 `[3,batch]` 不够。
+- benchmark 脚本本身也是验证工具，能暴露普通 correctness 测试没覆盖的非标准配置。
+
+剩余风险:
+
+- 当前 graph benchmark 只覆盖 RTX 5090、单卡、mixed batch、小 synthetic 输入；还未覆盖 4070/4090、多卡 TP、长上下文和真实视频文件采样策略。
+- graph benchmark 数值不能直接用于声称超过 vLLM/SGLang；对比前需要单独固定版本、输入集合、参数和显存限制。
+
+## P3-006: 自实现 Triton paged decode kernel 接入与基线 benchmark
+
+状态: Verified
+
+发现方式:
+
+- P3.6 阶段任务。P2/P3 早期 paged decode 为 correctness fallback: 逐请求从 `block_tables/context_lens` 收集 K/V 后调用 PyTorch SDPA，不是高性能 kernel。
+- P3.5 CUDA Graph capture 也需要 graph-safe decode 路径；原 eager fallback 里的 `.item()`、`.tolist()` 和动态 `torch.cat` 不适合作为 CUDA Graph replay 内路径。
+
+影响范围:
+
+- `prism_infer/layers/attention.py` decode + paged KV cache 路径。
+- Qwen3-VL GQA: `num_heads != num_kv_heads` 时 query head 到 KV head 的映射。
+- P3/P6 性能基线和后续 torch.compile/Triton 优化。
+
+根因:
+
+- 原 `_forward_decode_eager` 是正确性实现，不是 kernel 实现。它每条 sequence 在 Python 中遍历 block table 并拼接历史 K/V，CPU overhead 随 batch 增加。
+- 如果在 P3.5 中继续依赖 fallback，即使 token ids 正确，也无法建立可 benchmark 的 graph decode 路径。
+
+修复:
+
+- 新增 `prism_infer/ops/paged_decode.py`:
+  - `paged_decode_attention(q, k_cache, v_cache, block_tables, context_lens, scale)`。
+  - Triton kernel 每个 program 处理 `(seq_idx, q_head)`，按 block table 遍历 paged KV，使用 online softmax 累积输出。
+  - 支持 GQA: `kv_head = q_head // (num_heads // num_kv_heads)`。
+  - unsupported shape 显式报错，不 silent fallback。
+- `Attention.forward` 在 decode 且 `context.block_tables is not None` 时，CUDA + Triton 环境优先走 `paged_decode_attention`；CPU/无 Triton 时显式保留 eager fallback。
+- 新增 `tests/test_paged_decode_kernel.py` 与 `benchmarks/bench_paged_decode.py`。
+
+拒绝的替代方案:
+
+- 不用 flash-attn `flash_attn_with_kvcache` 假装支持 paged block table；本地签名没有 block table 参数。
+- 不在 kernel unsupported 时 silent fallback 后报告 kernel PASS。
+- 不用性能数字替代 correctness；所有 benchmark case 先输出 max diff/mean diff/PASS。
+
+验证命令:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_paged_decode_kernel.py \
+  /data/Prism-Infer/tests/test_qwen3_vl_attention_kv.py -s
+```
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+/data/Prism-Infer/.venv-local/bin/python benchmarks/bench_paged_decode.py \
+  --batch-sizes 1,2,4,8 \
+  --context-lens 256,1024,4096 \
+  --warmup 10 \
+  --repeat 50
+```
+
+验证结果:
+
+- correctness: `5 passed in 2.84s`；合并 shape 测试后为 `6 passed in 4.74s`。
+- small GQA:
+  - q shape: `[3, 4, 16]`
+  - k_cache shape: `[9, 4, 2, 16]`
+  - block_tables shape: `[3, 3]`
+  - context_lens: `[1, 5, 9]`
+  - kernel mean/std: `-1.948629e-02 / 7.964026e-01`
+  - reference mean/std: `-1.945430e-02 / 7.964330e-01`
+  - max diff: `3.906250e-03`
+  - mean diff: `1.447549e-04`
+  - PASS
+- Qwen shape:
+  - q shape: `[2, 8, 128]`
+  - k_cache shape: `[6, 16, 2, 128]`
+  - context_lens: `[17, 33]`
+  - kernel mean/std: `-3.931073e-03 / 3.038969e-01`
+  - reference mean/std: `-3.932172e-03 / 3.039157e-01`
+  - max diff: `7.812500e-03`
+  - mean diff: `2.812790e-04`
+  - PASS
+- Attention 接入:
+  - decode engine output shape: `[1, 4, 16]`
+  - decode reference output shape: `[1, 4, 16]`
+  - engine mean/std: `1.976967e-02 / 3.161756e-01`
+  - reference mean/std: `1.984596e-02 / 3.163016e-01`
+  - max diff: `1.953125e-03`
+  - mean diff: `3.700256e-04`
+  - PASS
+- benchmark:
+  - commit: `45edd3a`
+  - GPU: NVIDIA GeForce RTX 5090
+  - torch: `2.6.0a0+ecf3bae40a.nv25.01`
+  - dtype: bf16
+  - warmup=10, repeat=50
+  - num_heads=32, num_kv_heads=8, head_dim=128, block_size=256
+  - 12 个 batch/context case 全部 correctness PASS。
+  - batch=1/context=256: kernel median `0.0466ms`, reference median `0.1256ms`, max diff `1.953125e-03`
+  - batch=1/context=4096: kernel median `0.2839ms`, reference median `0.2265ms`, max diff `4.882812e-04`
+  - batch=4/context=1024: kernel median `0.0956ms`, reference median `0.4908ms`, max diff `9.765625e-04`
+  - batch=8/context=4096: kernel median `0.4646ms`, reference median `1.8313ms`, max diff `4.882812e-04`
+
+经验:
+
+- Triton baseline kernel 在 batch 增大时明显减少 Python/SDPA reference 的 per-sequence overhead；但单 batch 长上下文不一定更快。
+- 高性能 kernel 不能只验证 shape。bf16 下 kernel 与 SDPA reference 的 max diff 在 `1e-3` 到 `8e-3`，必须作为跨实现门槛记录。
+- Paged decode kernel 的接口必须显式暴露 block table 和 context lens，不能把调度状态藏在 Python list 里。
+
+剩余风险:
+
+- 当前 kernel 是 P3 baseline，不是最终最优 kernel；batch=1/context=4096 慢于 reference，P6 需要继续优化。
+- 当前 benchmark 是 synthetic q/k/v，不代表完整模型端到端吞吐；端到端吞吐已由 P3-005 的 graph benchmark覆盖一部分，但仍需 P6 做系统级 benchmark。
+
+## P3-007: P3 阶段 Review 与完整回归
+
+状态: Verified
+
+发现方式:
+
+- P3.7 阶段门禁。P3.5/P3.6 完成后必须证明 P1/P2/P3 correctness 没有回归，并把 full logits 重型验证串行跑完。
+
+影响范围:
+
+- P1 纯文本 full logits。
+- P2 单图图文 full logits 和单图 engine 路径。
+- P3 多图、视频、mixed batch、长输出、CUDA Graph、paged decode kernel。
+- 文档状态从 “P3.5/P3.6 完成，P3.7 待回归” 更新为 “P3 当前门禁完成”。
+
+验证命令:
+
+```bash
+cd /data/Prism-Infer && \
+/data/Prism-Infer/.venv-local/bin/python -m compileall prism_infer tests benchmarks
+```
+
+```bash
+cd /data/Prism-Infer && git diff --check
+```
+
+```bash
+cd /data/Prism-Infer && \
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  tests/test_processor_pipeline.py \
+  tests/test_processor_pipeline_multi_image.py \
+  tests/test_processor_pipeline_video.py \
+  tests/test_sequence_multimodal.py \
+  tests/test_vl_rope_index.py \
+  tests/test_vl_rope_index_multi_image.py \
+  tests/test_vl_rope_index_video.py \
+  tests/test_model_runner_vl_prefill.py \
+  tests/test_model_runner_vl_mixed_prefill.py \
+  tests/test_model_runner_vl_cudagraph.py \
+  tests/test_qwen3_vl_attention_kv.py \
+  tests/test_paged_decode_kernel.py \
+  tests/test_sampler_greedy.py \
+  tests/test_llm_vl_generate.py::test_add_vl_request_builds_single_image_sequence \
+  tests/test_llm_vl_generate.py::test_add_vl_request_builds_multi_image_sequence \
+  tests/test_llm_vl_generate.py::test_add_video_request_builds_video_sequence \
+  tests/test_llm_vl_generate.py::test_add_vl_request_allows_graph_mode_sequence_building \
+  tests/test_llm_vl_generate.py::test_generate_vl_one_token_matches_hf_greedy \
+  tests/test_llm_vl_generate.py::test_generate_vl_multi_image_one_token_matches_hf_greedy \
+  tests/test_llm_vl_generate.py::test_generate_video_one_token_matches_hf_greedy \
+  tests/test_llm_vl_mixed_batch_generate.py \
+  tests/test_llm_vl_long_generate.py \
+  tests/test_llm_vl_cuda_graph_decode.py \
+  tests/test_text_only_regression.py \
+  tests/test_vision_rope_init.py -s
+```
+
+```bash
+cd /data/Prism-Infer && \
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python tests/test_full_model.py
+```
+
+```bash
+cd /data/Prism-Infer && \
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python tests/test_full_model_vl.py
+```
+
+```bash
+cd /data/Prism-Infer && \
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python tests/test_full_model_vl_multi_image.py
+```
+
+```bash
+cd /data/Prism-Infer && \
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+/data/Prism-Infer/.venv-local/bin/python tests/test_full_model_vl_video.py
+```
+
+验证结果:
+
+- `compileall`: PASS。
+- `git diff --check`: PASS。
+- grouped regression: `49 passed in 356.34s`。
+  - 覆盖 processor、sequence、rope、engine attention、ModelRunner、sampler、LLM VL generate、mixed batch、32-token long generate、VL CUDA Graph、teacher-forced logits/ppl、batch numeric sensitivity 和 paged decode kernel。
+  - single-image/multi-image/video `max_tokens=32` HF greedy exact，prefix@8/16/32 全部 match。
+  - single-image/multi-image/video teacher-forced logits shape `[1,32,151936]`，max diff、mean diff、ppl diff 均为 `0.000000e+00`。
+  - mixed batch VL rows 32-token 与 fresh 单请求独立运行一致；text-only row 的 32-token 分叉已由 HF/Prism duplicate batch 数值敏感性解释。
+- 纯文本 full logits:
+  - shape: HF `[1,64,151936]`, Prism `[1,64,151936]`
+  - max diff: `0.000000e+00`
+  - mean diff: `0.000000e+00`
+  - Result: PASS
+- 单图 VL full logits:
+  - input_ids shape: `[1,210]`
+  - pixel_values shape: `[784,1536]`
+  - image_grid_thw shape: `[1,3]`
+  - position_ids shape: `[3,1,210]`
+  - HF/Prism logits shape: `[1,151936]`
+  - HF mean/std: `-1.756945e+00 / 4.123917e+00`
+  - Prism mean/std: `-1.756945e+00 / 4.123917e+00`
+  - max diff: `0.000000e+00`
+  - mean diff: `0.000000e+00`
+  - PASS
+- 多图 VL full logits:
+  - input_ids shape: `[1,408]`
+  - pixel_values shape: `[1568,1536]`
+  - image_grid_thw shape: `[2,3]`
+  - image tokens: `392 / expected 392`
+  - position_ids shape: `[3,1,408]`
+  - HF mean/std: `-1.318763e+00 / 4.206440e+00`
+  - Prism mean/std: `-1.318763e+00 / 4.206440e+00`
+  - max diff: `0.000000e+00`
+  - mean diff: `0.000000e+00`
+  - PASS
+- 视频 VL full logits:
+  - input_ids shape: `[1,420]`
+  - pixel_values_videos shape: `[1568,1536]`
+  - video_grid_thw shape: `[1,3]`
+  - video tokens: `392 / expected 392`
+  - position_ids shape: `[3,1,420]`
+  - HF mean/std: `-1.130621e+00 / 4.290061e+00`
+  - Prism mean/std: `-1.130621e+00 / 4.290061e+00`
+  - max diff: `0.000000e+00`
+  - mean diff: `0.000000e+00`
+  - PASS
+
+经验:
+
+- P3 回归必须拆分轻量 grouped tests 和重型 full logits；后者串行执行可以避免 8B HF/Prism 同时加载导致 OOM。
+- P3.5/P3.6 的性能路径必须和 P1/P2/P3 correctness 一起回归，否则可能引入基础精度退化。
+- 阶段完成声明必须等文档、Issue Log 和验证命令都同步后再发布。
+
+剩余风险:
+
+- P3 固定长输出门槛已提升到 `max_tokens=32` greedy 和 teacher-forced logits/ppl；长上下文压力未纳入当前门禁。
+- prefix-cache/chunked-prefill VL mixed batch 仍未支持。
+- 当前 paged decode Triton kernel 是 baseline kernel，batch=1/context=4096 慢于 SDPA reference。
+- P3 benchmark 只覆盖本机 RTX 5090；4070/4090、多卡 TP、真实视频文件采样策略、vLLM/SGLang 同条件对比留到 P6/P7。
+
+## P3-008: benchmark 脚本直接运行 import 失败
+
+状态: Verified
+
+发现方式:
+
+- P3 完成审计时按 `docs/VERIFICATION.md` 中的 benchmark 命令直接运行 `benchmarks/bench_paged_decode.py`。
+
+影响范围:
+
+- P3.5/P3.6 的 benchmark 可复现性。
+- 不影响模型 correctness，但会导致用户按文档命令复现 benchmark 时直接失败。
+
+证据:
+
+失败命令:
+
+```bash
+cd /data/Prism-Infer && \
+/data/Prism-Infer/.venv-local/bin/python benchmarks/bench_paged_decode.py \
+  --batch-sizes 1,2,4,8 \
+  --context-lens 256,1024,4096 \
+  --warmup 10 \
+  --repeat 50
+```
+
+失败输出:
+
+```text
+ModuleNotFoundError: No module named 'prism_infer'
+```
+
+根因:
+
+- Python 直接执行 `benchmarks/bench_paged_decode.py` 时，`sys.path[0]` 是 `/data/Prism-Infer/benchmarks`，不是 repo root。
+- benchmark 脚本位于包目录外，直接 `from prism_infer...` 依赖调用者额外设置 `PYTHONPATH`；这与文档中的直接运行命令不一致。
+
+修复:
+
+- 修改 `benchmarks/bench_paged_decode.py` 和 `benchmarks/bench_vl_cudagraph_decode.py`:
+  - 启动时用 `Path(__file__).resolve().parents[1]` 得到 repo root。
+  - 若 repo root 不在 `sys.path`，插入到 `sys.path[0]`。
+  - 保持 benchmark 核心逻辑不变。
+
+拒绝的替代方案:
+
+- 不只在文档中要求用户手动设置 `PYTHONPATH`；benchmark 脚本应能从 repo root 直接执行。
+- 不把 benchmark 移入 `prism_infer` 包内；脚本仍属于项目工具入口，最小修复是入口 bootstrap。
+
+验证命令:
+
+```bash
+cd /data/Prism-Infer && \
+/data/Prism-Infer/.venv-local/bin/python -m compileall benchmarks
+```
+
+```bash
+cd /data/Prism-Infer && git diff --check
+```
+
+```bash
+cd /data/Prism-Infer && \
+/data/Prism-Infer/.venv-local/bin/python benchmarks/bench_paged_decode.py \
+  --batch-sizes 1,2,4,8 \
+  --context-lens 256,1024,4096 \
+  --warmup 10 \
+  --repeat 50
+```
+
+```bash
+cd /data/Prism-Infer && \
+/data/Prism-Infer/.venv-local/bin/python benchmarks/bench_vl_cudagraph_decode.py \
+  --model /data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+  --case mixed \
+  --max-tokens 4 \
+  --warmup 1 \
+  --repeat 1
+```
+
+验证结果:
+
+- `compileall benchmarks`: PASS。
+- `git diff --check`: PASS。
+- paged decode benchmark: 12 个 batch/context case 全部 `correctness: PASS`。
+  - batch=1/context=256: kernel median `0.0460ms`，reference median `0.1264ms`，max diff `1.953125e-03`。
+  - batch=1/context=4096: kernel median `0.2834ms`，reference median `0.2314ms`，max diff `4.882812e-04`。
+  - batch=4/context=1024: kernel median `0.0956ms`，reference median `0.4969ms`，max diff `9.765625e-04`。
+  - batch=8/context=4096: kernel median `0.4662ms`，reference median `1.8635ms`，max diff `4.882812e-04`。
+- VL CUDA Graph benchmark direct-run sanity:
+  - case: mixed, `max_tokens=4`, warmup=1, repeat=1, `kvcache_block_size=1024`。
+  - eager token ids 与 graph token ids 完全一致。
+  - correctness: PASS。
+  - eager decode median `48.1290ms`，graph decode median `16.4824ms`，peak memory `27995.47MiB`。
+
+经验:
+
+- benchmark 脚本也是阶段交付的一部分，不能只验证 pytest；文档中的 benchmark 命令必须直接可执行。
+- 入口脚本放在 repo 包外时，需要显式处理 repo root import path，避免复现依赖调用者 shell 环境。
+
+剩余风险:
+
+- 这次修复只保证 benchmark 脚本入口可复现；性能优化本身仍按 P3-005/P3-006 的剩余风险处理。

@@ -1,6 +1,6 @@
 # Prism-Infer 项目路线图
 
-> 修订日期: 2026-06-21
+> 修订日期: 2026-06-25
 > 目标模型: Qwen3-VL-8B-Instruct
 > 项目目标: 自实现 Qwen3-VL 多模态推理引擎，并在可靠 FP baseline 上完成视觉 token KV Cache 分析与压缩研究。
 
@@ -19,13 +19,14 @@ Prism-Infer 的交付目标不是单个 demo，而是一套可验证、可复现
 | 领域 | 状态 | 说明 |
 |---|---|---|
 | 项目治理 | 已建立 | `CLAUDE.md` 和 `prism-infer-rigor` Codex plugin 已配置。 |
-| Vision Encoder | 已实现，需持续回归 | `prism_infer/vision/vision_encoder.py` 已存在，已有 PatchEmbed/ViT/DeepStack 相关测试。 |
+| Vision Encoder | 已实现，图文路径严格对齐 | `prism_infer/vision/vision_encoder.py` 已修复 P2-005；单图 processor 输入下 visual/layerwise/logits 已与 HF exact match。 |
 | M-RoPE | 已实现，需持续回归 | `prism_infer/vision/mrope.py` 已存在，已有 M-RoPE 测试。 |
 | Qwen3-VL Text Model | 纯文本 full logits 已严格对齐 | `prism_infer/models/qwen3_vl.py` 已存在，组件测试已建立。 |
-| 模块对齐套件 | PASS | 2026-06-21 重新验证: `20 passed in 82.17s`。后续改动必须重新跑。 |
-| Full logits | PASS | 2026-06-21 修复 P1-001 后，`tests/test_full_model.py` 输出 max diff `0.000000e+00`, mean diff `0.000000e+00`。 |
-| Engine 端到端 VL 推理 | 未完成 | 仍需完善图像输入、3D position_ids、Prefill/Decode 和 `LLM.generate` 接口。 |
-| KV Cache 分析与压缩 | 未开始 | 必须等图文端到端路径可靠后进入。 |
+| 模块对齐套件 | PASS | 2026-06-24 回归: P1 轻量 `10 passed in 74.68s`；P2 Gate + vision 回归 `24 passed in 48.49s`。后续改动必须重新跑。 |
+| Full logits | PASS | 纯文本 `tests/test_full_model.py` max diff `0.000000e+00`, mean diff `0.000000e+00`；图文 `tests/test_full_model_vl.py` last logits max diff `0.000000e+00`, mean diff `0.000000e+00`。 |
+| Engine 端到端 VL 推理 | 多模态 eager 与 CUDA Graph decode correctness 已完成 | P2 已跑通单图 `LLM.generate_vl` 1-token greedy HF exact match，并补齐单图图文 full logits/layerwise strict PASS；P3.1-P3.4 已补齐多图、视频、mixed batch、32-token 长输出和 logits/ppl 分布；P3.5 已补齐 VL CUDA Graph decode；P3.6 已接入自实现 Triton paged decode kernel。 |
+| VL Engine 完整性 | 已完成当前 P3 门禁 | P3.0-P3.7 已完成；多图、视频、mixed batch、32-token 长输出、logits/ppl 分布、VL CUDA Graph decode、paged decode kernel 和 P1/P2/P3 回归均有验证记录。 |
+| KV Cache 分析与压缩 | 未开始 | 必须等 P3 建立可靠多模态 engine baseline 后进入。 |
 
 ## 阶段门禁总览
 
@@ -33,11 +34,12 @@ Prism-Infer 的交付目标不是单个 demo，而是一套可验证、可复现
 |---|---|---|---|
 | P0 | 治理与基线 | 固化工程流程、验证入口和当前真实状态 | 文档、插件、验证命令可用，当前风险清楚 |
 | P1 | 模型地基严格对齐 | Vision/M-RoPE/Text/Full logits 对齐 | 纯文本 full logits 已 PASS；图文路径进入 P2 |
-| P2 | Engine 单图端到端推理 | 从 `LLM` 层接收图文输入并生成 | 单图 greedy tokens 与 HF 一致，纯文本不回归 |
-| P3 | KV Cache 分析 | 捕获和量化 visual token KV/attention 行为 | trace 可复现，输出分析报告 |
-| P4 | KV Cache 压缩策略 | 实现至少一个视觉 token 压缩策略 | 有压缩率、质量退化、显存/性能实测 |
-| P5 | 性能优化与扩展 | Triton/多卡/长序列优化 | correctness 不回归，benchmark 可复现 |
-| P6 | 项目交付 | README、技术报告、复现实验和投递材料 | 外部用户能按文档复现核心结果 |
+| P2 | Engine 单图端到端推理 | 从 `LLM` 层接收图文输入并生成 | 单图 greedy tokens、图文 last logits/layerwise 与 HF 一致，纯文本不回归 |
+| P3 | VL Engine 完整性与性能基线 | 补齐真实多模态推理必须具备的输入、batch、长输出和 decode 性能路径 | 多图/视频/batch/长输出/CUDA Graph/paged decode 均有 correctness 验证和明确 benchmark 基线 |
+| P4 | KV Cache 分析 | 捕获和量化 visual token KV/attention 行为 | trace 可复现，输出分析报告 |
+| P5 | KV Cache 压缩策略 | 实现至少一个视觉 token 压缩策略 | 有压缩率、质量退化、显存/性能实测 |
+| P6 | 性能优化与扩展 | torch.compile、Triton、自定义算子、多卡、长序列优化 | correctness 不回归，benchmark 可复现 |
+| P7 | 项目交付 | README、技术报告、复现实验和投递材料 | 外部用户能按文档复现核心结果 |
 
 每个阶段必须遵循:
 
@@ -98,7 +100,7 @@ Plan -> Implement -> Verify -> Teach -> Document -> Gate Review
 - P1 模块对齐套件: `20 passed in 82.17s`。
 - `tests/test_full_model.py`: PASS，logits max diff `0.000000e+00`, mean diff `0.000000e+00`。
 - P1-001 已记录在 `docs/ISSUE_LOG.md`，状态为 `Verified`。
-- 剩余风险: 以上 PASS 是纯文本 full logits；图文输入、视觉 token 替换、DeepStack 注入和端到端 generate 在 P2 验证。
+- 剩余风险: 以上 P1 PASS 是纯文本 full logits；图文输入、视觉 token 替换、DeepStack 注入和端到端 generate 已在 P2 单图 eager 范围验证。
 
 ### 主要验证
 
@@ -114,24 +116,153 @@ Plan -> Implement -> Verify -> Teach -> Document -> Gate Review
 
 - [x] P2.0 设计门禁: 明确单图 VL 数据流、关键风险、验证标准和不做范围，见 `docs/P2_ENGINE_VL_DESIGN.md`。
 - [x] P2.1 Processor pipeline: 建立 prompt + image 到 `input_ids` / `pixel_values` / `image_grid_thw` 的稳定入口，并说明 HF processor 作为非核心工具的使用理由。
-- [ ] P2.2 多模态 `Sequence`: 携带单图预处理结果、3D position ids / rope delta，并保证跨进程序列化不丢失必要字段。
-- [ ] P2.3 自实现 Qwen3-VL 3D position ids: 对齐 HF `get_rope_index` 的单图逻辑，输出 `[3, batch, seqlen]` position ids 和 rope delta。
-- [ ] P2.4 KV-aware Qwen3-VL attention + Prefill: 让 Qwen3-VL LLM attention 接入 engine KV cache，并把 VL payload 从 `ModelRunner.prepare_prefill` 传到模型 forward。
-- [ ] P2.5 Decode eager 对齐: decode 阶段不重复传图像，只用 last token、KV cache 和 rope delta 延续 position ids。
-- [ ] P2.6 Greedy sampler 和 `LLM.generate_vl`: 支持 deterministic greedy，用单图公开 API 对齐 HF tokens。
-- [ ] P2.7 P1/P2 回归和阶段 Review: 新增纯文本回归测试，更新问题记录和阶段状态。
+- [x] P2.2 多模态 `Sequence`: 携带单图预处理结果、3D position ids / rope delta，并保证跨进程序列化不丢失必要字段。
+- [x] P2.3 自实现 Qwen3-VL 3D position ids: 对齐 HF `get_rope_index` 的单图逻辑，输出 `[3, batch, seqlen]` position ids 和 rope delta。
+- [x] P2.4 KV-aware Qwen3-VL attention + Prefill: 让 Qwen3-VL LLM attention 接入 engine KV cache，并把 VL payload 从 `ModelRunner.prepare_prefill` 传到模型 forward。
+- [x] P2.5 Decode eager 对齐: decode 阶段不重复传图像，只用 last token、KV cache 和 rope delta 延续 position ids。
+- [x] P2.6 Greedy sampler 和 `LLM.generate_vl`: 支持 deterministic greedy，用单图公开 API 对齐 HF tokens。
+- [x] P2.7 P1/P2 回归和阶段 Review: 新增纯文本回归测试，更新问题记录和阶段状态。
+- [x] P2.8 图文 full logits 与 layerwise strict 对齐: 修复 VisionEncoder RoPE buffer 与 PatchMerger eps，补充 `tests/test_full_model_vl.py`、`tests/test_full_model_vl_layerwise_debug.py` 和 `tests/test_vision_rope_init.py`。
 
 ### 出口标准
 
 - 单图 prompt 能从 `LLM` 层跑通。
 - greedy `temperature=0` 输出 tokens 与 HF 一致。
+- 单图图文 last logits 与 HF 对齐，max diff `< 1e-2`；当前 strict 结果为 `0.000000e+00`。
+- full-model layerwise debug 中 visual、embedding、M-RoPE、LLM layers、final norm、logits 均无非零差异。
 - 纯文本 prompt 不回归。
 - Qwen3-VL attention 必须在 engine prefill/decode 中正确写入和读取 KV cache；仅把图像字段传入模型 forward 不能算 P2 完成。
-- 当前 P2 第一版以 `enforce_eager=True` 完成 correctness；VL CUDA Graph decode 未验证前必须列为风险。
-- 多图、视频、batch 混合图文不属于 P2 完成范围；未实现时必须显式报错或在文档中标为未支持。
+- P2 第一版当时以 `enforce_eager=True` 完成 correctness；P3.5 已补齐 VL CUDA Graph decode。
+- 多图、视频、batch 混合图文不属于 P2 完成范围；这些能力已在 P3.1-P3.3 补齐。
 - 若 P1 full logits 未 strict PASS，P2 不能宣称严格精度完成，只能作为功能 smoke。
 
-## P3: KV Cache 分析
+### 当前验证结果
+
+- P2 Gate + vision 回归测试: `24 passed in 48.49s`。
+- `LLM.generate_vl` 单图 1-token greedy HF 对齐: HF token ids `[785]`，Prism token ids `[785]`。
+- 图文 full logits: `tests/test_full_model_vl.py` PASS，HF/Prism shape `[1, 151936]`，max diff `0.000000e+00`，mean diff `0.000000e+00`。
+- 图文 full-model layerwise: `visual/embed/rope/layer_00...layer_35/final_norm/logits` max diff 均为 `0.000000e+00`。
+- Vision RoPE 初始化回归: `tests/test_vision_rope_init.py` `2 passed in 8.71s`，`inv_freq/freq_table/rot_pos_emb` max diff 均为 `0.000000e+00`。
+- Qwen3-VL engine attention prefill: output max diff `0.000000e+00`，KV cache max diff `0.000000e+00`。
+- Qwen3-VL engine attention decode paged KV fallback: output max diff `0.000000e+00`。
+- `ModelRunner.prepare_prefill`: 单图输入 `input_ids=[210]`、`position_ids=[3, 210]`、`pixel_values=[784, 1536]`、`image_grid_thw=[1, 3]`。
+- `ModelRunner.prepare_decode`: decode 不传 `pixel_values/image_grid_thw`，使用 `rope_delta` 生成 `[3, 1]` position ids。
+- 纯文本 engine greedy smoke: output token ids `[785]`。
+- P1 轻量回归: `10 passed in 74.68s`。
+- P1 full logits 回归: PASS，max diff `0.000000e+00`，mean diff `0.000000e+00`。
+- P2 当前状态: 单图、单请求、`enforce_eager=True` correctness 与 strict 图文对齐门禁已完成。
+- P2 阶段外能力已在 P3 补齐多图、视频、mixed batch、32-token 长输出、logits/ppl 分布、VL CUDA Graph decode 和 paged decode kernel；仍未支持 prefix-cache/chunked-prefill VL mixed batch，P3 kernel 也只是 baseline kernel。
+
+## P3: VL Engine 完整性与性能基线
+
+### 目标
+
+P2 只证明单图、单请求、`enforce_eager=True` 的 correctness。P3 要把 Prism-Infer 从“可以跑通单图 forward/generate”推进到“具备真实多模态推理框架的核心能力”，覆盖:
+
+- 多图输入: 一条请求包含多张图片。
+- 视频输入: 一条请求包含视频帧/视频 grid。
+- batch 混合图文: 同一 prefill/decode batch 中混合 text-only、单图、多图、视频请求。
+- 长输出多 token 质量评估: 不只验证 1-token greedy，而是验证多 token greedy、logits 分布和质量指标。
+- VL CUDA Graph decode: 在 `enforce_eager=False` 下验证 VL decode graph capture/replay correctness。
+- 高性能 paged decode kernel: 替换当前 correctness eager fallback，建立可对比的 paged decode kernel 和 benchmark。
+
+### 当前阻断证据
+
+| 能力 | 当前限制 | 证据 |
+|---|---|---|
+| 多图输入 | P3.1 已解除单请求多图 eager correctness 阻断；P3.3/P3.5 已补齐 mixed batch 与 CUDA Graph decode correctness。 | `prism_infer/engine/vl_inputs.py`, `prism_infer/vision/vision_encoder.py`, `tests/test_full_model_vl_multi_image.py`, `tests/test_llm_vl_generate.py`, `tests/test_llm_vl_mixed_batch_generate.py`, `tests/test_llm_vl_cuda_graph_decode.py` |
+| 视频输入 | P3.2 已解除单请求 synthetic video eager correctness 阻断；P3.3/P3.5 已补齐 mixed batch 与 CUDA Graph decode correctness；真实视频文件读取/采样策略仍未覆盖。 | `prism_infer/engine/vl_inputs.py`, `prism_infer/models/qwen3_vl_position.py`, `prism_infer/models/qwen3_vl.py`, `tests/test_full_model_vl_video.py`, `tests/test_llm_vl_generate.py`, `tests/test_llm_vl_mixed_batch_generate.py`, `tests/test_llm_vl_cuda_graph_decode.py` |
+| batch 混合图文 | P3.3 已解除 non-prefix mixed batch correctness 阻断，P3.5 已覆盖 CUDA Graph mixed batch；当前仍未覆盖 prefix-cache/chunked-prefill VL mixed batch。 | `prism_infer/engine/model_runner.py`, `tests/test_model_runner_vl_mixed_prefill.py`, `tests/test_llm_vl_mixed_batch_generate.py`, `tests/test_llm_vl_cuda_graph_decode.py` |
+| 长输出质量 | P3.4 已覆盖单图/多图/视频 8/16/32-token HF greedy exact、32-token logits/ppl 分布、mixed batch VL rows 32-token 等价；text-only mixed 32-token 分叉已证明为 HF/Prism 共有 batch-size 数值敏感性。 | `tests/test_llm_vl_long_generate.py`, `tests/test_llm_vl_mixed_batch_generate.py`, `tests/test_vl_logits_distribution.py`, `tests/test_batch_numeric_sensitivity.py` |
+| VL CUDA Graph decode | P3.5 已解除阻断；`enforce_eager=False` 下 single-image/multi-image/video/mixed batch token ids 与 eager 对齐。 | `prism_infer/engine/model_runner.py`, `prism_infer/engine/llm_engine.py`, `tests/test_llm_vl_cuda_graph_decode.py`, `tests/test_model_runner_vl_cudagraph.py` |
+| 高性能 paged decode | P3.6 已接入自实现 Triton paged decode kernel；保留 PyTorch SDPA eager reference。 | `prism_infer/ops/paged_decode.py`, `prism_infer/layers/attention.py`, `tests/test_paged_decode_kernel.py`, `benchmarks/bench_paged_decode.py` |
+
+### 小任务
+
+- [x] P3.0 设计门禁: 固化 VL 通用输入数据结构、batch 语义、position ids 语义、decode graph 约束、paged kernel 接口和 benchmark 输入集合。
+- [x] P3.1 多图输入 correctness:
+  - 将 `SingleImageInputs` 泛化为 image/video 可扩展的 `VLInputs` 或等价结构。
+  - 支持一条请求包含多张图片，`image_grid_thw=[num_images,3]`。
+  - 验证 processor 输出、image token 数、position_ids/rope_delta、full logits 和 `LLM` 入口 greedy tokens 均与 HF 对齐。
+- [x] P3.2 视频输入 correctness:
+  - 调查并实现 `video_grid_thw`、video token span、视频 position ids/rope_delta。
+  - 支持最小可复现 synthetic video 或本地固定视频样例，不依赖网络下载。
+  - 验证 processor、position ids、vision/video embeddings、full logits 和 1-token greedy。
+- [x] P3.3 batch 混合图文 correctness:
+  - 支持同一批次中混合 text-only、single-image、multi-image、video 请求。
+  - 放开 `ModelRunner.prepare_prefill/prepare_decode` 中的单 VL sequence 限制。
+  - 验证每条请求的输出与单请求独立运行一致，并验证 batch flatten attention/KV slot mapping 不串扰。
+- [x] P3.4 长输出多 token 质量评估:
+  - 建立 `max_tokens=8/16/32` greedy exact token 对齐。
+  - 建立 logits 分布或 perplexity 检查，记录 shape、max diff、mean/std、PASS/FAIL。
+  - 为非 greedy 采样模式记录可复现 seed、分布指标和质量样例，不把随机文本一致性作为 PASS。
+- [x] P3.5 VL CUDA Graph decode:
+  - 让 VL decode 的 3D position ids 和 `rope_delta` 能进入 graph replay。
+  - `enforce_eager=False` 下验证单图、多图和 mixed batch decode 输出与 eager 完全一致或达到同精度阈值。
+  - 建立 graph capture/replay 的 latency benchmark。
+- [x] P3.6 高性能 paged decode kernel:
+  - 保留当前 eager fallback 作为 correctness reference。
+  - 实现或接入项目自有 paged decode kernel 接口，优先覆盖 Qwen3-VL decode 的 GQA、block table、context_lens。
+  - correctness 先对齐 eager fallback，再做 latency/token/s benchmark。
+- [x] P3.7 阶段 Review:
+  - 跑 P1/P2/P3 回归，更新 `docs/VERIFICATION.md`、`docs/ISSUE_LOG.md` 和性能基线日志。
+  - 未完成项必须列为风险，不能并入 “VL engine 完成” 声明。
+
+### 出口标准
+
+- 多图、视频、batch 混合图文均能从公开 `LLM` 入口运行。
+- 每类输入至少有 processor/position ids/full logits/greedy generate 四层验证。
+- 长输出多 token greedy 与 HF token ids 完全一致；分布或 perplexity 指标达到 `docs/VERIFICATION.md` 门槛。
+- `enforce_eager=False` 的 VL CUDA Graph decode correctness PASS，并有 eager vs graph benchmark。
+- 高性能 paged decode kernel correctness PASS，并有 eager fallback vs kernel benchmark。
+- P1/P2 单图和纯文本回归不退化。
+- 所有性能数字必须来自同一 commit、同一硬件、同一输入条件的实测日志。
+
+### 当前状态
+
+- P3.0 设计门禁已完成，见 `docs/P3_VL_ENGINE_COMPLETENESS.md`。
+- P3.1 多图输入 correctness 已完成:
+  - `prepare_image_inputs` 支持单图或多图 list/tuple，`image_grid_thw=[num_images,3]`。
+  - 多图 processor 输出、`position_ids/rope_delta` 与 HF exact match。
+  - 多图图文 full logits strict PASS，HF/Prism shape `[1, 151936]`，max diff `0.000000e+00`，mean diff `0.000000e+00`。
+  - `LLM.generate_vl` 多图 1-token greedy 与 HF token ids 完全一致，当前样例均为 `[785]`。
+  - P2/P3.1 组合回归已有 `30 passed` 记录。
+- P3.2 视频输入 correctness 已完成:
+  - synthetic video processor 输出 `input_ids=[1,420]`、`pixel_values_videos=[1568,1536]`、`video_grid_thw=[[2,28,28]]`、video tokens `392 / 392`。
+  - 视频 `position_ids/rope_delta` 与 HF exact match，max diff `0.000000e+00`。
+  - 视频 full logits strict PASS，HF/Prism shape `[1,151936]`，max diff `0.000000e+00`，mean diff `0.000000e+00`。
+  - `LLM.generate_video` 1-token greedy 与 HF token ids 完全一致，当前样例均为 `[785]`。
+- P3.3 batch 混合图文 correctness 已完成:
+  - `ModelRunner.prepare_prefill` 支持 text-only + single-image + multi-image + video 同批，统一输出 `position_ids=[3,total_tokens]`。
+  - mixed prefill 样例输出 `input_ids=[1043]`、`position_ids=[3,1043]`、`pixel_values=[2352,1536]`、`image_grid_thw=[3,3]`、`pixel_values_videos=[1568,1536]`、`video_grid_thw=[1,3]`。
+  - mixed decode 样例输出 `input_ids=[3]`、`position_ids=[3,3]`、`context_lens=[6,211,421]`。
+  - `LLM.generate_mixed` 在 text/single-image/multi-image/video batch 中 1-token greedy 与 fresh 单请求独立运行完全一致，token ids 为 `[[11], [785], [785], [785]]`。
+- P3.4 长输出多 token 质量评估已完成:
+  - 单图/多图/视频 `max_tokens=32` HF greedy exact，prefix@8/16/32 全部 match。
+  - 单图/多图/视频 teacher-forced logits shape `[1,32,151936]`，max diff `0.000000e+00`，mean diff `0.000000e+00`，ppl diff `0.000000e+00`。
+  - mixed batch VL rows 32-token 输出与 fresh 单请求独立运行一致。
+  - mixed batch text-only row 32-token 分叉来自 bf16 batch-size 数值敏感性；HF 与 Prism duplicate batch max/mean diff 均为 `5.312500e-01 / 1.473503e-01`。
+- P3.5 VL CUDA Graph decode 已完成:
+  - `ModelRunner` graph replay 的 decode `position_ids` 统一规范为 `[3,batch]`。
+  - `enforce_eager=False` 下 single-image/multi-image/video `max_tokens=2` 与 eager token ids 完全一致。
+  - mixed batch=3 命中非标准 graph batch 档位，token ids 与 eager 完全一致: `[[11, 358], [785, 1378], [785, 2766]]`。
+  - mixed VL graph benchmark: commit `45edd3a`，RTX 5090，`max_tokens=8`，warmup=2，repeat=5；eager decode median `31.5488ms`，graph decode median `16.4468ms`，correctness PASS。
+- P3.6 高性能 paged decode kernel 已完成当前基线:
+  - 新增自实现 Triton kernel `prism_infer/ops/paged_decode.py`，支持 Qwen3-VL GQA、paged KV cache、block table 和 context lens。
+  - correctness 覆盖小 GQA shape 与 Qwen shape；Qwen shape `q=[2,8,128]` max diff `7.812500e-03`，mean diff `2.812790e-04`，PASS。
+  - benchmark 覆盖 batch `1,2,4,8` 与 context `256,1024,4096`，12 个 case 全部 correctness PASS。
+  - 性能风险: batch=1/context=4096 下 kernel median `0.2834ms` 慢于 reference `0.2314ms`；batch>=2 和多数场景 kernel 明显快于 reference。
+- P3.7 阶段 Review 已完成:
+  - `compileall prism_infer tests benchmarks`: PASS。
+  - `git diff --check`: PASS。
+  - P1/P2/P3 grouped regression: `49 passed in 356.34s`。
+  - 纯文本 full logits: HF/Prism shape `[1,64,151936]`，max diff `0.000000e+00`，mean diff `0.000000e+00`。
+  - 单图 VL full logits: HF/Prism shape `[1,151936]`，max diff `0.000000e+00`，mean diff `0.000000e+00`。
+  - 多图 VL full logits: HF/Prism shape `[1,151936]`，max diff `0.000000e+00`，mean diff `0.000000e+00`。
+  - 视频 VL full logits: HF/Prism shape `[1,151936]`，max diff `0.000000e+00`，mean diff `0.000000e+00`。
+- 在 P3.1-P3.4 完成前，不进入 KV Cache 压缩；否则压缩研究会建立在不完整的多模态 baseline 上。
+
+## P4: KV Cache 分析
 
 ### 目标
 
@@ -152,7 +283,7 @@ Plan -> Implement -> Verify -> Teach -> Document -> Gate Review
 - 至少覆盖单图描述、细节问答、多图或长上下文中的 3 类输入。
 - 输出 `docs/KV_ANALYSIS_REPORT.md`，明确压缩假设。
 
-## P4: KV Cache 压缩策略
+## P5: KV Cache 压缩策略
 
 ### 目标
 
@@ -174,18 +305,20 @@ Plan -> Implement -> Verify -> Teach -> Document -> Gate Review
 - 至少一个策略在指定场景下显示可测收益。
 - 输出 `docs/COMPRESSION_REPORT.md` 和原始 benchmark 日志。
 
-## P5: 性能优化与扩展
+## P6: 性能优化与扩展
 
 ### 目标
 
-在 correctness 不回归的前提下推进 Triton kernel、多卡 TP、长序列压力测试和工程性能优化。
+在 correctness 不回归的前提下推进 torch.compile、Triton kernel、多卡 TP、长序列压力测试和工程性能优化。P3 的 paged decode kernel 属于 decode 核心路径基线；P6 在此基础上继续做全系统优化和与 vLLM/SGLang 的同条件对比。
 
 ### 小任务
 
 - [ ] 标准化 `bench.py` 参数和输出格式。
 - [ ] 建立 4070 / 4090 / 5090 三档硬件的 benchmark 记录模板。
+- [ ] 建立与 vLLM/SGLang 对比前的证据清单: 版本、commit、启动参数、输入集合、warmup/repeat、显存限制和采样配置。
 - [ ] 只针对已定位瓶颈实现 Triton/CUDA 优化。
 - [ ] 每个自定义 kernel 都有 correctness test 和 benchmark。
+- [ ] 评估 `torch.compile` 对 prefill/decode/vision encoder 的收益和 graph break 风险。
 - [ ] 设计并验证 2 卡 TP 路径。
 - [ ] 跑长序列和多图压力测试。
 
@@ -196,7 +329,7 @@ Plan -> Implement -> Verify -> Teach -> Document -> Gate Review
 - 单卡/多卡输出一致性验证通过。
 - 输出 `docs/PERFORMANCE_REPORT.md`。
 
-## P6: 项目交付
+## P7: 项目交付
 
 ### 目标
 
@@ -220,8 +353,8 @@ Plan -> Implement -> Verify -> Teach -> Document -> Gate Review
 
 当前应优先执行:
 
-1. P2.2/P2.3: 扩展 `Sequence` 并实现单图 3D position ids / rope delta。
-2. P2.4/P2.5: 接入 KV-aware attention、prefill 和 eager decode。
-3. P2.6/P2.7: 打通 `LLM.generate_vl` greedy tokens 对齐，并跑 P1/P2 回归。
+1. P4.0: 设计 KV Cache trace schema、开关位置和不改变输出的验证门禁。
+2. P4.1: 实现 attention/KV trace on/off，先证明 trace 开启不改变 greedy 输出。
+3. P4.2: 建立 visual token attention/KV 行为统计和报告样例。
 
-在 P2 图文端到端 greedy tokens 未达标前，不进入 KV Cache 压缩实现。
+P3 已建立可用的多模态 FP baseline 和 decode 性能基线；进入 P4 后仍不能直接声称超越 vLLM/SGLang。对比前必须另建同条件 benchmark 设计，记录对方版本/commit、启动参数、输入集合、warmup/repeat、显存限制和采样配置。

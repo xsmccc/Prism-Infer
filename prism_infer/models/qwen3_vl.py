@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from prism_infer.layers.attention import Attention
+from prism_infer.utils.context import get_context
 from prism_infer.vision.vision_encoder import VisionEncoder
 from prism_infer.vision.mrope import MRope, apply_mrope
 
@@ -91,10 +93,14 @@ class Qwen3VLTextAttention(nn.Module):
 
         self.q_norm = Qwen3VLTextRMSNorm(head_dim, dtype=dtype)
         self.k_norm = Qwen3VLTextRMSNorm(head_dim, dtype=dtype)
+        self.engine_attn = Attention(num_heads, head_dim, self.scale, num_kv_heads)
 
     def forward(self, hidden_states: torch.Tensor,
                 position_embeddings: tuple | None = None,
                 attention_mask: torch.Tensor | None = None) -> torch.Tensor:
+        if hidden_states.ndim == 2:
+            return self._forward_engine(hidden_states, position_embeddings)
+
         bsz, q_len, _ = hidden_states.shape
 
         q = self.q_proj(hidden_states)
@@ -130,6 +136,50 @@ class Qwen3VLTextAttention(nn.Module):
 
         o = o.transpose(1, 2).contiguous().reshape(bsz, q_len, -1).contiguous()
         return self.o_proj(o)
+
+    def _forward_engine(self, hidden_states: torch.Tensor,
+                        position_embeddings: tuple | None = None) -> torch.Tensor:
+        """engine flatten 路径: [num_tokens, hidden] -> [num_tokens, hidden]."""
+
+        num_tokens = hidden_states.shape[0]
+        q = self.q_proj(hidden_states).view(num_tokens, self.num_heads, self.head_dim)
+        k = self.k_proj(hidden_states).view(num_tokens, self.num_kv_heads, self.head_dim)
+        v = self.v_proj(hidden_states).view(num_tokens, self.num_kv_heads, self.head_dim)
+
+        q = self.q_norm(q)
+        k = self.k_norm(k)
+
+        if position_embeddings is not None:
+            cos, sin = position_embeddings
+            q, k = self._apply_mrope_engine(q, k, cos, sin)
+
+        o = self.engine_attn(q, k, v)
+        o = o.contiguous().reshape(num_tokens, -1)
+        return self.o_proj(o)
+
+    @staticmethod
+    def _apply_mrope_engine(q: torch.Tensor, k: torch.Tensor,
+                            cos: torch.Tensor, sin: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """把 M-RoPE 应用到 engine flatten q/k。
+
+        q: [num_tokens, num_heads, head_dim]
+        k: [num_tokens, num_kv_heads, head_dim]
+        cos/sin: [1, num_tokens, head_dim] or [num_tokens, head_dim]
+        """
+
+        if cos.ndim == 3:
+            if cos.shape[0] != 1:
+                raise ValueError(f"engine M-RoPE expects batch=1 cos/sin, got {list(cos.shape)}")
+            cos = cos.squeeze(0)
+            sin = sin.squeeze(0)
+        if cos.ndim != 2:
+            raise ValueError(f"engine M-RoPE expects cos/sin [num_tokens, head_dim], got {list(cos.shape)}")
+
+        cos = cos.unsqueeze(1)
+        sin = sin.unsqueeze(1)
+        q = q * cos + torch.cat((-q[..., q.shape[-1] // 2:], q[..., :q.shape[-1] // 2]), dim=-1) * sin
+        k = k * cos + torch.cat((-k[..., k.shape[-1] // 2:], k[..., :k.shape[-1] // 2]), dim=-1) * sin
+        return q, k
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -266,10 +316,18 @@ class Qwen3VLTextModel(nn.Module):
         # 自动计算 M-RoPE position embeddings (参照 HF L819-L820)
         if position_embeddings is None:
             if position_ids is None:
-                seqlen = hidden_states.shape[1]
                 device = hidden_states.device
-                # 纯文本: [1, seqlen] position_ids
-                position_ids = torch.arange(seqlen, device=device).unsqueeze(0)
+                if hidden_states.ndim == 2:
+                    # engine flatten: [num_tokens, hidden]
+                    position_ids = torch.arange(hidden_states.shape[0], device=device)
+                else:
+                    seqlen = hidden_states.shape[1]
+                    # full-sequence: [batch, seqlen]
+                    position_ids = torch.arange(seqlen, device=device).unsqueeze(0)
+            elif hidden_states.ndim == 2 and position_ids.ndim == 2 and position_ids.shape[0] == 3:
+                # engine flatten VL: [3, num_tokens] 明确视为单个 flatten 序列，
+                # 避免 num_tokens == 3 时被 MRope 误判为 [batch, seqlen]。
+                position_ids = position_ids[:, None, :]
             position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
         for layer_idx, layer in enumerate(self.layers):
@@ -334,35 +392,55 @@ class Qwen3VLModel(nn.Module):
         # <|image_pad|> token ID (HF config.image_token_id)
         self.image_token_id = _cfg_get(config, "image_token_id",
                                        default=151655)
+        self.video_token_id = _cfg_get(config, "video_token_id",
+                                       default=151656)
+
+    def _encode_visual_payload(
+        self,
+        pixel_values: torch.Tensor,
+        grid_thw: torch.Tensor,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        """用自实现 VisionEncoder 编码 image/video patch payload。"""
+
+        main_vis, deepstack_vis = self.visual(pixel_values, grid_thw)
+        return main_vis, deepstack_vis
 
     def forward(self, input_ids: torch.Tensor,
                 pixel_values: torch.Tensor | None = None,
                 image_grid_thw: torch.Tensor | None = None,
+                pixel_values_videos: torch.Tensor | None = None,
+                video_grid_thw: torch.Tensor | None = None,
                 position_embeddings: tuple | None = None,
                 attention_mask: torch.Tensor | None = None,
                 position_ids: torch.Tensor | None = None) -> torch.Tensor:
         """
         input_ids: [batch, seqlen]
-        pixel_values: [N_patches, 1536] or None
+        pixel_values: [N_image_patches, 1536] or None
         image_grid_thw: [[T, H, W]] or None
+        pixel_values_videos: [N_video_patches, 1536] or None
+        video_grid_thw: [[T, H, W]] or None
         """
         # 1. 文本 embedding
         inputs_embeds = self.language_model.embed_tokens(input_ids)
 
-        visual_pos_masks = None
-        deepstack_visual_embeds = None
+        visual_masks: list[torch.Tensor] = []
+        deepstack_by_modality: list[list[torch.Tensor]] = []
 
         # 2. Vision encoding + 特征注入 (参照 HF L1191-L1237)
         if pixel_values is not None and image_grid_thw is not None:
-            main_vis, deepstack_vis = self.visual(pixel_values, image_grid_thw)
+            main_vis, deepstack_vis = self._encode_visual_payload(
+                pixel_values,
+                image_grid_thw,
+            )
             # main_vis: [N_vis, 4096], deepstack_vis: list of 3 × [N_vis, 4096]
+            main_vis = main_vis.to(inputs_embeds.device, inputs_embeds.dtype)
 
             # 找到视觉 token 占位符位置 (HF L1091: input_ids == image_token_id)
-            visual_pos_masks_2d = (input_ids == self.image_token_id)  # [batch, seqlen]
-            visual_pos_masks = visual_pos_masks_2d.unsqueeze(-1)      # [batch, seqlen, 1]
+            visual_pos_masks_base = (input_ids == self.image_token_id)
+            visual_pos_masks = visual_pos_masks_base.unsqueeze(-1).expand_as(inputs_embeds)
 
             # 验证 token 数量匹配 (参照 HF L1097-L1099)
-            n_vis_tokens = visual_pos_masks_2d.sum().item()
+            n_vis_tokens = visual_pos_masks_base.sum().item()
             expected_elements = n_vis_tokens * inputs_embeds.shape[-1]
             actual_elements = main_vis.numel()
             if expected_elements != actual_elements:
@@ -378,9 +456,57 @@ class Qwen3VLModel(nn.Module):
             inputs_embeds = inputs_embeds.masked_scatter(
                 visual_pos_masks.to(inputs_embeds.device), main_vis)
 
-            deepstack_visual_embeds = deepstack_vis
-            # visual_pos_masks 转回 2D 给 _deepstack_process 使用
-            visual_pos_masks = visual_pos_masks_2d
+            visual_masks.append(visual_pos_masks_base)
+            deepstack_by_modality.append(deepstack_vis)
+
+        if pixel_values_videos is not None and video_grid_thw is not None:
+            video_vis, deepstack_video = self._encode_visual_payload(
+                pixel_values_videos,
+                video_grid_thw,
+            )
+            video_vis = video_vis.to(inputs_embeds.device, inputs_embeds.dtype)
+
+            video_pos_masks_base = (input_ids == self.video_token_id)
+            video_pos_masks = video_pos_masks_base.unsqueeze(-1).expand_as(inputs_embeds)
+            n_video_tokens = video_pos_masks_base.sum().item()
+            expected_elements = n_video_tokens * inputs_embeds.shape[-1]
+            actual_elements = video_vis.numel()
+            if expected_elements != actual_elements:
+                raise ValueError(
+                    f"视频 token 数量不匹配: input 中有 {n_video_tokens} 个 "
+                    f"<|video_pad|> ({n_video_tokens}×{inputs_embeds.shape[-1]}"
+                    f"={expected_elements} elements), "
+                    f"但 Vision Encoder 输出 {video_vis.shape[0]} 个 token "
+                    f"({actual_elements} elements)"
+                )
+
+            inputs_embeds = inputs_embeds.masked_scatter(
+                video_pos_masks.to(inputs_embeds.device), video_vis)
+
+            visual_masks.append(video_pos_masks_base)
+            deepstack_by_modality.append(deepstack_video)
+
+        visual_pos_masks = None
+        deepstack_visual_embeds = None
+        if visual_masks:
+            visual_pos_masks = visual_masks[0]
+            for mask in visual_masks[1:]:
+                visual_pos_masks = visual_pos_masks | mask
+            if len(deepstack_by_modality) == 1:
+                deepstack_visual_embeds = deepstack_by_modality[0]
+            else:
+                deepstack_visual_embeds = []
+                for layer_embeds in zip(*deepstack_by_modality):
+                    joint = layer_embeds[0].new_zeros(
+                        visual_pos_masks.sum(),
+                        layer_embeds[0].shape[-1],
+                    )
+                    offset = 0
+                    for mask, embeds in zip(visual_masks, layer_embeds):
+                        modality_mask = mask[visual_pos_masks]
+                        joint[modality_mask, :] = embeds.to(joint.device, joint.dtype)
+                        offset += embeds.shape[0]
+                    deepstack_visual_embeds.append(joint)
 
         # 3. LLM forward (DeepStack 注入在 Qwen3VLTextModel.forward 内部)
         hidden_states = self.language_model(
@@ -427,15 +553,23 @@ class Qwen3VLForCausalLM(nn.Module):
     def forward(self, input_ids: torch.Tensor,
                 pixel_values: torch.Tensor | None = None,
                 image_grid_thw: torch.Tensor | None = None,
+                pixel_values_videos: torch.Tensor | None = None,
+                video_grid_thw: torch.Tensor | None = None,
                 position_embeddings: tuple | None = None,
                 attention_mask: torch.Tensor | None = None,
                 position_ids: torch.Tensor | None = None) -> torch.Tensor:
         return self.model(input_ids=input_ids,
                           pixel_values=pixel_values,
                           image_grid_thw=image_grid_thw,
+                          pixel_values_videos=pixel_values_videos,
+                          video_grid_thw=video_grid_thw,
                           position_embeddings=position_embeddings,
                           attention_mask=attention_mask,
                           position_ids=position_ids)
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        if hidden_states.ndim == 2:
+            context = get_context()
+            if context.is_prefill and context.cu_seqlens_q is not None:
+                hidden_states = hidden_states[context.cu_seqlens_q[1:] - 1].contiguous()
         return self.lm_head(hidden_states)

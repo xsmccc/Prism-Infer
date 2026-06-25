@@ -9,5 +9,7 @@ class SamplingParams:
     ignore_eos: bool = False        # True=遇到EOS也不停, 继续生成到max_tokens(benchmark用)
 
     def __post_init__(self):
-        # 禁止temperature≈0(贪心采样需要argmax, nano-vllm简化省去了)
-        assert self.temperature > 1e-10, "greedy sampling is not permitted"
+        if self.temperature < 0:
+            raise ValueError("temperature must be non-negative")
+        if self.max_tokens <= 0:
+            raise ValueError("max_tokens must be positive")

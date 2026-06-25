@@ -2,6 +2,10 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from prism_infer.ops.paged_decode import (
+    HAS_TRITON as HAS_PAGED_DECODE_TRITON,
+    paged_decode_attention,
+)
 from prism_infer.utils.context import get_context
 
 # flash_attn 和 triton 是可选依赖: 有 GPU 时手动安装
@@ -96,7 +100,10 @@ class Attention(nn.Module):
 
         if context.is_prefill:
             if context.block_tables is not None:
-                k, v = k_cache, v_cache
+                raise RuntimeError(
+                    "paged prefix-cache prefill is not supported by the local "
+                    "flash_attn_varlen_func signature"
+                )
             if HAS_FLASH_ATTN:
                 o = flash_attn_varlen_func(
                     q, k, v,
@@ -105,18 +112,87 @@ class Attention(nn.Module):
                     max_seqlen_k=context.max_seqlen_k,
                     cu_seqlens_k=context.cu_seqlens_k,
                     softmax_scale=self.scale, causal=True,
-                    block_table=context.block_tables)
+                )
             else:
                 o = F.scaled_dot_product_attention(
                     q, k, v, is_causal=True, scale=self.scale)
         else:
-            if HAS_FLASH_ATTN and q.is_cuda:
+            if HAS_FLASH_ATTN and q.is_cuda and context.block_tables is None:
                 o = flash_attn_with_kvcache(
                     q.unsqueeze(1), k_cache, v_cache,
                     cache_seqlens=context.context_lens,
-                    block_table=context.block_tables,
                     softmax_scale=self.scale, causal=True)
+            elif context.block_tables is not None:
+                if HAS_PAGED_DECODE_TRITON and q.is_cuda:
+                    o = paged_decode_attention(
+                        q,
+                        k_cache,
+                        v_cache,
+                        context.block_tables,
+                        context.context_lens,
+                        self.scale,
+                    )
+                else:
+                    o = self._forward_decode_eager(q, k_cache, v_cache, context)
             else:
                 o = F.scaled_dot_product_attention(
                     q, k, v, is_causal=True, scale=self.scale)
         return o
+
+    def _forward_decode_eager(
+        self,
+        q: torch.Tensor,
+        k_cache: torch.Tensor,
+        v_cache: torch.Tensor,
+        context,
+    ) -> torch.Tensor:
+        """Decode fallback: 从 paged KV cache 收集历史 token 后做单步 SDPA。
+
+        q: [batch, num_heads, head_dim]
+        k_cache/v_cache: [num_blocks, block_size, num_kv_heads, head_dim]
+        返回: [batch, num_heads, head_dim]
+        """
+
+        if context.block_tables is None or context.context_lens is None:
+            return F.scaled_dot_product_attention(
+                q, q.new_empty(0), q.new_empty(0), is_causal=True, scale=self.scale)
+
+        outputs = []
+        block_size = k_cache.shape[1]
+        for seq_idx in range(q.shape[0]):
+            context_len = int(context.context_lens[seq_idx].item())
+            block_ids = context.block_tables[seq_idx]
+            pieces_k = []
+            pieces_v = []
+            remaining = context_len
+            for block_id in block_ids.tolist():
+                if remaining <= 0:
+                    break
+                if block_id < 0:
+                    break
+                take = min(block_size, remaining)
+                pieces_k.append(k_cache[block_id, :take])
+                pieces_v.append(v_cache[block_id, :take])
+                remaining -= take
+            if remaining != 0 or not pieces_k:
+                raise RuntimeError(
+                    "invalid decode block table for paged KV fallback: "
+                    f"context_len={context_len}, remaining={remaining}"
+                )
+
+            keys = torch.cat(pieces_k, dim=0)
+            values = torch.cat(pieces_v, dim=0)
+            if self.num_heads != self.num_kv_heads:
+                groups = self.num_heads // self.num_kv_heads
+                keys = keys.repeat_interleave(groups, dim=1)
+                values = values.repeat_interleave(groups, dim=1)
+
+            # q_i: [1, heads, 1, dim], keys/values: [1, heads, context_len, dim]
+            q_i = q[seq_idx].unsqueeze(0).unsqueeze(2)
+            k_i = keys.transpose(0, 1).unsqueeze(0)
+            v_i = values.transpose(0, 1).unsqueeze(0)
+            out_i = F.scaled_dot_product_attention(
+                q_i, k_i, v_i, is_causal=False, scale=self.scale)
+            outputs.append(out_i.squeeze(0).squeeze(1))
+
+        return torch.stack(outputs, dim=0)

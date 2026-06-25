@@ -8,8 +8,14 @@ import torch.multiprocessing as mp      # PyTorch多进程模块(比标准multip
 from prism_infer.config import Config
 from prism_infer.sampling_params import SamplingParams
 from prism_infer.engine.sequence import Sequence
+from prism_infer.engine.vl_inputs import (
+    load_vl_processor,
+    prepare_image_inputs,
+    prepare_video_inputs,
+)
 from prism_infer.engine.scheduler import Scheduler
 from prism_infer.engine.model_runner import ModelRunner
+from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 
 
 class LLMEngine:
@@ -39,23 +45,92 @@ class LLMEngine:
 
         # --- Tokenizer + Scheduler ---
         self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)  # 分词器(只在主进程)
+        self.vl_processor = load_vl_processor(config.model) if self.model_runner.is_vl_model else None
+        self.config = config
         config.eos = self.tokenizer.eos_token_id  # 从tokenizer获取EOS token id(Config创建时还不知道)
         self.scheduler = Scheduler(config)  # 调度器
         atexit.register(self.exit)  # 注册退出清理函数(类似RAII析构+atexit)
 
     def exit(self):
         """清理: 通知子进程退出, 释放GPU资源, 等待子进程结束"""
-        self.model_runner.call("exit")  # 通过IPC通知所有子进程退出无限循环
-        del self.model_runner            # 释放主进程的ModelRunner(含GPU资源)
-        for p in self.ps:
+        if getattr(self, "_exited", False):
+            return
+        self._exited = True
+        model_runner = getattr(self, "model_runner", None)
+        if model_runner is not None:
+            model_runner.call("exit")  # 通过IPC通知所有子进程退出无限循环
+            del self.model_runner      # 释放主进程的ModelRunner(含GPU资源)
+        for p in getattr(self, "ps", []):
             p.join()                     # 等待所有子进程退出(类似C++ thread.join)
 
-    def add_request(self, prompt: str | list[int], sampling_params: SamplingParams):
+    def add_request(self, prompt: str | list[int], sampling_params: SamplingParams) -> int:
         """添加一条推理请求: 文本→tokenize→创建Sequence→加入调度队列"""
         if isinstance(prompt, str):
             prompt = self.tokenizer.encode(prompt)  # 文本→token_ids
         seq = Sequence(prompt, sampling_params)      # 创建序列对象
         self.scheduler.add(seq)                      # 加入scheduler.waiting队列
+        return seq.seq_id
+
+    def add_vl_request(self, prompt: str, image, sampling_params: SamplingParams) -> int:
+        """添加一条图像 VL 请求。
+
+        image 可以是一张图片，也可以是多张图片的 list/tuple。processor 作为
+        非核心预处理工具使用；position ids 和 engine 推理由 Prism-Infer 自实现。
+        """
+
+        if self.vl_processor is None:
+            raise ValueError("generate_vl requires a Qwen3-VL model config")
+        inputs = prepare_image_inputs(self.vl_processor, prompt, image)
+        position_ids, rope_delta = get_qwen3_vl_rope_index_from_config(
+            inputs.input_ids,
+            config=self.config.hf_config,
+            image_grid_thw=inputs.image_grid_thw,
+            attention_mask=inputs.attention_mask,
+        )
+        seq = Sequence.from_image_inputs(
+            inputs,
+            sampling_params,
+            position_ids=position_ids,
+            rope_delta=rope_delta,
+        )
+        self.scheduler.add(seq)
+        return seq.seq_id
+
+    def add_images_request(
+        self,
+        prompt: str,
+        images,
+        sampling_params: SamplingParams,
+    ) -> int:
+        """添加一条多图 VL 请求，语义化别名。"""
+
+        return self.add_vl_request(prompt, images, sampling_params)
+
+    def add_video_request(
+        self,
+        prompt: str,
+        video,
+        sampling_params: SamplingParams,
+    ) -> int:
+        """添加一条视频 VL 请求。"""
+
+        if self.vl_processor is None:
+            raise ValueError("generate_video requires a Qwen3-VL model config")
+        inputs = prepare_video_inputs(self.vl_processor, prompt, video)
+        position_ids, rope_delta = get_qwen3_vl_rope_index_from_config(
+            inputs.input_ids,
+            config=self.config.hf_config,
+            video_grid_thw=inputs.video_grid_thw,
+            attention_mask=inputs.attention_mask,
+        )
+        seq = Sequence.from_video_inputs(
+            inputs,
+            sampling_params,
+            position_ids=position_ids,
+            rope_delta=rope_delta,
+        )
+        self.scheduler.add(seq)
+        return seq.seq_id
 
     def step(self):
         """执行一步推理(一次完整的 调度→推理→后处理 循环)
@@ -127,3 +202,185 @@ class LLMEngine:
         if use_tqdm:
             pbar.close()
         return outputs  # 返回: [{"text": "...", "token_ids": [...]}, ...]
+
+    def generate_vl(
+        self,
+        prompt: str,
+        image,
+        sampling_params: SamplingParams,
+        use_tqdm: bool = True,
+    ) -> dict:
+        """Qwen3-VL 图像生成入口。
+
+        image 可以是一张图片，也可以是多张图片的 list/tuple。当前仍是
+        单请求 eager correctness 路径；视频和 batch VL 会在 P3 后续阶段扩展。
+        """
+
+        if use_tqdm:
+            pbar = tqdm(total=1, desc="Generating VL", dynamic_ncols=True)
+        else:
+            pbar = None
+
+        seq_id = self.add_vl_request(prompt, image, sampling_params)
+        outputs = {}
+        prefill_throughput = decode_throughput = 0.
+        while not self.is_finished():
+            t = perf_counter()
+            output, num_tokens = self.step()
+            if pbar is not None:
+                if num_tokens > 0:
+                    prefill_throughput = num_tokens / (perf_counter() - t)
+                else:
+                    decode_throughput = -num_tokens / (perf_counter() - t)
+                pbar.set_postfix({
+                    "Prefill": f"{int(prefill_throughput)}tok/s",
+                    "Decode": f"{int(decode_throughput)}tok/s",
+                })
+            for done_seq_id, token_ids in output:
+                outputs[done_seq_id] = token_ids
+                if pbar is not None:
+                    pbar.update(1)
+
+        if pbar is not None:
+            pbar.close()
+        token_ids = outputs[seq_id]
+        return {
+            "text": self.tokenizer.decode(token_ids),
+            "token_ids": token_ids,
+        }
+
+    def generate_images(
+        self,
+        prompt: str,
+        images,
+        sampling_params: SamplingParams,
+        use_tqdm: bool = True,
+    ) -> dict:
+        """多图生成入口，语义化别名。"""
+
+        return self.generate_vl(prompt, images, sampling_params, use_tqdm=use_tqdm)
+
+    def generate_video(
+        self,
+        prompt: str,
+        video,
+        sampling_params: SamplingParams,
+        use_tqdm: bool = True,
+    ) -> dict:
+        """Qwen3-VL 视频生成入口。"""
+
+        if use_tqdm:
+            pbar = tqdm(total=1, desc="Generating Video", dynamic_ncols=True)
+        else:
+            pbar = None
+
+        seq_id = self.add_video_request(prompt, video, sampling_params)
+        outputs = {}
+        prefill_throughput = decode_throughput = 0.
+        while not self.is_finished():
+            t = perf_counter()
+            output, num_tokens = self.step()
+            if pbar is not None:
+                if num_tokens > 0:
+                    prefill_throughput = num_tokens / (perf_counter() - t)
+                else:
+                    decode_throughput = -num_tokens / (perf_counter() - t)
+                pbar.set_postfix({
+                    "Prefill": f"{int(prefill_throughput)}tok/s",
+                    "Decode": f"{int(decode_throughput)}tok/s",
+                })
+            for done_seq_id, token_ids in output:
+                outputs[done_seq_id] = token_ids
+                if pbar is not None:
+                    pbar.update(1)
+
+        if pbar is not None:
+            pbar.close()
+        token_ids = outputs[seq_id]
+        return {
+            "text": self.tokenizer.decode(token_ids),
+            "token_ids": token_ids,
+        }
+
+    def generate_mixed(
+        self,
+        requests: list[dict],
+        sampling_params: SamplingParams | list[SamplingParams],
+        use_tqdm: bool = True,
+    ) -> list[dict]:
+        """混合 text/image/images/video 请求批量生成。
+
+        request 格式:
+          - {"type": "text", "prompt": "..."}
+          - {"type": "image", "prompt": "...", "image": image}
+          - {"type": "images", "prompt": "...", "images": [image0, image1]}
+          - {"type": "video", "prompt": "...", "video": frames}
+
+        P3.3 当前覆盖 non-prefix mixed batch eager correctness。
+        """
+
+        if not requests:
+            return []
+        if not isinstance(sampling_params, list):
+            sampling_params = [sampling_params] * len(requests)
+        if len(sampling_params) != len(requests):
+            raise ValueError(
+                "sampling_params length must match requests length, "
+                f"got {len(sampling_params)} vs {len(requests)}"
+            )
+
+        if use_tqdm:
+            pbar = tqdm(total=len(requests), desc="Generating Mixed", dynamic_ncols=True)
+        else:
+            pbar = None
+
+        seq_ids = []
+        for request, sp in zip(requests, sampling_params):
+            request_type = request.get("type", "text")
+            prompt = request.get("prompt")
+            if prompt is None:
+                raise ValueError(f"mixed request missing prompt: {request}")
+            if request_type == "text":
+                seq_ids.append(self.add_request(prompt, sp))
+            elif request_type == "image":
+                if "image" not in request:
+                    raise ValueError("image request must provide 'image'")
+                seq_ids.append(self.add_vl_request(prompt, request["image"], sp))
+            elif request_type == "images":
+                if "images" not in request:
+                    raise ValueError("images request must provide 'images'")
+                seq_ids.append(self.add_images_request(prompt, request["images"], sp))
+            elif request_type == "video":
+                if "video" not in request:
+                    raise ValueError("video request must provide 'video'")
+                seq_ids.append(self.add_video_request(prompt, request["video"], sp))
+            else:
+                raise ValueError(f"unsupported mixed request type: {request_type}")
+
+        outputs = {}
+        prefill_throughput = decode_throughput = 0.
+        while not self.is_finished():
+            t = perf_counter()
+            output, num_tokens = self.step()
+            if pbar is not None:
+                if num_tokens > 0:
+                    prefill_throughput = num_tokens / (perf_counter() - t)
+                else:
+                    decode_throughput = -num_tokens / (perf_counter() - t)
+                pbar.set_postfix({
+                    "Prefill": f"{int(prefill_throughput)}tok/s",
+                    "Decode": f"{int(decode_throughput)}tok/s",
+                })
+            for done_seq_id, token_ids in output:
+                outputs[done_seq_id] = token_ids
+                if pbar is not None:
+                    pbar.update(1)
+
+        if pbar is not None:
+            pbar.close()
+
+        ordered = [outputs[seq_id] for seq_id in seq_ids]
+        return [
+            {"text": self.tokenizer.decode(token_ids), "token_ids": token_ids}
+            for token_ids in ordered
+        ]

@@ -14,12 +14,33 @@ class Sampler(nn.Module):
     def __init__(self):
         super().__init__()
 
-    @torch.compile    # 融合整个采样流程为一个 kernel
     def forward(self, logits: torch.Tensor, temperatures: torch.Tensor):
+        """根据每条请求的 temperature 采样下一个 token。
+
+        logits: [num_seqs, vocab_size]
+        temperatures: [num_seqs]，temperature <= 1e-10 时走 greedy argmax。
+        """
+
+        greedy_mask = temperatures <= 1e-10
+        if bool(greedy_mask.all().item()):
+            return logits.argmax(dim=-1)
+        if bool((~greedy_mask).all().item()):
+            return self._sample_random(logits, temperatures)
+
+        sample_tokens = torch.empty(logits.shape[0], dtype=torch.long, device=logits.device)
+        sample_tokens[greedy_mask] = logits[greedy_mask].argmax(dim=-1)
+        sample_tokens[~greedy_mask] = self._sample_random(
+            logits[~greedy_mask],
+            temperatures[~greedy_mask],
+        )
+        return sample_tokens
+
+    @torch.compile    # 融合随机采样流程为一个 kernel
+    def _sample_random(self, logits: torch.Tensor, temperatures: torch.Tensor):
         # 1. Temperature scaling: logits / temperature
         #    temperature 越高 → 分布越平 (更随机)
         #    temperature 越低 → 分布越尖 (越确定)
-        #    temperature = 0 时应该用 greedy (这里假设不为0)
+        #    temperature = 0 已在 forward 中走 greedy
         #    unsqueeze(dim=1): [num_seqs] → [num_seqs, 1] 广播到 [num_seqs, vocab]
         logits = logits.float().div_(temperatures.unsqueeze(dim=1))
         # 2. Softmax: logits → 概率分布

@@ -1,10 +1,12 @@
-"""
-Vision Encoder for Qwen3-VL-8B — 自实现 (参照 vLLM qwen3_vl.py)。
+"""Qwen3-VL Vision Encoder 自实现。
 
-Ref: vLLM v0.22.0, vllm/model_executor/models/qwen3_vl.py L348-L700+
+对齐参考:
+  HF transformers 本地源码
+  `.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py:46-275`
+  `.venv-local/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py:564-753`
 
-Architecture:
-  PatchEmbed (Conv3d) → PosEmbed → 27× ViTBlock → 4× PatchMerger
+架构:
+  PatchEmbed (Conv3d) -> PosEmbed -> 27x ViTBlock -> 4x PatchMerger
   Output: (main_features [196, 4096], [ds0, ds1, ds2] each [196, 4096])
 """
 import torch
@@ -26,7 +28,7 @@ def _cfg_get(config, *names, default=None):
 
 # ═══════════════════════════════════════════════════════════════
 # PatchEmbed — Conv3d Patch Embedding
-# Ref: vLLM qwen3_vl.py L348-L374
+# Ref: HF modeling_qwen3_vl.py:59-76
 # ═══════════════════════════════════════════════════════════════
 class PatchEmbed(nn.Module):
     """Conv3d patch embedding: pixel_values → patch features.
@@ -73,7 +75,7 @@ class PatchEmbed(nn.Module):
 
 # ═══════════════════════════════════════════════════════════════
 # ViTMLP — Vision Transformer FFN
-# Ref: vLLM qwen3_vl.py L377-L411
+# Ref: HF modeling_qwen3_vl.py:46-56
 # ═══════════════════════════════════════════════════════════════
 class ViTMLP(nn.Module):
     """ViT FFN: Linear(1152→4304) + GELU-Tanh + Linear(4304→1152).
@@ -94,9 +96,31 @@ class ViTMLP(nn.Module):
         return x
 
 
+class VisionRotaryEmbedding(nn.Module):
+    """Vision 2D RoPE 的一维频率表.
+
+    HF 在构造 `Qwen3VLVisionRotaryEmbedding` 时注册 `inv_freq` buffer，
+    forward 只按最大高宽取外积。这里保持同样的数据流，避免每次 forward
+    动态重算频率导致 bf16 量化边界发生变化。
+    Ref: transformers/models/qwen3_vl/modeling_qwen3_vl.py:79-90
+    """
+
+    def __init__(self, dim: int, theta: float = 10000.0) -> None:
+        super().__init__()
+        target_device = torch.empty((), dtype=torch.float).device
+        inv_freq = 1.0 / (
+            theta ** (torch.arange(0, dim, 2, dtype=torch.float, device="cpu") / dim)
+        )
+        self.register_buffer("inv_freq", inv_freq.to(target_device), persistent=False)
+
+    def forward(self, seqlen: int) -> torch.Tensor:
+        seq = torch.arange(seqlen, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
+        return torch.outer(seq, self.inv_freq)
+
+
 # ═══════════════════════════════════════════════════════════════
 # ViTAttention — Vision Transformer Self-Attention (合并 QKV, 16头, 双向)
-# Ref: HF Qwen3VLVisionAttention, vLLM qwen2_5_vl.py L313-L397
+# Ref: HF modeling_qwen3_vl.py:168-248
 # ═══════════════════════════════════════════════════════════════
 class ViTAttention(nn.Module):
     """ViT Self-Attention: 合并 QKV 投影 + 16 头 + 双向注意力.
@@ -106,7 +130,7 @@ class ViTAttention(nn.Module):
       - 双向注意力 (无 causal mask)，LLM 是单向的
       - 16 Q-heads = 16 KV-heads (无 GQA)，LLM 有 GQA (32:8)
       - head_dim = 72 (1152/16)，LLM head_dim = 128
-      - 使用 2D RoPE (当前未实现，后续添加)
+      - 使用 2D RoPE
     """
 
     def __init__(self, dim: int = 1152, num_heads: int = 16,
@@ -153,8 +177,13 @@ class ViTAttention(nn.Module):
 
     def forward(self, x: torch.Tensor,
                 cos: torch.Tensor = None,
-                sin: torch.Tensor = None) -> torch.Tensor:
-        """x: [N, 1152] or [B, N, 1152] → same shape."""
+                sin: torch.Tensor = None,
+                cu_seqlens: torch.Tensor | None = None) -> torch.Tensor:
+        """x: [N, 1152] or [B, N, 1152] → same shape.
+
+        cu_seqlens: [num_images + 1]，多图时按每张图分段做双向
+        attention，避免不同图片 patch 之间互相注意。
+        """
         squeeze_out = False
         if x.dim() == 2:
             x = x.unsqueeze(0)   # [N, 1152] → [1, N, 1152]
@@ -178,9 +207,21 @@ class ViTAttention(nn.Module):
             q = self.apply_rotary_emb(q, cos, sin)
             k = self.apply_rotary_emb(k, cos, sin)
 
-        # 5. Scaled Dot-Product Attention (双向, 无 causal mask)
-        o = F.scaled_dot_product_attention(
-            q, k, v, is_causal=False, scale=self.scale)
+        # 5. Scaled Dot-Product Attention (双向, 无 causal mask)。
+        # 多图时 HF eager 路径按 cu_seqlens 分段计算，不能让不同图片
+        # patch 之间互相注意。单图或未传 cu_seqlens 时保持原路径。
+        if cu_seqlens is not None and cu_seqlens.numel() > 2:
+            outputs = []
+            for start, end in zip(cu_seqlens[:-1].tolist(), cu_seqlens[1:].tolist()):
+                q_i = q[:, :, start:end, :]
+                k_i = k[:, :, start:end, :]
+                v_i = v[:, :, start:end, :]
+                outputs.append(F.scaled_dot_product_attention(
+                    q_i, k_i, v_i, is_causal=False, scale=self.scale))
+            o = torch.cat(outputs, dim=2)
+        else:
+            o = F.scaled_dot_product_attention(
+                q, k, v, is_causal=False, scale=self.scale)
 
         # 6. 合并多头 + 输出投影: [B, 16, N, 72] → [B, N, 1152]
         o = o.transpose(1, 2).reshape(B, N, D)
@@ -193,7 +234,7 @@ class ViTAttention(nn.Module):
 
 # ═══════════════════════════════════════════════════════════════
 # ViTBlock — Vision Transformer Block (Pre-Norm + 残差)
-# Ref: vLLM qwen3_vl.py L414-L465
+# Ref: HF modeling_qwen3_vl.py:251-275
 # ═══════════════════════════════════════════════════════════════
 class ViTBlock(nn.Module):
     """ViT Transformer Block: LayerNorm → Attention → +res → LayerNorm → MLP → +res.
@@ -215,9 +256,10 @@ class ViTBlock(nn.Module):
 
     def forward(self, x: torch.Tensor,
                 cos: torch.Tensor = None,
-                sin: torch.Tensor = None) -> torch.Tensor:
+                sin: torch.Tensor = None,
+                cu_seqlens: torch.Tensor | None = None) -> torch.Tensor:
         # Pre-norm + Attention + residual
-        x = x + self.attn(self.norm1(x), cos=cos, sin=sin)
+        x = x + self.attn(self.norm1(x), cos=cos, sin=sin, cu_seqlens=cu_seqlens)
         # Pre-norm + MLP + residual
         x = x + self.mlp(self.norm2(x))
         return x
@@ -225,7 +267,7 @@ class ViTBlock(nn.Module):
 
 # ═══════════════════════════════════════════════════════════════
 # PatchMerger — 空间合并 (784→196) + 维度映射 (1152→4096)
-# Ref: HF Qwen3VLVisionPatchMerger, vLLM qwen3_vl.py L468-L517
+# Ref: HF modeling_qwen3_vl.py:93-106
 # ═══════════════════════════════════════════════════════════════
 class PatchMerger(nn.Module):
     """将 ViT patch 特征合并为 LLM 维度的 visual token.
@@ -246,7 +288,7 @@ class PatchMerger(nn.Module):
         # post_norm=True (deepstack): norm 在合并之后, 对 4608 维做 LN
         # post_norm=False (main): norm 在合并之前, 对 1152 维做 LN
         norm_dim = merged_dim if post_norm else dim
-        self.norm = nn.LayerNorm(norm_dim, dtype=dtype)
+        self.norm = nn.LayerNorm(norm_dim, eps=1e-6, dtype=dtype)
         self.linear_fc1 = nn.Linear(merged_dim, merged_dim, bias=True, dtype=dtype)
         self.linear_fc2 = nn.Linear(merged_dim, out_dim, bias=True, dtype=dtype)
 
@@ -269,7 +311,7 @@ class PatchMerger(nn.Module):
 class VisionEncoder(nn.Module):
     """Qwen3-VL Vision Encoder: patch→27层→4路Merger→(main, [ds0,ds1,ds2]).
 
-    参照 HF Qwen3VLVisionModel + vLLM Qwen3_VisionTransformer 实现。
+    参照 HF Qwen3VLVisionModel 的结构自实现。
     """
 
     def __init__(self, config=None, dtype: torch.dtype | None = None):
@@ -326,6 +368,7 @@ class VisionEncoder(nn.Module):
         self.deepstack_visual_indexes = list(deepstack_indexes)
         self.spatial_merge_size = spatial_merge_size
         self.head_dim = dim // num_heads
+        self.rotary_pos_emb = VisionRotaryEmbedding(self.head_dim // 2)
 
     def rot_pos_emb(self, grid_thw: torch.Tensor) -> torch.Tensor:
         """生成 2D RoPE 的频率 embedding (参照 HF rot_pos_emb).
@@ -333,19 +376,22 @@ class VisionEncoder(nn.Module):
         grid_thw: [[T, H, W]], e.g. [[1, 28, 28]]
         返回: [total_patches, head_dim/2] = [784, 36]
         """
+        max_hw = int(grid_thw[:, 1:].max().item())
+        freq_table = self.rotary_pos_emb(max_hw)  # [max_hw, head_dim/4]
+        device = freq_table.device
+
         total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
-        dim = self.head_dim // 2  # HF: rot_pos_emb 返回 head_dim/2
         pos_ids = torch.empty((total_tokens, 2), dtype=torch.long,
-                              device=next(self.parameters()).device)
+                              device=device)
 
         offset = 0
         for num_frames, height, width in grid_thw:
             merged_h, merged_w = height // self.spatial_merge_size, width // self.spatial_merge_size
 
-            block_rows = torch.arange(merged_h)
-            block_cols = torch.arange(merged_w)
-            intra_row = torch.arange(self.spatial_merge_size)
-            intra_col = torch.arange(self.spatial_merge_size)
+            block_rows = torch.arange(merged_h, device=device)
+            block_cols = torch.arange(merged_w, device=device)
+            intra_row = torch.arange(self.spatial_merge_size, device=device)
+            intra_col = torch.arange(self.spatial_merge_size, device=device)
 
             row_idx = block_rows[:, None, None, None] * self.spatial_merge_size + intra_row[None, None, :, None]
             col_idx = block_cols[None, :, None, None] * self.spatial_merge_size + intra_col[None, None, None, :]
@@ -359,8 +405,6 @@ class VisionEncoder(nn.Module):
             pos_ids[offset:offset + n] = coords
             offset += n
 
-        max_hw = int(grid_thw[:, 1:].max().item())
-        freq_table = self._compute_rope_freqs(dim, max_hw, pos_ids.device)
         embeddings = freq_table[pos_ids]  # [N, 2, dim/2]
         return embeddings.flatten(1)       # [N, dim]
 
@@ -426,19 +470,6 @@ class VisionEncoder(nn.Module):
             outputs.append(pos_embed)
         return torch.cat(outputs, dim=0).to(dtype=dtype)
 
-    @staticmethod
-    def _compute_rope_freqs(dim: int, max_pos: int,
-                            device: torch.device) -> torch.Tensor:
-        """计算 RoPE 频率表: [max_pos, dim/2].
-
-        freqs[pos, i] = pos / theta^(2i/dim)
-        theta = 10000 (标准 RoPE base)
-        """
-        theta = 10000.0
-        freq = 1.0 / (theta ** (torch.arange(0, dim, 2, device=device).float() / dim))
-        pos = torch.arange(max_pos, device=device).float()
-        return pos[:, None] * freq[None, :]  # [max_pos, dim/2]
-
     def _get_position_embeddings(self, grid_thw: torch.Tensor,
                                   hidden_states: torch.Tensor):
         """生成 RoPE 的 (cos, sin) 对.
@@ -463,13 +494,19 @@ class VisionEncoder(nn.Module):
         x = self.patch_embed(pixel_values)  # [N, 1152]
         x = x + self._pos_embed_interpolate(grid_thw, x.device)
 
-        # 2. RoPE cos/sin
+        # 2. RoPE cos/sin + 多图分段边界。HF VisionModel 使用
+        # cu_seqlens 将每张图的 patch 分开做双向 attention。
         cos, sin = self._get_position_embeddings(grid_thw, x)
+        cu_seqlens = torch.repeat_interleave(
+            grid_thw[:, 1] * grid_thw[:, 2],
+            grid_thw[:, 0],
+        ).cumsum(dim=0, dtype=torch.int32)
+        cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0).to(x.device)
 
         # 3. 27 ViT Blocks + DeepStack 提取
         deepstack_features = []
         for i, blk in enumerate(self.blocks):
-            x = blk(x, cos=cos, sin=sin)
+            x = blk(x, cos=cos, sin=sin, cu_seqlens=cu_seqlens)
             if i in self.deepstack_visual_indexes:
                 ds_idx = self.deepstack_visual_indexes.index(i)
                 ds = self.deepstack_merger_list[ds_idx](x)

@@ -26,5 +26,10 @@ class Config:
         assert self.kvcache_block_size % 256 == 0            # block_size需256对齐(FlashAttention kernel要求)
         assert 1 <= self.tensor_parallel_size <= 8           # TP并行数1~8(单机最多8块GPU)
         self.hf_config = AutoConfig.from_pretrained(self.model)  # 从模型目录的config.json加载模型结构
-        self.max_model_len = min(self.max_model_len, self.hf_config.max_position_embeddings)  # 不超过模型支持的最大位置编码
+        model_max_len = getattr(
+            self.hf_config,
+            "max_position_embeddings",
+            getattr(getattr(self.hf_config, "text_config", None), "max_position_embeddings", self.max_model_len),
+        )
+        self.max_model_len = min(self.max_model_len, model_max_len)  # 不超过模型支持的最大位置编码
         assert self.max_num_batched_tokens >= self.max_model_len  # batch容量必须>=单条最大长度

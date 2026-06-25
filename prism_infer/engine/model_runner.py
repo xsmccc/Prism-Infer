@@ -15,6 +15,8 @@
 # ═══════════════════════════════════════════════════════════════
 
 import pickle                                      # 序列化, 用于多 GPU 间传递数据
+from dataclasses import dataclass
+
 import torch
 import torch.distributed as dist                   # 分布式通信 (NCCL)
 from multiprocessing.synchronize import Event       # 进程间事件通知
@@ -32,6 +34,40 @@ from prism_infer.utils.context import set_context, get_context, reset_context  #
 from prism_infer.utils.loader import load_model             # 权重加载
 
 
+@dataclass
+class ModelInputs:
+    """一次模型 forward 所需的输入张量。"""
+
+    input_ids: torch.Tensor
+    position_ids: torch.Tensor
+    pixel_values: torch.Tensor | None = None
+    image_grid_thw: torch.Tensor | None = None
+    pixel_values_videos: torch.Tensor | None = None
+    video_grid_thw: torch.Tensor | None = None
+
+
+def _resolve_model_dtype(hf_config) -> torch.dtype:
+    """从 HF config 或 text_config 中解析模型权重 dtype。"""
+
+    text_config = getattr(hf_config, "text_config", None)
+    dtype = (
+        getattr(hf_config, "torch_dtype", None)
+        or getattr(hf_config, "dtype", None)
+        or getattr(text_config, "torch_dtype", None)
+        or getattr(text_config, "dtype", None)
+        or torch.bfloat16
+    )
+    if isinstance(dtype, str):
+        return getattr(torch, dtype.replace("torch.", ""))
+    return dtype
+
+
+def _text_hf_config(hf_config):
+    """Qwen3-VL 的 LLM 配置在 text_config；纯文本模型直接用顶层 config。"""
+
+    return getattr(hf_config, "text_config", hf_config)
+
+
 class ModelRunner:
 
     # ─────────────────────────────────────────────────────────
@@ -45,6 +81,7 @@ class ModelRunner:
         self.world_size = config.tensor_parallel_size  # 几张 GPU (Tensor Parallel 并行度)
         self.rank = rank                             # 当前 GPU 编号 (0, 1, 2, ...)
         self.event = event                           # 进程间事件, 用于多 GPU 同步
+        self.model_dtype = _resolve_model_dtype(hf_config)
 
         # ── 初始化分布式通信 ──
         dist.init_process_group("nccl", "tcp://localhost:2333",
@@ -57,7 +94,7 @@ class ModelRunner:
 
         # ── 创建模型并加载权重 ──
         default_dtype = torch.get_default_dtype()     # 保存原始默认类型 (float32)
-        torch.set_default_dtype(hf_config.torch_dtype)  # 设为模型精度 (如 bfloat16)
+        torch.set_default_dtype(self.model_dtype)       # 设为模型精度 (如 bfloat16)
         torch.set_default_device("cuda")              # 后续 torch.empty() 等默认在 GPU 上
         if self._is_vl_config(hf_config) or Qwen3ForCausalLM is None:
             self.model = Qwen3VLForCausalLM(hf_config)  # Qwen3-VL 模型结构
@@ -166,11 +203,16 @@ class ModelRunner:
             or hasattr(hf_config, "image_token_id")
         )
 
-    def _forward_model(self, input_ids: torch.Tensor, positions: torch.Tensor):
+    def _forward_model(self, inputs: ModelInputs):
         """Call either the new Qwen3-VL interface or the legacy text model."""
         if self.is_vl_model:
-            return self.model(input_ids=input_ids, position_ids=positions)
-        return self.model(input_ids, positions)
+            return self.model(input_ids=inputs.input_ids,
+                              position_ids=inputs.position_ids,
+                              pixel_values=inputs.pixel_values,
+                              image_grid_thw=inputs.image_grid_thw,
+                              pixel_values_videos=inputs.pixel_values_videos,
+                              video_grid_thw=inputs.video_grid_thw)
+        return self.model(inputs.input_ids, inputs.position_ids)
 
     def warmup_model(self):
         """热身: 用最大尺寸输入跑一次模型, 触发 CUDA kernel 编译/分配"""
@@ -191,24 +233,25 @@ class ModelRunner:
         """根据 GPU 剩余显存, 计算能分配多少 KV Cache block, 一次性分配"""
         config = self.config
         hf_config = config.hf_config
+        text_config = _text_hf_config(hf_config)
         free, total = torch.cuda.mem_get_info()         # GPU 显存: 空闲 / 总量
         used = total - free                             # 已使用
         peak = torch.cuda.memory_stats()["allocated_bytes.all.peak"]     # PyTorch 峰值占用
         current = torch.cuda.memory_stats()["allocated_bytes.all.current"]  # PyTorch 当前占用
 
         # ── 计算每个 block 的字节数 ──
-        num_kv_heads = hf_config.num_key_value_heads // self.world_size
+        num_kv_heads = text_config.num_key_value_heads // self.world_size
         # GQA/MQA: KV head 数可能比 Q head 少, 再除以 TP 并行度
-        head_dim = getattr(hf_config, "head_dim",
-                           hf_config.hidden_size // hf_config.num_attention_heads)
+        head_dim = getattr(text_config, "head_dim",
+                           text_config.hidden_size // text_config.num_attention_heads)
         # 每个 head 的维度, 如 128
 
         block_bytes = (2 *                              # K 和 V 两份
-                       hf_config.num_hidden_layers *     # 每层都有 KV Cache
+                       text_config.num_hidden_layers *   # 每层都有 KV Cache
                        self.block_size *                 # 每个 block 的 token 数
                        num_kv_heads *                    # KV head 个数
                        head_dim *                        # 每个 head 的维度
-                       hf_config.torch_dtype.itemsize)   # 每个元素的字节数 (bf16=2)
+                       self.model_dtype.itemsize)        # 每个元素的字节数 (bf16=2)
         # C++ 类比: sizeof(Block_KV) = 2 * layers * block_size * heads * dim * sizeof(half)
 
         # ── 计算能分配多少个 block ──
@@ -223,7 +266,7 @@ class ModelRunner:
         # ── 一次性分配整个 KV Cache 张量 ──
         self.kv_cache = torch.empty(
             2,                                           # 0=K_cache, 1=V_cache
-            hf_config.num_hidden_layers,                 # 每层一份
+            text_config.num_hidden_layers,               # 每层一份
             config.num_kvcache_blocks,                   # block 个数
             self.block_size,                             # 每 block token 数
             num_kv_heads,                                # KV head 数
@@ -241,6 +284,10 @@ class ModelRunner:
                 module.k_cache = self.kv_cache[0, layer_id]  # shape: [num_blocks, block_size, heads, dim]
                 module.v_cache = self.kv_cache[1, layer_id]
                 layer_id += 1
+        assert layer_id == text_config.num_hidden_layers, (
+            f"KV cache layer count mismatch: assigned={layer_id}, "
+            f"expected={text_config.num_hidden_layers}"
+        )
         # 这样每一层的 Attention 直接引用这个大张量的一个切片
 
         # ── 分配 CPU 端 KV Cache (Swap 用, pinned memory 加速 GPU↔CPU 传输) ──
@@ -251,12 +298,12 @@ class ModelRunner:
         if num_cpu_blocks > 0:
             self.cpu_kv_cache = torch.empty(
                 2,
-                hf_config.num_hidden_layers,
+                text_config.num_hidden_layers,
                 num_cpu_blocks,
                 self.block_size,
                 num_kv_heads,
                 head_dim,
-                dtype=hf_config.torch_dtype,
+                dtype=self.model_dtype,
                 device="cpu",
                 pin_memory=True  # pinned memory: 加速 GPU↔CPU 传输
             )
@@ -321,12 +368,18 @@ class ModelRunner:
         """Prefill 准备: 拼接多条序列的 token, 计算位置和 slot_mapping"""
         input_ids = []          # 所有序列的 token 拼成一个一维列表
         positions = []          # 每个 token 的位置编号 (RoPE 用)
+        vl_position_chunks = []
         cu_seqlens_q = [0]      # cumulative sequence lengths for Q (前缀和)
         cu_seqlens_k = [0]      # cumulative sequence lengths for K
         max_seqlen_q = 0        # 最长的 Q 序列长度 (Flash Attention 需要)
         max_seqlen_k = 0        # 最长的 K 序列长度
         slot_mapping = []       # 每个 token 在 KV Cache 中的全局槽位编号
         block_tables = None     # Prefix Cache 命中时才需要
+        pixel_value_chunks = []
+        image_grid_chunks = []
+        video_value_chunks = []
+        video_grid_chunks = []
+        has_vl_positions = any(seq.position_ids is not None for seq in seqs)
 
         for seq in seqs:
             seqlen = len(seq)                           # 序列总长度
@@ -336,9 +389,25 @@ class ModelRunner:
             # Prefix Cache 命中的 token 不用喂给模型 → 跳过前 num_cached_tokens 个
             # 如果没有 cache hit, num_cached_tokens=0 → 喂全部 token
 
-            positions.extend(list(range(seq.num_cached_tokens, seqlen)))
-            # 位置编号: [num_cached_tokens, num_cached_tokens+1, ..., seqlen-1]
-            # RoPE 需要每个 token 的绝对位置
+            if has_vl_positions:
+                if seq.num_cached_tokens != 0:
+                    raise ValueError("P3 mixed VL prefill does not support prefix/chunk cache hits yet")
+                if seq.position_ids is not None:
+                    # seq.position_ids: [3, 1, seqlen] -> current chunk [3, seqlen_q]
+                    vl_position_chunks.append(seq.position_ids[:, 0, seq.num_cached_tokens:seqlen])
+                else:
+                    text_pos = torch.arange(seq.num_cached_tokens, seqlen, dtype=torch.long)
+                    vl_position_chunks.append(text_pos.view(1, -1).expand(3, -1))
+                if seq.pixel_values is not None:
+                    pixel_value_chunks.append(seq.pixel_values)
+                    image_grid_chunks.append(seq.image_grid_thw)
+                if seq.pixel_values_videos is not None:
+                    video_value_chunks.append(seq.pixel_values_videos)
+                    video_grid_chunks.append(seq.video_grid_thw)
+            else:
+                positions.extend(list(range(seq.num_cached_tokens, seqlen)))
+                # 位置编号: [num_cached_tokens, num_cached_tokens+1, ..., seqlen-1]
+                # RoPE 需要每个 token 的绝对位置
 
             seqlen_q = seqlen - seq.num_cached_tokens   # Q 的实际长度 (去掉 cached 部分)
             seqlen_k = seqlen                           # K 的长度 = 整个序列 (包括 cached)
@@ -373,7 +442,10 @@ class ModelRunner:
 
         # ── 全部转成 GPU tensor ──
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
-        positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
+        if has_vl_positions:
+            positions = torch.cat(vl_position_chunks, dim=1).to(torch.int64).pin_memory().cuda(non_blocking=True)
+        else:
+            positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         cu_seqlens_q = torch.tensor(cu_seqlens_q, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         cu_seqlens_k = torch.tensor(cu_seqlens_k, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
@@ -384,18 +456,41 @@ class ModelRunner:
         # True = is_prefill
         # attention 层通过 get_context() 获取这些信息来决定怎么计算
 
-        return input_ids, positions
+        pixel_values = torch.cat(pixel_value_chunks, dim=0) if pixel_value_chunks else None
+        image_grid_thw = torch.cat(image_grid_chunks, dim=0) if image_grid_chunks else None
+        pixel_values_videos = torch.cat(video_value_chunks, dim=0) if video_value_chunks else None
+        video_grid_thw = torch.cat(video_grid_chunks, dim=0) if video_grid_chunks else None
+        if pixel_values is not None:
+            pixel_values = pixel_values.pin_memory().cuda(non_blocking=True)
+            image_grid_thw = image_grid_thw.pin_memory().cuda(non_blocking=True)
+        if pixel_values_videos is not None:
+            pixel_values_videos = pixel_values_videos.pin_memory().cuda(non_blocking=True)
+            video_grid_thw = video_grid_thw.pin_memory().cuda(non_blocking=True)
+
+        return ModelInputs(input_ids=input_ids,
+                           position_ids=positions,
+                           pixel_values=pixel_values,
+                           image_grid_thw=image_grid_thw,
+                           pixel_values_videos=pixel_values_videos,
+                           video_grid_thw=video_grid_thw)
 
     def prepare_decode(self, seqs: list[Sequence]):
         """Decode 准备: 每条序列只取最后一个 token"""
         input_ids = []
         positions = []
+        vl_position_chunks = []
         slot_mapping = []
         context_lens = []           # 每条序列的上下文长度 (= 总 token 数)
+        has_vl_positions = any(seq.rope_delta is not None for seq in seqs)
 
         for seq in seqs:
             input_ids.append(seq.last_token)            # 只取最后一个 token
-            positions.append(len(seq) - 1)              # 位置 = 序列长度 - 1
+            if has_vl_positions:
+                delta = int(seq.rope_delta.item()) if seq.rope_delta is not None else 0
+                pos = torch.arange(1, dtype=torch.long) + (len(seq) - 1 + delta)
+                vl_position_chunks.append(pos.expand(3, -1))
+            else:
+                positions.append(len(seq) - 1)          # 位置 = 序列长度 - 1
             context_lens.append(len(seq))               # 上下文长度 = 序列总长度
 
             slot_mapping.append(
@@ -407,7 +502,10 @@ class ModelRunner:
             # 注意: last_block_num_tokens 已经包含了刚 append 的新 token
 
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
-        positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
+        if has_vl_positions:
+            positions = torch.cat(vl_position_chunks, dim=1).to(torch.int64).pin_memory().cuda(non_blocking=True)
+        else:
+            positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         context_lens = torch.tensor(context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         block_tables = self.prepare_block_tables(seqs)
@@ -415,7 +513,7 @@ class ModelRunner:
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens,
                     block_tables=block_tables)
         # False = is_decode
-        return input_ids, positions
+        return ModelInputs(input_ids=input_ids, position_ids=positions)
 
     def prepare_sample(self, seqs: list[Sequence]):
         """准备采样参数: 收集每条序列的温度"""
@@ -426,6 +524,39 @@ class ModelRunner:
                                      pin_memory=True).cuda(non_blocking=True)
         return temperatures
 
+    @staticmethod
+    def _as_mrope_decode_positions(position_ids: torch.Tensor) -> torch.Tensor:
+        """把 decode position ids 规范为 `[3, batch]`。
+
+        text-only decode 原本是一维 `[batch]`；CUDA Graph replay 统一使用
+        `[3, max_bs]` 占位，三轴同值与文本 M-RoPE 语义等价。
+        """
+
+        if position_ids.ndim == 1:
+            return position_ids.view(1, -1).expand(3, -1)
+        if position_ids.ndim == 2 and position_ids.shape[0] == 3:
+            return position_ids
+        raise ValueError(
+            "decode position_ids must be [batch] or [3, batch], "
+            f"got {list(position_ids.shape)}"
+        )
+
+    @staticmethod
+    def _cudagraph_batch_sizes(max_bs: int) -> list[int]:
+        """生成 CUDA Graph decode batch 档位，确保覆盖 `max_bs`。
+
+        常用档位保持 1/2/4/8/16...；当 `max_num_seqs` 是 3、5、17 等
+        非标准档位时，额外录制最后的 `max_bs`，避免 replay 查找失败。
+        """
+
+        if max_bs < 1:
+            raise ValueError(f"max_bs must be >= 1, got {max_bs}")
+        graph_bs = [bs for bs in [1, 2, 4, 8] if bs <= max_bs]
+        graph_bs += list(range(16, max_bs + 1, 16))
+        if not graph_bs or graph_bs[-1] != max_bs:
+            graph_bs.append(max_bs)
+        return sorted(set(graph_bs))
+
     # ═══════════════════════════════════════════════════════════
     # 执行阶段: run_model + run (对外入口)
     # ═══════════════════════════════════════════════════════════
@@ -433,11 +564,12 @@ class ModelRunner:
     @torch.inference_mode()
     # @torch.inference_mode(): 禁用梯度计算 + 自动求导, 推理更快更省内存
     # 比 torch.no_grad() 更彻底 (连 autograd 元数据都不创建)
-    def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
+    def run_model(self, model_inputs: ModelInputs, is_prefill: bool):
         """执行模型前向推理, 返回 logits"""
+        input_ids = model_inputs.input_ids
         if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
             # ---- Prefill / Eager / batch 太大 → 直接跑模型 ----
-            return self.model.compute_logits(self._forward_model(input_ids, positions))
+            return self.model.compute_logits(self._forward_model(model_inputs))
             # self.model(input_ids, positions): 前向传播, 返回 hidden_states
             # self.model.compute_logits(...): 乘以 lm_head 权重 → [batch, vocab_size]
         else:
@@ -455,11 +587,14 @@ class ModelRunner:
             # graph_vars 是录制时的 tensor → 回放前把实际数据拷进去
 
             graph_vars["input_ids"][:bs] = input_ids
-            graph_vars["positions"][:bs] = positions
+            graph_vars["positions"][:, :bs] = self._as_mrope_decode_positions(
+                model_inputs.position_ids
+            )
             graph_vars["slot_mapping"].fill_(-1)        # 先全填 -1 (padding)
             graph_vars["slot_mapping"][:bs] = context.slot_mapping
             graph_vars["context_lens"].zero_()           # 先全填 0
             graph_vars["context_lens"][:bs] = context.context_lens
+            graph_vars["block_tables"].fill_(-1)
             graph_vars["block_tables"][:bs, :context.block_tables.size(1)] = context.block_tables
 
             graph.replay()                               # 回放! GPU 执行预录制的所有 kernel
@@ -475,6 +610,13 @@ class ModelRunner:
 
         # warmup 时 block_table 为空, 不走 chunked prefill
         is_warmup = any(not seq.block_table for seq in seqs)
+        if is_prefill and enable_chunked and not is_warmup:
+            for seq in seqs:
+                if seq.is_multimodal and seq.remaining_prefill_tokens > max_chunk:
+                    raise ValueError(
+                        "P2 VL chunked prefill is not supported when one request "
+                        "needs multiple chunks"
+                    )
         if is_prefill and enable_chunked and not is_warmup:
             # ── Chunked Prefill: 限制每条 seq 只暴露 chunk 大小的 token ──
             # 保存原始 num_cached_tokens, 并设临时值使 prepare_prefill 只看到 chunk
@@ -494,11 +636,11 @@ class ModelRunner:
                 seq.token_ids = seq.token_ids[:seq.num_tokens]
 
         # 1. 准备输入
-        input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
+        model_inputs = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
         temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
 
         # 2. 前向推理
-        logits = self.run_model(input_ids, positions, is_prefill)
+        logits = self.run_model(model_inputs, is_prefill)
 
         # 3. 采样
         token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
@@ -530,20 +672,21 @@ class ModelRunner:
         """录制不同 batch size 的 CUDA Graph"""
         config = self.config
         hf_config = config.hf_config
+        text_config = _text_hf_config(hf_config)
         max_bs = min(self.config.max_num_seqs, 512)     # 最大 batch size
         max_num_blocks = (config.max_model_len + self.block_size - 1) // self.block_size
         # 最多需要多少个 block (向上取整)
 
         # ── 创建"占位"tensor (graph 录制时绑定这些 tensor 的地址) ──
         input_ids = torch.zeros(max_bs, dtype=torch.int64)
-        positions = torch.zeros(max_bs, dtype=torch.int64)
+        positions = torch.zeros(3, max_bs, dtype=torch.int64)
         slot_mapping = torch.zeros(max_bs, dtype=torch.int32)
-        context_lens = torch.zeros(max_bs, dtype=torch.int32)
+        context_lens = torch.ones(max_bs, dtype=torch.int32)
         block_tables = torch.zeros(max_bs, max_num_blocks, dtype=torch.int32)
-        outputs = torch.zeros(max_bs, hf_config.hidden_size)
+        outputs = torch.zeros(max_bs, text_config.hidden_size)
 
         # ── 要录制的 batch size 列表 ──
-        self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
+        self.graph_bs = self._cudagraph_batch_sizes(max_bs)
         # [1, 2, 4, 8, 16, 32, 48, 64, ...]
         # 不是每个 bs 都录, 只录这些 "档位"
         # 实际 bs 不在列表里时, 向上找最近的 (如 bs=3 → 用 bs=4 的 graph)
@@ -555,13 +698,16 @@ class ModelRunner:
             graph = torch.cuda.CUDAGraph()
 
             # warmup: 先跑一次, 让 CUDA 编译 kernel
+            slot_mapping[:bs] = torch.arange(bs, dtype=torch.int32, device=slot_mapping.device)
+            context_lens[:bs] = 1
+            block_tables[:bs].zero_()
             set_context(False, slot_mapping=slot_mapping[:bs],
                        context_lens=context_lens[:bs], block_tables=block_tables[:bs])
-            outputs[:bs] = self._forward_model(input_ids[:bs], positions[:bs])
+            outputs[:bs] = self._forward_model(ModelInputs(input_ids[:bs], positions[:, :bs]))
 
             # capture: 录制!
             with torch.cuda.graph(graph, self.graph_pool):
-                outputs[:bs] = self._forward_model(input_ids[:bs], positions[:bs])
+                outputs[:bs] = self._forward_model(ModelInputs(input_ids[:bs], positions[:, :bs]))
             # torch.cuda.graph(graph, pool):
             #   pool: 共享内存池, 不同 bs 的 graph 共享 GPU workspace
             #   with 块内的所有 GPU 操作被录制到 graph 里
