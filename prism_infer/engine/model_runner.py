@@ -30,6 +30,7 @@ except ImportError:
     Qwen3ForCausalLM = None  # VL 项目中纯文本模型可能不存在, 用 VL 版替代
 from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 from prism_infer.layers.sampler import Sampler              # 采样器 (温度采样/贪婪)
+from prism_infer.analysis.kv_trace import build_trace_metadata, register_model_config
 from prism_infer.utils.context import set_context, get_context, reset_context  # 全局上下文
 from prism_infer.utils.loader import load_model             # 权重加载
 
@@ -82,6 +83,7 @@ class ModelRunner:
         self.rank = rank                             # 当前 GPU 编号 (0, 1, 2, ...)
         self.event = event                           # 进程间事件, 用于多 GPU 同步
         self.model_dtype = _resolve_model_dtype(hf_config)
+        register_model_config(config)
 
         # ── 初始化分布式通信 ──
         dist.init_process_group("nccl", "tcp://localhost:2333",
@@ -281,6 +283,7 @@ class ModelRunner:
         for module in self.model.modules():              # 遍历模型所有子模块
             if hasattr(module, "k_cache") and hasattr(module, "v_cache"):
                 # 找到 Attention 层 (有 k_cache 和 v_cache 属性的模块)
+                module.layer_idx = layer_id
                 module.k_cache = self.kv_cache[0, layer_id]  # shape: [num_blocks, block_size, heads, dim]
                 module.v_cache = self.kv_cache[1, layer_id]
                 layer_id += 1
@@ -352,6 +355,12 @@ class ModelRunner:
 
     def prepare_block_tables(self, seqs: list[Sequence]):
         """把每条序列的 block_table 对齐并转成 GPU 张量"""
+        swapped = [seq.seq_id for seq in seqs if getattr(seq, "cpu_block_table", [])]
+        if swapped:
+            raise RuntimeError(
+                "prepare_block_tables requires GPU block_table; "
+                f"swapped sequences still on CPU: {swapped}"
+            )
         max_len = max(len(seq.block_table) for seq in seqs)  # 找最长的 block_table
         # 不同序列的 block 数可能不同, 需要 padding 到相同长度
         block_tables = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]
@@ -366,6 +375,10 @@ class ModelRunner:
 
     def prepare_prefill(self, seqs: list[Sequence]):
         """Prefill 准备: 拼接多条序列的 token, 计算位置和 slot_mapping"""
+        register_model_config(self.config)
+        swapped = [seq.seq_id for seq in seqs if getattr(seq, "cpu_block_table", [])]
+        if swapped:
+            raise RuntimeError(f"cannot prepare prefill for swapped sequences: {swapped}")
         input_ids = []          # 所有序列的 token 拼成一个一维列表
         positions = []          # 每个 token 的位置编号 (RoPE 用)
         vl_position_chunks = []
@@ -437,8 +450,10 @@ class ModelRunner:
                 # slot_mapping 告诉 attention 层: "这个 token 的 KV 写到 cache 的第几号槽"
 
         if cu_seqlens_k[-1] > cu_seqlens_q[-1]:         # K 总长 > Q 总长 → 有 Prefix Cache
-            block_tables = self.prepare_block_tables(seqs)
-            # Prefix Cache 命中时, attention 需要 block_tables 来找 cached 的 KV
+            raise RuntimeError(
+                "paged prefix-cache prefill is not supported yet; "
+                "disable prefix-cache hits for prefill or implement paged prefill attention"
+            )
 
         # ── 全部转成 GPU tensor ──
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
@@ -450,9 +465,20 @@ class ModelRunner:
         cu_seqlens_k = torch.tensor(cu_seqlens_k, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
 
+        trace_metadata = build_trace_metadata(
+            seqs,
+            is_prefill=True,
+            input_ids=input_ids,
+            position_ids=positions,
+            slot_mapping=slot_mapping,
+            block_tables=block_tables,
+            context_lens=None,
+            block_size=self.block_size,
+        )
+
         # ── 设置全局上下文 (attention 层会读取这些信息) ──
         set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                    slot_mapping, None, block_tables)
+                    slot_mapping, None, block_tables, trace_metadata=trace_metadata)
         # True = is_prefill
         # attention 层通过 get_context() 获取这些信息来决定怎么计算
 
@@ -476,6 +502,10 @@ class ModelRunner:
 
     def prepare_decode(self, seqs: list[Sequence]):
         """Decode 准备: 每条序列只取最后一个 token"""
+        register_model_config(self.config)
+        swapped = [seq.seq_id for seq in seqs if getattr(seq, "cpu_block_table", [])]
+        if swapped:
+            raise RuntimeError(f"cannot prepare decode for swapped sequences: {swapped}")
         input_ids = []
         positions = []
         vl_position_chunks = []
@@ -510,8 +540,18 @@ class ModelRunner:
         context_lens = torch.tensor(context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         block_tables = self.prepare_block_tables(seqs)
 
+        trace_metadata = build_trace_metadata(
+            seqs,
+            is_prefill=False,
+            input_ids=input_ids,
+            position_ids=positions,
+            slot_mapping=slot_mapping,
+            block_tables=block_tables,
+            context_lens=context_lens,
+            block_size=self.block_size,
+        )
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens,
-                    block_tables=block_tables)
+                    block_tables=block_tables, trace_metadata=trace_metadata)
         # False = is_decode
         return ModelInputs(input_ids=input_ids, position_ids=positions)
 

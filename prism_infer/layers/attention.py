@@ -6,6 +6,7 @@ from prism_infer.ops.paged_decode import (
     HAS_TRITON as HAS_PAGED_DECODE_TRITON,
     paged_decode_attention,
 )
+from prism_infer.analysis.kv_trace import record_attention_layer
 from prism_infer.utils.context import get_context
 
 # flash_attn 和 triton 是可选依赖: 有 GPU 时手动安装
@@ -52,10 +53,54 @@ if HAS_TRITON:
         tl.store(v_cache_ptr + cache_offsets, value)
 
 
-def store_kvcache(key: torch.Tensor, value: torch.Tensor,
-                  k_cache: torch.Tensor, v_cache: torch.Tensor,
-                  slot_mapping: torch.Tensor):
-    """将当前 K/V 写入 KV Cache (GPU→Triton, CPU→PyTorch fallback)"""
+def _store_kvcache_eager(
+    key: torch.Tensor,
+    value: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    slot_mapping: torch.Tensor,
+) -> None:
+    """PyTorch fallback: 按 flat slot 写入 canonical paged KV cache。
+
+    key/value: [num_tokens, num_kv_heads, head_dim]
+    k_cache/v_cache: [num_blocks, block_size, num_kv_heads, head_dim]
+    slot_mapping: [num_tokens]，slot = block_id * block_size + block_offset。
+    """
+
+    if k_cache.shape != v_cache.shape:
+        raise ValueError(
+            f"k_cache/v_cache shape mismatch: {list(k_cache.shape)} vs {list(v_cache.shape)}"
+        )
+    if k_cache.ndim not in (3, 4):
+        raise ValueError(
+            "k_cache/v_cache must be [slots, heads, dim] or "
+            f"[num_blocks, block_size, heads, dim], got {list(k_cache.shape)}"
+        )
+
+    for i in range(key.shape[0]):
+        slot = int(slot_mapping[i].item())
+        if slot == -1:
+            continue
+        if k_cache.ndim == 4:
+            block_size = k_cache.shape[1]
+            block_id = slot // block_size
+            block_offset = slot % block_size
+            k_cache[block_id, block_offset] = key[i].to(k_cache.dtype)
+            v_cache[block_id, block_offset] = value[i].to(v_cache.dtype)
+        else:
+            # Legacy flat-cache fallback kept for small unit tests.
+            k_cache[slot] = key[i].to(k_cache.dtype)
+            v_cache[slot] = value[i].to(v_cache.dtype)
+
+
+def store_kvcache(
+    key: torch.Tensor,
+    value: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    slot_mapping: torch.Tensor,
+) -> None:
+    """将当前 K/V 写入 KV Cache (GPU→Triton, CPU→PyTorch fallback)。"""
     N, num_heads, head_dim = key.shape
     D = num_heads * head_dim
 
@@ -66,12 +111,7 @@ def store_kvcache(key: torch.Tensor, value: torch.Tensor,
             key, key.stride(0), value, value.stride(0),
             k_cache, v_cache, slot_mapping, D)
     else:
-        for i in range(N):
-            slot = slot_mapping[i].item()
-            if slot == -1:
-                continue
-            k_cache[slot] = key[i].to(k_cache.dtype)
-            v_cache[slot] = value[i].to(v_cache.dtype)
+        _store_kvcache_eager(key, value, k_cache, v_cache, slot_mapping)
 
 
 # ============================================================
@@ -86,6 +126,7 @@ class Attention(nn.Module):
         self.scale = scale
         self.num_kv_heads = num_kv_heads
         self.k_cache = self.v_cache = torch.tensor([])
+        self.layer_idx: int | None = None
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
         # q: [N, num_heads, head_dim]
@@ -137,6 +178,20 @@ class Attention(nn.Module):
             else:
                 o = F.scaled_dot_product_attention(
                     q, k, v, is_causal=True, scale=self.scale)
+        record_attention_layer(
+            layer_id=self.layer_idx,
+            q=q,
+            k=k,
+            v=v,
+            output=o,
+            k_cache=k_cache,
+            v_cache=v_cache,
+            context=context,
+            num_heads=self.num_heads,
+            num_kv_heads=self.num_kv_heads,
+            head_dim=self.head_dim,
+            scale=self.scale,
+        )
         return o
 
     def _forward_decode_eager(

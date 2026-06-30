@@ -12,8 +12,9 @@
 # ═══════════════════════════════════════════════════════════════
 
 from collections import deque
-import xxhash          # 超快哈希库，用于 Prefix Caching 的 block 内容指纹
+
 import numpy as np
+import xxhash          # 超快哈希库，用于 Prefix Caching 的 block 内容指纹
 
 from prism_infer.engine.sequence import Sequence
 
@@ -23,19 +24,19 @@ from prism_infer.engine.sequence import Sequence
 # C++ 类比: struct PageFrame { int id; int ref_count; hash_t hash; vector<int> tokens; };
 class Block:
 
-    def __init__(self, block_id):
+    def __init__(self, block_id: int):
         self.block_id = block_id       # 物理块编号 (0, 1, 2, ...)
         self.ref_count = 0             # 引用计数 (多个序列共享同一 block 时 > 1)
         self.hash = -1                 # 内容哈希 (-1 = 未满/未计算)
         self.token_ids = []            # 这个 block 里存的 token 内容 (用于验证 hash 命中)
 
     # ── 更新哈希和内容（block 填满时调用）──
-    def update(self, hash: int, token_ids: list[int]):
+    def update(self, hash: int, token_ids: list[int]) -> None:
         self.hash = hash            # 设置哈希指纹
         self.token_ids = token_ids  # 设置内容副本
 
     # ── 重置为初始状态（被分配给新序列时调用）──
-    def reset(self):
+    def reset(self) -> None:
         self.ref_count = 1             # 新分配 → 引用计数 = 1
         self.hash = -1                 # 清空哈希
         self.token_ids = []            # 清空 token 记录
@@ -52,6 +53,7 @@ class BlockManager:
         self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]  # 所有物理块数组 (类似 C++ 的页帧数组)
         self.hash_to_block_id: dict[int, int] = dict()         # 哈希 → block_id 的映射 (Prefix Caching 索引)
         self.free_block_ids: deque[int] = deque(range(num_blocks))  # 空闲块 ID 队列
+        self.free_block_id_set: set[int] = set(range(num_blocks))   # O(1) 判断指定 block 是否空闲
         self.used_block_ids: set[int] = set()                   # 正在被使用的块 ID 集合
         # ── CPU 端 block 管理 (Swap 用) ──
         # C++ 类比: swap 分区的页帧管理
@@ -62,7 +64,7 @@ class BlockManager:
     # prefix: 前一个 block 的哈希 → 形成链式哈希 (保证相同前缀才能匹配)
     # C++ 类比: static hash_t compute_hash(vector<int>& tokens, hash_t prefix)
     @classmethod
-    def compute_hash(cls, token_ids: list[int], prefix: int = -1):
+    def compute_hash(cls, token_ids: list[int], prefix: int = -1) -> int:
         h = xxhash.xxh64()                                      # 创建 xxHash64 哈希器
         if prefix != -1:
             h.update(prefix.to_bytes(8, "little"))              # 先把前缀哈希喂进去 (链式哈希)
@@ -70,18 +72,41 @@ class BlockManager:
         return h.intdigest()                                    # 返回 64-bit 整数哈希值
 
     # ── 分配一个物理块 (内部方法) ──
+    def _remove_hash_index_for_block(self, block: Block) -> None:
+        """释放/替换 block 前清理仍指向该 block 的 prefix-cache 索引。"""
+
+        if block.hash == -1:
+            return
+        if self.hash_to_block_id.get(block.hash) == block.block_id:
+            del self.hash_to_block_id[block.hash]
+
     def _allocate_block(self, block_id: int) -> Block:
         block = self.blocks[block_id]
         assert block.ref_count == 0                             # 确保这个块没被占用
+        if block_id not in self.free_block_id_set:
+            raise RuntimeError(f"block {block_id} is not free")
+        self._remove_hash_index_for_block(block)
         block.reset()                                           # 重置为干净状态, ref_count=1
-        self.free_block_ids.remove(block_id)                    # 从空闲队列中移除
+        self.free_block_id_set.remove(block_id)                  # 从空闲集合中移除
         self.used_block_ids.add(block_id)                       # 加入使用中集合
         return self.blocks[block_id]
 
+    def _allocate_free_block(self) -> Block:
+        """从空闲队列头分配一个真实空闲 block，跳过过期队列项。"""
+
+        while self.free_block_ids:
+            block_id = self.free_block_ids.popleft()
+            if block_id in self.free_block_id_set:
+                return self._allocate_block(block_id)
+        raise RuntimeError("no free KV cache block available")
+
     # ── 释放一个物理块 (内部方法) ──
-    def _deallocate_block(self, block_id: int) -> Block:
-        assert self.blocks[block_id].ref_count == 0             # 引用计数为 0 才能真正释放
+    def _deallocate_block(self, block_id: int) -> None:
+        block = self.blocks[block_id]
+        assert block.ref_count == 0                             # 引用计数为 0 才能真正释放
+        self._remove_hash_index_for_block(block)
         self.used_block_ids.remove(block_id)                    # 从使用中移除
+        self.free_block_id_set.add(block_id)
         self.free_block_ids.append(block_id)                    # 归还到空闲队列
 
     # ═══════════════════════════════════════════════════════════
@@ -91,13 +116,13 @@ class BlockManager:
     # ── can_allocate: Prefill 前检查是否有足够空闲块 ──
     # scheduler._schedule_prefill() 调用
     def can_allocate(self, seq: Sequence) -> bool:
-        return len(self.free_block_ids) >= seq.num_blocks       # 空闲块数 >= 序列需要的块数?
+        return len(self.free_block_id_set) >= seq.num_blocks       # 空闲块数 >= 序列需要的块数?
 
     # ── allocate: 为一条新序列分配所有 KV Cache 块 (Prefill 阶段) ──
     # 带 Prefix Caching: 如果之前有相同前缀的 block，直接复用，跳过计算
     #
     # 流程: 遍历序列的每个 block → 算哈希 → 查缓存 → 命中则复用, 未命中则新分配
-    def allocate(self, seq: Sequence):
+    def allocate(self, seq: Sequence) -> None:
         assert not seq.block_table                              # 确保还没分配过
         h = -1                                                  # 链式哈希的前缀 (第一个 block 无前缀)
         cache_miss = False                                      # 一旦 miss，后续所有 block 都一定 miss
@@ -110,8 +135,8 @@ class BlockManager:
                 cache_miss = True                               # 哈希未命中 or 内容不匹配 → miss
             if cache_miss:
                 # ---- Cache Miss: 分配新块 ----
-                block_id = self.free_block_ids[0]               # 取空闲队列的第一个
-                block = self._allocate_block(block_id)
+                block = self._allocate_free_block()
+                block_id = block.block_id
             else:
                 # ---- Cache Hit: 复用已有块, 跳过 KV 计算 ----
                 seq.num_cached_tokens += self.block_size        # 这些 token 不用重新算 attention
@@ -131,7 +156,7 @@ class BlockManager:
     # ── deallocate: 释放一条序列的所有 KV Cache 块 ──
     # scheduler.preempt() 或 scheduler.postprocess() (序列结束时) 调用
     # 倒序释放: 最后一个块通常是不满的, 没有缓存价值
-    def deallocate(self, seq: Sequence):
+    def deallocate(self, seq: Sequence) -> None:
         for block_id in reversed(seq.block_table):              # 倒序遍历页表
             block = self.blocks[block_id]
             block.ref_count -= 1                                # 引用计数 -1
@@ -140,13 +165,14 @@ class BlockManager:
             # 如果 ref_count > 0 → 别的序列还在用, 不释放 (Prefix Caching 共享)
         seq.num_cached_tokens = 0                               # 重置缓存计数
         seq.block_table.clear()                                 # 清空页表
+        seq.cpu_block_table.clear()                             # 释放后不应残留 swap 页表
 
     # ── can_append: Decode 阶段检查是否能追加 1 个 token ──
     # scheduler._schedule_decode() 的 while not 循环调用
     # len(seq) % block_size == 1 意味着刚好跨入新 block, 需要分配 1 个新块
     # 其他情况不需要新块 (当前块还没满), 返回 True
     def can_append(self, seq: Sequence) -> bool:
-        return len(self.free_block_ids) >= (len(seq) % self.block_size == 1)
+        return len(self.free_block_id_set) >= (len(seq) % self.block_size == 1)
         # 注意: (len(seq) % block_size == 1) 是 bool, 转成 int 就是 0 或 1
         # >= 1 → 需要 1 个空闲块
         # >= 0 → 永远 True (不需要新块)
@@ -154,15 +180,15 @@ class BlockManager:
     # ── may_append: Decode 阶段实际追加 token 后更新 block 状态 ──
     # scheduler.postprocess() 在 append_token 之后调用
     # 三种情况, 取决于追加后序列长度对 block_size 的余数:
-    def may_append(self, seq: Sequence):
+    def may_append(self, seq: Sequence) -> None:
         block_table = seq.block_table
         last_block = self.blocks[block_table[-1]]               # 取当前最后一个 block
         if len(seq) % self.block_size == 1:
             # ---- 情况1: 余数=1 → 刚好溢出到新 block ----
             # 上一个 block 刚填满(hash 已算好), 需要分配新块
             assert last_block.hash != -1                        # 上一个块应该是满的(有hash)
-            block_id = self.free_block_ids[0]
-            self._allocate_block(block_id)
+            block = self._allocate_free_block()
+            block_id = block.block_id
             block_table.append(block_id)                        # 新块加入页表
         elif len(seq) % self.block_size == 0:
             # ---- 情况2: 余数=0 → 当前 block 刚好填满 ----
@@ -192,8 +218,10 @@ class BlockManager:
         """GPU → CPU: 把序列的 KV Cache 从 GPU 显存搬到 CPU 内存
         返回: [(gpu_block_id, cpu_block_id), ...] 需要在 GPU 上执行的搬运对
         """
+        if seq.cpu_block_table:
+            raise RuntimeError(f"seq {seq.seq_id} already has CPU block table")
         swap_map = []
-        new_block_table = []
+        cpu_block_table = []
         for gpu_id in seq.block_table:
             cpu_id = self.cpu_free_block_ids.popleft()
             swap_map.append((gpu_id, cpu_id))
@@ -201,29 +229,33 @@ class BlockManager:
             self.blocks[gpu_id].ref_count -= 1
             if self.blocks[gpu_id].ref_count == 0:
                 self._deallocate_block(gpu_id)
-            new_block_table.append(cpu_id)
-        seq.block_table = new_block_table  # 现在 block_table 存的是 CPU block ID
+            cpu_block_table.append(cpu_id)
+        seq.cpu_block_table = cpu_block_table
+        seq.block_table = []
         return swap_map
 
     def can_swap_in(self, seq: Sequence) -> bool:
         """是否有足够的 GPU block 来换入这个序列"""
-        return len(self.free_block_ids) >= len(seq.block_table)
+        return bool(seq.cpu_block_table) and len(self.free_block_id_set) >= len(seq.cpu_block_table)
 
     def swap_in(self, seq: Sequence) -> list[tuple[int, int]]:
         """CPU → GPU: 把序列的 KV Cache 从 CPU 内存搬回 GPU 显存
         返回: [(cpu_block_id, gpu_block_id), ...] 需要在 GPU 上执行的搬运对
         """
+        if seq.block_table:
+            raise RuntimeError(f"seq {seq.seq_id} already has GPU block table")
+        if not seq.cpu_block_table:
+            raise RuntimeError(f"seq {seq.seq_id} has no CPU block table to swap in")
         swap_map = []
         new_block_table = []
-        for cpu_id in seq.block_table:
-            gpu_id = self.free_block_ids.popleft()
-            self.used_block_ids.add(gpu_id)
-            self.blocks[gpu_id].reset()
-            self.blocks[gpu_id].ref_count = 1
+        for cpu_id in seq.cpu_block_table:
+            block = self._allocate_free_block()
+            gpu_id = block.block_id
             swap_map.append((cpu_id, gpu_id))
             self.cpu_free_block_ids.append(cpu_id)
             new_block_table.append(gpu_id)
         seq.block_table = new_block_table
+        seq.cpu_block_table = []
 
         # 恢复满块的 hash 信息 (Prefix Cache 需要)
         h = -1
@@ -262,8 +294,8 @@ class BlockManager:
             return None  # 独占, 不需要复制
         
         # 需要 CoW: 分配新 block, 旧 block 引用计数 -1
-        new_block_id = self.free_block_ids[0]
-        new_block = self._allocate_block(new_block_id)
+        new_block = self._allocate_free_block()
+        new_block_id = new_block.block_id
         # 复制旧 block 的元数据 (hash, token_ids) 到新 block
         # CoW 只是逻辑分离, GPU 上的 KV 数据由调用者 (model_runner.copy_kv_blocks) 复制
         new_block.hash = last_block.hash
@@ -277,4 +309,3 @@ class BlockManager:
         seq.block_table[-1] = new_block_id  # 更新页表
         
         return (last_block_id, new_block_id)
-

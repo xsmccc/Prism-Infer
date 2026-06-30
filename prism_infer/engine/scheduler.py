@@ -88,7 +88,7 @@ class Scheduler:
         swap_in_map = []   # CPU→GPU 搬运对
         swap_out_map = []  # GPU→CPU 搬运对
         # ── 先尝试换入 swapped 序列 (如果 GPU 有足够空间) ──
-        while self.swapped and len(self.block_manager.free_block_ids) >= len(self.swapped[0].block_table):
+        while self.swapped and self.block_manager.can_swap_in(self.swapped[0]):
             seq = self.swapped.popleft()
             pairs = self.block_manager.swap_in(seq)
             swap_in_map.extend(pairs)

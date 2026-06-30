@@ -53,7 +53,8 @@ class Sequence:
         self.num_prompt_tokens = len(token_ids)         # prompt token数(固定不变)
         self.num_cached_tokens = 0                      # 已在KV Cache中缓存的token数 (Prefix Cache)
         self.num_computed_tokens = 0                      # 已Prefill计算的token数 (Chunked Prefill)
-        self.block_table = []                           # 物理块映射表: [block_id_0, block_id_1, ...]
+        self.block_table = []                           # GPU 物理块映射表: [gpu_block_id_0, gpu_block_id_1, ...]
+        self.cpu_block_table = []                       # Swap 后的 CPU 物理块映射表，不能污染 GPU block_table
         # 从SamplingParams展开存储(避免序列化时携带整个SamplingParams对象)
         self.temperature = sampling_params.temperature  # 采样温度
         self.max_tokens = sampling_params.max_tokens    # 最大生成token数
@@ -215,6 +216,7 @@ class Sequence:
             "num_cached_tokens": self.num_cached_tokens,
             "num_computed_tokens": self.num_computed_tokens,
             "block_table": self.block_table,
+            "cpu_block_table": self.cpu_block_table,
             "payload": self.token_ids if is_prefill_payload else self.last_token,
             "is_prefill_payload": is_prefill_payload,
             "pixel_values": self.pixel_values if is_prefill_payload else None,
@@ -246,6 +248,7 @@ class Sequence:
             self.num_cached_tokens = state["num_cached_tokens"]
             self.num_computed_tokens = state.get("num_computed_tokens", self.num_cached_tokens)
             self.block_table = state["block_table"]
+            self.cpu_block_table = state.get("cpu_block_table", [])
             if state["is_prefill_payload"]:
                 self.token_ids = state["payload"]
                 self.last_token = self.token_ids[-1]
@@ -264,6 +267,7 @@ class Sequence:
         else:
             self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.block_table = state[:-1]
             self.num_computed_tokens = self.num_cached_tokens
+            self.cpu_block_table = []
             if self.num_completion_tokens == 0:
                 self.token_ids = state[-1]   # Prefill: state[-1]是完整列表
                 self.last_token = self.token_ids[-1]

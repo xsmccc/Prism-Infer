@@ -14,6 +14,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 from dataclasses import dataclass
+from typing import Any
 import torch
 
 
@@ -28,6 +29,7 @@ class Context:
     slot_mapping: torch.Tensor | None = None       # 每个 token 在 KV Cache 中的全局槽位
     context_lens: torch.Tensor | None = None       # 每条序列的上下文长度 (Decode 用)
     block_tables: torch.Tensor | None = None       # 每条序列的 block 页表 (Decode/PrefixCache 用)
+    trace_metadata: Any | None = None              # KV trace 元数据; 默认关闭时为 None
 
 # ── 模块级全局变量: 单例 Context ──
 _CONTEXT = Context()
@@ -37,10 +39,10 @@ def get_context():
     """attention 层调用: 获取当前步骤的上下文"""
     return _CONTEXT
 
-def set_context(is_prefill, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0, max_seqlen_k=0, slot_mapping=None, context_lens=None, block_tables=None):
+def set_context(is_prefill, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0, max_seqlen_k=0, slot_mapping=None, context_lens=None, block_tables=None, trace_metadata=None):
     """model_runner 调用: 设置当前步骤的上下文"""
     global _CONTEXT                                # 声明要修改模块级变量
-    _CONTEXT = Context(is_prefill, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, context_lens, block_tables)
+    _CONTEXT = Context(is_prefill, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, context_lens, block_tables, trace_metadata)
     # 每次创建新的 Context 对象 (不是修改旧的)
     # dataclass 的 __init__ 按字段顺序接收参数
 

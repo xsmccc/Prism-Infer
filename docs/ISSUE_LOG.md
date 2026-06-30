@@ -1775,3 +1775,241 @@ cd /data/Prism-Infer && \
 剩余风险:
 
 - 这次修复只保证 benchmark 脚本入口可复现；性能优化本身仍按 P3-005/P3-006 的剩余风险处理。
+
+## P4-001: KV trace 接入与样例脚本可复现性问题
+
+状态: Verified
+
+发现方式:
+
+- P4 开发过程中运行新增轻量测试和三类真实样例脚本。
+
+影响范围:
+
+- P4 “trace 文件可复现生成”和“trace on/off 输出一致”门禁。
+- 不影响普通推理路径；问题发生在新增 trace 测试和 `scripts/run_kv_trace_samples.py` 入口。
+
+证据:
+
+轻量测试首次失败 1:
+
+```text
+ValueError: pixel_values and image_grid_thw must be provided together
+```
+
+轻量测试首次失败 2:
+
+```text
+RuntimeError: FlashAttention only support fp16 and bf16 data type
+```
+
+修复后真实样例首次失败:
+
+```text
+Traceback (most recent call last):
+  File "/data/Prism-Infer/scripts/run_kv_trace_samples.py", line 23, in <module>
+    from prism_infer import LLM
+ModuleNotFoundError: No module named 'prism_infer'
+```
+
+定位过程:
+
+- 第一个失败来自 `Sequence.__init__` 的成对 VL payload 校验。测试只传了 `image_grid_thw/video_grid_thw`，没有传对应的 `pixel_values/pixel_values_videos`，违反现有输入边界。
+- 第二个失败来自 CPU/float32 单测在安装了 flash-attn 的环境中走到 `flash_attn_varlen_func`，而 flash-attn 不支持 fp32。trace on/off 单元测试目标是验证 trace 不改变输出，不应依赖 flash-attn dtype 和 GPU。
+- 第三个失败与 P3-008 类似: 直接执行 `scripts/run_kv_trace_samples.py` 时，`sys.path[0]` 是 `scripts/`，repo root 不在 import path。
+- 过程中还发现 CPU fallback 的 `store_kvcache` 对 paged cache 形态和 slot 语义与真实 GPU Triton 路径不同；该差异不属于 P4 目标，测试改为 `slot_mapping=-1` 使用预填 paged cache 做只读 decode trace，避免把无关 fallback 问题混入 P4。
+
+根因:
+
+- 测试构造没有完全遵守现有 `Sequence` VL payload invariant。
+- P4 trace on/off 测试初版选择了 prefill fp32 路径，错误地暴露给 flash-attn 可选依赖。
+- 新增脚本位于包目录外，缺少 repo root bootstrap。
+
+修复:
+
+- `tests/test_analysis_schema.py` 为 schema 构造补齐 `pixel_values` 和 `pixel_values_videos`，保持与 `Sequence` 约束一致。
+- `tests/test_kv_trace_no_output_change.py` 改为小张量 decode eager fallback 路径，比较 trace off/on 输出 max diff，并检查 trace record 中 visual attention mass。
+- `scripts/analyze_kv_trace.py` 和 `scripts/run_kv_trace_samples.py` 启动时将 repo root 加入 `sys.path`，保证文档命令可直接执行。
+- `prism_infer/analysis/kv_trace.py` 避免对整块预分配 KV cache 做 mean/std，只记录 cache 元信息，对当前 q/k/v 和有效 span 做统计，避免扫描未使用 cache 槽。
+
+验证命令:
+
+```bash
+cd /data/Prism-Infer && \
+.venv-local/bin/python -m compileall prism_infer tests scripts
+```
+
+```bash
+cd /data/Prism-Infer && \
+.venv-local/bin/python -m pytest -q \
+  tests/test_analysis_schema.py \
+  tests/test_visual_token_stats.py \
+  tests/test_kv_trace_no_output_change.py -s
+```
+
+```bash
+cd /data/Prism-Infer && \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+.venv-local/bin/python scripts/run_kv_trace_samples.py \
+  --output-dir data/kv_trace_samples \
+  --max-tokens 2
+```
+
+验证结果:
+
+- `compileall prism_infer tests scripts`: PASS。
+- P4 轻量测试: `4 passed in 1.46s`。
+- trace on/off 小张量 decode:
+  - output shape: `[1, 2, 4]`
+  - max diff: `0.000000e+00`
+  - mean diff: `0.000000e+00`
+  - visual attention mass: `4.361440e-01`
+- 三类真实样例:
+  - `single_image_description`: token ids `[32, 6303]`，layer records `72`，phases `decode/prefill`。
+  - `single_image_detail_qa`: token ids `[2518, 151645]`，layer records `72`，phases `decode/prefill`。
+  - `multi_image_comparison`: token ids `[28715, 389]`，layer records `72`，phases `decode/prefill`。
+  - manifest result: `PASS`。
+
+经验:
+
+- 分析脚本也是阶段门禁的一部分，必须像 benchmark 脚本一样能从 repo root 直接执行。
+- trace on/off 测试应隔离“是否改变输出”这个核心问题，避免被 flash-attn dtype、GPU 可用性或 CPU fallback 形态差异干扰。
+- KV trace 不能扫描整块预分配 cache 做统计，否则会把未使用槽位和性能开销引入分析结果。
+
+剩余风险:
+
+- CPU `store_kvcache` fallback 与 paged cache 形态的兼容性不是本次 P4 修复范围；真实 P3/P4 GPU 路径使用 Triton store 和 paged decode。
+- P4 trace 是分析路径，会增加同步和 JSON 序列化开销，不能用于 benchmark。
+- P4 只形成压缩假设，不代表 P5 compression 已实现或有收益。
+
+## P4.5-001: KV layout、prefix hash 与 swap block_table 语义硬化
+
+状态: Verified
+
+发现方式:
+
+- 用户通过多 agent 专家诊断指出 KV 子系统存在 P0/P1 结构债。
+- 本轮按代码证据复核 `attention.py`、`paged_decode.py`、`block_manager.py`、`model_runner.py`、`scheduler.py` 和既有 P3/P4 文档。
+
+影响范围:
+
+- P5 KV Cache 压缩算法的地基。
+- Prefix cache、swap、paged decode、KV trace 与后续高性能服务调度。
+- 不直接影响 P3/P4 已验证的 non-prefix、non-swap、GPU paged decode baseline，但如果不修，会阻断后续 compression 和生产级 engine。
+
+证据:
+
+- `ModelRunner.allocate_kv_cache` 给每层 attention 分配的 cache 是 4D paged layout: `[num_blocks, block_size, num_kv_heads, head_dim]`。
+- `paged_decode_attention` 明确要求 `k_cache/v_cache` 为 `[num_blocks, block_size, num_kv_heads, head_dim]`。
+- `store_kvcache` 的 GPU Triton 路径按 `slot * D + arange(D)` 对 contiguous 4D cache 做 flat slot 写入；但 CPU fallback 原先直接 `k_cache[slot] = key[i]`，会把 flat slot 错当第一维 block id。
+- `BlockManager._deallocate_block` 原先只把 block 从 used 移到 free，不清理 `hash_to_block_id`。
+- `BlockManager.swap_out` 原先把 `seq.block_table` 从 GPU block id 替换成 CPU block id；同一个字段在不同状态下含义不同。
+- `ModelRunner.prepare_prefill` 原先在 prefix cache hit 时构造 `block_tables`，最后由 attention 层在 prefill + block_tables 路径报错；失败位置偏晚。
+
+根因:
+
+- KV layout 缺少明确 contract。真实主路径已经是 4D paged cache，但 fallback 和注释中存在 flat 2D 直觉。
+- Prefix cache hash index 没有和 block 生命周期绑定；free block 仍可被 stale hash 指向。
+- Swap 逻辑把 GPU/CPU 两个地址空间复用在 `seq.block_table` 一个字段上，导致后续 prepare/trace/decode 路径难以静态判断字段语义。
+- Prefix-cache prefill 尚无 paged prefill attention kernel，却没有在 ModelRunner 阶段早停。
+
+修复:
+
+- `prism_infer/layers/attention.py`
+  - 新增 `_store_kvcache_eager`。
+  - CPU fallback 支持 canonical 4D paged cache: `block_id = slot // block_size`，`block_offset = slot % block_size`。
+  - 保留 legacy `[slots, heads, dim]` fallback 只用于小形态单测。
+- `prism_infer/engine/block_manager.py`
+  - 新增 `free_block_id_set`，避免指定 block 分配依赖 `deque.remove` 的 O(n) 删除。
+  - 新增 `_remove_hash_index_for_block`，block 释放或重新分配前清理仍指向该 block 的 hash index。
+  - `_allocate_free_block` 从空闲队列头取真实 free block，跳过过期项。
+  - `deallocate` 同步清理 `seq.cpu_block_table`。
+- `prism_infer/engine/sequence.py`
+  - 新增 `cpu_block_table` 字段。
+  - 序列化/反序列化保留该字段。
+  - `block_table` 明确只表示 GPU block id。
+- `prism_infer/engine/block_manager.py`
+  - `swap_out()` 不再把 CPU block id 写入 `seq.block_table`；改为写入 `seq.cpu_block_table` 并清空 GPU table。
+  - `swap_in()` 要求 `seq.block_table` 为空、`seq.cpu_block_table` 非空，换入后恢复 GPU table 并清空 CPU table。
+- `prism_infer/engine/scheduler.py`
+  - swapped queue 的换入容量判断改用 `block_manager.can_swap_in(seq)`，后者基于 `cpu_block_table`。
+- `prism_infer/engine/model_runner.py`
+  - `prepare_block_tables/prepare_prefill/prepare_decode` 拒绝仍带 `cpu_block_table` 的 swapped sequence。
+  - prefix-cache prefill 在 `prepare_prefill` 阶段显式 `RuntimeError`，不再拖到 attention 层。
+- 新增测试:
+  - `tests/test_kv_engine_hardening.py`
+  - `tests/test_scheduler_swap_tables.py`
+
+拒绝的替代方案:
+
+- 不把主 KV cache 改成全局 2D flat layout。现有 `ModelRunner`、paged decode kernel 和 P3/P4 实测路径都以 4D paged layout 为物理真相；修 fallback 和 contract 风险更小。
+- 不继续允许 free block 作为 prefix cache 命中对象。当前没有 cached/reserved 独立状态，保留 stale hash 会让 free list 和 prefix cache 生命周期混在一起。后续如果需要持久 prefix cache，应显式设计 cached block 状态。
+- 不在 P4.5 实现 paged prefill kernel。P4.5 目标是 hardening，不是扩展新 kernel；paged prefill 属于后续 P6/P5 交叉任务。
+- 不在 P4.5 直接修改 `kvcache_block_size=256`。该改动会牵动 P3 correctness/benchmark 和 FlashAttention 约束；P5.0 会作为压缩粒度设计门禁单独处理。
+
+验证命令:
+
+```bash
+cd /data/Prism-Infer && \
+.venv-local/bin/python -m compileall prism_infer tests
+```
+
+```bash
+cd /data/Prism-Infer && \
+.venv-local/bin/python -m pytest -q \
+  tests/test_kv_engine_hardening.py \
+  tests/test_scheduler_swap_tables.py -s
+```
+
+```bash
+cd /data/Prism-Infer && \
+.venv-local/bin/python -m pytest -q \
+  tests/test_sequence_multimodal.py \
+  tests/test_qwen3_vl_attention_kv.py \
+  tests/test_model_runner_vl_prefill.py \
+  tests/test_model_runner_vl_mixed_prefill.py \
+  tests/test_kv_trace_no_output_change.py -s
+```
+
+```bash
+cd /data/Prism-Infer && \
+.venv-local/bin/python -m pytest -q \
+  tests/test_kv_engine_hardening.py \
+  tests/test_scheduler_swap_tables.py \
+  tests/test_paged_decode_kernel.py \
+  tests/test_qwen3_vl_attention_kv.py -s
+```
+
+验证结果:
+
+- `compileall prism_infer tests`: PASS。
+- P4.5 focused invariant tests:
+  - `tests/test_kv_engine_hardening.py` + `tests/test_scheduler_swap_tables.py`: `5 passed`。
+  - 4D paged KV store: input shape `[5,2,3]`，cache shape `[3,4,2,3]`，slot_mapping `[0,3,4,9,-1]`，K/V max diff `0.000000e+00`。
+  - BlockManager hash cleanup: deallocate 后 `hash index keys after deallocate: []`。
+  - swap table split: `swap_out` 后 GPU `block_table=[]`、CPU `cpu_block_table=[0,1]`；`swap_in` 后 CPU table 清空，GPU table 恢复。
+  - scheduler swap-in: 使用 `cpu_block_table` 后换入成功，`seq.cpu_block_table=[]`。
+  - prefix-cache prefill early gate: PASS。
+- 受影响窄回归:
+  - `12 passed in 11.87s`。
+  - engine attention prefill KV: output/K/V cache max diff `0.000000e+00`。
+  - engine attention decode paged KV: output max diff `1.953125e-03`，mean diff `3.700256e-04`。
+  - mixed prefill/decode 和 KV trace on/off 均 PASS。
+- Paged decode + attention regression:
+  - `10 passed in 4.98s`。
+  - paged decode small GQA max diff `3.906250e-03`，mean diff `1.447549e-04`。
+  - paged decode Qwen shape max diff `7.812500e-03`，mean diff `2.812790e-04`。
+
+经验:
+
+- “运行时必然崩溃”这类诊断要拆成路径级判断。GPU 主路径的 flat slot 写入 4D contiguous cache 是可工作的；真正错误的是 CPU fallback 和缺少 layout contract。
+- BlockManager 不能让 free list、prefix cache、swap 三种状态隐式共享同一字段或索引。后续压缩只会进一步增加状态复杂度，必须先把生命周期写清楚。
+- 对 unsupported 功能，越早失败越好。prefix-cache prefill 未实现时，ModelRunner 准备阶段报错比 attention 内部报错更容易定位，也避免 trace/metadata 生成半成品状态。
+
+剩余风险:
+
+- prefix-cache prefill 仍未实现；P4.5 只做 early gate。
+- `kvcache_block_size=256` 仍然对 visual-token KV 压缩粒度偏粗；P5.0 必须设计 block-size/sub-page metadata。
+- swap 数据搬运仍使用全局 `torch.cuda.synchronize()`；这是 P6 性能问题。
+- paged decode kernel 的 `MAX_CONTEXT_LEN` 冗余迭代、`BLOCK_N=32` 固定调优仍未处理；这是 P6 kernel 性能问题。
+- 本轮未运行 P1/P2/P3 全量 grouped regression 和 full logits 串行重型验证；合并前如要发布阶段 release，应按 `docs/VERIFICATION.md` 重新跑全量门禁。

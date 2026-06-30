@@ -1015,21 +1015,285 @@ PASS
 
 ## P4: KV Cache 分析验证
 
-计划新增测试:
+### 1. 语法检查
 
 ```bash
-.venv-local/bin/python -m pytest -q \
-  tests/test_kv_trace_no_output_change.py \
-  tests/test_analysis_schema.py \
-  tests/test_visual_token_stats.py
+.venv-local/bin/python -m compileall prism_infer tests scripts
 ```
 
 PASS 标准:
 
-- trace on/off 的 greedy 输出一致。
+- `prism_infer/analysis/kv_trace.py`、trace 接入点、测试和脚本均无 Python 编译错误。
+
+当前状态:
+
+- 2026-06-26 已验证 PASS。
+
+### 2. 轻量 trace/schema/summary 测试
+
+```bash
+.venv-local/bin/python -m pytest -q \
+  tests/test_analysis_schema.py \
+  tests/test_visual_token_stats.py \
+  tests/test_kv_trace_no_output_change.py -s
+```
+
+PASS 标准:
+
+- `TokenSpan` 能正确划分 text/image/video 连续区间。
 - trace 文件 schema 稳定，字段完整。
-- visual/text token 区间划分正确。
-- 分析脚本能生成至少一份可复现报告。
+- summary 能输出 visual attention mass、visual/text K norm ratio、head 差异、层间冗余。
+- trace on/off 的 attention 输出一致，max diff `0.000000e+00`。
+
+当前状态:
+
+```text
+4 passed in 1.46s
+trace off output shape: [1, 2, 4]
+trace on output shape: [1, 2, 4]
+trace output max diff: 0.000000e+00
+trace output mean diff: 0.000000e+00
+trace visual attention mass: 4.361440e-01
+```
+
+### 3. 三类真实样例 trace 门禁
+
+```bash
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+.venv-local/bin/python scripts/run_kv_trace_samples.py \
+  --output-dir data/kv_trace_samples \
+  --max-tokens 2
+```
+
+PASS 标准:
+
+- 每个样例先跑 trace off，再跑 trace on。
+- trace on/off greedy token ids 完全一致，不一致直接失败。
+- 覆盖三类输入:
+  - `single_image_description`
+  - `single_image_detail_qa`
+  - `multi_image_comparison`
+- 每个样例生成 JSONL trace、summary JSON、summary Markdown。
+- 每个样例生成 summary SVG 可视化。
+- summary 至少包含 `decode/prefill` 两个 phase、36 层 layer 记录、visual attention mass 和 KV norm 统计。
+
+当前状态:
+
+```text
+single_image_description:
+  token_ids: [32, 6303]
+  layer records: 72
+  steps: 2
+  phases: ["decode", "prefill"]
+
+single_image_detail_qa:
+  token_ids: [2518, 151645]
+  layer records: 72
+  steps: 2
+  phases: ["decode", "prefill"]
+
+multi_image_comparison:
+  token_ids: [28715, 389]
+  layer records: 72
+  steps: 2
+  phases: ["decode", "prefill"]
+
+manifest result: PASS
+```
+
+输出文件:
+
+- `data/kv_trace_samples/single_image_description.jsonl`
+- `data/kv_trace_samples/single_image_description.summary.json`
+- `data/kv_trace_samples/single_image_description.summary.md`
+- `data/kv_trace_samples/single_image_description.summary.svg`
+- `data/kv_trace_samples/single_image_detail_qa.jsonl`
+- `data/kv_trace_samples/single_image_detail_qa.summary.json`
+- `data/kv_trace_samples/single_image_detail_qa.summary.md`
+- `data/kv_trace_samples/single_image_detail_qa.summary.svg`
+- `data/kv_trace_samples/multi_image_comparison.jsonl`
+- `data/kv_trace_samples/multi_image_comparison.summary.json`
+- `data/kv_trace_samples/multi_image_comparison.summary.md`
+- `data/kv_trace_samples/multi_image_comparison.summary.svg`
+- `data/kv_trace_samples/manifest.json`
+
+说明:
+
+- `data/` 目录被 `.gitignore` 排除，原始 trace 不入库；文档保留复现命令和结果摘要。
+- P4 trace 是分析路径，不用于 benchmark 性能数字。
+
+## P4.5: KV Engine Hardening 验证
+
+### 1. 语法检查
+
+```bash
+.venv-local/bin/python -m compileall prism_infer tests
+```
+
+PASS 标准:
+
+- KV layout、BlockManager、Sequence swap state、Scheduler、ModelRunner 和新增测试均无 Python 编译错误。
+
+当前状态:
+
+```text
+compileall prism_infer tests: PASS
+```
+
+### 2. P4.5 focused invariant 测试
+
+```bash
+.venv-local/bin/python -m pytest -q \
+  tests/test_kv_engine_hardening.py \
+  tests/test_scheduler_swap_tables.py -s
+```
+
+PASS 标准:
+
+- `store_kvcache` CPU fallback 按 flat slot 写入 canonical 4D paged cache。
+- 释放最后一个 block 引用后，`hash_to_block_id` 不残留指向 free block 的 stale hash。
+- `swap_out()` 后 `seq.block_table == []`，CPU block id 只进入 `seq.cpu_block_table`。
+- `swap_in()` 后 `seq.cpu_block_table == []`，GPU block id 恢复到 `seq.block_table`。
+- Scheduler 使用 `cpu_block_table` 判断 swapped sequence 的换入容量。
+- prefix-cache prefill 未实现路径在 `ModelRunner.prepare_prefill` 阶段显式报错。
+
+当前状态:
+
+```text
+5 passed
+
+store key input shape: [5, 2, 3]
+store cache shape: [3, 4, 2, 3]
+store slot_mapping: [0, 3, 4, 9, -1]
+store k_cache max diff: 0.000000e+00
+store v_cache max diff: 0.000000e+00
+KV layout 4D eager store: PASS
+
+deallocated block id: 0
+released block hash: 8356527653647720045
+hash index keys after deallocate: []
+free block ids after deallocate: [0, 1, 2, 3]
+BlockManager hash cleanup: PASS
+
+swap out map: [(0, 0), (1, 1)]
+gpu block_table after swap_out: []
+cpu block_table after swap_out: [0, 1]
+swap in map: [(0, 2), (1, 3)]
+gpu block_table after swap_in: [2, 3]
+cpu block_table after swap_in: []
+BlockManager swap table split: PASS
+
+scheduler initial swap map: [(0, 0)]
+scheduler swap_in_map: [(0, 1)]
+scheduler seq block_table after swap_in: [1, 2]
+scheduler seq cpu_block_table after swap_in: []
+Scheduler swap table capacity: PASS
+
+prefix-cache prefill early gate: PASS
+```
+
+### 3. 受影响窄回归
+
+```bash
+.venv-local/bin/python -m pytest -q \
+  tests/test_sequence_multimodal.py \
+  tests/test_qwen3_vl_attention_kv.py \
+  tests/test_model_runner_vl_prefill.py \
+  tests/test_model_runner_vl_mixed_prefill.py \
+  tests/test_kv_trace_no_output_change.py -s
+```
+
+PASS 标准:
+
+- Sequence 序列化保留 `block_table/cpu_block_table` 语义，不破坏 VL prefill/decode payload。
+- Qwen3-VL engine attention prefill/decode KV correctness 不退化。
+- ModelRunner 单图和 mixed text/VL prefill/decode 输入准备不退化。
+- KV trace on/off 小张量输出仍 exact match。
+
+当前状态:
+
+```text
+12 passed in 11.87s
+
+engine attention prefill KV:
+  hidden input shape: [1, 7, 64]
+  engine output shape: [7, 64]
+  k_cache shape: [1, 7, 2, 16]
+  attention output max diff: 0.000000e+00
+  k_cache max diff: 0.000000e+00
+  v_cache max diff: 0.000000e+00
+  PASS
+
+engine attention decode paged KV:
+  decode q shape: [1, 4, 16]
+  decode engine/reference output shape: [1, 4, 16]
+  decode output max diff: 1.953125e-03
+  decode output mean diff: 3.700256e-04
+  PASS
+
+mixed prefill:
+  input_ids shape: [1043]
+  position_ids shape: [3, 1043]
+  pixel_values shape: [2352, 1536]
+  image_grid_thw shape: [3, 3]
+  pixel_values_videos shape: [1568, 1536]
+  video_grid_thw shape: [1, 3]
+  PASS
+
+trace on/off:
+  output shape: [1, 2, 4]
+  max diff: 0.000000e+00
+  mean diff: 0.000000e+00
+  visual attention mass: 4.361440e-01
+  PASS
+```
+
+### 4. Paged decode / attention regression
+
+```bash
+.venv-local/bin/python -m pytest -q \
+  tests/test_kv_engine_hardening.py \
+  tests/test_scheduler_swap_tables.py \
+  tests/test_paged_decode_kernel.py \
+  tests/test_qwen3_vl_attention_kv.py -s
+```
+
+PASS 标准:
+
+- P4.5 invariant 测试 PASS。
+- P3.6 paged decode Triton kernel correctness 不退化。
+- Engine attention prefill/decode KV correctness 不退化。
+
+当前状态:
+
+```text
+10 passed in 4.98s
+
+paged kernel small GQA:
+  q shape: [3, 4, 16]
+  k_cache shape: [9, 4, 2, 16]
+  block_tables shape: [3, 3]
+  context_lens: [1, 5, 9]
+  max diff: 3.906250e-03
+  mean diff: 1.447549e-04
+  PASS
+
+paged kernel Qwen shape:
+  q shape: [2, 8, 128]
+  k_cache shape: [6, 16, 2, 128]
+  block_tables shape: [2, 3]
+  context_lens: [17, 33]
+  max diff: 7.812500e-03
+  mean diff: 2.812790e-04
+  PASS
+```
+
+剩余风险:
+
+- P4.5 不声明 prefix-cache prefill 可用；当前只是 early gate。
+- P4.5 不改变 `kvcache_block_size=256`，P5.0 必须单独设计压缩粒度或 sub-page metadata。
+- P4.5 不解决 swap 全局 synchronize、paged decode kernel 参数调优、mixed chunked prefill+decode 调度，这些属于 P6 性能优化。
+- 本轮未重跑 P1/P2/P3 全量重型 full logits；修改点集中在 KV 管理和 fallback，已跑窄回归。若后续合并前需要阶段 release，应再跑 grouped regression 和 full logits 串行门禁。
 
 ## P5: 压缩策略验证
 
