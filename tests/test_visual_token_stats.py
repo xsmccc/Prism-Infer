@@ -40,6 +40,9 @@ def _record(layer_id: int, visual_mass: float, visual_k: float, text_k: float) -
                     "seq_id": 0,
                     "visual_mass_mean": visual_mass,
                     "text_mass_mean": 1.0 - visual_mass,
+                    "attention_entropy_mean": 1.25 + layer_id,
+                    "attention_entropy_normalized_mean": 0.5 + layer_id * 0.1,
+                    "visual_attention_entropy_normalized_mean": 0.4 + layer_id * 0.1,
                     "head_visual_mass": [visual_mass - 0.1, visual_mass + 0.1],
                     "head_text_mass": [1.1 - visual_mass, 0.9 - visual_mass],
                 }
@@ -76,8 +79,10 @@ def test_summarize_trace_reports_attention_norm_ratio_and_redundancy():
     assert summary["phases"] == ["prefill"]
     assert summary["per_layer"]["0"]["visual_text_k_norm_ratio"] == 2.0
     assert summary["per_layer"]["1"]["visual_attention_mass_mean"] == 0.5
+    assert summary["per_layer"]["0"]["attention_entropy_mean"] == 1.25
+    assert summary["per_layer"]["1"]["attention_entropy_normalized_mean"] == 0.6
     assert summary["adjacent_layer_redundancy"][0]["visual_k_head_cosine"] > 0.99
-    assert "| layer | visual attn mass |" in markdown
+    assert "| layer | visual attn mass | text attn mass | entropy |" in markdown
     assert svg.startswith("<svg ")
     assert "KV Trace Layer Summary" in svg
     print("KV trace visual token summary: PASS")

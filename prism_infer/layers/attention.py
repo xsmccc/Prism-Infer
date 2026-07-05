@@ -7,6 +7,7 @@ from prism_infer.ops.paged_decode import (
     paged_decode_attention,
 )
 from prism_infer.analysis.kv_trace import record_attention_layer
+from prism_infer.engine.compression import ensure_compression_off
 from prism_infer.utils.context import get_context
 
 # flash_attn 和 triton 是可选依赖: 有 GPU 时手动安装
@@ -133,6 +134,7 @@ class Attention(nn.Module):
         # k: [N, num_kv_heads, head_dim]
         # v: [N, num_kv_heads, head_dim]
         context = get_context()
+        ensure_compression_off(context.compression_metadata)
         k_cache, v_cache = self.k_cache, self.v_cache
 
         # 写入 KV Cache
@@ -145,7 +147,7 @@ class Attention(nn.Module):
                     "paged prefix-cache prefill is not supported by the local "
                     "flash_attn_varlen_func signature"
                 )
-            if HAS_FLASH_ATTN:
+            if HAS_FLASH_ATTN and q.is_cuda:
                 o = flash_attn_varlen_func(
                     q, k, v,
                     max_seqlen_q=context.max_seqlen_q,
@@ -153,6 +155,7 @@ class Attention(nn.Module):
                     max_seqlen_k=context.max_seqlen_k,
                     cu_seqlens_k=context.cu_seqlens_k,
                     softmax_scale=self.scale, causal=True,
+                    deterministic=True,
                 )
             else:
                 o = F.scaled_dot_product_attention(

@@ -572,4 +572,6 @@ class Qwen3VLForCausalLM(nn.Module):
             context = get_context()
             if context.is_prefill and context.cu_seqlens_q is not None:
                 hidden_states = hidden_states[context.cu_seqlens_q[1:] - 1].contiguous()
+        if hidden_states.is_cuda and hidden_states.dtype in (torch.float16, torch.bfloat16):
+            return F.linear(hidden_states.float(), self.lm_head.weight.float())
         return self.lm_head(hidden_states)

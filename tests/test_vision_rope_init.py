@@ -31,7 +31,7 @@ def test_vision_rotary_embedding_matches_hf_when_default_device_is_cuda():
     with torch.no_grad():
         hf_inv = hf_rotary.inv_freq
         our_inv = our.rotary_pos_emb.inv_freq
-        hf_freq = hf_rotary(28)
+        hf_freq = _hf_vision_freq_table(hf_rotary, 28, device)
         our_freq = our.rotary_pos_emb(28)
         hf_rot = _hf_rot_pos_emb_from_freq(hf_freq, grid_thw, merge_size=2)
         our_rot = our.rot_pos_emb(grid_thw)
@@ -60,6 +60,16 @@ def test_patch_merger_layernorm_eps_matches_hf():
 
     print(f"  merger eps values: {eps_values}")
     assert eps_values == [1e-6, 1e-6, 1e-6, 1e-6]
+
+
+def _hf_vision_freq_table(hf_rotary, seqlen: int, device: str) -> torch.Tensor:
+    """Call HF vision rotary embedding across old/new forward signatures."""
+
+    try:
+        return hf_rotary(seqlen)
+    except (AttributeError, TypeError):
+        position_ids = torch.arange(seqlen, device=device, dtype=torch.long)
+        return hf_rotary(position_ids)
 
 
 def _hf_rot_pos_emb_from_freq(

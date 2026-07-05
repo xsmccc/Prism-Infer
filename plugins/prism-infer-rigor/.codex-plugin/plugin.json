@@ -1,24 +1,24 @@
 {
   "name": "prism-infer-rigor",
-  "version": "0.1.0",
-  "description": "Project-local Codex rigor rules for Prism-Infer development.",
+  "version": "0.1.0+codex.20260705070827",
+  "description": "Mandatory Codex workflow and rigor rules for Prism-Infer development.",
   "author": {
     "name": "Prism-Infer"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Prism-Infer Rigor",
-    "shortDescription": "Evidence and verification guardrails for Prism-Infer.",
-    "longDescription": "Project-local Codex skill that enforces evidence, self-implementation, verification, benchmark integrity, and Chinese-first delivery rules for Prism-Infer development.",
+    "shortDescription": "Mandatory workflow checks for Prism-Infer.",
+    "longDescription": "Project-local Codex skill that enforces CLAUDE.md-style recovery, planning, evidence, self-implementation, verification, benchmark integrity, teaching, documentation, and Chinese-first delivery rules for Prism-Infer development.",
     "developerName": "Prism-Infer",
     "category": "Productivity",
     "capabilities": [
       "Write"
     ],
     "defaultPrompt": [
-      "Use Prism-Infer Rigor while modifying model code.",
-      "Audit this Prism-Infer change for verification gaps.",
-      "Plan the next Prism-Infer task with evidence checks."
+      "Use Prism-Infer Rigor for this Prism-Infer task and follow the full Plan -> Implement -> Verify -> Teach -> Document workflow.",
+      "Audit this Prism-Infer change for evidence, implementation, verification, and documentation gaps.",
+      "Recover the Prism-Infer session state, then plan the next task with verification gates."
     ]
   }
 }

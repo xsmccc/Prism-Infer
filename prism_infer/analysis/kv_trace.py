@@ -574,6 +574,41 @@ def _top_tokens(
     ]
 
 
+def _entropy_from_probs(probs: torch.Tensor) -> torch.Tensor:
+    """按最后一维计算 Shannon entropy，输入需为概率分布。"""
+
+    safe_probs = probs.clamp_min(torch.finfo(probs.dtype).tiny)
+    return -(probs * safe_probs.log()).sum(dim=-1)
+
+
+def _normalized_entropy(entropy: torch.Tensor, token_count: int) -> torch.Tensor:
+    """把 entropy 归一化到约 [0, 1]；token_count<=1 时定义为 0。"""
+
+    if token_count <= 1:
+        return torch.zeros_like(entropy)
+    return entropy / math.log(token_count)
+
+
+def _conditional_entropy_for_indices(
+    probs: torch.Tensor,
+    indices: list[int],
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    """计算候选 token 内的条件 entropy。
+
+    返回每个 head 的 `(entropy, normalized_entropy)`；没有候选 token 时返回
+    `(None, None)`。
+    """
+
+    if not indices:
+        return None, None
+    index = torch.tensor(indices, device=probs.device, dtype=torch.long)
+    selected = probs.index_select(-1, index)
+    mass = selected.sum(dim=-1, keepdim=True)
+    normalized = selected / mass.clamp_min(torch.finfo(selected.dtype).tiny)
+    entropy = _entropy_from_probs(normalized)
+    return entropy, _normalized_entropy(entropy, len(indices))
+
+
 def _span_kv_stats(
     metadata: TraceMetadata,
     k: torch.Tensor,
@@ -702,11 +737,33 @@ def _attention_for_prefill(
                 for idx in _modality_indices(seq, modality=modality, length=seq.query_end)
                 if seq.query_start <= idx < seq.query_end
             )
+        entropy = _entropy_from_probs(probs)
+        entropy_norm = _normalized_entropy(entropy, probs.shape[-1])
+        visual_entropy, visual_entropy_norm = _conditional_entropy_for_indices(
+            probs,
+            visual_indices,
+        )
         sequence_stats.append(
             {
                 "seq_id": seq.seq_id,
                 "query_token_index": seq.query_end - 1,
                 "key_token_count": seq.query_end - seq.query_start,
+                "attention_entropy_mean": float(entropy.mean().item()),
+                "attention_entropy_std": float(entropy.std(unbiased=False).item()),
+                "attention_entropy_by_head": _to_float_list(entropy),
+                "attention_entropy_normalized_mean": float(entropy_norm.mean().item()),
+                "attention_entropy_normalized_by_head": _to_float_list(entropy_norm),
+                "visual_attention_entropy_mean": (
+                    None if visual_entropy is None else float(visual_entropy.mean().item())
+                ),
+                "visual_attention_entropy_normalized_mean": (
+                    None
+                    if visual_entropy_norm is None
+                    else float(visual_entropy_norm.mean().item())
+                ),
+                "visual_attention_entropy_by_head": (
+                    [] if visual_entropy is None else _to_float_list(visual_entropy)
+                ),
                 "visual_mass_mean": float(visual_head_mass.mean().item()),
                 "visual_mass_std": float(visual_head_mass.std(unbiased=False).item()),
                 "text_mass_mean": float(text_head_mass.mean().item()),
@@ -818,11 +875,33 @@ def _attention_for_decode(
             visual_indices.extend(
                 idx for idx in _modality_indices(seq, modality=modality, length=context_len)
             )
+        entropy = _entropy_from_probs(probs)
+        entropy_norm = _normalized_entropy(entropy, probs.shape[-1])
+        visual_entropy, visual_entropy_norm = _conditional_entropy_for_indices(
+            probs,
+            visual_indices,
+        )
         sequence_stats.append(
             {
                 "seq_id": seq.seq_id,
                 "query_token_index": context_len - 1,
                 "key_token_count": context_len,
+                "attention_entropy_mean": float(entropy.mean().item()),
+                "attention_entropy_std": float(entropy.std(unbiased=False).item()),
+                "attention_entropy_by_head": _to_float_list(entropy),
+                "attention_entropy_normalized_mean": float(entropy_norm.mean().item()),
+                "attention_entropy_normalized_by_head": _to_float_list(entropy_norm),
+                "visual_attention_entropy_mean": (
+                    None if visual_entropy is None else float(visual_entropy.mean().item())
+                ),
+                "visual_attention_entropy_normalized_mean": (
+                    None
+                    if visual_entropy_norm is None
+                    else float(visual_entropy_norm.mean().item())
+                ),
+                "visual_attention_entropy_by_head": (
+                    [] if visual_entropy is None else _to_float_list(visual_entropy)
+                ),
                 "visual_mass_mean": float(visual_head_mass.mean().item()),
                 "visual_mass_std": float(visual_head_mass.std(unbiased=False).item()),
                 "text_mass_mean": float(text_head_mass.mean().item()),
@@ -969,6 +1048,9 @@ def summarize_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
         records_l = [r for r in layer_records if r.get("layer_id") == layer]
         visual_mass_values = []
         text_mass_values = []
+        entropy_values = []
+        entropy_norm_values = []
+        visual_entropy_norm_values = []
         visual_head_std_values = []
         visual_k_norm = []
         text_k_norm = []
@@ -980,6 +1062,14 @@ def summarize_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
                     visual_mass_values.append(float(seq_stat["visual_mass_mean"]))
                 if "text_mass_mean" in seq_stat:
                     text_mass_values.append(float(seq_stat["text_mass_mean"]))
+                if "attention_entropy_mean" in seq_stat:
+                    entropy_values.append(float(seq_stat["attention_entropy_mean"]))
+                if "attention_entropy_normalized_mean" in seq_stat:
+                    entropy_norm_values.append(float(seq_stat["attention_entropy_normalized_mean"]))
+                if seq_stat.get("visual_attention_entropy_normalized_mean") is not None:
+                    visual_entropy_norm_values.append(
+                        float(seq_stat["visual_attention_entropy_normalized_mean"])
+                    )
                 if "head_visual_mass" in seq_stat and seq_stat["head_visual_mass"]:
                     values = seq_stat["head_visual_mass"]
                     mean_v = sum(values) / len(values)
@@ -1011,6 +1101,9 @@ def summarize_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
             "record_count": len(records_l),
             "visual_attention_mass_mean": _mean(visual_mass_values),
             "text_attention_mass_mean": _mean(text_mass_values),
+            "attention_entropy_mean": _mean(entropy_values),
+            "attention_entropy_normalized_mean": _mean(entropy_norm_values),
+            "visual_attention_entropy_normalized_mean": _mean(visual_entropy_norm_values),
             "visual_head_mass_std_mean": _mean(visual_head_std_values),
             "visual_k_norm_mean": visual_norm_mean,
             "text_k_norm_mean": text_norm_mean,
@@ -1058,8 +1151,8 @@ def format_summary_markdown(summary: dict[str, Any]) -> str:
         "",
         "## Per-layer Visual KV / Attention",
         "",
-        "| layer | visual attn mass | text attn mass | visual K norm | text K norm | K ratio | head mass std |",
-        "|---:|---:|---:|---:|---:|---:|---:|",
+        "| layer | visual attn mass | text attn mass | entropy | norm entropy | visual norm entropy | visual K norm | text K norm | K ratio | head mass std |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for layer in summary["layers"]:
         stats = summary["per_layer"][str(layer)]
@@ -1070,6 +1163,9 @@ def format_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(
             f"| {layer} | {fmt(stats['visual_attention_mass_mean'])} | "
             f"{fmt(stats['text_attention_mass_mean'])} | "
+            f"{fmt(stats['attention_entropy_mean'])} | "
+            f"{fmt(stats['attention_entropy_normalized_mean'])} | "
+            f"{fmt(stats['visual_attention_entropy_normalized_mean'])} | "
             f"{fmt(stats['visual_k_norm_mean'])} | "
             f"{fmt(stats['text_k_norm_mean'])} | "
             f"{fmt(stats['visual_text_k_norm_ratio'])} | "

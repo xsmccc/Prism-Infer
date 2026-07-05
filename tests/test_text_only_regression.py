@@ -17,6 +17,7 @@ def test_text_only_generate_greedy_smoke():
         max_num_batched_tokens=128,
         max_num_seqs=1,
         gpu_memory_utilization=0.9,
+        compression_mode="off",
     )
     try:
         outputs = llm.generate(

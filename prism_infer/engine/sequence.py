@@ -20,6 +20,19 @@ class Sequence:
     block_size = 256    # 类变量: KV Cache块大小(所有实例共享)
     counter = count()   # 类变量: 全局自增ID计数器(类似C++ static atomic<int>)
 
+    @classmethod
+    def set_block_size(cls, block_size: int) -> None:
+        """同步全局 Sequence block size。
+
+        当前 Sequence 仍用类变量保存 block size；engine 初始化时必须把
+        Config.kvcache_block_size 写入这里，避免 Sequence.num_blocks 与
+        BlockManager/ModelRunner 的物理 KV block size 不一致。
+        """
+
+        if block_size <= 0:
+            raise ValueError(f"block_size must be positive, got {block_size}")
+        cls.block_size = int(block_size)
+
     def __init__(
         self,
         token_ids: list[int],

@@ -1,7 +1,7 @@
 interface:
   display_name: "Prism-Infer Rigor"
-  short_description: "Rigorous Prism-Infer development checks"
-  default_prompt: "Use $prism-infer-rigor while working on Prism-Infer."
+  short_description: "Mandatory Prism-Infer workflow checks"
+  default_prompt: "Use $prism-infer-rigor to follow the full Prism-Infer Plan -> Implement -> Verify -> Teach -> Document workflow."
 
 policy:
   allow_implicit_invocation: true

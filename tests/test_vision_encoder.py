@@ -15,7 +15,7 @@ ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 VisionEncoder = ve.VisionEncoder
 
-from conftest import get_model_path, require_transformers
+from conftest import get_model_path, hf_qwen3_vl_visual, require_transformers
 
 THRESHOLD = 2e-2
 # 注: 单模块 diff < 1e-5, 但 27 层 ViT Block 链式传播导致 bf16 累积误差 ~0.016。
@@ -30,7 +30,7 @@ def test_vision_encoder():
     hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
         cache, dtype=torch.bfloat16, device_map='cpu',
         trust_remote_code=True, local_files_only=True)
-    hf_vis = hf.visual
+    hf_vis = hf_qwen3_vl_visual(hf)
 
     our = VisionEncoder(torch.bfloat16)
     # 加载权重: HF "model.visual.xxx" → our "xxx"
@@ -42,7 +42,8 @@ def test_vision_encoder():
     grid_thw = torch.tensor([[1, 28, 28]])
 
     with torch.no_grad():
-        hf_main, hf_ds = hf_vis(pv, grid_thw=grid_thw)
+        hf_out = hf_vis(pv, grid_thw=grid_thw)
+        hf_main, hf_ds = _unpack_hf_vision_output(hf_out)
         our_main, our_ds = our(pv, grid_thw=grid_thw)
 
     results = []
@@ -60,6 +61,14 @@ def test_vision_encoder():
     all_pass = all(r[2] == "PASS" for r in results)
     assert all_pass, f"Some tests failed"
     print(f"\n  All PASS (CPU bf16, threshold={THRESHOLD})")
+
+
+def _unpack_hf_vision_output(output):
+    """Return merged visual output and DeepStack features across HF layouts."""
+
+    if hasattr(output, "pooler_output") and hasattr(output, "deepstack_features"):
+        return output.pooler_output, output.deepstack_features
+    return output
 
 
 if __name__ == '__main__':

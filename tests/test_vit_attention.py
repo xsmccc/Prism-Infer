@@ -15,7 +15,7 @@ ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 ViTAttention = ve.ViTAttention
 
-from conftest import get_model_path, require_transformers
+from conftest import get_model_path, hf_qwen3_vl_visual, require_transformers
 
 THRESHOLD = 1e-5
 
@@ -29,7 +29,7 @@ def test_attention_full():
     hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
         cache, dtype=torch.bfloat16, device_map='cpu',
         trust_remote_code=True, local_files_only=True)
-    hf_attn = hf.visual.blocks[0].attn
+    hf_attn = hf_qwen3_vl_visual(hf).blocks[0].attn
 
     our = ViTAttention(1152, 16, torch.bfloat16)
     for k in ['qkv.weight', 'qkv.bias', 'proj.weight', 'proj.bias']:

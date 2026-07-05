@@ -100,6 +100,15 @@ class BlockManager:
                 return self._allocate_block(block_id)
         raise RuntimeError("no free KV cache block available")
 
+    def _assert_sequence_block_size(self, seq: Sequence) -> None:
+        """确保 Sequence 页表计算粒度与 BlockManager 物理粒度一致。"""
+
+        if seq.block_size != self.block_size:
+            raise ValueError(
+                "Sequence.block_size must match BlockManager.block_size, "
+                f"got sequence={seq.block_size}, manager={self.block_size}"
+            )
+
     # ── 释放一个物理块 (内部方法) ──
     def _deallocate_block(self, block_id: int) -> None:
         block = self.blocks[block_id]
@@ -116,6 +125,7 @@ class BlockManager:
     # ── can_allocate: Prefill 前检查是否有足够空闲块 ──
     # scheduler._schedule_prefill() 调用
     def can_allocate(self, seq: Sequence) -> bool:
+        self._assert_sequence_block_size(seq)
         return len(self.free_block_id_set) >= seq.num_blocks       # 空闲块数 >= 序列需要的块数?
 
     # ── allocate: 为一条新序列分配所有 KV Cache 块 (Prefill 阶段) ──
@@ -123,6 +133,7 @@ class BlockManager:
     #
     # 流程: 遍历序列的每个 block → 算哈希 → 查缓存 → 命中则复用, 未命中则新分配
     def allocate(self, seq: Sequence) -> None:
+        self._assert_sequence_block_size(seq)
         assert not seq.block_table                              # 确保还没分配过
         h = -1                                                  # 链式哈希的前缀 (第一个 block 无前缀)
         cache_miss = False                                      # 一旦 miss，后续所有 block 都一定 miss
@@ -157,6 +168,7 @@ class BlockManager:
     # scheduler.preempt() 或 scheduler.postprocess() (序列结束时) 调用
     # 倒序释放: 最后一个块通常是不满的, 没有缓存价值
     def deallocate(self, seq: Sequence) -> None:
+        self._assert_sequence_block_size(seq)
         for block_id in reversed(seq.block_table):              # 倒序遍历页表
             block = self.blocks[block_id]
             block.ref_count -= 1                                # 引用计数 -1
@@ -172,6 +184,7 @@ class BlockManager:
     # len(seq) % block_size == 1 意味着刚好跨入新 block, 需要分配 1 个新块
     # 其他情况不需要新块 (当前块还没满), 返回 True
     def can_append(self, seq: Sequence) -> bool:
+        self._assert_sequence_block_size(seq)
         return len(self.free_block_id_set) >= (len(seq) % self.block_size == 1)
         # 注意: (len(seq) % block_size == 1) 是 bool, 转成 int 就是 0 或 1
         # >= 1 → 需要 1 个空闲块
@@ -181,6 +194,7 @@ class BlockManager:
     # scheduler.postprocess() 在 append_token 之后调用
     # 三种情况, 取决于追加后序列长度对 block_size 的余数:
     def may_append(self, seq: Sequence) -> None:
+        self._assert_sequence_block_size(seq)
         block_table = seq.block_table
         last_block = self.blocks[block_table[-1]]               # 取当前最后一个 block
         if len(seq) % self.block_size == 1:
@@ -212,12 +226,14 @@ class BlockManager:
 
     def can_swap_out(self, seq: Sequence) -> bool:
         """是否有足够的 CPU block 来换出这个序列"""
+        self._assert_sequence_block_size(seq)
         return len(self.cpu_free_block_ids) >= len(seq.block_table)
 
     def swap_out(self, seq: Sequence) -> list[tuple[int, int]]:
         """GPU → CPU: 把序列的 KV Cache 从 GPU 显存搬到 CPU 内存
         返回: [(gpu_block_id, cpu_block_id), ...] 需要在 GPU 上执行的搬运对
         """
+        self._assert_sequence_block_size(seq)
         if seq.cpu_block_table:
             raise RuntimeError(f"seq {seq.seq_id} already has CPU block table")
         swap_map = []
@@ -236,12 +252,14 @@ class BlockManager:
 
     def can_swap_in(self, seq: Sequence) -> bool:
         """是否有足够的 GPU block 来换入这个序列"""
+        self._assert_sequence_block_size(seq)
         return bool(seq.cpu_block_table) and len(self.free_block_id_set) >= len(seq.cpu_block_table)
 
     def swap_in(self, seq: Sequence) -> list[tuple[int, int]]:
         """CPU → GPU: 把序列的 KV Cache 从 CPU 内存搬回 GPU 显存
         返回: [(cpu_block_id, gpu_block_id), ...] 需要在 GPU 上执行的搬运对
         """
+        self._assert_sequence_block_size(seq)
         if seq.block_table:
             raise RuntimeError(f"seq {seq.seq_id} already has GPU block table")
         if not seq.cpu_block_table:
@@ -285,6 +303,7 @@ class BlockManager:
     # 返回: (old_block_id, new_block_id) 如果发生了复制, 否则 None
     #        调用者需要用这个信息在 GPU 上复制 KV 数据
     def copy_on_write(self, seq: Sequence) -> tuple[int, int] | None:
+        self._assert_sequence_block_size(seq)
         if not seq.block_table:
             return None
         last_block_id = seq.block_table[-1]

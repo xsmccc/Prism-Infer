@@ -149,6 +149,40 @@ def _run_decode_attention(enable_trace: bool):
 
 
 def test_kv_trace_prefill_on_off_output_identical():
+    """开启 KV trace 不应改变 prefill attention 输出。"""
+
+    output_off, _ = _run_prefill_attention(enable_trace=False)
+    output_on, session = _run_prefill_attention(enable_trace=True)
+    diff = (output_on - output_off).abs()
+
+    assert session is not None
+    records = session.records
+    record = records[0]
+    attention = record["attention"]["sequence_stats"][0]
+
+    print(f"prefill trace off output shape: {list(output_off.shape)}")
+    print(f"prefill trace on output shape: {list(output_on.shape)}")
+    print(f"prefill trace output max diff: {diff.max().item():.6e}")
+    print(f"prefill trace output mean diff: {diff.mean().item():.6e}")
+    print(f"prefill trace records: {len(records)}")
+    print(f"prefill trace q shape: {record['tensor_stats']['q']['shape']}")
+    print(f"prefill visual attention mass: {attention['visual_mass_mean']:.6e}")
+    print(f"prefill attention entropy: {attention['attention_entropy_mean']:.6e}")
+
+    assert list(output_on.shape) == [5, 2, 4]
+    assert diff.max().item() == 0.0
+    assert len(records) == 1
+    assert record["record_type"] == "attention_layer"
+    assert record["phase"] == "prefill"
+    assert record["attention"]["kind"] == "prefill_last_query"
+    assert record["batch"]["sequences"][0]["spans"][1]["modality"] == "image"
+    assert 0.0 <= attention["visual_mass_mean"] <= 1.0
+    assert attention["attention_entropy_mean"] >= 0.0
+    assert 0.0 <= attention["attention_entropy_normalized_mean"] <= 1.0
+    print("KV trace prefill on/off equality: PASS")
+
+
+def test_kv_trace_decode_on_off_output_identical():
     """开启 KV trace 不应改变 decode attention 输出。"""
 
     output_off, _ = _run_decode_attention(enable_trace=False)
@@ -160,18 +194,23 @@ def test_kv_trace_prefill_on_off_output_identical():
     record = records[0]
     attention = record["attention"]["sequence_stats"][0]
 
-    print(f"trace off output shape: {list(output_off.shape)}")
-    print(f"trace on output shape: {list(output_on.shape)}")
-    print(f"trace output max diff: {diff.max().item():.6e}")
-    print(f"trace output mean diff: {diff.mean().item():.6e}")
-    print(f"trace records: {len(records)}")
-    print(f"trace q shape: {record['tensor_stats']['q']['shape']}")
-    print(f"trace visual attention mass: {attention['visual_mass_mean']:.6e}")
+    print(f"decode trace off output shape: {list(output_off.shape)}")
+    print(f"decode trace on output shape: {list(output_on.shape)}")
+    print(f"decode trace output max diff: {diff.max().item():.6e}")
+    print(f"decode trace output mean diff: {diff.mean().item():.6e}")
+    print(f"decode trace records: {len(records)}")
+    print(f"decode trace q shape: {record['tensor_stats']['q']['shape']}")
+    print(f"decode visual attention mass: {attention['visual_mass_mean']:.6e}")
+    print(f"decode attention entropy: {attention['attention_entropy_mean']:.6e}")
 
     assert list(output_on.shape) == [1, 2, 4]
     assert diff.max().item() == 0.0
     assert len(records) == 1
     assert record["record_type"] == "attention_layer"
+    assert record["phase"] == "decode"
+    assert record["attention"]["kind"] == "decode_current_query"
     assert record["batch"]["sequences"][0]["spans"][1]["modality"] == "image"
     assert 0.0 <= attention["visual_mass_mean"] <= 1.0
-    print("KV trace prefill on/off equality: PASS")
+    assert attention["attention_entropy_mean"] >= 0.0
+    assert 0.0 <= attention["attention_entropy_normalized_mean"] <= 1.0
+    print("KV trace decode on/off equality: PASS")

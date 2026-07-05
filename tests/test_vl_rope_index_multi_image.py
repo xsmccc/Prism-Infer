@@ -1,11 +1,9 @@
 """P3.1 Qwen3-VL 多图 3D position ids 验证。"""
 
-from types import SimpleNamespace
-
 import torch
 from PIL import Image
 
-from conftest import get_model_path, require_transformers
+from conftest import get_model_path, hf_qwen3_vl_rope_index, require_transformers
 from prism_infer.engine.vl_inputs import prepare_image_inputs
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 
@@ -20,18 +18,6 @@ def _load_processor_and_config():
     )
     config = transformers.AutoConfig.from_pretrained(model_path, local_files_only=True)
     return transformers, processor, config
-
-
-def _hf_rope_index(transformers, config, input_ids, image_grid_thw, attention_mask):
-    dummy_model = SimpleNamespace(config=config)
-    hf_model_cls = transformers.models.qwen3_vl.modeling_qwen3_vl.Qwen3VLModel
-    return hf_model_cls.get_rope_index(
-        dummy_model,
-        input_ids=input_ids,
-        image_grid_thw=image_grid_thw,
-        attention_mask=attention_mask,
-    )
-
 
 def _demo_images() -> list[Image.Image]:
     return [
@@ -52,12 +38,12 @@ def test_multi_image_rope_index_matches_hf():
         image_grid_thw=inputs.image_grid_thw,
         attention_mask=inputs.attention_mask,
     )
-    hf_pos, hf_delta = _hf_rope_index(
+    hf_pos, hf_delta = hf_qwen3_vl_rope_index(
         transformers,
         config,
-        inputs.input_ids,
-        inputs.image_grid_thw,
-        inputs.attention_mask,
+        input_ids=inputs.input_ids,
+        image_grid_thw=inputs.image_grid_thw,
+        attention_mask=inputs.attention_mask,
     )
 
     pos_diff = (ours_pos - hf_pos).abs().max().item()

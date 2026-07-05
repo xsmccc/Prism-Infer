@@ -14,6 +14,7 @@ class Scheduler:
         self.enable_chunked_prefill = getattr(config, 'enable_chunked_prefill', False)
         self.max_chunk_size = getattr(config, 'max_chunk_size', 512)
         self.eos = config.eos
+        Sequence.set_block_size(config.kvcache_block_size)
         # 负责 KV Cache 物理块的分配/释放
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size, getattr(config, 'num_cpu_blocks', 0))
         # waiting: 等待 prefill 的序列；running: 正在 decode 的序列

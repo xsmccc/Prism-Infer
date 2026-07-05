@@ -96,6 +96,21 @@ def test_block_manager_deallocate_clears_hash_index() -> None:
         Sequence.block_size = old_block_size
 
 
+def test_block_manager_rejects_sequence_block_size_mismatch() -> None:
+    """Sequence 页表粒度与 BlockManager 物理粒度不一致时必须显式失败。"""
+
+    old_block_size = Sequence.block_size
+    Sequence.set_block_size(8)
+    try:
+        manager = BlockManager(num_blocks=4, block_size=4)
+        seq = Sequence([1, 2, 3, 4])
+        with pytest.raises(ValueError, match="Sequence.block_size must match"):
+            manager.allocate(seq)
+        print("BlockManager block size mismatch gate: PASS")
+    finally:
+        Sequence.block_size = old_block_size
+
+
 def test_block_manager_swap_uses_separate_cpu_block_table() -> None:
     """swap_out 后 GPU block_table 必须清空，CPU block id 只能进入 cpu_block_table。"""
 

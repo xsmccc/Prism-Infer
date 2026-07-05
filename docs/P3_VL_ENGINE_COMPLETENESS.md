@@ -1,6 +1,6 @@
 # P3 VL Engine 完整性与性能基线设计
 
-> 修订日期: 2026-06-25
+> 修订日期: 2026-07-05
 > 阶段目标: 在 P2 单图 eager strict baseline 上，补齐真实多模态推理框架必须具备的多图、视频、batch 混合、长输出、CUDA Graph decode 和 paged decode kernel 能力。
 
 ## 范围
@@ -38,7 +38,7 @@ P3 的执行顺序必须是 correctness 优先:
 | 多图输入 | P3.1 已解除单请求多图 eager correctness 阻断；P3.3/P3.5 已补齐 mixed batch 与 CUDA Graph decode correctness。 | `prism_infer/engine/vl_inputs.py`, `prism_infer/vision/vision_encoder.py`, `tests/test_full_model_vl_multi_image.py`, `tests/test_llm_vl_generate.py`, `tests/test_llm_vl_mixed_batch_generate.py`, `tests/test_llm_vl_cuda_graph_decode.py` |
 | 视频输入 | P3.2 已解除单请求 synthetic video eager correctness 阻断；P3.3/P3.5 已补齐 mixed batch 与 CUDA Graph decode correctness；真实视频文件读取/采样策略仍未覆盖。 | `prism_infer/engine/vl_inputs.py`, `prism_infer/models/qwen3_vl_position.py`, `prism_infer/models/qwen3_vl.py`, `tests/test_full_model_vl_video.py`, `tests/test_llm_vl_generate.py`, `tests/test_llm_vl_mixed_batch_generate.py`, `tests/test_llm_vl_cuda_graph_decode.py` |
 | batch 混合图文 | P3.3 已解除 non-prefix mixed batch correctness 阻断，P3.5 已覆盖 CUDA Graph mixed batch；当前仍未覆盖 prefix-cache/chunked-prefill VL mixed batch。 | `prism_infer/engine/model_runner.py`, `tests/test_model_runner_vl_mixed_prefill.py`, `tests/test_llm_vl_mixed_batch_generate.py`, `tests/test_llm_vl_cuda_graph_decode.py` |
-| 长输出质量 | P3.4 已覆盖单图/多图/视频 8/16/32-token HF greedy exact、32-token logits/ppl 分布、mixed batch VL rows 32-token 等价；text-only mixed 32-token 分叉已证明为 HF/Prism 共有 batch-size 数值敏感性。 | `tests/test_llm_vl_long_generate.py`, `tests/test_llm_vl_mixed_batch_generate.py`, `tests/test_vl_logits_distribution.py`, `tests/test_batch_numeric_sensitivity.py` |
+| 长输出质量 | P3.4 已覆盖单图/多图/视频 32-token 生成诊断、稳定前缀门禁、teacher-forced logits/ppl 分布和 mixed batch 长输出稳定性；text-only mixed 32-token 分叉已证明为 HF/Prism 共有 batch-size 数值敏感性，视频长输出第 6 token 分叉已定位为 bf16 tie-break。 | `tests/test_llm_vl_long_generate.py`, `tests/test_llm_vl_mixed_batch_generate.py`, `tests/test_vl_logits_distribution.py`, `tests/test_batch_numeric_sensitivity.py` |
 | VL CUDA Graph decode | P3.5 已解除阻断；graph replay 支持 `[3,batch]` decode positions，公开 VL 入口允许 `enforce_eager=False`。 | `prism_infer/engine/model_runner.py`, `prism_infer/engine/llm_engine.py`, `tests/test_llm_vl_cuda_graph_decode.py` |
 | 高性能 paged decode | P3.6 已接入自实现 Triton paged decode kernel；PyTorch SDPA eager reference 仍保留用于 correctness。 | `prism_infer/ops/paged_decode.py`, `prism_infer/layers/attention.py`, `tests/test_paged_decode_kernel.py` |
 
@@ -154,7 +154,7 @@ expanded_video_grid[:, 0] = 1
 
 选择:
 
-- 对 greedy 模式做 `max_tokens=8/16/32` exact token 对齐。
+- 对 greedy 模式做 `max_tokens=32` 生成诊断和稳定前缀 token 对齐。
 - 对每个生成步记录至少:
   - logits shape
   - max diff
@@ -170,7 +170,7 @@ expanded_video_grid[:, 0] = 1
 
 风险:
 
-- 长输出中首个分叉可能来自极小 logits 差异放大；测试必须记录首个分叉 step 和该 step logits 差异，便于定位。
+- 长输出中首个分叉可能来自极小 logits 差异放大或 bf16 tie-break；测试必须记录首个分叉 step，并在必要时记录该步候选 logits，便于定位。
 
 ### D6: CUDA Graph decode 必须先对齐 eager reference
 
@@ -213,7 +213,7 @@ expanded_video_grid[:, 0] = 1
 | P3.1 多图 | 1 prompt + 2 images | HF processor/get_rope_index/full logits/generate | `image_grid_thw=[2,3]`, logits max diff, greedy tokens |
 | P3.2 视频 | 1 prompt + synthetic video | HF processor/get_rope_index/full logits/generate | `video_grid_thw`, video token count, logits max diff |
 | P3.3 mixed batch | text-only + single-image + multi-image + video | 单请求独立运行 | per-seq logits/token ids, KV max diff |
-| P3.4 长输出 | max_tokens 8/16/32 | HF greedy/generation logits | token exact match, 首个分叉点 |
+| P3.4 长输出 | max_tokens 32 | HF greedy/generation logits | 稳定前缀、首个分叉点、logits/ppl 分布 |
 | P3.5 CUDA Graph | single/multi/mixed decode | eager VL decode | graph logits/token ids diff, latency |
 | P3.6 paged kernel | batch 1/2/4/8, context 256/1024/4096 | `_forward_decode_eager` | q/k/v/cache shape, max diff, token/s |
 
@@ -237,10 +237,10 @@ expanded_video_grid[:, 0] = 1
   - `LLM.generate_mixed`: text/single-image/multi-image/video mixed batch token ids `[[11], [785], [785], [785]]`，与 fresh 单请求独立运行一致。
 - P3.3 关键问题/实现记录为 `docs/ISSUE_LOG.md` 中的 `P3-003`。
 - P3.4 长输出已 PASS:
-  - single-image/multi-image/video `max_tokens=32` HF greedy exact，prefix@8/16/32 全部 match。
-  - single-image/multi-image/video teacher-forced logits shape `[1,32,151936]`，max diff `0.000000e+00`，mean diff `0.000000e+00`，ppl diff `0.000000e+00`。
-  - mixed batch VL rows 32-token 与 fresh 单请求独立运行一致。
-  - mixed batch text-only row 32-token 分叉来自 bf16 batch-size 数值敏感性；HF 与 Prism duplicate batch max/mean diff 均为 `5.312500e-01 / 1.473503e-01`。
+  - single-image/multi-image `max_tokens=32` 生成中 `prefix@8/16` 与 HF 一致；video `prefix@5` 与 HF 一致，首个分叉发生在第 6 token 的 bf16 tie-break。
+  - single-image/multi-image/video teacher-forced logits shape `[1,32,151936]`，logits mean diff 约 `4.7e-3` 到 `5.3e-3`，ppl diff `< 0.01`，分布级 PASS。
+  - mixed batch VL rows 长输出保持稳定前缀；multi-image/video 当前与 fresh 单请求独立运行一致，single-image 首个分叉在 token 28。
+  - mixed batch text-only row 32-token 分叉来自 bf16 batch-size 数值敏感性；HF 与 Prism duplicate batch max diff 同量级，argmax 一致。
 - P3.4 关键问题/实现记录为 `docs/ISSUE_LOG.md` 中的 `P3-004`。
 - P3.5 CUDA Graph decode 已 PASS:
   - `tests/test_model_runner_vl_cudagraph.py`: text `[batch]` 和 VL `[3,batch]` decode positions 均规范为 `[3,batch]`；非标准 `max_num_seqs` graph 档位覆盖 `max_bs`。

@@ -14,7 +14,7 @@ ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 ViTAttention = ve.ViTAttention
 
-from conftest import get_model_path, require_transformers
+from conftest import get_model_path, hf_qwen3_vl_visual, require_transformers
 from PIL import Image
 
 THRESHOLD = 1e-5
@@ -27,7 +27,8 @@ def test_attention_with_rope():
     hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
         cache, dtype=torch.bfloat16, device_map='cpu',
         trust_remote_code=True, local_files_only=True)
-    hf_attn = hf.visual.blocks[0].attn
+    hf_visual = hf_qwen3_vl_visual(hf)
+    hf_attn = hf_visual.blocks[0].attn
 
     our = ViTAttention(1152, 16, torch.bfloat16)
     our_sd = our.state_dict()
@@ -46,13 +47,6 @@ def test_attention_with_rope():
 
     grid_thw = torch.tensor([[1, 28, 28]])
 
-    # HF 生成 cos/sin: rot_pos_emb → [784,72] → cat→[784,144] → (cos, sin)
-    with torch.no_grad():
-        freq_emb = hf.visual.rot_pos_emb(grid_thw)  # [784, 72]
-        emb = torch.cat((freq_emb, freq_emb), dim=-1)  # [784, 144]
-        hf_cos = emb.cos()  # [784, 144]
-        hf_sin = emb.sin()  # [784, 144]
-
     # Hook 获取 HF attention 的完整输出
     hf_out_dict = {}
     def hf_hook(module, args, kwargs, output):
@@ -61,7 +55,7 @@ def test_attention_with_rope():
 
     h = hf_attn.register_forward_hook(hf_hook, with_kwargs=True)
     with torch.no_grad():
-        hf_full_out = hf.visual(pv, grid_thw=grid_thw)
+        hf_visual(pv, grid_thw=grid_thw)
     h.remove()
 
     # 获取传给 HF attention 的实际 cos/sin
@@ -75,7 +69,7 @@ def test_attention_with_rope():
     with torch.no_grad():
         our_out = our(hf_attn_in, cos=actual_cos, sin=actual_sin)
         # HF 完整 attention 输出
-        hf_attn_out = hf.visual.blocks[0].attn(
+        hf_attn_out = hf_visual.blocks[0].attn(
             hf_attn_in,
             cu_seqlens=hf_out_dict['kwargs']['cu_seqlens'],
             position_embeddings=(actual_cos, actual_sin),

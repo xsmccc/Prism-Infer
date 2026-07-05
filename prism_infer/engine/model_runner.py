@@ -23,6 +23,7 @@ from multiprocessing.synchronize import Event       # 进程间事件通知
 from multiprocessing.shared_memory import SharedMemory  # 进程间共享内存
 
 from prism_infer.config import Config
+from prism_infer.engine.compression import build_compression_metadata
 from prism_infer.engine.sequence import Sequence
 try:
     from prism_infer.models.qwen3 import Qwen3ForCausalLM     # Qwen3 纯文本模型 (legacy)
@@ -78,6 +79,7 @@ class ModelRunner:
         self.config = config
         hf_config = config.hf_config                # HuggingFace 模型配置 (层数/head数等)
         self.block_size = config.kvcache_block_size  # KV Cache 块大小 (如 16)
+        Sequence.set_block_size(self.block_size)
         self.enforce_eager = config.enforce_eager    # True = 禁用 CUDA Graph, 每次都 eager 执行
         self.world_size = config.tensor_parallel_size  # 几张 GPU (Tensor Parallel 并行度)
         self.rank = rank                             # 当前 GPU 编号 (0, 1, 2, ...)
@@ -475,10 +477,16 @@ class ModelRunner:
             context_lens=None,
             block_size=self.block_size,
         )
+        compression_metadata = build_compression_metadata(
+            self.config,
+            seqs,
+            is_prefill=True,
+        )
 
         # ── 设置全局上下文 (attention 层会读取这些信息) ──
         set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                    slot_mapping, None, block_tables, trace_metadata=trace_metadata)
+                    slot_mapping, None, block_tables, trace_metadata=trace_metadata,
+                    compression_metadata=compression_metadata)
         # True = is_prefill
         # attention 层通过 get_context() 获取这些信息来决定怎么计算
 
@@ -550,8 +558,14 @@ class ModelRunner:
             context_lens=context_lens,
             block_size=self.block_size,
         )
+        compression_metadata = build_compression_metadata(
+            self.config,
+            seqs,
+            is_prefill=False,
+        )
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens,
-                    block_tables=block_tables, trace_metadata=trace_metadata)
+                    block_tables=block_tables, trace_metadata=trace_metadata,
+                    compression_metadata=compression_metadata)
         # False = is_decode
         return ModelInputs(input_ids=input_ids, position_ids=positions)
 

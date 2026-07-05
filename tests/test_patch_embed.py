@@ -15,7 +15,7 @@ ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 PatchEmbed = ve.PatchEmbed
 
-from conftest import get_model_path, require_transformers
+from conftest import get_model_path, hf_qwen3_vl_visual, require_transformers
 from PIL import Image
 
 THRESHOLD = 1e-5
@@ -38,7 +38,7 @@ def test_patch_embed_accuracy():
     hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
         cache, dtype=torch.bfloat16, device_map='cpu',
         trust_remote_code=True, local_files_only=True)
-    hf_pe = hf.visual.patch_embed
+    hf_pe = hf_qwen3_vl_visual(hf).patch_embed
 
     our = PatchEmbed(3, 1152, 2, 16, torch.bfloat16)
     our.load_state_dict(hf_pe.state_dict())

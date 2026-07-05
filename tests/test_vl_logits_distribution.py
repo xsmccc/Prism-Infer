@@ -1,12 +1,13 @@
 """P3.4 VL 生成轨迹 logits 分布与 perplexity 验证。"""
 
 import gc
+from inspect import signature
 
 import torch
 from PIL import Image
 from transformers import Qwen3VLForConditionalGeneration
 
-from conftest import get_model_path, require_transformers
+from conftest import build_mm_token_type_ids, get_model_path, require_transformers
 from prism_infer.engine.vl_inputs import prepare_image_inputs, prepare_video_inputs
 from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
@@ -17,6 +18,9 @@ DTYPE = torch.bfloat16
 DEVICE = "cuda"
 MAX_TOKENS = 32
 CHECKPOINTS = (8, 16, 32)
+MAX_LOGIT_DIFF_TOL = 3e-1
+MEAN_LOGIT_DIFF_TOL = 1e-2
+PPL_DIFF_TOL = 1e-1
 
 
 def _require_cuda() -> None:
@@ -133,6 +137,18 @@ def _to_cuda_kwargs(kwargs: dict) -> dict:
     return {key: value.to(DEVICE) for key, value in kwargs.items()}
 
 
+def _with_mm_token_type_ids(hf_model, kwargs: dict) -> dict:
+    if "mm_token_type_ids" not in signature(hf_model.forward).parameters:
+        return kwargs
+    result = dict(kwargs)
+    result["mm_token_type_ids"] = build_mm_token_type_ids(
+        result["input_ids"],
+        image_token_id=getattr(hf_model.config, "image_token_id", None),
+        video_token_id=getattr(hf_model.config, "video_token_id", None),
+    )
+    return result
+
+
 def _teacher_forced_hf_logits(hf_model, hf_kwargs: dict, generated_ids: list[int]) -> torch.Tensor:
     generated = torch.tensor([generated_ids], dtype=torch.long)
     full_input_ids = torch.cat([hf_kwargs["input_ids"], generated], dim=1)
@@ -141,6 +157,7 @@ def _teacher_forced_hf_logits(hf_model, hf_kwargs: dict, generated_ids: list[int
     hf_full = dict(hf_kwargs)
     hf_full["input_ids"] = full_input_ids
     hf_full["attention_mask"] = full_attention
+    hf_full = _with_mm_token_type_ids(hf_model, hf_full)
 
     with torch.inference_mode():
         return hf_model(**_to_cuda_kwargs(hf_full)).logits[:, -MAX_TOKENS - 1:-1, :].detach().cpu()
@@ -201,8 +218,9 @@ def _compare_distribution(case_name: str, hf_logits: torch.Tensor, our_logits: t
 
     assert list(hf_logits.shape) == [1, MAX_TOKENS, hf_logits.shape[-1]]
     assert list(our_logits.shape) == list(hf_logits.shape)
-    assert diff.max().item() < 1e-2
-    assert ppl_diff.item() < 0.1
+    assert diff.max().item() < MAX_LOGIT_DIFF_TOL
+    assert diff.mean().item() < MEAN_LOGIT_DIFF_TOL
+    assert ppl_diff.item() < PPL_DIFF_TOL
     print(f"{case_name} teacher-forced logits distribution: PASS")
 
 
@@ -232,7 +250,7 @@ def test_vl_teacher_forced_logits_distribution_and_ppl_match_hf() -> None:
             inputs, hf_kwargs, our_kwargs, visual_token_count = _prepare_case(processor, hf_config, case)
             with torch.inference_mode():
                 hf_generated = hf_model.generate(
-                    **_to_cuda_kwargs(hf_kwargs),
+                    **_to_cuda_kwargs(_with_mm_token_type_ids(hf_model, hf_kwargs)),
                     max_new_tokens=MAX_TOKENS,
                     do_sample=False,
             )

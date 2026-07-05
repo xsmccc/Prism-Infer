@@ -42,7 +42,7 @@ class Sampler(nn.Module):
         #    temperature 越低 → 分布越尖 (越确定)
         #    temperature = 0 已在 forward 中走 greedy
         #    unsqueeze(dim=1): [num_seqs] → [num_seqs, 1] 广播到 [num_seqs, vocab]
-        logits = logits.float().div_(temperatures.unsqueeze(dim=1))
+        logits = logits.float() / temperatures.unsqueeze(dim=1)
         # 2. Softmax: logits → 概率分布
         probs = torch.softmax(logits, dim=-1)
         # 3. Gumbel-Max trick 采样:

@@ -13,7 +13,7 @@ ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 ViTMLP = ve.ViTMLP
 
-from conftest import get_model_path, require_transformers
+from conftest import get_model_path, hf_qwen3_vl_visual, require_transformers
 
 THRESHOLD = 1e-5
 
@@ -33,7 +33,7 @@ def test_mlp_accuracy():
     hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
         cache, dtype=torch.bfloat16, device_map='cpu',
         trust_remote_code=True, local_files_only=True)
-    hf_mlp = hf.visual.blocks[0].mlp
+    hf_mlp = hf_qwen3_vl_visual(hf).blocks[0].mlp
 
     our = ViTMLP(1152, 4304, torch.bfloat16)
     our.load_state_dict(hf_mlp.state_dict())
