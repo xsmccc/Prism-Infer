@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from prism_infer.engine.scheduler import Scheduler
 from prism_infer.engine.sequence import Sequence, SequenceStatus
 
@@ -10,7 +12,7 @@ def test_scheduler_swap_in_capacity_uses_cpu_block_table() -> None:
     """swapped 序列应根据 cpu_block_table 判断换入容量。"""
 
     old_block_size = Sequence.block_size
-    Sequence.block_size = 4
+    Sequence.set_block_size(4)
     try:
         config = SimpleNamespace(
             max_num_seqs=2,
@@ -49,4 +51,24 @@ def test_scheduler_swap_in_capacity_uses_cpu_block_table() -> None:
         assert seq.block_table
         print("Scheduler swap table capacity: PASS")
     finally:
-        Sequence.block_size = old_block_size
+        Sequence.set_block_size(old_block_size)
+
+
+def test_scheduler_empty_decode_raises_runtime_error() -> None:
+    """decode 分支没有可运行序列时必须显式报错，不能依赖 assert。"""
+
+    config = SimpleNamespace(
+        max_num_seqs=2,
+        max_num_batched_tokens=16,
+        enable_chunked_prefill=False,
+        max_chunk_size=4,
+        eos=-1,
+        num_kvcache_blocks=1,
+        kvcache_block_size=256,
+        num_cpu_blocks=0,
+    )
+    scheduler = Scheduler(config)
+
+    with pytest.raises(RuntimeError, match="no runnable sequences"):
+        scheduler.schedule()
+    print("Scheduler empty decode explicit error: PASS")

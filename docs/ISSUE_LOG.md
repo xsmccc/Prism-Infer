@@ -2013,3 +2013,79 @@ cd /data/Prism-Infer && \
 - swap 数据搬运仍使用全局 `torch.cuda.synchronize()`；这是 P6 性能问题。
 - paged decode kernel 的 `MAX_CONTEXT_LEN` 冗余迭代、`BLOCK_N=32` 固定调优仍未处理；这是 P6 kernel 性能问题。
 - 本轮未运行 P1/P2/P3 全量 grouped regression 和 full logits 串行重型验证；合并前如要发布阶段 release，应按 `docs/VERIFICATION.md` 重新跑全量门禁。
+
+## P5-001: 外部评估对照后的 P5 readiness correctness 修复
+
+状态: Verified
+
+发现方式:
+
+- 用户提供 2026-07-06 外部评估文本，指出 P1/PB/C 类问题和 P5/P6 技术路线建议。
+- 本轮按 `CLAUDE.md` / `prism-infer-rigor` 要求先复核源码、测试和文档，再决定修复范围。
+
+影响范围:
+
+- P5 active compression 前的 engine correctness。
+- Sequence 跨进程序列化、swap/prefix-cache hash 生命周期、ModelRunner context 生命周期和 scheduler 空调度错误路径。
+- P5 路线文档，避免把 FP8/VScan/PoRe/DeepStack-aware pruning 等未实现候选方案写成已验证能力。
+
+采纳并修复:
+
+- B2: `Sequence.__setstate__` 原先把 decode 反序列化后的 `temperature/max_tokens/ignore_eos` 重置为默认值。本轮在 `__getstate__/__setstate__` 中保存和恢复 sampling 参数。
+- P1-2: `BlockManager.swap_in()` 原先依赖 `seq.block(i)` 重算 hash；decode 反序列化对象可能没有完整 `token_ids`。本轮在 `swap_out` 保存 CPU block hash 和满块 token 副本，`swap_in` 用 metadata 恢复 prefix-cache index。
+- B3: `ModelRunner.run()` 原先只在正常路径末尾 `reset_context()`。本轮改为 `try/finally`，异常时也清理 context，并恢复 chunked prefill 临时截断状态。
+- B4: `Scheduler.schedule()` 原先用 `assert scheduled_seqs`。本轮改为显式 `RuntimeError`，避免 `python -O` 跳过。
+- C-4: `Attention.forward()` 原先总是调用 trace 记录函数。现在先检查 `is_trace_enabled()`，trace 关闭时不构造记录调用。
+- C-7: `tests/test_paged_decode_kernel.py` 新增 mean diff `< 1e-3` 门槛。
+- P1-1: 在已有 `Sequence.set_block_size()` 和 BlockManager mismatch gate 基础上，本轮让每个 `Sequence` 保存实例级 `block_size` 快照，避免构造后被后续 Config 全局同步污染。
+- B1: 当前 engine flatten VL 路径未复现 DeepStack 缺失。`ModelRunner._forward_model()` 会传递 visual payload，`Qwen3VLModel.forward()` 会构造 `visual_pos_masks/deepstack_visual_embeds`；本轮补轻量回归覆盖该路径。
+
+暂缓:
+
+- C-1 `_cfg_get` 抽取、C-2 compression/config 依赖拆分、C-3 端口和 SHM 参数化、C-5 decode trace 开关、C-6 visual importance aggregate 合并均属于非阻断重构或 schema 设计项，本轮不扩大范围。
+- FP8 KV、VScan/PoRe、M-RoPE physical compaction、vLLM/SGLang 对比和具体性能数字未做外部查源或本地同条件 benchmark；只能作为候选路线，不能作为项目完成 claim。
+
+验证命令:
+
+```bash
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_kv_engine_hardening.py \
+  /data/Prism-Infer/tests/test_scheduler_swap_tables.py \
+  /data/Prism-Infer/tests/test_model_runner_context_reset.py \
+  /data/Prism-Infer/tests/test_full_model_structure.py -s
+```
+
+```bash
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+HF_HUB_OFFLINE=1 \
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_sequence_multimodal.py -s
+```
+
+```bash
+/data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_compression_off.py \
+  /data/Prism-Infer/tests/test_visual_importance_scoring.py \
+  /data/Prism-Infer/tests/test_visual_token_stats.py \
+  /data/Prism-Infer/tests/test_analysis_schema.py -s
+```
+
+```bash
+/data/Prism-Infer/.venv-local/bin/python -m compileall -q \
+  /data/Prism-Infer/prism_infer \
+  /data/Prism-Infer/tests \
+  /data/Prism-Infer/scripts
+```
+
+验证结果:
+
+- KV/scheduler/context/DeepStack focused: `17 passed in 3.57s`。
+- Sequence multimodal roundtrip: `5 passed in 4.35s`。
+- P5/P4 analysis focused: `11 passed in 1.57s`。
+- `compileall`: PASS，无错误输出。
+
+剩余风险:
+
+- 本轮未运行 P1/P2/P3 全量 grouped regression 和 full logits 重型验证。
+- P5.2 active compression 尚未实现；当前仍不能声明 compression ratio、显存收益、latency/throughput 收益或质量收益。
+- P5 路线中的 FP8/VScan/PoRe/physical compaction 需要单独设计、实现和 benchmark。

@@ -115,7 +115,8 @@ class Scheduler:
                     cow_pairs.append(cow_pair)
                 self.block_manager.may_append(seq)
                 scheduled_seqs.append(seq)
-        assert scheduled_seqs   # vllm在这里用的swap，换到CPU内存
+        if not scheduled_seqs:
+            raise RuntimeError("scheduler decode step produced no runnable sequences")
         # popleft 取出的序列仍需保留在 running，放回队头准备下一轮 decode
         self.running.extendleft(reversed(scheduled_seqs))
         return scheduled_seqs, False, cow_pairs, swap_in_map, swap_out_map

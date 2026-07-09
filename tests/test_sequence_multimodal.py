@@ -51,6 +51,43 @@ def test_text_sequence_behavior_unchanged():
     print("text sequence regression: PASS")
 
 
+def test_sequence_block_size_is_instance_snapshot():
+    """Sequence 构造后应保留自身 block_size，不受后续全局同步影响。"""
+
+    old_block_size = Sequence.block_size
+    Sequence.set_block_size(4)
+    try:
+        seq = Sequence([1, 2, 3, 4, 5], SamplingParams(max_tokens=2))
+        Sequence.set_block_size(8)
+
+        assert seq.block_size == 4
+        assert seq.num_blocks == 2
+        print(f"sequence instance block_size: {seq.block_size}")
+        print("sequence block size instance snapshot: PASS")
+    finally:
+        Sequence.set_block_size(old_block_size)
+
+
+def test_decode_sequence_roundtrip_preserves_sampling_params():
+    """Decode 序列化必须保留请求级采样参数。"""
+
+    params = SamplingParams(temperature=0.25, max_tokens=7, ignore_eos=True)
+    seq = Sequence([1, 2, 3], params)
+    seq.block_table = [0]
+    seq.append_token(42)
+
+    restored = pickle.loads(pickle.dumps(seq))
+
+    assert restored.last_token == 42
+    assert restored.temperature == params.temperature
+    assert restored.max_tokens == params.max_tokens
+    assert restored.ignore_eos == params.ignore_eos
+    print(f"decode restored temperature: {restored.temperature}")
+    print(f"decode restored max_tokens: {restored.max_tokens}")
+    print(f"decode restored ignore_eos: {restored.ignore_eos}")
+    print("decode sequence sampling params roundtrip: PASS")
+
+
 def test_single_image_sequence_prefill_state_roundtrip():
     """Prefill 序列化必须保留完整 token 和 VL payload。"""
 

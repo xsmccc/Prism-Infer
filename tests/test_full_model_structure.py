@@ -82,6 +82,74 @@ def test_forward_deepstack():
     print("  PASS")
 
 
+def test_engine_flatten_vl_forward_builds_deepstack_inputs():
+    """验证 engine flatten VL 路径会把 pixel_values 转成 DeepStack 注入参数。"""
+
+    print("--- Test 3b: Engine flatten VL forward builds DeepStack inputs ---")
+    hidden_size = 8
+    image_token_id = 50
+
+    class RecordingLanguageModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embed_tokens = torch.nn.Embedding(100, hidden_size)
+            self.last_inputs_embeds = None
+            self.last_visual_pos_masks = None
+            self.last_deepstack_visual_embeds = None
+
+        def forward(
+            self,
+            *,
+            inputs_embeds,
+            position_embeddings=None,
+            attention_mask=None,
+            position_ids=None,
+            visual_pos_masks=None,
+            deepstack_visual_embeds=None,
+        ):
+            self.last_inputs_embeds = inputs_embeds
+            self.last_visual_pos_masks = visual_pos_masks
+            self.last_deepstack_visual_embeds = deepstack_visual_embeds
+            return inputs_embeds
+
+    class FakeVLModel:
+        def __init__(self):
+            self.language_model = RecordingLanguageModel()
+            self.image_token_id = image_token_id
+            self.video_token_id = 51
+
+        def _encode_visual_payload(self, pixel_values, grid_thw):
+            main = torch.arange(2 * hidden_size, dtype=torch.float32).view(2, hidden_size)
+            deepstack = [main + 100, main + 200, main + 300]
+            return main, deepstack
+
+    model = FakeVLModel()
+    input_ids = torch.tensor([1, image_token_id, image_token_id, 2], dtype=torch.long)
+    pixel_values = torch.zeros(8, 4)
+    image_grid_thw = torch.tensor([[1, 2, 4]])
+
+    with torch.no_grad():
+        out = Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
+        )
+
+    visual_mask = model.language_model.last_visual_pos_masks
+    deepstack = model.language_model.last_deepstack_visual_embeds
+
+    assert list(out.shape) == [4, hidden_size]
+    assert visual_mask is not None
+    assert visual_mask.tolist() == [False, True, True, False]
+    assert deepstack is not None and len(deepstack) == 3
+    assert [list(t.shape) for t in deepstack] == [[2, hidden_size]] * 3
+    assert torch.equal(model.language_model.last_inputs_embeds[visual_mask], deepstack[0] - 100)
+    print(f"  engine visual mask shape: {list(visual_mask.shape)}")
+    print(f"  engine deepstack shapes: {[list(t.shape) for t in deepstack]}")
+    print("  PASS")
+
+
 def test_image_token_mask():
     """验证 image_token_id 用于创建正确的 mask."""
     print("--- Test 4: Image token masking ---")

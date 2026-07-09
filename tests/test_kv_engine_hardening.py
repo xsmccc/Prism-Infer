@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pickle
+
 import pytest
 import torch
 
@@ -15,11 +17,11 @@ def _sequence(token_ids: list[int], block_size: int) -> Sequence:
     """构造与 BlockManager block_size 一致的轻量 Sequence。"""
 
     old_block_size = Sequence.block_size
-    Sequence.block_size = block_size
+    Sequence.set_block_size(block_size)
     try:
         return Sequence(token_ids)
     finally:
-        Sequence.block_size = old_block_size
+        Sequence.set_block_size(old_block_size)
 
 
 def test_store_kvcache_eager_writes_canonical_4d_paged_cache() -> None:
@@ -71,7 +73,7 @@ def test_block_manager_deallocate_clears_hash_index() -> None:
 
     block_size = 4
     old_block_size = Sequence.block_size
-    Sequence.block_size = block_size
+    Sequence.set_block_size(block_size)
     try:
         manager = BlockManager(num_blocks=4, block_size=block_size)
         seq = Sequence([1, 2, 3, 4])
@@ -93,7 +95,7 @@ def test_block_manager_deallocate_clears_hash_index() -> None:
         assert manager.blocks[block_id].ref_count == 0
         print("BlockManager hash cleanup: PASS")
     finally:
-        Sequence.block_size = old_block_size
+        Sequence.set_block_size(old_block_size)
 
 
 def test_block_manager_rejects_sequence_block_size_mismatch() -> None:
@@ -108,7 +110,7 @@ def test_block_manager_rejects_sequence_block_size_mismatch() -> None:
             manager.allocate(seq)
         print("BlockManager block size mismatch gate: PASS")
     finally:
-        Sequence.block_size = old_block_size
+        Sequence.set_block_size(old_block_size)
 
 
 def test_block_manager_swap_uses_separate_cpu_block_table() -> None:
@@ -116,7 +118,7 @@ def test_block_manager_swap_uses_separate_cpu_block_table() -> None:
 
     block_size = 4
     old_block_size = Sequence.block_size
-    Sequence.block_size = block_size
+    Sequence.set_block_size(block_size)
     try:
         manager = BlockManager(num_blocks=4, block_size=block_size, num_cpu_blocks=4)
         seq = Sequence([10, 11, 12, 13, 14, 15])
@@ -132,6 +134,8 @@ def test_block_manager_swap_uses_separate_cpu_block_table() -> None:
         assert len(seq.cpu_block_table) == len(gpu_table_before)
         assert [gpu_id for gpu_id, _ in swap_out_map] == gpu_table_before
         assert manager.can_swap_in(seq)
+        assert len(seq.cpu_block_hashes) == len(seq.cpu_block_table)
+        assert len(seq.cpu_block_token_ids) == len(seq.cpu_block_table)
 
         swap_in_map = manager.swap_in(seq)
         print(f"swap in map: {swap_in_map}")
@@ -146,7 +150,41 @@ def test_block_manager_swap_uses_separate_cpu_block_table() -> None:
             assert block_id not in manager.free_block_id_set
         print("BlockManager swap table split: PASS")
     finally:
-        Sequence.block_size = old_block_size
+        Sequence.set_block_size(old_block_size)
+
+
+def test_block_manager_swap_in_restores_hash_from_metadata_after_decode_pickle() -> None:
+    """swap_in 不能依赖 decode 反序列化对象保留完整 token_ids。"""
+
+    block_size = 4
+    old_block_size = Sequence.block_size
+    Sequence.set_block_size(block_size)
+    try:
+        manager = BlockManager(num_blocks=4, block_size=block_size, num_cpu_blocks=4)
+        seq = Sequence([10, 11, 12, 13, 14])
+        manager.allocate(seq)
+        full_block_hash = manager.blocks[seq.block_table[0]].hash
+        full_block_tokens = list(manager.blocks[seq.block_table[0]].token_ids)
+        seq.append_token(99)
+        swap_out_map = manager.swap_out(seq)
+
+        restored = pickle.loads(pickle.dumps(seq))
+        assert not hasattr(restored, "token_ids")
+
+        swap_in_map = manager.swap_in(restored)
+        restored_block_id = restored.block_table[0]
+
+        print(f"swap out map before pickle: {swap_out_map}")
+        print(f"swap in map after pickle: {swap_in_map}")
+        print(f"restored full block hash: {manager.blocks[restored_block_id].hash}")
+        print(f"restored full block tokens: {manager.blocks[restored_block_id].token_ids}")
+
+        assert manager.blocks[restored_block_id].hash == full_block_hash
+        assert manager.blocks[restored_block_id].token_ids == full_block_tokens
+        assert manager.hash_to_block_id[full_block_hash] == restored_block_id
+        print("BlockManager swap hash metadata restore: PASS")
+    finally:
+        Sequence.set_block_size(old_block_size)
 
 
 def test_prepare_prefill_rejects_prefix_cache_before_attention() -> None:
@@ -154,7 +192,7 @@ def test_prepare_prefill_rejects_prefix_cache_before_attention() -> None:
 
     block_size = 4
     old_block_size = Sequence.block_size
-    Sequence.block_size = block_size
+    Sequence.set_block_size(block_size)
     try:
         runner = ModelRunner.__new__(ModelRunner)
         runner.block_size = block_size
@@ -167,4 +205,4 @@ def test_prepare_prefill_rejects_prefix_cache_before_attention() -> None:
             runner.prepare_prefill([seq])
         print("prefix-cache prefill early gate: PASS")
     finally:
-        Sequence.block_size = old_block_size
+        Sequence.set_block_size(old_block_size)

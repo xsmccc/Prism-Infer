@@ -671,16 +671,16 @@ class ModelRunner:
                         "P2 VL chunked prefill is not supported when one request "
                         "needs multiple chunks"
                     )
-        if is_prefill and enable_chunked and not is_warmup:
+        chunked_active = is_prefill and enable_chunked and not is_warmup
+        if chunked_active:
             # ── Chunked Prefill: 限制每条 seq 只暴露 chunk 大小的 token ──
             # 保存原始 num_cached_tokens, 并设临时值使 prepare_prefill 只看到 chunk
-            saved_cached = {}
             for seq in seqs:
-                saved_cached[seq.seq_id] = seq.num_cached_tokens
                 # 当前 chunk 的实际 token 数
                 remaining = seq.num_prompt_tokens - seq.num_computed_tokens
                 chunk = min(remaining, max_chunk)
                 # 设 num_cached_tokens = num_computed_tokens, 让 prepare_prefill 从这里开始
+                seq._orig_num_cached_tokens = seq.num_cached_tokens
                 seq.num_cached_tokens = seq.num_computed_tokens
                 # 临时截断: 设 num_tokens = num_computed_tokens + chunk
                 # 同时截断 token_ids, 使 seq[num_cached_tokens:] 只取 chunk 部分
@@ -689,33 +689,40 @@ class ModelRunner:
                 seq.num_tokens = seq.num_computed_tokens + chunk
                 seq.token_ids = seq.token_ids[:seq.num_tokens]
 
-        # 1. 准备输入
-        model_inputs = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
-        temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
+        try:
+            # 1. 准备输入
+            model_inputs = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
+            temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
 
-        # 2. 前向推理
-        logits = self.run_model(model_inputs, is_prefill)
+            # 2. 前向推理
+            logits = self.run_model(model_inputs, is_prefill)
 
-        # 3. 采样
-        token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
+            # 3. 采样
+            token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
 
-        if is_prefill and enable_chunked and not is_warmup:
-            # ── 恢复 num_tokens, 更新 num_computed_tokens ──
-            for i, seq in enumerate(seqs):
-                chunk = seq.num_tokens - seq.num_computed_tokens  # 本次 chunk 大小
-                seq.num_computed_tokens += chunk
-                seq.num_cached_tokens = seq.num_computed_tokens  # 同步: 下次 prepare 跳过已算的
-                seq.num_tokens = seq._orig_num_tokens  # 恢复真实总 token 数
-                seq.token_ids = seq._orig_token_ids     # 恢复完整 token 列表
-                del seq._orig_num_tokens, seq._orig_token_ids
-                if not seq.is_prefill_finished:
-                    # 中间 chunk: 不采样, token_id 设为 None
-                    if token_ids is not None:
-                        token_ids[i] = None
-
-        # 4. 清理
-        reset_context()
-        return token_ids
+            if chunked_active:
+                # ── 恢复 num_tokens, 更新 num_computed_tokens ──
+                for i, seq in enumerate(seqs):
+                    chunk = seq.num_tokens - seq.num_computed_tokens  # 本次 chunk 大小
+                    seq.num_computed_tokens += chunk
+                    seq.num_cached_tokens = seq.num_computed_tokens  # 同步: 下次 prepare 跳过已算的
+                    seq.num_tokens = seq._orig_num_tokens  # 恢复真实总 token 数
+                    seq.token_ids = seq._orig_token_ids     # 恢复完整 token 列表
+                    del seq._orig_num_tokens, seq._orig_token_ids, seq._orig_num_cached_tokens
+                    if not seq.is_prefill_finished:
+                        # 中间 chunk: 不采样, token_id 设为 None
+                        if token_ids is not None:
+                            token_ids[i] = None
+            return token_ids
+        finally:
+            if chunked_active:
+                for seq in seqs:
+                    if hasattr(seq, "_orig_num_tokens"):
+                        seq.num_tokens = seq._orig_num_tokens
+                        seq.token_ids = seq._orig_token_ids
+                        seq.num_cached_tokens = seq._orig_num_cached_tokens
+                        del seq._orig_num_tokens, seq._orig_token_ids, seq._orig_num_cached_tokens
+            reset_context()
 
     # ═══════════════════════════════════════════════════════════
     # CUDA Graph: 预录制 Decode 操作, 消除 CPU 开销

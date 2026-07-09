@@ -129,6 +129,7 @@ def _run_case(
 
     assert list(kernel_out.shape) == [batch, num_heads, head_dim]
     assert diff.max().item() < 1e-2
+    assert diff.float().mean().item() < 1e-3
     print("paged decode Triton kernel correctness: PASS")
 
 

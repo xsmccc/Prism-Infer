@@ -1,7 +1,7 @@
 # P4 KV Cache Trace 设计
 
 > 日期: 2026-06-26
-> 状态: Implemented, verification in progress
+> 状态: Verified
 > 目标: 在不改变 Prism-Infer 正常推理输出的前提下，捕获视觉 token 的 KV/attention 行为，为 P5 压缩策略提供证据。
 
 ## 设计目标

@@ -1361,10 +1361,13 @@ PASS 标准:
 
 PASS 标准:
 
+- compression on 必须有明确 runtime decision record: 每条请求的 visual token 总数、保留数、丢弃数、keep ratio、使用的 score/threshold/config。
 - compression on 的 KV shape、block mapping 和 decode 状态一致。
+- P5.2 logical pruning/retention 若不做 physical compaction，必须显式记录该限制；若实现 physical compaction，必须额外验证 slot mapping、context length、block table、prefix/swap 状态和 M-RoPE position 语义。
 - 输出压缩率、质量退化、显存、latency 或 throughput 数据。
 - compression on greedy/token distribution 门禁与 P1-P4 FP baseline 对比通过。
 - 任一 unsupported compression mode 必须显式失败，不能 silent fallback。
+- FP8 KV、VScan/PoRe、DeepStack-aware pruning、M-RoPE block compaction 或竞品对比数字在未实现、未跑同条件 benchmark 前，只能写为候选路线或未验证风险。
 
 ## P6: Benchmark 验证
 

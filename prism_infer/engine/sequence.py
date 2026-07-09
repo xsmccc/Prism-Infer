@@ -59,6 +59,7 @@ class Sequence:
             raise ValueError("pixel_values_videos and video_grid_thw must be provided together")
 
         self.seq_id = next(Sequence.counter)          # 全局唯一ID: 0, 1, 2, ...
+        self.block_size = int(type(self).block_size)  # 实例级快照，避免多 Config 运行时互相污染
         self.status = SequenceStatus.WAITING           # 初始状态=等待prefill
         self.token_ids = copy(token_ids)               # 浅拷贝prompt的token列表(值语义, 类似C++ vector拷贝)
         self.last_token = token_ids[-1]                # 最后一个token(序列化优化用)
@@ -68,6 +69,8 @@ class Sequence:
         self.num_computed_tokens = 0                      # 已Prefill计算的token数 (Chunked Prefill)
         self.block_table = []                           # GPU 物理块映射表: [gpu_block_id_0, gpu_block_id_1, ...]
         self.cpu_block_table = []                       # Swap 后的 CPU 物理块映射表，不能污染 GPU block_table
+        self.cpu_block_hashes = []                      # Swap 后每个 CPU block 对应的 prefix hash
+        self.cpu_block_token_ids = []                   # Swap 后满块 token 副本，用于恢复 prefix-cache 索引
         # 从SamplingParams展开存储(避免序列化时携带整个SamplingParams对象)
         self.temperature = sampling_params.temperature  # 采样温度
         self.max_tokens = sampling_params.max_tokens    # 最大生成token数
@@ -224,12 +227,18 @@ class Sequence:
         """
         is_prefill_payload = self.num_completion_tokens == 0
         return {
+            "block_size": self.block_size,
             "num_tokens": self.num_tokens,
             "num_prompt_tokens": self.num_prompt_tokens,
             "num_cached_tokens": self.num_cached_tokens,
             "num_computed_tokens": self.num_computed_tokens,
             "block_table": self.block_table,
             "cpu_block_table": self.cpu_block_table,
+            "cpu_block_hashes": self.cpu_block_hashes,
+            "cpu_block_token_ids": self.cpu_block_token_ids,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "ignore_eos": self.ignore_eos,
             "payload": self.token_ids if is_prefill_payload else self.last_token,
             "is_prefill_payload": is_prefill_payload,
             "pixel_values": self.pixel_values if is_prefill_payload else None,
@@ -251,17 +260,22 @@ class Sequence:
         """
         self.seq_id = next(Sequence.counter)
         self.status = SequenceStatus.WAITING
-        self.temperature = 1.0
-        self.max_tokens = 0
-        self.ignore_eos = False
 
         if isinstance(state, dict):
+            self.block_size = int(state.get("block_size", Sequence.block_size))
+            self.temperature = state.get("temperature", 1.0)
+            self.max_tokens = state.get("max_tokens", 0)
+            self.ignore_eos = state.get("ignore_eos", False)
             self.num_tokens = state["num_tokens"]
             self.num_prompt_tokens = state["num_prompt_tokens"]
             self.num_cached_tokens = state["num_cached_tokens"]
             self.num_computed_tokens = state.get("num_computed_tokens", self.num_cached_tokens)
             self.block_table = state["block_table"]
             self.cpu_block_table = state.get("cpu_block_table", [])
+            self.cpu_block_hashes = state.get("cpu_block_hashes", [])
+            self.cpu_block_token_ids = [
+                list(token_ids) for token_ids in state.get("cpu_block_token_ids", [])
+            ]
             if state["is_prefill_payload"]:
                 self.token_ids = state["payload"]
                 self.last_token = self.token_ids[-1]
@@ -278,9 +292,15 @@ class Sequence:
             self.video_token_id = state.get("video_token_id")
             self.video_token_count = state.get("video_token_count", 0)
         else:
+            self.block_size = int(Sequence.block_size)
+            self.temperature = 1.0
+            self.max_tokens = 0
+            self.ignore_eos = False
             self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.block_table = state[:-1]
             self.num_computed_tokens = self.num_cached_tokens
             self.cpu_block_table = []
+            self.cpu_block_hashes = []
+            self.cpu_block_token_ids = []
             if self.num_completion_tokens == 0:
                 self.token_ids = state[-1]   # Prefill: state[-1]是完整列表
                 self.last_token = self.token_ids[-1]

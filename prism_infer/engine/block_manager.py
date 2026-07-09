@@ -178,6 +178,8 @@ class BlockManager:
         seq.num_cached_tokens = 0                               # 重置缓存计数
         seq.block_table.clear()                                 # 清空页表
         seq.cpu_block_table.clear()                             # 释放后不应残留 swap 页表
+        seq.cpu_block_hashes.clear()
+        seq.cpu_block_token_ids.clear()
 
     # ── can_append: Decode 阶段检查是否能追加 1 个 token ──
     # scheduler._schedule_decode() 的 while not 循环调用
@@ -238,15 +240,22 @@ class BlockManager:
             raise RuntimeError(f"seq {seq.seq_id} already has CPU block table")
         swap_map = []
         cpu_block_table = []
+        cpu_block_hashes = []
+        cpu_block_token_ids = []
         for gpu_id in seq.block_table:
             cpu_id = self.cpu_free_block_ids.popleft()
             swap_map.append((gpu_id, cpu_id))
+            block = self.blocks[gpu_id]
+            cpu_block_hashes.append(block.hash)
+            cpu_block_token_ids.append(list(block.token_ids))
             # 释放 GPU block
-            self.blocks[gpu_id].ref_count -= 1
-            if self.blocks[gpu_id].ref_count == 0:
+            block.ref_count -= 1
+            if block.ref_count == 0:
                 self._deallocate_block(gpu_id)
             cpu_block_table.append(cpu_id)
         seq.cpu_block_table = cpu_block_table
+        seq.cpu_block_hashes = cpu_block_hashes
+        seq.cpu_block_token_ids = cpu_block_token_ids
         seq.block_table = []
         return swap_map
 
@@ -264,6 +273,16 @@ class BlockManager:
             raise RuntimeError(f"seq {seq.seq_id} already has GPU block table")
         if not seq.cpu_block_table:
             raise RuntimeError(f"seq {seq.seq_id} has no CPU block table to swap in")
+        cpu_block_hashes = getattr(seq, "cpu_block_hashes", [])
+        cpu_block_token_ids = getattr(seq, "cpu_block_token_ids", [])
+        if (
+            len(cpu_block_hashes) != len(seq.cpu_block_table)
+            or len(cpu_block_token_ids) != len(seq.cpu_block_table)
+        ):
+            raise RuntimeError(
+                "swapped sequence is missing CPU block hash metadata; "
+                "cannot restore prefix-cache index safely"
+            )
         swap_map = []
         new_block_table = []
         for cpu_id in seq.cpu_block_table:
@@ -275,18 +294,24 @@ class BlockManager:
         seq.block_table = new_block_table
         seq.cpu_block_table = []
 
-        # 恢复满块的 hash 信息 (Prefix Cache 需要)
-        h = -1
-        for i in range(len(new_block_table)):
-            token_ids = seq.block(i)
-            if len(token_ids) == self.block_size:
-                # 满块: 重新计算 hash 并注册
-                h = self.compute_hash(token_ids, h)
-                block = self.blocks[new_block_table[i]]
-                block.update(h, token_ids)
-                self.hash_to_block_id[h] = new_block_table[i]
-            else:
-                h = -1  # 不满的块不算 hash
+        # 恢复满块的 hash 信息 (Prefix Cache 需要)。
+        # 注意: decode 序列跨进程序列化后可能只保留 last_token，不能依赖
+        # seq.block(i) 重新读取完整 token_ids。
+        for i, block_id in enumerate(new_block_table):
+            block_hash = cpu_block_hashes[i]
+            token_ids = cpu_block_token_ids[i]
+            if block_hash != -1:
+                if len(token_ids) != self.block_size:
+                    raise RuntimeError(
+                        "swapped full block metadata is inconsistent: "
+                        f"hash={block_hash}, token_count={len(token_ids)}, "
+                        f"block_size={self.block_size}"
+                    )
+                block = self.blocks[block_id]
+                block.update(block_hash, list(token_ids))
+                self.hash_to_block_id[block_hash] = block_id
+        seq.cpu_block_hashes = []
+        seq.cpu_block_token_ids = []
         return swap_map
 
         # ── copy_on_write: 写时复制 (CoW) ──

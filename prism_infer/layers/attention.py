@@ -6,7 +6,7 @@ from prism_infer.ops.paged_decode import (
     HAS_TRITON as HAS_PAGED_DECODE_TRITON,
     paged_decode_attention,
 )
-from prism_infer.analysis.kv_trace import record_attention_layer
+from prism_infer.analysis.kv_trace import is_trace_enabled, record_attention_layer
 from prism_infer.engine.compression import ensure_compression_off
 from prism_infer.utils.context import get_context
 
@@ -181,20 +181,21 @@ class Attention(nn.Module):
             else:
                 o = F.scaled_dot_product_attention(
                     q, k, v, is_causal=True, scale=self.scale)
-        record_attention_layer(
-            layer_id=self.layer_idx,
-            q=q,
-            k=k,
-            v=v,
-            output=o,
-            k_cache=k_cache,
-            v_cache=v_cache,
-            context=context,
-            num_heads=self.num_heads,
-            num_kv_heads=self.num_kv_heads,
-            head_dim=self.head_dim,
-            scale=self.scale,
-        )
+        if is_trace_enabled():
+            record_attention_layer(
+                layer_id=self.layer_idx,
+                q=q,
+                k=k,
+                v=v,
+                output=o,
+                k_cache=k_cache,
+                v_cache=v_cache,
+                context=context,
+                num_heads=self.num_heads,
+                num_kv_heads=self.num_kv_heads,
+                head_dim=self.head_dim,
+                scale=self.scale,
+            )
         return o
 
     def _forward_decode_eager(
