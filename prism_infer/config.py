@@ -2,7 +2,7 @@ import os                           # os.path.isdir: 检查目录是否存在
 from dataclasses import dataclass   # @dataclass: 自动生成__init__的装饰器(类似C++ struct带默认值)
 from transformers import AutoConfig # HuggingFace: 根据模型目录自动加载config.json中的模型结构配置
 
-from prism_infer.engine.compression import normalize_compression_mode
+from prism_infer.engine.compression import build_visual_pruning_config, normalize_compression_mode
 from prism_infer.engine.sequence import Sequence
 
 
@@ -22,7 +22,11 @@ class Config:
     num_kvcache_blocks: int = -1            # KV Cache物理块总数, model_runner.py中根据GPU显存自动计算
     enable_chunked_prefill: bool = True     # 是否启用Chunked Prefill(分块预填充)
     max_chunk_size: int = 512               # 每次Prefill最多处理的token数
-    compression_mode: str = "off"           # P5 KV 压缩模式；P5.0 只支持 off baseline
+    compression_mode: str = "off"           # P5 KV 压缩模式: "off" | "visual_prune" | "fp8_kv"
+    enable_visual_pruning_shadow: bool = False  # off 模式下只记录 pruning decision, 不改变 KV
+    visual_pruning_keep_ratio: float = 0.6       # visual pruning 目标保留比例
+    visual_pruning_min_keep_tokens: int = 32     # 最少保留 visual token 数
+    visual_pruning_strategy: str = "uniform"     # "uniform" | "score"; runtime 当前不提供 score
 
     def __post_init__(self):
         """dataclass专属钩子: __init__自动生成后自动调用, 用于参数校验和衍生值计算"""
@@ -30,6 +34,7 @@ class Config:
         assert self.kvcache_block_size % 256 == 0            # block_size需256对齐(FlashAttention kernel要求)
         assert 1 <= self.tensor_parallel_size <= 8           # TP并行数1~8(单机最多8块GPU)
         self.compression_mode = normalize_compression_mode(self.compression_mode)
+        build_visual_pruning_config(self)
         Sequence.set_block_size(self.kvcache_block_size)
         self.hf_config = AutoConfig.from_pretrained(self.model)  # 从模型目录的config.json加载模型结构
         model_max_len = getattr(

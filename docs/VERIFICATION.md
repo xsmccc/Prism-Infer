@@ -1320,8 +1320,8 @@ PASS 标准:
 当前状态:
 
 - P5.0 已接入 `compression_mode="off"` 和 per-step `CompressionMetadata`。
-- active compression mode 尚未实现；任何非 off mode 都必须显式失败。
-- focused verification: `tests/test_compression_off.py` 为 `4 passed in 0.10s`。
+- `compression_mode="visual_prune"` 已在 P5.2 接入为 active logical pruning；其他未实现模式仍必须显式失败。
+- focused verification 已扩展到 P5.2 active tests；历史 P5.0 `tests/test_compression_off.py` 结果不再代表完整 P5 focused 集合。
 
 ### P5.1 Visual Importance Scoring
 
@@ -1357,17 +1357,197 @@ PASS 标准:
 - P5.1 只输出 importance proxy；不声明压缩率、显存收益、latency 或质量收益。
 - P4 trace 未保存完整 per-token attention distribution；`top_visual_tokens` 只用于细化已记录 top-k token，未进入 top-k 的 visual tokens 使用 span mass 剩余量均分。
 
-### P5.2+ Active Compression
+### P5.2-A Decision Shadow Mode
+
+P5.2-A 只验证 runtime compression 之前的 keep/drop decision contract 和
+shadow metadata 接入。它不能替代 P5.2+ compression-on 质量和性能门禁。
+
+```bash
+.venv-local/bin/python -m pytest -q \
+  tests/test_compression_off.py \
+  tests/test_visual_pruning.py -s
+```
+
+PASS 标准:
+
+- `compression_mode="off"` 的 shadow metadata 仍为 no-op。
+- off-only helper 对 active metadata 显式失败；`Attention.forward` 对未实现 compression metadata 显式失败。
+- visual-token span 扫描支持 image/video 多段，不假设一个连续 visual span。
+- decision record 包含 visual token 总数、保留数、丢弃数、keep ratio、strategy、span、kept/dropped token indices 和 physical compaction 状态。
+- `enable_visual_pruning_shadow=True` 时，prefill `CompressionMetadata` 记录 visual pruning decision，但 `metadata.enabled` 仍为 `False`。
+- decode `CompressionMetadata` 不重算 pruning decision，避免依赖 decode 阶段不完整的 `token_ids`。
+- 携带 shadow decision records 的 attention 输出必须与无 metadata 输出完全一致。
+- `score` strategy 缺少 token score 时显式失败，不能 fallback 到 uniform。
+- slot mask helper 只作为 prefill 实验工具；不能据此声明 active compression 完成。
+
+当前状态:
+
+- CPU-only focused test 已扩展为 `tests/test_compression_off.py` + `tests/test_visual_pruning.py` + `tests/test_visual_pruning_active.py`，当前为 `20 passed in 0.19s`。
+- `prism_infer.engine.visual_pruning` 已接入 shadow metadata 和 active logical decode retention；shadow mode 本身仍不改变 KV。
+
+### P5.2 Active Logical Visual Pruning
 
 PASS 标准:
 
 - compression on 必须有明确 runtime decision record: 每条请求的 visual token 总数、保留数、丢弃数、keep ratio、使用的 score/threshold/config。
 - compression on 的 KV shape、block mapping 和 decode 状态一致。
-- P5.2 logical pruning/retention 若不做 physical compaction，必须显式记录该限制；若实现 physical compaction，必须额外验证 slot mapping、context length、block table、prefix/swap 状态和 M-RoPE position 语义。
+- logical pruning/retention 若不做 physical compaction，必须显式记录该限制；若实现 physical compaction，必须额外验证 slot mapping、context length、block table、prefix/swap 状态和 M-RoPE position 语义。
 - 输出压缩率、质量退化、显存、latency 或 throughput 数据。
 - compression on greedy/token distribution 门禁与 P1-P4 FP baseline 对比通过。
 - 任一 unsupported compression mode 必须显式失败，不能 silent fallback。
-- FP8 KV、VScan/PoRe、DeepStack-aware pruning、M-RoPE block compaction 或竞品对比数字在未实现、未跑同条件 benchmark 前，只能写为候选路线或未验证风险。
+- VScan/PoRe、DeepStack-aware pruning、M-RoPE block compaction 或竞品对比数字在未实现、未跑同条件 benchmark 前，只能写为候选路线或未验证风险；FP8 KV 的当前项目 baseline 见 P5.3/P5.4。
+
+Focused correctness:
+
+```bash
+PYTHONPATH=/data/Prism-Infer /data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_visual_pruning_active.py \
+  /data/Prism-Infer/tests/test_compression_off.py \
+  /data/Prism-Infer/tests/test_visual_pruning.py -s
+```
+
+当前输出:
+
+- `20 passed in 0.19s`。
+- active compact reference: output shape `[1,4,8]`，reference shape `[1,4,8]`，max diff `0.000000e+00`，mean/std 完全一致。
+- keep-all active/off decode: max diff `0.000000e+00`。
+- missing active decision record 显式 `RuntimeError`。
+
+真实模型 smoke:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+HF_HUB_OFFLINE=1 \
+/data/Prism-Infer/.venv-local/bin/python <inline smoke>
+```
+
+当前输出:
+
+- 单图 `max_tokens=2`, keep-all: off token ids `[785, 2168]`，active token ids `[785, 2168]`，exact match。
+- 单图 `max_tokens=8`, `keep_ratio=0.5`: visual tokens `196 -> 98`，off 与 active token ids 均为 `[785, 2168, 3897, 374, 264, 6437, 11, 13794]`，8/8 exact match。
+
+小型端到端 benchmark:
+
+- GPU: NVIDIA GeForce RTX 5090。
+- 输入: 单图 448x448，prompt `Describe this image.`，`max_tokens=8`。
+- warmup=1，repeat=3，每次测量前后调用 `torch.cuda.synchronize()`。
+- off latency median/p90/min/max: `0.292072/0.294718/0.284047/0.294718s`。
+- `visual_prune keep_ratio=0.5` latency median/p90/min/max: `0.798550/0.810786/0.781913/0.810786s`。
+- off output token/s median: `27.390514`；active output token/s median: `10.018163`。
+- off memory allocated/reserved/peak median: `25743.02/28348.00/28122.23 MB`。
+- active memory allocated/reserved/peak median: `25707.93/28312.00/28087.13 MB`。
+- 解释: active logical pruning 当前没有 physical KV compaction；显存数字接近，只能说明小样例当前没有可声明的物理显存收益。active 路径更慢，不能声明吞吐收益。
+
+当前状态:
+
+- `compression_mode="visual_prune"` 已实现 prefill decision 持久化、decode retained-token KV view、keep-all exact no-op 和小样例 compression-on smoke。
+- 当前 `visual_prune` mode 是 logical pruning，不是 physical KV compaction；它自身未满足物理显存收益门禁。
+- P5 的收益门禁由 P5.3/P5.4 `fp8_kv` baseline 补齐。
+
+### P5.3/P5.4 FP8 KV Baseline
+
+`fp8_kv` 是 P5 当前满足收益门禁的 physical KV storage baseline。它不改变
+logical context，也不做 visual-token compaction；它把 KV cache 物理 dtype 从
+model dtype bf16 改为 `torch.float8_e4m3fn`，decode 读取时显式 dequant 到 query
+dtype 后运行 attention。
+
+Focused correctness:
+
+```bash
+PYTHONPATH=/data/Prism-Infer /data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_fp8_kv_cache.py \
+  /data/Prism-Infer/tests/test_compression_off.py \
+  /data/Prism-Infer/tests/test_visual_pruning_active.py -s
+```
+
+当前输出:
+
+- `16 passed in 0.23s`。
+- FP8 store: key shape `[5,2,8]`，cache shape `[2,4,2,8]`。
+- one-tensor BF16 cache bytes `256`，FP8 cache bytes `128`。
+- store round-trip max diff `0.000000e+00` against explicit `to(fp8).to(bf16)` reference。
+- FP8 decode: output shape `[1,4,8]`，reference shape `[1,4,8]`，mean/std 完全一致，max diff `0.000000e+00`。
+
+受影响窄回归:
+
+```bash
+PYTHONPATH=/data/Prism-Infer /data/Prism-Infer/.venv-local/bin/python -m pytest -q \
+  /data/Prism-Infer/tests/test_qwen3_vl_attention_kv.py \
+  /data/Prism-Infer/tests/test_kv_engine_hardening.py \
+  /data/Prism-Infer/tests/test_kv_trace_no_output_change.py -s
+```
+
+当前输出:
+
+- `11 passed in 4.15s`。
+- Qwen attention decode paged KV kernel 仍 PASS，max diff `1.953125e-03`。
+- 4D KV store、BlockManager hardening、swap、prefix-cache early gate 和 trace on/off equality 均 PASS。
+
+真实模型 fixed-block smoke:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+HF_HUB_OFFLINE=1 \
+/data/Prism-Infer/.venv-local/bin/python <inline smoke>
+```
+
+当前输出:
+
+- off KV dtype `torch.bfloat16`，shape `[2,36,16,256,8,128]`，bytes `603979776`。
+- fp8 KV dtype `torch.float8_e4m3fn`，shape `[2,36,16,256,8,128]`，bytes `301989888`。
+- `kv byte ratio fp8/off: 0.500000`。
+- 单图 `max_tokens=4`: off 和 fp8 token ids 均为 `[785, 2168, 3897, 374]`。
+
+可复现 benchmark:
+
+```bash
+PYTHONPATH=/data/Prism-Infer HF_HUB_OFFLINE=1 \
+/data/Prism-Infer/.venv-local/bin/python \
+  /data/Prism-Infer/benchmarks/bench_kv_compression.py \
+  --model /data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+  --case single_image \
+  --modes off,fp8_kv \
+  --max-tokens 8 \
+  --warmup 1 \
+  --repeat 3 \
+  --num-kvcache-blocks 16 \
+  --max-model-len 1024 \
+  --max-num-batched-tokens 1024
+```
+
+原始日志:
+
+- `data/p5_compression/fp8_kv_single_image_benchmark_20260709.jsonl`
+- `data/p5_compression/fp8_kv_quality_matrix_20260709.jsonl`
+
+single-image benchmark 当前输出:
+
+- GPU: NVIDIA GeForce RTX 5090。
+- 输入: 单图 448x448，prompt `Describe this image.`，`max_tokens=8`。
+- warmup=1，repeat=3，每次测量前后调用 `torch.cuda.synchronize()`。
+- off latency median/p90/min/max: `0.278173/0.287490/0.274921/0.287490s`。
+- fp8 latency median/p90/min/max: `0.704317/0.704871/0.692049/0.704871s`。
+- off output token/s median: `28.759042`；fp8 output token/s median: `11.358516`。
+- off memory allocated/reserved/peak median: `17319.02/19938.00/19698.23 MB`。
+- fp8 memory allocated/reserved/peak median: `17023.57/19626.00/19402.86 MB`。
+- KV cache bytes: off `603979776`，fp8 `301989888`，ratio `0.500000`。
+- token ids 均为 `[785, 2168, 3897, 374, 264, 6437, 11, 13794]`。
+
+quality matrix 当前输出:
+
+- 覆盖 `text`、`single_image`、`multi_image`、`video` 四类，每类 `max_tokens=8`。
+- `fp8_kv` 对 `off` aggregate token match: `32/32`，exact match。
+- per-case exact: text `8/8`，single-image `8/8`，multi-image `8/8`，video `8/8`。
+- KV byte ratio: `0.5`。
+
+P5 当前结论:
+
+- `fp8_kv` 已给出 compression ratio、质量退化、显存和 latency/throughput 数据。
+- 可测收益是 KV cache physical bytes 减半，以及 fixed-block 场景 GPU allocated/reserved/peak 下降约 295/312/295 MB。
+- 当前 FP8 decode 路径为了 correctness 走 eager dequant + SDPA，latency/throughput 明显慢于 off；不能声明吞吐收益。
+- P5 当前门禁已满足，后续性能优化属于 P6。
 
 ## P6: Benchmark 验证
 

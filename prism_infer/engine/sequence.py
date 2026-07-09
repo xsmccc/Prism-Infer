@@ -87,6 +87,7 @@ class Sequence:
         self.image_token_count = image_token_count
         self.video_token_id = video_token_id
         self.video_token_count = video_token_count
+        self.visual_pruning_decision_record: dict[str, object] | None = None
 
     @classmethod
     def from_image_inputs(
@@ -251,6 +252,7 @@ class Sequence:
             "image_token_count": self.image_token_count,
             "video_token_id": self.video_token_id,
             "video_token_count": self.video_token_count,
+            "visual_pruning_decision_record": self.visual_pruning_decision_record,
         }
 
     def __setstate__(self, state):
@@ -291,6 +293,9 @@ class Sequence:
             self.image_token_count = state.get("image_token_count", 0)
             self.video_token_id = state.get("video_token_id")
             self.video_token_count = state.get("video_token_count", 0)
+            self.visual_pruning_decision_record = state.get(
+                "visual_pruning_decision_record"
+            )
         else:
             self.block_size = int(Sequence.block_size)
             self.temperature = 1.0
@@ -316,3 +321,4 @@ class Sequence:
             self.image_token_count = 0
             self.video_token_id = None
             self.video_token_count = 0
+            self.visual_pruning_decision_record = None

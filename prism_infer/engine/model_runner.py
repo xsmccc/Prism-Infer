@@ -23,7 +23,10 @@ from multiprocessing.synchronize import Event       # 进程间事件通知
 from multiprocessing.shared_memory import SharedMemory  # 进程间共享内存
 
 from prism_infer.config import Config
-from prism_infer.engine.compression import build_compression_metadata
+from prism_infer.engine.compression import (
+    COMPRESSION_FP8_KV,
+    build_compression_metadata,
+)
 from prism_infer.engine.sequence import Sequence
 try:
     from prism_infer.models.qwen3 import Qwen3ForCausalLM     # Qwen3 纯文本模型 (legacy)
@@ -85,6 +88,7 @@ class ModelRunner:
         self.rank = rank                             # 当前 GPU 编号 (0, 1, 2, ...)
         self.event = event                           # 进程间事件, 用于多 GPU 同步
         self.model_dtype = _resolve_model_dtype(hf_config)
+        self.kv_cache_dtype = self._resolve_kv_cache_dtype(config)
         register_model_config(config)
 
         # ── 初始化分布式通信 ──
@@ -207,6 +211,22 @@ class ModelRunner:
             or hasattr(hf_config, "image_token_id")
         )
 
+    @staticmethod
+    def _dtype_itemsize(dtype: torch.dtype) -> int:
+        """返回 dtype 的元素字节数。"""
+
+        return torch.empty((), dtype=dtype).element_size()
+
+    @staticmethod
+    def _resolve_kv_cache_dtype(config: Config) -> torch.dtype:
+        """根据 compression mode 选择物理 KV cache dtype。"""
+
+        if config.compression_mode == COMPRESSION_FP8_KV:
+            if not hasattr(torch, "float8_e4m3fn"):
+                raise RuntimeError("compression_mode='fp8_kv' requires torch.float8_e4m3fn")
+            return torch.float8_e4m3fn
+        return _resolve_model_dtype(config.hf_config)
+
     def _forward_model(self, inputs: ModelInputs):
         """Call either the new Qwen3-VL interface or the legacy text model."""
         if self.is_vl_model:
@@ -250,20 +270,32 @@ class ModelRunner:
                            text_config.hidden_size // text_config.num_attention_heads)
         # 每个 head 的维度, 如 128
 
+        kv_element_size = self._dtype_itemsize(self.kv_cache_dtype)
         block_bytes = (2 *                              # K 和 V 两份
                        text_config.num_hidden_layers *   # 每层都有 KV Cache
                        self.block_size *                 # 每个 block 的 token 数
                        num_kv_heads *                    # KV head 个数
                        head_dim *                        # 每个 head 的维度
-                       self.model_dtype.itemsize)        # 每个元素的字节数 (bf16=2)
+                       kv_element_size)                  # 每个 KV cache 元素的字节数
         # C++ 类比: sizeof(Block_KV) = 2 * layers * block_size * heads * dim * sizeof(half)
 
         # ── 计算能分配多少个 block ──
-        config.num_kvcache_blocks = int(
+        max_num_kvcache_blocks = int(
             total * config.gpu_memory_utilization        # GPU 总量 × 利用率 (如 0.9)
             - used                                       # 减去已用
             - peak + current                             # 减去峰值瞬时占用
         ) // block_bytes
+        requested_blocks = int(getattr(config, "num_kvcache_blocks", -1))
+        if requested_blocks > 0:
+            if requested_blocks > max_num_kvcache_blocks:
+                raise RuntimeError(
+                    "requested num_kvcache_blocks exceeds available memory: "
+                    f"requested={requested_blocks}, max={max_num_kvcache_blocks}, "
+                    f"kv_cache_dtype={self.kv_cache_dtype}"
+                )
+            config.num_kvcache_blocks = requested_blocks
+        else:
+            config.num_kvcache_blocks = max_num_kvcache_blocks
         # 这就是 "剩余空间能放多少个 block"
         assert config.num_kvcache_blocks > 0
 
@@ -274,7 +306,8 @@ class ModelRunner:
             config.num_kvcache_blocks,                   # block 个数
             self.block_size,                             # 每 block token 数
             num_kv_heads,                                # KV head 数
-            head_dim                                     # head 维度
+            head_dim,                                    # head 维度
+            dtype=self.kv_cache_dtype,
         )
         # shape 示例: [2, 28, 500, 16, 8, 128]
         # 2 = K/V, 28层, 500个block, 每block 16 token, 8个KV head, 128维
@@ -308,7 +341,7 @@ class ModelRunner:
                 self.block_size,
                 num_kv_heads,
                 head_dim,
-                dtype=self.model_dtype,
+                dtype=self.kv_cache_dtype,
                 device="cpu",
                 pin_memory=True  # pinned memory: 加速 GPU↔CPU 传输
             )
@@ -621,15 +654,26 @@ class ModelRunner:
     def run_model(self, model_inputs: ModelInputs, is_prefill: bool):
         """执行模型前向推理, 返回 logits"""
         input_ids = model_inputs.input_ids
-        if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
+        context = get_context()
+        compression_metadata = context.compression_metadata
+        compression_requires_eager = (
+            compression_metadata is not None and compression_metadata.enabled
+        )
+        if (
+            is_prefill
+            or self.enforce_eager
+            or input_ids.size(0) > 512
+            or compression_requires_eager
+        ):
             # ---- Prefill / Eager / batch 太大 → 直接跑模型 ----
+            # Active compression 也必须走 eager；CUDA Graph replay 不会重新进入
+            # Python attention 分支，不能感知 retained-token metadata。
             return self.model.compute_logits(self._forward_model(model_inputs))
             # self.model(input_ids, positions): 前向传播, 返回 hidden_states
             # self.model.compute_logits(...): 乘以 lm_head 权重 → [batch, vocab_size]
         else:
             # ---- Decode + CUDA Graph → 回放预录制的 Graph ----
             bs = input_ids.size(0)                      # batch size (序列数)
-            context = get_context()                     # 获取 set_context 设的全局变量
 
             # 找到 >= bs 的最小预录制 batch size
             graph = self.graphs[next(x for x in self.graph_bs if x >= bs)]
