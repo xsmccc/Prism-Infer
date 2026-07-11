@@ -28,26 +28,54 @@ class Context:
     max_seqlen_k: int = 0                          # 最长 K 序列
     slot_mapping: torch.Tensor | None = None       # 每个 token 在 KV Cache 中的全局槽位
     context_lens: torch.Tensor | None = None       # 每条序列的上下文长度 (Decode 用)
+    logical_context_lens: torch.Tensor | None = None  # M-RoPE/审计使用的未压缩长度
     block_tables: torch.Tensor | None = None       # 每条序列的 block 页表 (Decode/PrefixCache 用)
     trace_metadata: Any | None = None              # KV trace 元数据; 默认关闭时为 None
     compression_metadata: Any | None = None        # KV 压缩元数据; P5.0 off baseline 为 no-op
+    visual_pruning_slot_mappings: tuple[torch.Tensor, ...] = ()
 
 # ── 模块级全局变量: 单例 Context ──
 _CONTEXT = Context()
 # 只有一个实例, 整个进程共享 (单线程推理, 不需要锁)
 
-def get_context():
+def get_context() -> Context:
     """attention 层调用: 获取当前步骤的上下文"""
     return _CONTEXT
 
-def set_context(is_prefill, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0, max_seqlen_k=0, slot_mapping=None, context_lens=None, block_tables=None, trace_metadata=None, compression_metadata=None):
+def set_context(
+    is_prefill: bool,
+    cu_seqlens_q: torch.Tensor | None = None,
+    cu_seqlens_k: torch.Tensor | None = None,
+    max_seqlen_q: int = 0,
+    max_seqlen_k: int = 0,
+    slot_mapping: torch.Tensor | None = None,
+    context_lens: torch.Tensor | None = None,
+    block_tables: torch.Tensor | None = None,
+    trace_metadata: Any | None = None,
+    compression_metadata: Any | None = None,
+    visual_pruning_slot_mappings: tuple[torch.Tensor, ...] = (),
+    logical_context_lens: torch.Tensor | None = None,
+) -> None:
     """model_runner 调用: 设置当前步骤的上下文"""
     global _CONTEXT                                # 声明要修改模块级变量
-    _CONTEXT = Context(is_prefill, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, context_lens, block_tables, trace_metadata, compression_metadata)
+    _CONTEXT = Context(
+        is_prefill=is_prefill,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_k,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+        slot_mapping=slot_mapping,
+        context_lens=context_lens,
+        logical_context_lens=logical_context_lens,
+        block_tables=block_tables,
+        trace_metadata=trace_metadata,
+        compression_metadata=compression_metadata,
+        visual_pruning_slot_mappings=visual_pruning_slot_mappings,
+    )
     # 每次创建新的 Context 对象 (不是修改旧的)
     # dataclass 的 __init__ 按字段顺序接收参数
 
-def reset_context():
+def reset_context() -> None:
     """推理完成后调用: 清除上下文, 释放 tensor 引用"""
     global _CONTEXT
     _CONTEXT = Context()                           # 重置为默认值 (全部 None/0)

@@ -15,6 +15,42 @@ ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 VisionEncoder = ve.VisionEncoder
 
+
+def test_vision_tensor_region_split_is_exact() -> None:
+    """动态 geometry preparation 与稳定 tensor region 拆分必须 exact。"""
+
+    config = {
+        "hidden_size": 16,
+        "in_channels": 3,
+        "temporal_patch_size": 1,
+        "patch_size": 2,
+        "num_heads": 4,
+        "intermediate_size": 32,
+        "depth": 3,
+        "out_hidden_size": 24,
+        "num_position_embeddings": 16,
+        "spatial_merge_size": 2,
+        "deepstack_visual_indexes": [0, 1, 2],
+    }
+    torch.manual_seed(20260711)
+    vision = VisionEncoder(config, dtype=torch.float32)
+    pixels = torch.randn(16, 12)
+    grid_thw = torch.tensor([[1, 4, 4]], dtype=torch.long)
+
+    reference_main, reference_deepstack = vision(pixels, grid_thw)
+    tensor_inputs = vision.prepare_tensor_region_inputs(pixels, grid_thw)
+    actual_main, actual_deepstack = vision.forward_tensor_region(*tensor_inputs)
+
+    assert torch.equal(reference_main, actual_main)
+    assert len(reference_deepstack) == len(actual_deepstack) == 3
+    assert all(
+        torch.equal(reference, actual)
+        for reference, actual in zip(reference_deepstack, actual_deepstack)
+    )
+    print(f"vision tensor input shapes: {[list(value.shape) for value in tensor_inputs]}")
+    print(f"vision main output shape: {list(actual_main.shape)}")
+    print("Vision dynamic/tensor region split max diff: 0.000000e+00 PASS")
+
 from conftest import get_model_path, hf_qwen3_vl_visual, require_transformers
 
 THRESHOLD = 2e-2

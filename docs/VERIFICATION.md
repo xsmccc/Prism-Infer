@@ -1549,18 +1549,872 @@ P5 当前结论:
 - 当前 FP8 decode 路径为了 correctness 走 eager dequant + SDPA，latency/throughput 明显慢于 off；不能声明吞吐收益。
 - P5 当前门禁已满足，后续性能优化属于 P6。
 
-## P6: Benchmark 验证
+## P6: 系统优化与视觉 KV 物理压缩验证
+
+P6 的设计、模块边界、阶段顺序和非目标见 `docs/P6_SYSTEM_OPTIMIZATION_DESIGN.md`。P6 必须先建立统一 baseline，再推进 profiling、physical compaction、kernel、compile 和外部对比。
+
+### P6.0 设计门禁
+
+PASS 标准:
+
+- 明确 internal correctness/kernel/system/external baseline 层级。
+- ExecutionMode、AttentionBackend 和 CompressionMode 作为正交实验维度。
+- physical compaction 明确区分 logical context length 和 physical KV length。
+- `torch.compile` 只覆盖稳定 tensor compute region，不把动态 scheduler 当成编译目标。
+- megakernel 只有在 profiler 证明 launch-bound 且存在真实实现时启动。
+- PD 分离和投机解码不进入 P6 核心门禁。
+
+当前状态:
+
+- `docs/P6_SYSTEM_OPTIMIZATION_DESIGN.md` 已建立，P6.0 完成。
+- pruning 外部 PR 尚无链接/commit，当前不能作为实现依据或 benchmark baseline。
+
+### P6.1 统一 Benchmark Contract
+
+计划入口:
+
+```text
+benchmarks/bench_system.py
+tests/test_benchmark_schema.py
+docs/PERFORMANCE_REPORT.md
+```
+
+当前实现已落地。性能记录与结论边界见 `docs/PERFORMANCE_REPORT.md`。
+
+每条 JSONL result 必须包含:
+
+- schema version、timestamp、git commit 和 dirty state。
+- GPU、CUDA、torch、transformers、Python。
+- model snapshot、dtype、TP size、block size、max model len、显存利用率。
+- execution mode、attention mode、compression mode 和全部压缩参数。
+- case id、text token count、visual token count、图像/视频 shape、output token count。
+- preprocessing 是否计时。
+- warmup、repeat、batch/concurrency/request rate。
+- correctness summary 和 output token ids/hash。
+- TTFT、TPOT/ITL、end-to-end latency、throughput、memory、KV bytes 和 block count。
+
+PASS 标准:
+
+- 同一个 workload manifest 可运行 off/eager、off/CUDA Graph、visual-prune 和 fp8-kv internal modes。
+- schema test 拒绝缺少版本、输入、timing、memory 或 correctness 字段的 result。
+- deterministic greedy case 的 repeat 输出一致。
+- benchmark runner 只采集数据，不在内部自动改变 mode 以规避失败。
+- 第一份 `docs/PERFORMANCE_REPORT.md` 只记录 baseline，不提前写优化收益。
+
+当前验证命令:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+.venv-local/bin/python -m pytest -q tests/test_benchmark_schema.py -s
+```
+
+当前输出: `13 passed in 0.02s`。覆盖五类 workload manifest、完整 record、缺失 environment/workload/timing/memory/KV evidence、output hash 不一致、统计顺序错误和 offline traffic 一致性。
+
+RTX 5090 runner validation 命令:
+
+```bash
+PYTHONPATH=/data/Prism-Infer HF_HUB_OFFLINE=1 \
+.venv-local/bin/python benchmarks/bench_system.py \
+  --model /data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+  --case single_image_448 \
+  --modes off_eager,off_graph,visual_prune,fp8_kv \
+  --max-tokens 8 --warmup 1 --repeat 3 \
+  --num-kvcache-blocks 16 --max-model-len 1024 \
+  --max-num-batched-tokens 1024 \
+  --output data/p6_system/single_image_internal_baseline_20260711.jsonl
+```
+
+当前输出:
+
+- 4 条 JSONL record 逐条通过 `validate_benchmark_record()`。
+- mode 为 `off_eager/off_graph/visual_prune/fp8_kv`，repeat 内输出一致，相对首模式均为 8/8 token exact。
+- warmup/repeat 为 `1/3`，记录 `torch.cuda.synchronize()` timing boundary、输入 shape、E2E/engine TTFT、decode ITL、E2E latency、request/token throughput、allocated/reserved/peak 和 KV bytes。
+- KV bytes: BF16 三模式 `603979776`，FP8 `301989888`；visual-prune 仍为 logical path，不具备 physical KV bytes 收益。
+- 工作树为 `git_dirty=true`；该结果只能标记 runner validation baseline，正式 clean-commit rerun 尚未完成。
+- 完整数值和限制见 `docs/PERFORMANCE_REPORT.md`，不在此验证索引重复维护。
+
+### P6.2 Profiling 门禁
+
+每个待优化问题必须先记录:
+
+- processor、vision、prefill、decode、sample 和 scheduler 分段时间。
+- kernel count 和 CPU launch gap。
+- GPU utilization 和 peak memory。
+- 目标 batch/context/visual-token shape。
+- profiler 命令、原始 trace 路径和 commit。
+
+针对当前 P5 慢路径还必须分别测量:
+
+- visual-prune retained index 构造和 paged gather。
+- `.item()`/Python loop 引入的同步或 launch gap。
+- FP8 store、cache load/dequant 和 SDPA。
+- batch=1/context=4096 paged decode kernel。
+
+没有 profiler 或分段计时证据时，不进入 megakernel，也不声称某个函数是主要瓶颈。
+
+当前实现入口:
+
+```text
+prism_infer/analysis/performance_profile.py
+benchmarks/bench_system.py --profile-output ...
+benchmarks/analyze_nsys.py
+tests/test_performance_profile.py
+tests/test_nsys_analysis.py
+```
+
+semantic collector focused 验证:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+.venv-local/bin/python -m pytest -q \
+  tests/test_performance_profile.py \
+  tests/test_nsys_analysis.py -s
+```
+
+当前输出: `6 passed`。其中 profiling on/off CPU attention output shape 均为 `[4, 2, 8]`，max diff `0.000000e+00`；同时覆盖 profile schema/tamper guard、phase summary、Nsight correlation 和 eager capture 无 graph table。
+
+四模式 semantic profile 命令在 P6.1 runner 命令基础上增加:
+
+```bash
+--profile-repeat 1 \
+--profile-output data/p6_system/single_image_semantic_profile_20260711.jsonl
+```
+
+当前输出:
+
+- 4 条 profile records 通过 `validate_performance_profile_record()`；每条包含 1 个 prefill、7 个 decode step，profiled output 对 unprofiled output token exact。
+- `off_eager/off_graph/visual_prune/fp8_kv` 的 profiled decode `engine.model_runner` CUDA/step 分别为 `37.213/17.737/116.964/51.229 ms`。这些值包含 profiling overhead，只用于分层归因，不替代 unprofiled benchmark。
+- `visual_prune` 每 decode step: retained-index CPU `3.006 ms`、gather CUDA `69.055 ms`、SDPA CUDA `2.554 ms`；context `211..217`，retained length `113..119`。
+- FP8 prefill 36 层 eager KV store CUDA 合计 `373.769 ms`；FP8 decode 每 step store/gather/dequant/SDPA CUDA 分别为 `5.042/4.008/2.420/2.620 ms`。
+
+Nsight capture 模板:
+
+```bash
+nsys profile \
+  --trace=cuda,nvtx,osrt \
+  --capture-range=cudaProfilerApi \
+  --capture-range-end=stop \
+  --output=data/p6_system/<mode>_profile_20260711 \
+  .venv-local/bin/python benchmarks/bench_system.py \
+  <same model/workload args> \
+  --modes <mode> --warmup 1 --repeat 1 --profile-repeat 1 \
+  --cuda-profiler-range \
+  --profile-output data/p6_system/<mode>_nsys_semantic_20260711.jsonl
+```
+
+SQLite 结构化分析:
+
+```bash
+nsys export --type sqlite --force-overwrite=true \
+  --output=data/p6_system/<mode>_profile_20260711.sqlite \
+  data/p6_system/<mode>_profile_20260711.nsys-rep
+
+PYTHONPATH=/data/Prism-Infer \
+.venv-local/bin/python benchmarks/analyze_nsys.py \
+  data/p6_system/<mode>_profile_20260711.sqlite \
+  --target-range '<prism NVTX range>' \
+  --output data/p6_system/<mode>_nsys_summary_20260711.json
+```
+
+Nsight single-image decode median per step:
+
+| Mode | Explicit kernels | Graph launch | Async memcpy | Stream sync | Kernel busy | Graph execution |
+|---|---:|---:|---:|---:|---:|---:|
+| `off_eager` | 2004 | 0 | 10 | 2 | 16.137 ms | 0 |
+| `off_graph` | 11 | 1 | 14 | 2 | 4.074 ms | 12.896 ms |
+| `visual_prune` | 2148 | 0 | 3610 | 3566 | 17.384 ms | 0 |
+| `fp8_kv` | 2220 | 0 | 298 | 110 | 16.112 ms | 0 |
+
+注意: `off_graph` 的 explicit kernel 数不包含 graph 内部 node；graph execution 来自 `CUPTI_ACTIVITY_KIND_GRAPH_TRACE`。NVTX target 通过 runtime `correlationId` 关联 GPU activity，不能用 CPU NVTX 时间包含关系归因异步 kernel。
+
+关键 target range 证据:
+
+- 252 个 `visual_prune.gather` ranges 对应 24696 次 async memcpy 和 24696 次 stream sync，恰为每 layer/decode gather 98 次；源码路径包含逐 retained segment 的 `block_ids[...].item()`。
+- 288 个 FP8 eager KV-store ranges 对应 7812 次 stream sync，等于 `36 layers * (210 prefill tokens + 7 decode tokens)`；源码路径逐 token 执行 `slot_mapping[i].item()` 和 K/V assignment。
+- `off_eager` 的 252 个 paged Triton ranges 通过 correlation 得到 252 个 kernel，不再使用会漏掉异步 kernel 的时间戳 containment。
+
+batch=1 paged decode kernel 验证:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+.venv-local/bin/python benchmarks/bench_paged_decode.py \
+  --batch-sizes 1 --context-lens 256,1024,4096 \
+  --warmup 10 --repeat 50
+```
+
+当前输出:
+
+- context `256`: max diff `1.953125e-03` PASS；kernel/reference median `0.0387/0.1352 ms`。
+- context `1024`: max diff `9.765625e-04` PASS；kernel/reference median `0.0873/0.1473 ms`。
+- context `4096`: max diff `4.882812e-04` PASS；kernel/reference median `0.2674/0.2071 ms`，当前自实现 kernel 不占优。
+
+P6.2 当前门禁状态:
+
+- processor、M-RoPE、vision、prefill、decode、sampler、scheduler、compression subregion、kernel/API/sync 和 peak memory 已有实测证据。
+- Nsight `--gpu-metrics-devices=help` 对 RTX 5090 返回 `Already under profiling`；SM utilization 未验证，不能用 `kernel_busy_ms` 替代。
+- 当前所有记录为 `git_dirty=true`，属于瓶颈定位证据，不是正式发布 benchmark。
+- 因 SM utilization 缺口，P6.2 不标记无条件 PASS；但 visual gather、FP8 eager store 和 eager decode launch 病理已有足够证据进入对应 focused optimization。
+
+#### P6.2-C Visual Retained Gather 优化
+
+实现 contract:
+
+- `build_retained_slot_mapping()` 在每个 decode step 使用 CPU sequence block table，把 retained logical indices 映射为一个 int64 physical-slot tensor。
+- `ModelRunner.prepare_decode()` 每个 sequence 只构造一次 mapping，并通过 `Context.visual_pruning_slot_mappings` 传给全部 attention layers。
+- attention 将 canonical paged KV reshape 为 flat slots，通过两次 `index_select` 收集 K/V；不再逐 retained segment 调用 `block_ids[...].item()`。
+- 该路径不移动 KV、不释放 block，`physical_compaction` 仍为 `False`。
+
+focused correctness:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+.venv-local/bin/python -m pytest -q \
+  tests/test_visual_pruning_active.py \
+  tests/test_compression_off.py \
+  tests/test_model_runner_context_reset.py -s
+```
+
+当前输出: `19 passed in 2.91s`。active/reference output shape 均为 `[1, 4, 8]`，max diff `0.000000e+00`；keep-all/off exact；非连续 block `[3, 7]` 下 logical indices `(0, 1, 4, 5, 6)` 映射 physical slots `[12, 13, 28, 29, 30]`；short table 和 missing mapping 显式失败。
+
+同轮 unprofiled benchmark:
+
+```bash
+PYTHONPATH=/data/Prism-Infer HF_HUB_OFFLINE=1 \
+.venv-local/bin/python benchmarks/bench_system.py \
+  <same P6 model/workload args> \
+  --modes off_eager,visual_prune \
+  --max-tokens 8 --warmup 1 --repeat 3 --profile-repeat 1 \
+  --output data/p6_system/visual_gather_optimized_benchmark_20260711.jsonl \
+  --profile-output data/p6_system/visual_gather_optimized_semantic_20260711.jsonl
+```
+
+当前输出:
+
+- 四次路径（3 measured + 1 profiled）输出均为 `[785, 2168, 3897, 374, 264, 6437, 11, 13794]`。
+- decode-step median: off eager `30.834 ms`，visual prune `33.529 ms`，ratio `1.087x`。
+- visual-prune 相对优化前 P6.2 profile 对应 unprofiled median `100.544 ms` 下降 `66.7%`；跨运行对比只用于定位趋势，正式 clean-commit 数字待提交后复跑。
+- semantic visual gather CUDA 从约 `69.055 ms/step` 降至 `3.108 ms/step`；slot mapping 构造 CUDA 约 `0.160 ms/step`。
+
+优化后 Nsight target:
+
+```text
+before visual gather ranges: 252
+  async memcpy: 24696
+  stream sync: 24696
+
+after visual gather ranges: 252
+  async memcpy: 0
+  stream sync: 0
+```
+
+整步 decode median 的 async memcpy/stream sync 从 `3610/3566` 降为 `47/2`；stream sync 已回到 off-eager baseline 的 `2`。显式 kernel 数仍为 `2148`，因为当前仍是 gather + GQA expand + SDPA 多算子路径，没有把普通 tensorized gather 伪称为 fused kernel。
+
+quality matrix:
+
+```bash
+PYTHONPATH=/data/Prism-Infer HF_HUB_OFFLINE=1 \
+.venv-local/bin/python benchmarks/bench_kv_compression.py \
+  --model <Qwen3-VL snapshot> --case quality_matrix \
+  --modes off,visual_prune --max-tokens 8 \
+  --num-kvcache-blocks 16 --max-model-len 1024 \
+  --max-num-batched-tokens 1024
+```
+
+当前输出: text/single-image/multi-image/video 均为 `8/8` exact，aggregate `32/32` exact；KV byte ratio `1.0`。这证明当前 optimization 保持 logical pruning 质量，但不构成 physical KV compression。
+
+本轮 focused regression:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+.venv-local/bin/python -m pytest -q \
+  tests/test_benchmark_schema.py \
+  tests/test_performance_profile.py \
+  tests/test_nsys_analysis.py \
+  tests/test_compression_off.py \
+  tests/test_visual_pruning_active.py \
+  tests/test_fp8_kv_cache.py \
+  tests/test_kv_trace_no_output_change.py \
+  tests/test_paged_decode_kernel.py \
+  tests/test_model_runner_context_reset.py \
+  tests/test_model_runner_vl_prefill.py \
+  tests/test_model_runner_vl_mixed_prefill.py \
+  tests/test_qwen3_vl_attention_kv.py -s
+```
+
+当前输出: `52 passed in 8.22s`。profile on/off attention output max diff `0.000000e+00`，KV trace on/off max diff `0.000000e+00`，active visual prune/FP8 focused reference max diff 均为 `0.000000e+00`，paged Triton focused cases max diff 分别为 `3.906250e-03/7.812500e-03`；ModelRunner context、单/混合 VL prefill 和 Qwen3-VL attention KV 回归均通过。
+
+真实模型独立 HF greedy 回归:
+
+```bash
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+HF_HUB_OFFLINE=1 PYTHONPATH=/data/Prism-Infer \
+.venv-local/bin/python -m pytest -q \
+  tests/test_llm_vl_generate.py::test_generate_vl_one_token_matches_hf_greedy -s
+```
+
+当前输出: `1 passed in 19.55s`；HF token ids `[785]`，Prism token ids `[785]`，exact match。
+
+#### P6.2-D FP8 Vectorized KV Store
+
+实现 contract:
+
+- `store_kvcache()` 对 contiguous CUDA FP8 cache 复用项目自实现 `_store_kvcache_triton`，一个调用同时写 K/V；`tl.store` 按 destination pointer dtype 执行当前 unit-scale BF16/FP32 -> E4M3FN 转换。
+- `_store_kvcache_eager()` 保留为 CPU/fallback/reference，不改变 P5.3 FP8 量化语义。
+- FP8 Triton 路径使用独立 NVTX region `attention.kv_store.triton_fp8`；CUDA tensor/device/layout 不一致时显式失败。
+- 本项只优化 store，不改变 FP8 cache layout、bytes、decode gather/dequant 或 attention 计算。
+
+focused correctness:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+.venv-local/bin/python -m pytest -q \
+  tests/test_fp8_kv_cache.py \
+  tests/test_kv_engine_hardening.py \
+  tests/test_compression_off.py \
+  tests/test_qwen3_vl_attention_kv.py -s
+```
+
+当前输出: `23 passed in 4.93s`。Qwen prefill shape key/value `[210,8,128]`、cache `[3,256,8,128]`，跨非连续 physical slots 且含 `-1` padding；Triton/eager K/V max diff 均为 `0.000000e+00`，output/reference mean/std exact，untouched slot 保持原值。FP8 decode output/reference shape `[1,4,8]`，max diff `0.000000e+00`。
+
+同轮 unprofiled system benchmark:
+
+```bash
+PYTHONPATH=/data/Prism-Infer HF_HUB_OFFLINE=1 \
+.venv-local/bin/python benchmarks/bench_system.py \
+  --model <Qwen3-VL snapshot> --case single_image_448 \
+  --modes off_eager,fp8_kv --max-tokens 8 \
+  --warmup 1 --repeat 3 --profile-repeat 1 \
+  --max-model-len 1024 --max-num-batched-tokens 1024 \
+  --num-kvcache-blocks 16 --kvcache-block-size 256 \
+  --output data/p6_system/fp8_vectorized_benchmark_20260711.jsonl \
+  --profile-output data/p6_system/fp8_vectorized_semantic_20260711.jsonl
+```
+
+当前输出:
+
+- off/fp8 8-token outputs 均为 `[785,2168,3897,374,264,6437,11,13794]`，token exact。
+- KV bytes: BF16 `603979776`，FP8 `301989888`，ratio `0.5`。
+- decode-step median: off `31.077 ms`，FP8 `35.865 ms`，ratio `1.154x`；store 优化没有解决 FP8 full-context gather/dequant latency。
+- unprofiled FP8 prefill median 从旧 raw baseline `446.759 ms` 降到 `132.951 ms`，但本轮 prefill 样本为 `51.270..137.414 ms`，波动较大，只作为 focused trend。
+- semantic FP8 prefill 36 层 store CUDA 合计从 `373.769 ms` 降到 `0.606 ms`，profiled `model.language_model` prefill 从 `412.194 ms` 降到 `35.627 ms`。
+
+Nsight target before/after:
+
+| Metric | Eager per-token store | Triton FP8 store |
+|---|---:|---:|
+| ranges | 288 | 288 |
+| kernels | 15624 | 288 |
+| runtime APIs | 46879 | 288 |
+| async memcpy | 23436 | 0 |
+| stream sync | 7812 | 0 |
+| target kernel time total | 15.192 ms | 0.286 ms |
+
+整步 decode median 的 explicit kernels/async memcpy/stream sync 从 `2220/298/110` 降到 `2184/190/74`。剩余 `74` 次 stream sync 不在 FP8 store target 内，主要后续调查对象是逐层 context-length 读取和 FP8 eager gather。RTX 5090 NCU 返回 `ERR_NVGPUCTRPERM`，因此仍没有 SM utilization/occupancy/DRAM counter，不以 kernel busy 代替。
+
+质量矩阵重新运行 `off,fp8_kv`，text/single-image/multi-image/video 均 `8/8` exact，aggregate `32/32` exact，KV byte ratio `0.5`。
+
+本轮综合回归在新增 FP8 Triton test 后为 `53 passed in 8.01s`；`compileall prism_infer tests benchmarks scripts` 和 `git diff --check` PASS。
+
+### P6.3 Execution Backend 验证
+
+#### P6.3-A Eager/CUDA Graph Matrix
+
+实现与记录 contract:
+
+- benchmark schema 升为 v2，同时继续校验历史 v1 records；v2 增加 source request count、replication factor、prefill/decode backend、Graph capture scope/time、captured buckets、selected batch 和 padding。
+- `bench_system.py` 支持 `--batch-sizes` 与 `--output-lengths`；每个 workload/batch/output cell 独立选择首 mode baseline，禁止跨 cell 比 token 或 KV bytes。
+- 单请求 case 通过完整 request group replication 构造 offline batch，并在 record 中显式记录；不把复制后的 synthetic batch伪称为 manifest 原生 workload。
+- `ModelRunner.capture_cudagraph()` 单独测量 capture time；当前 scope 是 `decode_model_forward`，prefill、compute logits 和 sampler 都在 Graph 外。
+- replay NVTX 同时记录 actual/captured batch；`cudagraph_metadata()` 对 eager 返回无 graph state，对 Graph 返回 selected bucket 和 padding。
+
+focused contract tests:
+
+```bash
+PYTHONPATH=/data/Prism-Infer \
+.venv-local/bin/python -m pytest -q \
+  tests/test_benchmark_schema.py \
+  tests/test_model_runner_vl_cudagraph.py -s
+```
+
+当前输出: `25 passed in 4.17s`。覆盖 schema v1 backward compatibility、v2 graph/replication guards、matrix axis/cell comparison、batch=3 -> bucket=4 metadata 和 eager no-graph state。
+
+RTX 5090 execution matrix:
+
+```bash
+PYTHONPATH=/data/Prism-Infer HF_HUB_OFFLINE=1 \
+.venv-local/bin/python benchmarks/bench_system.py \
+  --model <Qwen3-VL snapshot> --case single_image_448 \
+  --modes off_eager,off_graph \
+  --batch-sizes 1,2,4,8 --output-lengths 8,32,128 \
+  --warmup 2 --repeat 5 \
+  --max-model-len 1024 --max-num-batched-tokens 2048 \
+  --num-kvcache-blocks 16 --kvcache-block-size 256 \
+  --output data/p6_system/execution_matrix_20260711.jsonl
+```
+
+24 records/12 cells 通过 schema v2；每条 repeat-stable，每个 Graph record 对 cell 内 eager token exact，output token count 均为 `batch * max_tokens`。decode median 范围:
+
+| Batch | Eager across output 8/32/128 | Graph across output 8/32/128 | Speedup range | Graph capture median |
+|---:|---:|---:|---:|---:|
+| 1 | 30.704..30.746 ms | 17.460..17.623 ms | 1.744x..1.760x | 251.950 ms |
+| 2 | 31.636..31.682 ms | 17.688..17.834 ms | 1.777x..1.791x | 563.718 ms |
+| 4 | 31.651..31.668 ms | 18.207..18.349 ms | 1.726x..1.738x | 926.789 ms |
+| 8 | 31.779..31.856 ms | 18.820..18.956 ms | 1.681x..1.691x | 1317.755 ms |
+
+output=32 的 Graph decode throughput median 随 batch `1/2/4/8` 为 `57.246/113.001/219.552/424.628 tok/s`。当前 capture 为 max batch 录制 `1/2/4/8` 等 buckets，因此 capture time 随 bucket 数增加；它不包含模型加载，但包含每个 bucket 的 warmup/capture/synchronize。
+
+batch8/output32 Nsight mechanism evidence:
+
+| Metric per decode step | Eager | CUDA Graph |
+|---|---:|---:|
+| explicit kernels | 2077 | 13 |
+| graph launch APIs | 0 | 1 |
+| graph execution | 0 | 14.818 ms |
+| kernel busy outside graph nodes | 17.000 ms | 4.095 ms |
+| async memcpy | 9 | 12 |
+| stream sync | 2 | 2 |
+
+两条路径 prefill 均为 `3617` 个 kernels，进一步证明当前 Graph 只覆盖 decode model forward。Graph 的 `kernel busy outside graph nodes` 不能与 eager total GPU work直接比较，Graph 内 node time由 `graph execution` 单列。
+
+额外真实 mixed text/image/video batch=3 correctness:
+
+```text
+eager: [[11,358],[785,1378],[785,2766]]
+graph: [[11,358],[785,1378],[785,2766]]
+selected bucket: 4
+PASS, 1 passed in 40.24s
+```
+
+本轮综合 focused regression: `65 passed in 7.82s`；`compileall prism_infer tests benchmarks scripts` 和 `git diff --check` PASS。
+
+限制:
+
+- 12-cell performance matrix 是 replicated synthetic single-image offline closed-loop，不是 online serving，也不覆盖 text/video/mixed 性能。
+- power-of-two matrix 没有 batch padding；batch=3 -> bucket=4 只完成 correctness，尚未形成 padding performance matrix。
+- 数据仍为 `git_dirty=true`；RTX 5090 NCU counter 权限未开放，不能报告 SM utilization/occupancy。
+- 本阶段只固定 CUDA Graph baseline，不证明 `torch.compile` 有收益。
+
+Raw evidence:
+
+```text
+data/p6_system/execution_matrix_20260711.jsonl
+data/p6_system/execution_eager_b8_o32_profile_20260711.nsys-rep
+data/p6_system/execution_graph_b8_o32_profile_20260711.nsys-rep
+data/p6_system/execution_eager_b8_o32_nsys_summary_20260711.json
+data/p6_system/execution_graph_b8_o32_nsys_summary_20260711.json
+```
+
+#### P6.3-B Torch Compile Preflight
+
+内部 ablation 至少包含:
+
+```text
+off + eager
+off + CUDA Graph
+off + torch.compile region
+```
+
+对每个 compile region 必须输出:
+
+- region 边界: vision、prefill 或 decode。
+- graph break 数量和位置。
+- recompile 次数与触发 shape。
+- compile/cold-start time。
+- steady-state latency、TTFT 或 TPOT。
+- eager/compiled output shape、max diff、mean/std 或 token equality。
+
+PASS 标准:
+
+- `torch.compile` 结果不改变 off baseline correctness。
+- CUDA Graph 和 compile 对比保持相同 attention backend、KV layout、batch 和输入。
+- 不把 compile time 隐藏在 steady-state benchmark，也不只报告 warm cache 数字。
+- 如果 dynamic batch 导致 recompile，必须报告，不能只选择单一 shape 隐藏风险。
+
+当前 RTX 5090 结果（2026-07-11，`compression=off`，dirty worktree）:
+
+- 新增 `compile_preflight` schema、validator 和 runner；system benchmark schema 升为 v3，并继续接受 v1/v2 records。focused compile/profile/schema/dispatch tests 均已覆盖。
+- 默认关闭的 `profile_region()` 原先导致 decoder layer `6 graphs/5 breaks/18 compile events`；编译捕获时改用标准 `nullcontext` 后为 `1 graph/0 break/3 compile events`，3 次 event 对应静态 batch `1/2/4`，重复 batch1 复用已有 graph。
+- 完整 language-model decode 为 `1 graph/0 break`、`767 ops`、`2991 FX nodes`，但 default 和 eager-cast 模式在 batch1/batch4 的 cold compile 都在 RTX 5090 32GB 上 OOM，不能形成 steady benchmark。
+- 完整 VisionEncoder 为 `7 graphs/6 breaks`，break 来自 grid data-dependent geometry、`Tensor.item()` 和动态 `repeat_interleave`。拆分 geometry preparation 与 blocks/mergers tensor region 后为 `1 graph/0 break`，但 default/emulate-casts 的 27 层主输出 max diff 分别为 `0.859375/0.515625`，均失败。
+- decoder 子区域中，`emulate_precision_casts=True` 后 RMSNorm 和 MLP 可 exact；RMSNorm median `0.0499 ms` 对 eager `0.0769 ms`，MLP `0.2577 ms` 对 eager `0.2216 ms`，因此 MLP 不占优。attention 单步可 exact，batch4 median `0.2142 ms` 对 eager `0.5549 ms`。
+- attention-only system matrix 在 batch `1/2/4/8` 上 steady decode 相对 eager 为 `1.43x..1.46x`，但仍比 CUDA Graph 慢 `1.20x..1.27x`。更严格的 `emulate_precision_casts + force_same_precision` 仍让 batch2/8 所有行在 token 28 分叉，因此该 mode 不通过长输出 correctness，只允许通过 `allow_unsafe_decode_compile=True` 复现 benchmark。
+- 最终 execution backend 结论：保留 eager reference 和 CUDA Graph supported path；不接入 full decode、Vision 或 attention-only `torch.compile` 为支持后端，不启动 megakernel。
+
+代表性三方 output32 matrix:
+
+| Batch | Eager decode | CUDA Graph | Compile attention | Compile cold first decode | Compile token exact |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 31.236 ms | 17.458 ms | 21.345 ms | 1810.650 ms | PASS |
+| 2 | 32.278 ms | 17.687 ms | 22.224 ms | 2162.114 ms | FAIL@28 |
+| 4 | 32.174 ms | 18.213 ms | 22.183 ms | 2212.579 ms | PASS |
+| 8 | 32.422 ms | 18.812 ms | 22.318 ms | 1693.812 ms | FAIL@28 |
+
+Raw evidence:
+
+```text
+data/p6_system/compile_preflight_*_20260711.json
+data/p6_system/execution_compile_matrix_final_20260711.jsonl
+data/p6_system/compile_attention_strict_precision_b2_b8_20260711.jsonl
+```
+
+### P6.4 Visual KV Physical Compaction 验证
+
+correctness matrix 至少覆盖:
+
+- text-only: compaction no-op。
+- single-image: keep-all 和 keep-ratio `<1.0`。
+- multi-image/video: visual spans 跨多个 physical blocks。
+- mixed batch: 不同请求具有不同 logical/physical lengths。
+- decode append: 至少跨越一个 compacted block boundary。
+- Sequence prefill/decode pickle。
+- block free-list/hash cleanup、CoW、swap-out/swap-in。
+- M-RoPE query positions 使用 logical length。
+
+每个 test 必须输出:
+
+- logical context length。
+- physical KV length。
+- original/retained visual token count。
+- old/new block table 和释放 block 数。
+- K/V compact 前后 shape。
+- 与 independent retained-KV reference 的 max diff、mean/std。
+- keep-all 与 off 的 exact equality。
+
+PASS 标准:
+
+- keep-all physical path 与 off exact match。
+- keep-ratio `<1.0` 时真实减少 physical KV token/block/bytes，不能只改变 attention view。
+- generated token position ids 与未压缩逻辑序列一致。
+- generated KV append 到 physical tail，不覆盖 retained prompt KV。
+- 旧 blocks 回收后不再出现在 hash、GPU/CPU block table 或 active mapping。
+- unsupported prefix/chunked/swap 组合必须显式失败，不能 silent fallback。
+
+当前 RTX 5090 结果（2026-07-11，dirty worktree）：
+
+- `test_kv_physical_layout.py` 与 KV/compression/schema 组合回归为 `64 passed`。独立 compact K/V reference shape `[2,2,6,1,2]`，max diff `0.000000e+00`。
+- compact swap-out/pickle/swap-in 保持 logical/physical length `10/6`，换入 GPU 页均为 `hash=-1` 且不进入 prefix hash index。
+- compact decode 使用 logical M-RoPE position `[13,13,13]`、physical context length `7` 和 physical write slot `[6]`。
+- mixed text/image/video 中 text 为 dense no-op；image/video physical prompt 分别为 `210 -> 112`、`422 -> 226`，总 active blocks `4 -> 3`，2-token exact。
+- multi-image keep=0.5、output8、warmup/repeat `2/5`：physical prompt `408 -> 212`、active blocks `2 -> 1`、occupied bytes ratio `0.5`；decode median `32.204 -> 32.231 ms`；前 6 token exact，第 7 token 分叉。
+- keep-all single-image 8-token 与 off exact；该 case 只有一页，因此不产生 page reduction。
+
+Raw evidence:
+
+```text
+data/p6_system/visual_compact_keep_all_smoke_20260711.jsonl
+data/p6_system/visual_compact_mixed_smoke_20260711.jsonl
+data/p6_system/visual_compact_multi_image_formal_dirty_20260711.jsonl
+```
+
+### P6.5 Compressed/FP8 Paged Attention 验证
+
+最小 kernel matrix:
+
+```text
+batch: 1,2,4,8
+physical context: 128,256,1024,4096
+num_heads/num_kv_heads: Qwen GQA shape + small focused shape
+dtype: bf16 compact + fp8 compact/full
+```
+
+每个 case 必须输出 q/cache/block table/context shape、output/reference mean/std、max diff、mean diff、kernel/backend name 和明确 PASS/FAIL。
+
+PASS 标准:
+
+- BF16 跨实现 max diff `<1e-2`。
+- FP8 reference 明确包含相同 quantize/dequant 语义；不能拿未量化 BF16 reference 要求 same-precision exact。
+- unsupported dtype/shape 显式失败，不能 fallback 后报告 kernel PASS。
+- benchmark 只在 correctness PASS 后运行。
+- 至少一个已 profiling 的目标 case 相对 P6 baseline 有可测改善；不要求所有 shape 胜出。
+
+当前 RTX 5090 结果（2026-07-11，commit `f4bf51a`，dirty worktree）：
+
+- Qwen GQA `heads/kv_heads/head_dim=32/8/128`，batch `1/2/4/8` × context `128/256/1024/4096`，BF16/FP8 共 32 cases 全部 PASS。
+- 所有 case output shape 与 q 一致；max diff `<=0.00390625`，mean diff `<1e-3`。FP8 reference 使用相同 E4M3FN quantize 后转 BF16 的语义。
+- engine-level FP8 paged dispatch shape `q=[2,8,128]`、cache `[6,16,2,128]`，max/mean diff `0.00390625/2.76e-4`。
+- warmup/repeat `10/50` micro matrix：FP8 batch8/context4096 kernel/reference median `0.2602/1.8029 ms`；BF16 batch8/context4096 为 `0.4527/1.6259 ms`。
+- 反例：BF16 batch1/context4096 kernel/reference median `0.2701/0.2077 ms`，kernel 不在所有 shape 占优。
+- full-engine single-image output32、warmup/repeat `2/5`：off/FP8 decode median `32.065/31.960 ms`，FP8 ratio `0.997x`；32-token exact，KV pool bytes `603,979,776 -> 301,989,888`。
+
+Raw evidence:
+
+```text
+data/p6_system/paged_decode_bf16_fp8_matrix_20260711.txt
+data/p6_system/fp8_paged_system_b1_o32_20260711.jsonl
+```
+
+### P6.6 质量、显存和容量验证
+
+最小模式:
+
+```text
+off
+visual logical prune
+visual physical compact
+fp8 kv
+visual physical compact + fp8
+```
+
+最小 keep-ratio matrix:
+
+```text
+0.25, 0.5, 0.75, 1.0
+```
+
+最小 workload:
+
+- text、single-image、multi-image、video、mixed batch。
+- synthetic deterministic smoke 与固定真实样例分开报告。
+- output length 至少覆盖 8、32、128；未完成项明确标记。
+
+每个 compression-on mode 必须报告:
+
+- logical/physical visual tokens、KV bytes ratio 和 block reduction。
+- exact token match/稳定前缀、teacher-forced logits 或 ppl。
+- TTFT、TPOT、throughput、allocated/reserved/peak。
+- 固定显存下 max concurrency 或 OOM boundary。
+
+P6 目标值 `KV bytes >=40%`、`accuracy drop <1%`、`TPOT <=1.05x off`、`max concurrency >=30%` 只是研究目标。未达到时必须收缩 claim，不能修改输入条件后继续写作达标。
+
+当前 RTX 5090 结果（2026-07-11，commit `f4bf51a`，dirty worktree）：
+
+- runner 支持 keep ratio `0.25/0.5/0.75/1.0` 和组合模式 `visual_compact_fp8`；CUDA FP8 compaction 对 independent retained K/V reference max diff `0.000000e+00`。
+- synthetic matrix 覆盖 single-image、multi-image、video、mixed batch，各 `5 modes x 4 ratios x output 8/32/128`，共 240 records；所有 record schema v4 PASS 且 repeat 内 deterministic。
+- 自动 Pareto 汇总仅选择 `off_eager/visual_compact/fp8_kv/visual_compact_fp8`，从 192 条记录生成 192 行。multi-image keep=0.5/output128 的组合模式 physical prompt `408 -> 212`、blocks `2 -> 1`、active bytes `0.25x`、TPOT `0.996x`、stable prefix `27/128`。
+- video keep=0.5/output128 的组合模式 physical prompt `422 -> 226`、active bytes `0.25x`、TPOT `1.002x`、stable prefix `14/128`。
+- mixed keep=0.5/output128 的组合模式 physical prompt `638 -> 344`、blocks `4 -> 3`、active bytes `0.375x`、TPOT `1.004x`、per-request stable prefix `[7,28,14]`。
+- 固定真实样例为 COCO val2017 `000000039769.jpg`，source URL `http://images.cocodataset.org/val2017/000000039769.jpg`，SHA256 `dea9e7ef97386345f7cff32f9055da4982da5471c48d575146c796ab4563b04e`，原图 `640x480 RGB`。manifest 加载时强制校验文件、摘要和尺寸。
+- 真实样例 4 modes x 4 ratios x output32、warmup/repeat `1/3` 共 16 records，全部 schema PASS 和 repeat-stable。compact keep=`0.25/0.5/0.75/1.0` stable prefix 为 `3/3/7/32`；FP8 与组合模式 keep=1 stable prefix 都为 `3/32`。
+- 32GB auto-pool capacity 使用 600 个 multi-image requests、output2、prefix cache off。off/compact/FP8/combo KV blocks 为 `249/249/499/499`，peak running 为 `124/248/249/498`，相对 off 为 `1.0x/2.0x/2.008x/4.016x`；四模式均完成 600 请求、无 swap。
+- 同一容量实验 elapsed 为 `91.323/83.510/95.602/111.411 s`，组合模式虽提高并发容量但整批更慢。capacity benchmark 必须一 mode 一进程；同一 CUDA context 连续重建 near-capacity pool 曾触发一次 illegal memory access。
+
+P6.6 判定：
+
+- `KV bytes >=40%`：PASS，组合模式代表点 active bytes 降低 `62.5%-75%`。
+- `TPOT <=1.05x off`：上述代表点 PASS，但只是当前 workload/dirty commit 的内部证据。
+- `max concurrency >=30%`：PASS，observed peak running 最低提升 `2.0x`，组合为 `4.016x`。
+- `accuracy drop <1%`：FAIL/未被证明。uniform pruning 的 stable prefix 明显不足，单个真实图片和 greedy token prefix 也不是 accuracy benchmark；不得把偶然 token exact 或 FP8 token flip 写成质量改善。
+
+Focused verification：
+
+```bash
+cd /data/Prism-Infer
+.venv-local/bin/python -m pytest -q \
+  tests/test_benchmark_schema.py tests/test_pareto_summary.py -s
+# 31 passed
+```
+
+Raw evidence：
+
+```text
+data/p6_system/pareto_single_image_20260711.jsonl
+data/p6_system/pareto_multi_image_20260711.jsonl
+data/p6_system/pareto_video_20260711.jsonl
+data/p6_system/pareto_mixed_20260711.jsonl
+data/p6_system/pareto_real_coco_20260711.jsonl
+data/p6_system/pareto_synthetic_summary_20260711.json
+data/p6_system/pareto_real_coco_summary_20260711.json
+data/p6_system/capacity_off_20260711.json
+data/p6_system/capacity_visual_compact_20260711.json
+data/p6_system/capacity_fp8_20260711.json
+data/p6_system/capacity_visual_compact_fp8_20260711.json
+```
+
+### P6.7 外部框架对比验证
+
+每个 external baseline 必须记录:
+
+- repo URL、version/commit、dirty state。
+- 安装环境和 attention backend。
+- 完整启动命令或 offline API 配置。
+- model/processor snapshot、dtype、TP、max model len、显存利用率。
+- prefix cache、chunked prefill、CUDA Graph或等价设置。
+- 相同 workload manifest、sampling、EOS 和 output length。
+- preprocessing included/excluded 口径。
+
+PASS 标准:
+
+- Prism off 和 compression-on 都参与，不能只展示最优 Prism mode。
+- external framework失败/OOM 时保留命令和错误，不自行降低其资源后继续比较。
+- offline 结果不能写成 online serving 吞吐；没有同等 server/request arrival 时明确限制。
+- 可以报告 Prism 劣势；P6 完成不要求全面超过 vLLM/SGLang/vLLM-Omni。
+- pruning 外部 PR 必须先固定链接/commit，并确认 pruning发生阶段后才可进入对比。
+
+当前 RTX 5090 结果（2026-07-11，Prism commit `f4bf51a` dirty）：
+
+- vLLM 环境：`vllm==0.24.0`，build commit `ee0da84ab`，Torch `2.11.0+cu130`，Transformers `5.13.0`。固定 `FLASH_ATTN`、eager、block size 256、KV pool `603,979,776` bytes、prefix cache off、MM processor cache 0。
+- vLLM FlashInfer sampler 因 Blackwell capability probe 报 `FlashInfer requires GPUs with sm75 or higher`；按 vLLM 源码提供的 `VLLM_USE_FLASHINFER_SAMPLER=0` 切换 PyTorch native sampler，并记录在每条 result。
+- SGLang 环境：tag `v0.5.15`，commit `f63458b5beaceabbd9d749b9fc956370e1b649e6`，Torch `2.11.0+cu130`，Transformers `5.12.1`，独立 dependency overlay，不修改 vLLM-Omni 环境。
+- SGLang FA3 vision 在源码中显式拒绝 Blackwell；FA4 `4.0.0b15` 在当前 CUTLASS DSL 产生 MLIR layout compile error。最终可执行 baseline 固定 text `triton`、vision `triton_attn`、eager、`max_total_tokens=4096`、radix cache off、chunked prefill off。
+- vLLM-Omni repo 为 clean commit `73bafd64e363cf3d4b114f3f9a1ef89eef73da6d`，依赖 vLLM `0.24.0`。标准 Qwen3-VL autoregressive model 注册位于该 vLLM dependency；vLLM-Omni 本身的额外 commit 是 MagiHuman FP8，不重复包装同一路径生成伪独立 baseline。
+- image/multi-image/COCO 的 Prism/external prompt tokens 分别严格相同：`210/408/316`。video/mixed 在 vLLM 中为 `420/636`，Prism 为 `422/638`，自动标记 `performance_comparable=false`，不用于 ratio claim。
+
+可比 eager output32、warmup/repeat `1/3`：
+
+| Framework | Case | External/Prism TPOT | External/Prism E2E throughput | Stable prefix vs Prism off |
+|---|---|---:|---:|---:|
+| vLLM 0.24.0 | single-image | `0.492x` | `1.900x` | `28/32` |
+| vLLM 0.24.0 | multi-image | `0.484x` | `1.937x` | `32/32` exact |
+| vLLM 0.24.0 | COCO | `0.487x` | `1.847x` | `7/32` |
+| SGLang 0.5.15 Triton | single-image | `0.432x` | `2.264x` | `2/32` |
+| SGLang 0.5.15 Triton | multi-image | `0.413x` | `2.430x` | `32/32` exact |
+| SGLang 0.5.15 Triton | COCO | `0.435x` | `2.207x` | `7/32` |
+
+Prism `visual_compact_fp8 keep=0.5` 也参与同一汇总：vLLM/SGLang TPOT ratio 分别约 `0.485-0.493x` / `0.414-0.438x`，外部 E2E throughput 为 `1.85-2.45x`。组合模式不能弥补 Prism eager framework overhead，且 P6.6 已证明其 uniform pruning 质量不达标。
+
+显存口径：vLLM in-process 与 Prism 都使用 torch allocator，可以比较；vLLM peak allocated 为 `17,719.8-17,760.7 MiB`，Prism off 为 `19,701.4-19,707.7 MiB`。SGLang 多进程只能得到 NVML process-used `19,244-19,318 MiB`，汇总器将 memory ratio 置为不可比。
+
+Focused verification：
+
+```bash
+cd /data/Prism-Infer
+.venv-local/bin/python -m pytest -q \
+  tests/test_benchmark_schema.py tests/test_pareto_summary.py \
+  tests/test_external_comparison.py -s
+# 33 passed
+```
+
+Raw evidence：
+
+```text
+data/p6_external/external_vs_prism_summary_20260711.json
+data/p6_external/external_vs_prism_compact_fp8_summary_20260711.json
+data/p6_external/vllm_0.24.0_*_eager_fixed_pool_20260711.json
+data/p6_external/sglang_0.5.15_*_eager_20260711.json
+data/p6_external/*stderr.txt
+```
+
+### P6.8 两卡 TP 验证
+
+PASS 标准:
+
+- 同一 prompt 的 1 GPU/2 GPU greedy token ids 一致。
+- logits/hidden 或等价 tensor 输出 shape、max diff、mean/std。
+- 输出权重 shard、KV head shard 和 collective 类型证据。
+- 记录每卡 allocated/reserved/peak、latency、TTFT/TPOT。
+- 小 batch 因通信变慢时如实记录，不把显存下降外推为吞吐提升。
+
+当前静态审计（2026-07-11）：
+
+- `nvidia-smi -L` 仅返回 `GPU 0: NVIDIA GeForce RTX 5090`，无第二张 GPU，因此没有 1GPU/2GPU token、logits、NCCL latency 或 per-GPU memory 实测。
+- `ColumnParallelLinear/QKVParallelLinear/RowParallelLinear` 分别按 output/QKV/input 维切权重；row parallel 与 vocab embedding 使用 `dist.all_reduce`，LM head 使用 rank0 `dist.gather`。Qwen3-VL 8B 的 Q heads 32、KV heads 8、hidden/intermediate/vocab 对 TP2 可整除。
+- Vision Encoder 当前不是 TP shard：每个 rank 构造并加载完整 VisionEncoder。即使 text TP 可运行，vision 权重/计算也不会随 TP2 减半。
+- `ModelRunner` 已用每 worker 独立单向 `multiprocessing.Pipe` 替换固定 `2**20` bytes shared memory。协议使用 `send_bytes/recv_bytes` 保留消息边界，rank0 只持有发送端，worker 只持有接收端。
+- 代表性 `[784, 1536]` FP32 `pixel_values` 消息序列化后为 `4,817,396` bytes；向两个接收端广播后 method/args/tensor 逐元素一致，超过旧 1 MiB 上限。小消息连续复用、损坏 pickle、不可序列化参数和断开通道均有显式门禁。
+- `validate_tensor_parallel_environment()` 在 spawn/NCCL 前检查 visible devices 和模型分片维度；variable-size IPC 解除 VL payload 的实现阻断，但不替代真实两卡 collective/correctness 验证。
+
+Focused verification：
+
+```bash
+cd /data/Prism-Infer
+.venv-local/bin/python -m pytest -q tests/test_tensor_parallel_preflight.py -s
+# 5 passed
+```
+
+P6.8 判定：IPC 子门禁 PASS，两卡动态门禁仍 BLOCKED/未通过。以下 TP1/TP2 greedy smoke 入口已创建，但当前单卡机器只能得到 skip；需要在两卡平台显式启用：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 HF_HUB_OFFLINE=1 PRISM_RUN_TP2=1 \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+.venv-local/bin/python -m pytest -q tests/test_llm_vl_tp2.py -s
+```
+
+当前 `tests/test_llm_vl_tp2.py` 只覆盖同一单图 prompt 的 8-token greedy exact。即使该 smoke PASS，仍需补 logits/hidden 数值、shard/collective 证据、每卡显存、TTFT/TPOT 后，P6.8 才能整体 PASS。
+
+### P6.9 Megakernel 可选验证
+
+只有满足以下条件才建立 PASS/FAIL:
+
+- P6.2 profiler 证明目标 decode workload 主要受 launch/host gap 限制。
+- 有真实可运行 megakernel 或项目内明确的 persistent kernel scope。
+- 相同模型区域、输入、dtype、KV layout 和输出语义可对比。
+
+对比矩阵:
+
+```text
+discrete eager kernels
+discrete kernels + CUDA Graph
+torch.compile region
+megakernel/persistent kernel
+```
+
+必须输出 kernel count、CPU launch gap、GPU time、TPOT、memory 和 correctness。普通 fusion、CUDA Graph 或单个 paged attention kernel不能仅因规模大而命名为 megakernel。
+
+当前门禁判定（2026-07-11）：NOT STARTED BY DESIGN。
+
+- P6.2 Nsight 已证明 eager decode kernel dispatch 多，P6.3 CUDA Graph 也已形成 `1.68x-1.79x` 强 baseline；但 RTX 5090 hardware counter/SM utilization 采集失败，不能证明目标 region 主要受 launch 而非 memory/compute 限制。
+- 仓库中没有真实 persistent/megakernel implementation，外部也未固定可运行且语义相同的实现。
+- 因此不创建虚假的 megakernel mode，不把 P6.5 paged attention、CUDA Graph 或 attention-only compile 重命名。待 RTX PRO 6000 补齐 counter 且有真实实现后再重新打开本节。
+
+### P6.10 阶段 Review
+
+最终命令（2026-07-11）：
+
+```bash
+cd /data/Prism-Infer
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+HF_HUB_OFFLINE=1 \
+.venv-local/bin/python -m pytest -q
+```
+
+最终结果：
+
+```text
+Running 195 items in this shard
+195 passed, 5 skipped in 245.50s (0:04:05)
+```
+
+回归修复记录：
+
+- 第一次全量为 `184 passed, 5 skipped, 11 failed`：9 个 engine failures 来自新增 TP preflight 漏 `import torch`；另 2 个为 Dynamo op count 顺序污染。
+- 第二次为 `193 passed, 5 skipped, 2 failed`：engine 回归已清零；剩余 Dynamo tests 在此前 GPU tests启用 default-device mode 后得到 `op_count=1`。
+- 独立 probe 证明初始 mode 为 `op_count=2`，`cuda -> cpu` 恢复后为 1，临时 `set_default_device(None)` 后恢复为 2。最终测试在 explain 期间隔离该 Torch 2.6 global mode，仍严格要求 graph 1、break 0、op count 2。
+- 第三次全量即上述 `195 passed`。首次、二次原始日志未覆盖删除。
+
+variable-size TP IPC 合入工作区后的 post-change 全量复跑：
+
+```text
+Running 198 items in this shard
+197 passed, 6 skipped in 267.13s (0:04:27)
+```
+
+新增 skip 来自 `tests/test_llm_vl_tp2.py` 的显式两卡门禁；当前 `PRISM_RUN_TP2` 未启用且只有一张 GPU。该结果验证单卡 P1-P6 路径无已知回归，不构成 TP2 动态 PASS。
+
+其他最终检查：
+
+```bash
+.venv-local/bin/python -m compileall -q prism_infer benchmarks scripts tests
+git diff --check
+```
+
+两项 PASS。Raw logs：
+
+```text
+data/p6_system/p6_full_regression_20260711.txt
+data/p6_system/p6_full_regression_rerun_20260711.txt
+data/p6_system/p6_full_regression_final_20260711.txt
+data/p6_system/p6_full_regression_variable_ipc_20260711.txt
+```
+
+P6 Review 判定：可执行 correctness/engineering review PASS，但阶段仍有以下未通过或外部阻断，不能写成完整性能目标 PASS：
+
+- P6.6 uniform pruning accuracy target FAIL。
+- P6.7 Prism eager TPOT/throughput 明显落后固定 vLLM/SGLang baseline。
+- P6.8 两卡 TP BLOCKED（variable-size VL IPC 已完成，但当前只有 single GPU，动态矩阵未运行）。
+- P6.2-B RTX hardware counters 未采集。
+- 所有当前 performance records 为 `git_dirty=true`，clean-commit formal rerun 未执行。
+
+### P6 全局 Benchmark 规则
 
 每个 benchmark 必须输出:
 
 - 硬件型号、CUDA、torch、transformers、commit hash。
-- 输入 shape、batch、seq_len、图像数量、compression config。
-- 对比 vLLM/SGLang 时必须记录对方版本或 commit、启动参数、调度参数、dtype、max model len、显存利用率、CUDA Graph 或 equivalent 设置。
+- 输入 shape、batch、seq len、visual token 数、图像/视频数量、compression config。
 - warmup 次数和 repeat 次数。
 - `torch.cuda.synchronize()` timing 边界。
 - GPU memory allocated/reserved/peak。
-- latency median、p90、min、max。
-- throughput 或 token/s。
+- latency median、p90、min、max；TPOT/ITL 还需 p99。
+- throughput 或 token/s，以及 physical KV bytes/block count。
 
 禁止:
 
@@ -1568,7 +2422,9 @@ P5 当前结论:
 - 用估算数字代替实测。
 - 混用不同输入条件做优化前后对比。
 - 在未验证 correctness 的 kernel 上报告性能收益。
+- 同时改变 execution、attention、compression 三个维度后把收益归因给单一模块。
 - 在不同输入集合、不同采样配置或不同显存限制下声称吞吐超越。
+- 在 P6.1 baseline 未完成前开始 physical compaction、`torch.compile` 或 megakernel 性能 claim。
 
 ## P7: 交付验证
 

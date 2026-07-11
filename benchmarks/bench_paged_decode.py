@@ -32,11 +32,20 @@ def _p90(values: list[float]) -> float:
     return ordered[index]
 
 
+def _p99(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, math.ceil(0.99 * len(ordered)) - 1)
+    return ordered[index]
+
+
 def _commit() -> str:
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
             text=True,
+            cwd=REPO_ROOT,
         ).strip()
     except Exception:
         return "unknown"
@@ -51,6 +60,9 @@ def _reference_decode(
     scale: float,
 ) -> torch.Tensor:
     outputs = []
+    if k_cache.dtype != q.dtype:
+        k_cache = k_cache.to(q.dtype)
+        v_cache = v_cache.to(q.dtype)
     block_size = k_cache.shape[1]
     num_heads = q.shape[1]
     num_kv_heads = k_cache.shape[2]
@@ -98,13 +110,29 @@ def _make_inputs(
     num_heads: int,
     num_kv_heads: int,
     head_dim: int,
-    dtype: torch.dtype,
+    query_dtype: torch.dtype,
+    cache_dtype: torch.dtype,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     max_blocks = (context_len + block_size - 1) // block_size
     num_blocks = batch * max_blocks
-    q = torch.randn(batch, num_heads, head_dim, device="cuda", dtype=dtype)
-    k_cache = torch.randn(num_blocks, block_size, num_kv_heads, head_dim, device="cuda", dtype=dtype)
-    v_cache = torch.randn_like(k_cache)
+    q = torch.randn(
+        batch,
+        num_heads,
+        head_dim,
+        device="cuda",
+        dtype=query_dtype,
+    )
+    k_source = torch.randn(
+        num_blocks,
+        block_size,
+        num_kv_heads,
+        head_dim,
+        device="cuda",
+        dtype=query_dtype,
+    )
+    v_source = torch.randn_like(k_source)
+    k_cache = k_source.to(cache_dtype)
+    v_cache = v_source.to(cache_dtype)
     rows = []
     next_block = 0
     for _ in range(batch):
@@ -137,7 +165,8 @@ def _report(label: str, times_ms: list[float], decode_tokens: int) -> None:
     token_s = decode_tokens * len(times_ms) / total_s if total_s > 0 else 0.0
     print(
         f"{label}: median={statistics.median(times_ms):.4f}ms "
-        f"p90={_p90(times_ms):.4f}ms min={min(times_ms):.4f}ms "
+        f"p90={_p90(times_ms):.4f}ms p99={_p99(times_ms):.4f}ms "
+        f"min={min(times_ms):.4f}ms "
         f"max={max(times_ms):.4f}ms token/s={token_s:.2f}"
     )
 
@@ -150,6 +179,7 @@ def main() -> None:
     parser.add_argument("--num-heads", type=int, default=32)
     parser.add_argument("--num-kv-heads", type=int, default=8)
     parser.add_argument("--head-dim", type=int, default=128)
+    parser.add_argument("--cache-dtypes", default="bf16,fp8")
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--repeat", type=int, default=50)
     args = parser.parse_args()
@@ -157,11 +187,22 @@ def main() -> None:
     if not torch.cuda.is_available() or not HAS_TRITON:
         raise SystemExit("CUDA and Triton are required")
 
-    dtype = torch.bfloat16
+    query_dtype = torch.bfloat16
+    cache_dtypes = []
+    for name in [item.strip() for item in args.cache_dtypes.split(",") if item.strip()]:
+        if name == "bf16":
+            cache_dtypes.append((name, torch.bfloat16))
+        elif name == "fp8" and hasattr(torch, "float8_e4m3fn"):
+            cache_dtypes.append((name, torch.float8_e4m3fn))
+        else:
+            raise SystemExit(f"unsupported cache dtype: {name!r}")
+    if not cache_dtypes:
+        raise SystemExit("--cache-dtypes must contain at least one dtype")
     print(f"commit: {_commit()}")
     print(f"gpu: {torch.cuda.get_device_name(0)}")
     print(f"torch: {torch.__version__}")
-    print(f"dtype: {dtype}")
+    print(f"query dtype: {query_dtype}")
+    print(f"cache dtypes: {[name for name, _ in cache_dtypes]}")
     print(f"warmup: {args.warmup}, repeat: {args.repeat}")
     print(
         "shape config: "
@@ -169,48 +210,80 @@ def main() -> None:
         f"head_dim={args.head_dim}, block_size={args.block_size}"
     )
 
-    for batch in [int(x) for x in args.batch_sizes.split(",") if x]:
-        for context_len in [int(x) for x in args.context_lens.split(",") if x]:
-            q, k_cache, v_cache, block_tables, context_lens = _make_inputs(
-                batch=batch,
-                context_len=context_len,
-                block_size=args.block_size,
-                num_heads=args.num_heads,
-                num_kv_heads=args.num_kv_heads,
-                head_dim=args.head_dim,
-                dtype=dtype,
-            )
-            scale = args.head_dim ** -0.5
-            print("")
-            print(
-                f"case: batch={batch}, context_len={int(context_lens[0].item())}, "
-                f"q={list(q.shape)}, k_cache={list(k_cache.shape)}, "
-                f"block_tables={list(block_tables.shape)}"
-            )
-            kernel_times, kernel_out = _measure(
-                lambda: paged_decode_attention(q, k_cache, v_cache, block_tables, context_lens, scale),
-                args.warmup,
-                args.repeat,
-            )
-            ref_times, ref_out = _measure(
-                lambda: _reference_decode(q, k_cache, v_cache, block_tables, context_lens, scale),
-                args.warmup,
-                args.repeat,
-            )
-            diff = (kernel_out - ref_out).abs()
-            print(f"kernel mean/std: {kernel_out.float().mean().item():.6e} / {kernel_out.float().std().item():.6e}")
-            print(f"reference mean/std: {ref_out.float().mean().item():.6e} / {ref_out.float().std().item():.6e}")
-            print(f"max diff: {diff.max().item():.6e}")
-            print(f"mean diff: {diff.float().mean().item():.6e}")
-            print("correctness: PASS" if diff.max().item() < 1e-2 else "correctness: FAIL")
-            _report("kernel", kernel_times, batch)
-            _report("reference", ref_times, batch)
-            print(
-                "memory: "
-                f"allocated={torch.cuda.memory_allocated() / 2**20:.2f}MiB "
-                f"reserved={torch.cuda.memory_reserved() / 2**20:.2f}MiB "
-                f"peak={torch.cuda.max_memory_allocated() / 2**20:.2f}MiB"
-            )
+    for cache_dtype_name, cache_dtype in cache_dtypes:
+        for batch in [int(x) for x in args.batch_sizes.split(",") if x]:
+            for context_len in [int(x) for x in args.context_lens.split(",") if x]:
+                q, k_cache, v_cache, block_tables, context_lens = _make_inputs(
+                    batch=batch,
+                    context_len=context_len,
+                    block_size=args.block_size,
+                    num_heads=args.num_heads,
+                    num_kv_heads=args.num_kv_heads,
+                    head_dim=args.head_dim,
+                    query_dtype=query_dtype,
+                    cache_dtype=cache_dtype,
+                )
+                scale = args.head_dim ** -0.5
+                print("")
+                print(
+                    f"case: cache_dtype={cache_dtype_name}, batch={batch}, "
+                    f"context_len={int(context_lens[0].item())}, "
+                    f"q={list(q.shape)}, k_cache={list(k_cache.shape)}, "
+                    f"block_tables={list(block_tables.shape)}"
+                )
+                kernel_times, kernel_out = _measure(
+                    lambda: paged_decode_attention(
+                        q,
+                        k_cache,
+                        v_cache,
+                        block_tables,
+                        context_lens,
+                        scale,
+                    ),
+                    args.warmup,
+                    args.repeat,
+                )
+                ref_times, ref_out = _measure(
+                    lambda: _reference_decode(
+                        q,
+                        k_cache,
+                        v_cache,
+                        block_tables,
+                        context_lens,
+                        scale,
+                    ),
+                    args.warmup,
+                    args.repeat,
+                )
+                diff = (kernel_out - ref_out).abs()
+                print(
+                    "kernel mean/std: "
+                    f"{kernel_out.float().mean().item():.6e} / "
+                    f"{kernel_out.float().std().item():.6e}"
+                )
+                print(
+                    "reference mean/std: "
+                    f"{ref_out.float().mean().item():.6e} / "
+                    f"{ref_out.float().std().item():.6e}"
+                )
+                print(f"max diff: {diff.max().item():.6e}")
+                print(f"mean diff: {diff.float().mean().item():.6e}")
+                if diff.max().item() >= 1e-2:
+                    print("correctness: FAIL")
+                    raise RuntimeError(
+                        "paged decode benchmark correctness failed: "
+                        f"cache_dtype={cache_dtype_name}, batch={batch}, "
+                        f"context_len={context_len}, max_diff={diff.max().item()}"
+                    )
+                print("correctness: PASS")
+                _report("kernel", kernel_times, batch)
+                _report("reference", ref_times, batch)
+                print(
+                    "memory: "
+                    f"allocated={torch.cuda.memory_allocated() / 2**20:.2f}MiB "
+                    f"reserved={torch.cuda.memory_reserved() / 2**20:.2f}MiB "
+                    f"peak={torch.cuda.max_memory_allocated() / 2**20:.2f}MiB"
+                )
 
 
 if __name__ == "__main__":

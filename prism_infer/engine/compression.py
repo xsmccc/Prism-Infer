@@ -20,11 +20,15 @@ from prism_infer.engine.visual_pruning import (
 
 COMPRESSION_OFF = "off"
 COMPRESSION_VISUAL_PRUNE = "visual_prune"
+COMPRESSION_VISUAL_COMPACT = "visual_compact"
 COMPRESSION_FP8_KV = "fp8_kv"
+COMPRESSION_VISUAL_COMPACT_FP8 = "visual_compact_fp8"
 SUPPORTED_COMPRESSION_MODES = {
     COMPRESSION_OFF,
     COMPRESSION_VISUAL_PRUNE,
+    COMPRESSION_VISUAL_COMPACT,
     COMPRESSION_FP8_KV,
+    COMPRESSION_VISUAL_COMPACT_FP8,
 }
 
 
@@ -57,8 +61,25 @@ class CompressionMetadata:
         return self.mode == COMPRESSION_VISUAL_PRUNE
 
     @property
+    def visual_pruning_effective(self) -> bool:
+        """logical pruning mode 是否在当前 batch 真正删除了 visual token。"""
+
+        return self.visual_pruning_active and any(
+            record is not None
+            and int(record.get("dropped_visual_tokens", 0)) > 0
+            for record in self.visual_pruning_records_by_batch
+        )
+
+    @property
     def fp8_kv_active(self) -> bool:
-        return self.mode == COMPRESSION_FP8_KV
+        return self.mode in (COMPRESSION_FP8_KV, COMPRESSION_VISUAL_COMPACT_FP8)
+
+    @property
+    def visual_compact_active(self) -> bool:
+        return self.mode in (
+            COMPRESSION_VISUAL_COMPACT,
+            COMPRESSION_VISUAL_COMPACT_FP8,
+        )
 
 
 def normalize_compression_mode(mode: str | None) -> str:
@@ -68,7 +89,7 @@ def normalize_compression_mode(mode: str | None) -> str:
     if normalized not in SUPPORTED_COMPRESSION_MODES:
         raise ValueError(
             "supported compression_mode values are 'off', 'visual_prune', "
-            "and 'fp8_kv'; "
+            "'visual_compact', 'fp8_kv', and 'visual_compact_fp8'; "
             f"got {mode!r}"
         )
     return normalized
@@ -110,7 +131,11 @@ def _build_visual_pruning_records_by_batch(
     """Build batch-aligned visual-pruning records for shadow or active mode."""
 
     shadow_enabled = bool(getattr(config, "enable_visual_pruning_shadow", False))
-    active = mode == COMPRESSION_VISUAL_PRUNE
+    active = mode in (
+        COMPRESSION_VISUAL_PRUNE,
+        COMPRESSION_VISUAL_COMPACT,
+        COMPRESSION_VISUAL_COMPACT_FP8,
+    )
     if not shadow_enabled and not active:
         return ()
     if not is_prefill and not active:
@@ -156,7 +181,11 @@ def build_compression_metadata(
 
     mode = normalize_compression_mode(getattr(config, "compression_mode", None))
     shadow_enabled = bool(getattr(config, "enable_visual_pruning_shadow", False))
-    pruning_metadata_enabled = shadow_enabled or mode == COMPRESSION_VISUAL_PRUNE
+    pruning_metadata_enabled = shadow_enabled or mode in (
+        COMPRESSION_VISUAL_PRUNE,
+        COMPRESSION_VISUAL_COMPACT,
+        COMPRESSION_VISUAL_COMPACT_FP8,
+    )
     visual_pruning_config = (
         asdict(build_visual_pruning_config(config)) if pruning_metadata_enabled else None
     )
@@ -210,6 +239,19 @@ def ensure_supported_compression_metadata(
         ):
             raise RuntimeError(
                 "visual_prune decode requires batch-aligned pruning records"
+            )
+        return
+    if metadata.mode in (
+        COMPRESSION_VISUAL_COMPACT,
+        COMPRESSION_VISUAL_COMPACT_FP8,
+    ):
+        if (
+            not metadata.is_prefill
+            and metadata.total_visual_tokens > 0
+            and not metadata.visual_pruning_records_by_batch
+        ):
+            raise RuntimeError(
+                "visual_compact decode requires batch-aligned pruning records"
             )
         return
     if metadata.mode == COMPRESSION_FP8_KV:

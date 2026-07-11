@@ -9,25 +9,30 @@
 #   - Decode 准备: 每条序列只取最后一个 token
 #   - KV Cache 分配: 一次性预分配 GPU 显存, 分配给各 attention 层
 #   - CUDA Graph: 预录制 Decode 的 GPU 操作, 消除 CPU launch 开销
-#   - Tensor Parallel: 多 GPU 通过共享内存同步调用
+#   - Tensor Parallel: 多 GPU 通过变长 IPC 控制通道同步调用
 #
 # C++ 类比: 整个文件 ≈ inference engine 的 execute() 函数
 # ═══════════════════════════════════════════════════════════════
 
 import pickle                                      # 序列化, 用于多 GPU 间传递数据
 from dataclasses import dataclass
+from multiprocessing.connection import Connection
+from time import perf_counter
 
 import torch
 import torch.distributed as dist                   # 分布式通信 (NCCL)
-from multiprocessing.synchronize import Event       # 进程间事件通知
-from multiprocessing.shared_memory import SharedMemory  # 进程间共享内存
 
+from prism_infer.analysis.performance_profile import profile_region
 from prism_infer.config import Config
 from prism_infer.engine.compression import (
     COMPRESSION_FP8_KV,
+    COMPRESSION_VISUAL_COMPACT_FP8,
     build_compression_metadata,
 )
 from prism_infer.engine.sequence import Sequence
+from prism_infer.engine.kv_layout import KVCompactionPlan
+from prism_infer.engine.visual_pruning import build_retained_slot_mapping
+from prism_infer.ops.kv_compaction import compact_kv_slots
 try:
     from prism_infer.models.qwen3 import Qwen3ForCausalLM     # Qwen3 纯文本模型 (legacy)
 except ImportError:
@@ -78,7 +83,12 @@ class ModelRunner:
     # ─────────────────────────────────────────────────────────
     # __init__: 初始化模型、KV Cache、CUDA Graph
     # ─────────────────────────────────────────────────────────
-    def __init__(self, config: Config, rank: int, event: Event | list[Event]):
+    def __init__(
+        self,
+        config: Config,
+        rank: int,
+        control_channel: Connection | list[Connection],
+    ) -> None:
         self.config = config
         hf_config = config.hf_config                # HuggingFace 模型配置 (层数/head数等)
         self.block_size = config.kvcache_block_size  # KV Cache 块大小 (如 16)
@@ -86,9 +96,14 @@ class ModelRunner:
         self.enforce_eager = config.enforce_eager    # True = 禁用 CUDA Graph, 每次都 eager 执行
         self.world_size = config.tensor_parallel_size  # 几张 GPU (Tensor Parallel 并行度)
         self.rank = rank                             # 当前 GPU 编号 (0, 1, 2, ...)
-        self.event = event                           # 进程间事件, 用于多 GPU 同步
+        self.control_channel = control_channel       # rank0 为发送端列表, worker 为接收端
         self.model_dtype = _resolve_model_dtype(hf_config)
         self.kv_cache_dtype = self._resolve_kv_cache_dtype(config)
+        self.cudagraph_capture_ms = 0.0
+        self.decode_compile_first_call_ms = 0.0
+        self.decode_compile_first_call_pending = False
+        self.last_cudagraph_actual_batch_size: int | None = None
+        self.last_cudagraph_replay_batch_size: int | None = None
         register_model_config(config)
 
         # ── 初始化分布式通信 ──
@@ -116,6 +131,7 @@ class ModelRunner:
         # ── 初始化 KV Cache 和 CUDA Graph ──
         self.warmup_model()                            # 热身: 跑一次前向, 触发 CUDA kernel 编译
         self.allocate_kv_cache()                       # 根据剩余显存计算能分配多少 block, 分配 KV Cache
+        self._configure_decode_compile()
         if not self.enforce_eager:
             self.capture_cudagraph()                    # 录制 CUDA Graph (Decode 加速)
         torch.set_default_device("cpu")                # 还原默认设备为 CPU
@@ -124,25 +140,34 @@ class ModelRunner:
         # ── 多 GPU 同步 (Tensor Parallel) ──
         if self.world_size > 1:
             if rank == 0:
-                # rank 0 (主进程): 创建共享内存, 大小 1MB
-                self.shm = SharedMemory(name="prism_infer", create=True, size=2**20)
-                dist.barrier()                          # 等所有进程到这里
+                if not isinstance(self.control_channel, list):
+                    raise TypeError("rank 0 requires a list of TP control senders")
+                if len(self.control_channel) != self.world_size - 1:
+                    raise ValueError(
+                        "rank 0 TP control sender count must equal world_size - 1: "
+                        f"senders={len(self.control_channel)}, world_size={self.world_size}"
+                    )
+                dist.barrier()                          # 等所有 worker 完成模型初始化
             else:
-                # rank > 0 (从进程): 等主进程创建好共享内存, 然后连接
+                if not isinstance(self.control_channel, Connection):
+                    raise TypeError("TP worker requires one control receiver")
                 dist.barrier()
-                self.shm = SharedMemory(name="prism_infer")
                 self.loop()                             # 从进程进入无限循环, 等待主进程指令
                 # 注意: 只有 rank>0 会进入 loop(), rank=0 继续执行正常流程
 
     # ─────────────────────────────────────────────────────────
     # exit: 清理资源
     # ─────────────────────────────────────────────────────────
-    def exit(self):
+    def exit(self) -> None:
         if self.world_size > 1:
-            self.shm.close()                            # 关闭共享内存映射
+            channels = (
+                self.control_channel
+                if isinstance(self.control_channel, list)
+                else [self.control_channel]
+            )
+            for channel in channels:
+                channel.close()
             dist.barrier()                              # 等所有进程都关了
-            if self.rank == 0:
-                self.shm.unlink()                       # 主进程删除共享内存段
         if not self.enforce_eager:
             del self.graphs, self.graph_pool            # 释放 CUDA Graph 对象
         torch.cuda.synchronize()                        # 等所有 GPU 操作完成
@@ -150,50 +175,87 @@ class ModelRunner:
         # C++ 类比: MPI_Finalize()
 
     # ─────────────────────────────────────────────────────────
-    # 多 GPU 通信: loop / read_shm / write_shm / call
+    # 多 GPU 通信: loop / read_control_message / write_control_message / call
     #
     # 工作原理:
     #   rank 0 调用 call("run", seqs, True)
-    #   → call 内部 write_shm: 把方法名+参数 pickle 后写入共享内存
-    #   → rank>0 的 loop 里 read_shm: 从共享内存读出方法名+参数
+    #   → call 把方法名+参数 pickle 后通过每个 worker 的单向 Pipe 发送
+    #   → rank>0 的 loop 阻塞读取一条完整的变长消息
     #   → rank>0 调用 self.run(seqs, True) → 同步执行相同操作
     # ─────────────────────────────────────────────────────────
 
-    def loop(self):
+    def loop(self) -> None:
         """从进程的无限循环: 等待主进程发指令, 执行相同的方法"""
         while True:
-            method_name, args = self.read_shm()         # 从共享内存读取 (阻塞等待)
+            method_name, args = self.read_control_message()
             self.call(method_name, *args)               # 执行对应方法
             if method_name == "exit":
                 break                                    # 收到 exit 指令则退出循环
 
-    def read_shm(self):
-        """从进程: 等待事件 → 读共享内存 → 反序列化方法名和参数"""
-        assert self.world_size > 1 and self.rank > 0
-        self.event.wait()                               # 阻塞, 直到主进程 set event
-        n = int.from_bytes(self.shm.buf[0:4], "little") # 前 4 字节 = 数据长度
-        method_name, *args = pickle.loads(self.shm.buf[4:n+4])  # 反序列化
-        # pickle.loads: bytes → Python 对象
-        # *args: 解包剩余元素为列表
-        self.event.clear()                              # 清除事件, 准备下一次等待
+    @staticmethod
+    def _deserialize_control_message(data: bytes) -> tuple[str, list[object]]:
+        """反序列化并校验一条 TP 控制消息。"""
+
+        try:
+            message = pickle.loads(data)
+        except (pickle.PickleError, EOFError, AttributeError, ImportError, IndexError) as exc:
+            raise RuntimeError("failed to deserialize TP control message") from exc
+        if not isinstance(message, list) or not message:
+            raise ValueError("TP control message must be a non-empty list")
+        method_name, *args = message
+        if not isinstance(method_name, str) or not method_name:
+            raise ValueError("TP control method name must be a non-empty string")
         return method_name, args
 
-    def write_shm(self, method_name, *args):
-        """主进程: 序列化方法名和参数 → 写共享内存 → 通知从进程"""
-        assert self.world_size > 1 and self.rank == 0
-        data = pickle.dumps([method_name, *args])       # 序列化为 bytes
-        n = len(data)
-        self.shm.buf[0:4] = n.to_bytes(4, "little")    # 前 4 字节存长度
-        self.shm.buf[4:n+4] = data                      # 后面存数据
-        for event in self.event:
-            event.set()                                 # 通知所有从进程 "有活干了"
-        # self.event 在 rank 0 是一个 list (每个从进程一个 Event)
+    def read_control_message(self) -> tuple[str, list[object]]:
+        """worker 阻塞读取一条有边界的变长控制消息。"""
 
-    def call(self, method_name, *args):
+        assert self.world_size > 1 and self.rank > 0
+        if not isinstance(self.control_channel, Connection):
+            raise TypeError("TP worker control receiver is not a Connection")
+        try:
+            data = self.control_channel.recv_bytes()
+        except (EOFError, OSError) as exc:
+            raise RuntimeError(
+                f"TP worker rank {self.rank} lost its control channel"
+            ) from exc
+        return self._deserialize_control_message(data)
+
+    def write_control_message(self, method_name: str, *args: object) -> int:
+        """rank 0 向全部 worker 广播一条变长控制消息。"""
+
+        assert self.world_size > 1 and self.rank == 0
+        if not isinstance(method_name, str) or not method_name:
+            raise ValueError("TP control method name must be a non-empty string")
+        if not isinstance(self.control_channel, list):
+            raise TypeError("rank 0 TP control senders must be a list")
+        try:
+            data = pickle.dumps(
+                [method_name, *args],
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
+        except (pickle.PickleError, AttributeError, TypeError) as exc:
+            raise RuntimeError(
+                f"failed to serialize TP control message for method={method_name!r}"
+            ) from exc
+        for worker_rank, channel in enumerate(self.control_channel, start=1):
+            try:
+                channel.send_bytes(data)
+            except (BrokenPipeError, EOFError, OSError) as exc:
+                raise RuntimeError(
+                    "failed to send TP control message: "
+                    f"worker_rank={worker_rank}, method={method_name!r}, "
+                    f"payload_bytes={len(data)}"
+                ) from exc
+        return len(data)
+
+    def call(self, method_name: str, *args: object) -> object:
         """调用自身的方法, 同时通知从进程也调用相同方法"""
         if self.world_size > 1 and self.rank == 0:
-            self.write_shm(method_name, *args)          # 先通知从进程
+            self.write_control_message(method_name, *args)
         method = getattr(self, method_name, None)       # 反射: 通过字符串找到方法
+        if method is None or not callable(method):
+            raise AttributeError(f"unknown ModelRunner method: {method_name!r}")
         # getattr(self, "run") 等价于 self.run
         # C++ 类比: 类似 std::unordered_map<string, function_ptr>
         return method(*args)                            # 调用方法
@@ -221,7 +283,10 @@ class ModelRunner:
     def _resolve_kv_cache_dtype(config: Config) -> torch.dtype:
         """根据 compression mode 选择物理 KV cache dtype。"""
 
-        if config.compression_mode == COMPRESSION_FP8_KV:
+        if config.compression_mode in (
+            COMPRESSION_FP8_KV,
+            COMPRESSION_VISUAL_COMPACT_FP8,
+        ):
             if not hasattr(torch, "float8_e4m3fn"):
                 raise RuntimeError("compression_mode='fp8_kv' requires torch.float8_e4m3fn")
             return torch.float8_e4m3fn
@@ -237,6 +302,56 @@ class ModelRunner:
                               pixel_values_videos=inputs.pixel_values_videos,
                               video_grid_thw=inputs.video_grid_thw)
         return self.model(inputs.input_ids, inputs.position_ids)
+
+    def _configure_decode_compile(self) -> None:
+        """按显式配置启用 attention-only decode compile preflight。"""
+
+        region = self.config.decode_compile_region
+        if region == "none":
+            return
+        if region != "attention" or not self.is_vl_model:
+            raise RuntimeError(
+                "decode compile currently supports only Qwen3-VL attention"
+            )
+        attention_layers = [
+            layer.self_attn
+            for layer in self.model.model.language_model.layers
+        ]
+        if not attention_layers:
+            raise RuntimeError("decode attention compile found no decoder layers")
+        for attention in attention_layers:
+            attention.enable_decode_compile(
+                mode=self.config.decode_compile_mode,
+                emulate_precision_casts=(
+                    self.config.decode_compile_emulate_precision_casts
+                ),
+                force_same_precision=(
+                    self.config.decode_compile_force_same_precision
+                ),
+            )
+        self.decode_compile_first_call_pending = True
+
+    def compile_metadata(self) -> dict[str, object]:
+        """返回 decode ``torch.compile`` 的可审计配置和 cold first call。"""
+
+        enabled = self.config.decode_compile_region != "none"
+        return {
+            "enabled": enabled,
+            "region": (
+                "decode_attention" if enabled else "none"
+            ),
+            "backend": "inductor" if enabled else "none",
+            "mode": self.config.decode_compile_mode if enabled else "none",
+            "emulate_precision_casts": (
+                self.config.decode_compile_emulate_precision_casts
+                if enabled else False
+            ),
+            "force_same_precision": (
+                self.config.decode_compile_force_same_precision
+                if enabled else False
+            ),
+            "first_call_ms": self.decode_compile_first_call_ms if enabled else 0.0,
+        }
 
     def warmup_model(self):
         """热身: 用最大尺寸输入跑一次模型, 触发 CUDA kernel 编译/分配"""
@@ -364,6 +479,50 @@ class ModelRunner:
             # kv_cache shape: [2, num_layers, num_blocks, block_size, num_kv_heads, head_dim]
             # 复制所有层的 K 和 V
             self.kv_cache[:, :, dst_block_id].copy_(self.kv_cache[:, :, src_block_id])
+
+    def compact_kv_cache(self, plans: list[KVCompactionPlan]) -> None:
+        """按已验证 plan 把 retained prompt KV 移到页表前部。
+
+        kv_cache: [2, layers, blocks, block_size, kv_heads, head_dim]
+        每条 plan先 gather到临时 tensor，再写 destination slots，避免重叠 copy
+        覆盖尚未读取的 source。Block/free-list 提交由主进程 BlockManager 完成。
+        """
+
+        if not plans:
+            return
+        seen_sequence_ids: set[int] = set()
+        flat_cache = self.kv_cache.reshape(
+            self.kv_cache.shape[0],
+            self.kv_cache.shape[1],
+            -1,
+            self.kv_cache.shape[-2],
+            self.kv_cache.shape[-1],
+        )
+        for plan in plans:
+            plan.validate(block_size=self.block_size)
+            if plan.kv_dtype != str(self.kv_cache.dtype):
+                raise RuntimeError(
+                    "compaction plan/cache dtype mismatch: "
+                    f"plan={plan.kv_dtype}, cache={self.kv_cache.dtype}"
+                )
+            if plan.seq_id in seen_sequence_ids:
+                raise RuntimeError(
+                    f"duplicate compaction plan for seq_id={plan.seq_id}"
+                )
+            seen_sequence_ids.add(plan.seq_id)
+            source_slots = torch.tensor(
+                plan.source_slots,
+                dtype=torch.long,
+                device=self.kv_cache.device,
+            )
+            destination_slots = torch.tensor(
+                plan.destination_slots,
+                dtype=torch.long,
+                device=self.kv_cache.device,
+            )
+            compact_kv_slots(flat_cache, source_slots, destination_slots)
+        if self.world_size > 1:
+            dist.barrier()
 
     # ── swap_blocks: GPU ↔ CPU KV Cache 数据搬运 ──
     # C++ 类比: cudaMemcpyAsync(dst, src, size, direction, stream)
@@ -552,6 +711,7 @@ class ModelRunner:
         vl_position_chunks = []
         slot_mapping = []
         context_lens = []           # 每条序列的上下文长度 (= 总 token 数)
+        logical_context_lens = []   # 未压缩逻辑长度，M-RoPE position仍按它生成
         has_vl_positions = any(seq.rope_delta is not None for seq in seqs)
 
         for seq in seqs:
@@ -562,10 +722,13 @@ class ModelRunner:
                 vl_position_chunks.append(pos.expand(3, -1))
             else:
                 positions.append(len(seq) - 1)          # 位置 = 序列长度 - 1
-            context_lens.append(len(seq))               # 上下文长度 = 序列总长度
+            context_lens.append(seq.physical_kv_len)    # attention读取实际物理 KV 长度
+            logical_context_lens.append(len(seq))       # M-RoPE/trace 保留逻辑长度
 
             slot_mapping.append(
-                seq.block_table[-1] * self.block_size + seq.last_block_num_tokens - 1
+                seq.block_table[-1] * self.block_size
+                + seq.physical_last_block_num_tokens
+                - 1
             )
             # 新 token 的 KV 存到: 最后一个 block 的最后一个已占用位置
             # 例: block_table[-1]=5, block_size=16, last_block_num_tokens=3
@@ -579,6 +742,11 @@ class ModelRunner:
             positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         context_lens = torch.tensor(context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
+        logical_context_lens = torch.tensor(
+            logical_context_lens,
+            dtype=torch.int32,
+            pin_memory=True,
+        ).cuda(non_blocking=True)
         block_tables = self.prepare_block_tables(seqs)
 
         trace_metadata = build_trace_metadata(
@@ -596,9 +764,33 @@ class ModelRunner:
             seqs,
             is_prefill=False,
         )
+        visual_pruning_slot_mappings: tuple[torch.Tensor, ...] = ()
+        if compression_metadata.visual_pruning_effective:
+            records = compression_metadata.visual_pruning_records_by_batch
+            if len(records) != len(seqs):
+                raise RuntimeError(
+                    "visual pruning records must align with decode batch: "
+                    f"records={len(records)}, sequences={len(seqs)}"
+                )
+            with profile_region(
+                "runner.visual_prune.build_slot_mappings",
+                metadata={"batch_size": len(seqs)},
+            ):
+                visual_pruning_slot_mappings = tuple(
+                    build_retained_slot_mapping(
+                        record,
+                        len(seq),
+                        seq.block_table,
+                        self.block_size,
+                        device=block_tables.device,
+                    )
+                    for seq, record in zip(seqs, records)
+                )
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens,
+                    logical_context_lens=logical_context_lens,
                     block_tables=block_tables, trace_metadata=trace_metadata,
-                    compression_metadata=compression_metadata)
+                    compression_metadata=compression_metadata,
+                    visual_pruning_slot_mappings=visual_pruning_slot_mappings)
         # False = is_decode
         return ModelInputs(input_ids=input_ids, position_ids=positions)
 
@@ -644,6 +836,38 @@ class ModelRunner:
             graph_bs.append(max_bs)
         return sorted(set(graph_bs))
 
+    def cudagraph_metadata(self, requested_batch_size: int) -> dict[str, object]:
+        """返回可审计的 CUDA Graph capture/replay 配置。"""
+
+        if requested_batch_size < 1:
+            raise ValueError(
+                f"requested_batch_size must be >= 1, got {requested_batch_size}"
+            )
+        if self.enforce_eager:
+            return {
+                "enabled": False,
+                "capture_scope": "none",
+                "capture_ms": 0.0,
+                "batch_sizes": [],
+                "requested_batch_size": requested_batch_size,
+                "selected_batch_size": requested_batch_size,
+                "batch_padding": 0,
+            }
+        selected_batch_size = next(
+            batch_size
+            for batch_size in self.graph_bs
+            if batch_size >= requested_batch_size
+        )
+        return {
+            "enabled": True,
+            "capture_scope": "decode_model_forward",
+            "capture_ms": self.cudagraph_capture_ms,
+            "batch_sizes": list(self.graph_bs),
+            "requested_batch_size": requested_batch_size,
+            "selected_batch_size": selected_batch_size,
+            "batch_padding": selected_batch_size - requested_batch_size,
+        }
+
     # ═══════════════════════════════════════════════════════════
     # 执行阶段: run_model + run (对外入口)
     # ═══════════════════════════════════════════════════════════
@@ -668,7 +892,35 @@ class ModelRunner:
             # ---- Prefill / Eager / batch 太大 → 直接跑模型 ----
             # Active compression 也必须走 eager；CUDA Graph replay 不会重新进入
             # Python attention 分支，不能感知 retained-token metadata。
-            return self.model.compute_logits(self._forward_model(model_inputs))
+            with profile_region(
+                "runner.model.forward",
+                metadata={
+                    "backend": (
+                        "torch_compile_attention"
+                        if (
+                            not is_prefill
+                            and self.config.decode_compile_region == "attention"
+                        )
+                        else "eager"
+                    )
+                },
+            ):
+                if (
+                    not is_prefill
+                    and self.decode_compile_first_call_pending
+                ):
+                    torch.cuda.synchronize()
+                    compile_start = perf_counter()
+                    hidden_states = self._forward_model(model_inputs)
+                    torch.cuda.synchronize()
+                    self.decode_compile_first_call_ms = (
+                        perf_counter() - compile_start
+                    ) * 1000.0
+                    self.decode_compile_first_call_pending = False
+                else:
+                    hidden_states = self._forward_model(model_inputs)
+            with profile_region("runner.model.compute_logits"):
+                return self.model.compute_logits(hidden_states)
             # self.model(input_ids, positions): 前向传播, 返回 hidden_states
             # self.model.compute_logits(...): 乘以 lm_head 权重 → [batch, vocab_size]
         else:
@@ -676,7 +928,10 @@ class ModelRunner:
             bs = input_ids.size(0)                      # batch size (序列数)
 
             # 找到 >= bs 的最小预录制 batch size
-            graph = self.graphs[next(x for x in self.graph_bs if x >= bs)]
+            captured_bs = next(x for x in self.graph_bs if x >= bs)
+            graph = self.graphs[captured_bs]
+            self.last_cudagraph_actual_batch_size = bs
+            self.last_cudagraph_replay_batch_size = captured_bs
             # self.graph_bs = [1, 2, 4, 8, 16, 32, ...]
             # 例: bs=3 → 找到 4 → 用为 batch=4 录制的 graph
             # next + generator: 找第一个满足条件的
@@ -684,21 +939,33 @@ class ModelRunner:
             graph_vars = self.graph_vars
             # graph_vars 是录制时的 tensor → 回放前把实际数据拷进去
 
-            graph_vars["input_ids"][:bs] = input_ids
-            graph_vars["positions"][:, :bs] = self._as_mrope_decode_positions(
-                model_inputs.position_ids
-            )
-            graph_vars["slot_mapping"].fill_(-1)        # 先全填 -1 (padding)
-            graph_vars["slot_mapping"][:bs] = context.slot_mapping
-            graph_vars["context_lens"].zero_()           # 先全填 0
-            graph_vars["context_lens"][:bs] = context.context_lens
-            graph_vars["block_tables"].fill_(-1)
-            graph_vars["block_tables"][:bs, :context.block_tables.size(1)] = context.block_tables
+            with profile_region("runner.cudagraph.copy_inputs"):
+                graph_vars["input_ids"][:bs] = input_ids
+                graph_vars["positions"][:, :bs] = self._as_mrope_decode_positions(
+                    model_inputs.position_ids
+                )
+                graph_vars["slot_mapping"].fill_(-1)        # 先全填 -1 (padding)
+                graph_vars["slot_mapping"][:bs] = context.slot_mapping
+                graph_vars["context_lens"].zero_()           # 先全填 0
+                graph_vars["context_lens"][:bs] = context.context_lens
+                graph_vars["block_tables"].fill_(-1)
+                graph_vars["block_tables"][
+                    :bs,
+                    :context.block_tables.size(1),
+                ] = context.block_tables
 
-            graph.replay()                               # 回放! GPU 执行预录制的所有 kernel
+            with profile_region(
+                "runner.cudagraph.replay",
+                metadata={
+                    "actual_batch_size": bs,
+                    "captured_batch_size": captured_bs,
+                },
+            ):
+                graph.replay()                           # 回放! GPU 执行预录制的所有 kernel
             # 回放不经过 Python → 无 CPU launch overhead → 极快
 
-            return self.model.compute_logits(graph_vars["outputs"][:bs])
+            with profile_region("runner.model.compute_logits"):
+                return self.model.compute_logits(graph_vars["outputs"][:bs])
             # graph 输出写到 graph_vars["outputs"], 取前 bs 个
 
     def run(self, seqs: list[Sequence], is_prefill: bool) -> list[int]:
@@ -735,14 +1002,29 @@ class ModelRunner:
 
         try:
             # 1. 准备输入
-            model_inputs = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
-            temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
+            with profile_region(
+                "runner.prepare_inputs",
+                metadata={"phase": "prefill" if is_prefill else "decode"},
+            ):
+                model_inputs = (
+                    self.prepare_prefill(seqs)
+                    if is_prefill
+                    else self.prepare_decode(seqs)
+                )
+            with profile_region("runner.prepare_sample_inputs"):
+                temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
 
             # 2. 前向推理
-            logits = self.run_model(model_inputs, is_prefill)
+            with profile_region("runner.run_model"):
+                logits = self.run_model(model_inputs, is_prefill)
 
             # 3. 采样
-            token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
+            with profile_region("runner.sampler"):
+                token_ids = (
+                    self.sampler(logits, temperatures).tolist()
+                    if self.rank == 0
+                    else None
+                )
 
             if chunked_active:
                 # ── 恢复 num_tokens, 更新 num_computed_tokens ──
@@ -775,6 +1057,8 @@ class ModelRunner:
     @torch.inference_mode()
     def capture_cudagraph(self):
         """录制不同 batch size 的 CUDA Graph"""
+        torch.cuda.synchronize()
+        capture_start = perf_counter()
         config = self.config
         hf_config = config.hf_config
         text_config = _text_hf_config(hf_config)
@@ -834,5 +1118,7 @@ class ModelRunner:
             block_tables=block_tables,
             outputs=outputs,
         )
+        torch.cuda.synchronize()
+        self.cudagraph_capture_ms = (perf_counter() - capture_start) * 1000.0
         # 回放时: 把实际数据拷到这些 tensor 里 → replay → 读 outputs
         # 这些 tensor 的 GPU 地址在整个生命周期内不变 (CUDA Graph 的要求)

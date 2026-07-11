@@ -5,7 +5,10 @@ import torch
 import torch.nn.functional as F
 
 from prism_infer.engine.compression import CompressionMetadata
-from prism_infer.engine.visual_pruning import build_retained_context_indices
+from prism_infer.engine.visual_pruning import (
+    build_retained_context_indices,
+    build_retained_slot_mapping,
+)
 from prism_infer.layers.attention import Attention
 from prism_infer.utils.context import reset_context, set_context
 
@@ -58,10 +61,27 @@ def _run_decode_attention(
     current_v: torch.Tensor,
     k_cache: torch.Tensor,
     v_cache: torch.Tensor,
+    *,
+    include_slot_mapping: bool = True,
 ) -> torch.Tensor:
     attn = Attention(num_heads=4, num_kv_heads=2, head_dim=8, scale=8 ** -0.5)
     attn.k_cache = k_cache.clone()
     attn.v_cache = v_cache.clone()
+    slot_mappings: tuple[torch.Tensor, ...] = ()
+    if (
+        include_slot_mapping
+        and metadata.visual_pruning_active
+        and metadata.visual_pruning_records_by_batch
+    ):
+        slot_mappings = (
+            build_retained_slot_mapping(
+                metadata.visual_pruning_records_by_batch[0],
+                context_len=7,
+                block_table=[0, 1],
+                block_size=4,
+                device=q.device,
+            ),
+        )
     try:
         set_context(
             False,
@@ -69,6 +89,7 @@ def _run_decode_attention(
             context_lens=torch.tensor([7], dtype=torch.int32),
             block_tables=torch.tensor([[0, 1]], dtype=torch.int32),
             compression_metadata=metadata,
+            visual_pruning_slot_mappings=slot_mappings,
         )
         with torch.inference_mode():
             return attn(q, current_k, current_v)
@@ -208,3 +229,93 @@ def test_active_visual_prune_decode_requires_prefill_record():
     with pytest.raises(RuntimeError, match="batch-aligned pruning records"):
         _run_decode_attention(metadata, q, current_k, current_v, k_cache, v_cache)
     print("active visual prune missing-record guard: PASS")
+
+
+def test_retained_slot_mapping_handles_noncontiguous_physical_blocks() -> None:
+    """Logical retained indices 应正确映射到非连续 physical blocks。"""
+
+    record = _visual_pruning_record()
+    slots = build_retained_slot_mapping(
+        record,
+        context_len=7,
+        block_table=[3, 7],
+        block_size=4,
+    )
+
+    print(f"retained logical indices: {build_retained_context_indices(record, 7)}")
+    print(f"retained physical slots: {slots.tolist()}")
+    assert slots.dtype == torch.long
+    assert slots.tolist() == [12, 13, 28, 29, 30]
+    print("visual prune retained physical slot mapping: PASS")
+
+
+def test_retained_slot_mapping_rejects_short_block_table() -> None:
+    """slot mapping 不得对缺失 physical block 的 context 静默降级。"""
+
+    with pytest.raises(RuntimeError, match="block table is shorter"):
+        build_retained_slot_mapping(
+            _visual_pruning_record(),
+            context_len=7,
+            block_table=[0],
+            block_size=4,
+        )
+    print("visual prune retained slot short-table guard: PASS")
+
+
+def test_active_visual_prune_decode_requires_slot_mapping() -> None:
+    """active attention 必须显式收到 ModelRunner 构造的 retained slots。"""
+
+    q, current_k, current_v, k_cache, v_cache = _make_decode_tensors()
+    metadata = _visual_prune_metadata(_visual_pruning_record())
+
+    with pytest.raises(RuntimeError, match="one retained slot mapping"):
+        _run_decode_attention(
+            metadata,
+            q,
+            current_k,
+            current_v,
+            k_cache,
+            v_cache,
+            include_slot_mapping=False,
+        )
+    print("active visual prune retained slot mapping guard: PASS")
+
+
+def test_visual_prune_text_only_decode_uses_standard_paged_path(monkeypatch) -> None:
+    """text-only visual_prune 不得进入 retained eager attention 改变数值路径。"""
+
+    q, current_k, current_v, k_cache, v_cache = _make_decode_tensors()
+    metadata = CompressionMetadata(
+        mode="visual_prune",
+        is_prefill=False,
+        num_sequences=1,
+        total_prompt_tokens=6,
+        total_image_tokens=0,
+        total_video_tokens=0,
+        block_size=4,
+        visual_pruning_records_by_batch=(None,),
+    )
+    attn = Attention(num_heads=4, num_kv_heads=2, head_dim=8, scale=8 ** -0.5)
+    attn.k_cache = k_cache.clone()
+    attn.v_cache = v_cache.clone()
+
+    def reject_retained_path(*args, **kwargs):
+        raise AssertionError("text-only batch entered visual retained path")
+
+    monkeypatch.setattr(attn, "_forward_decode_visual_prune_eager", reject_retained_path)
+    try:
+        set_context(
+            False,
+            slot_mapping=torch.tensor([6], dtype=torch.int32),
+            context_lens=torch.tensor([7], dtype=torch.int32),
+            block_tables=torch.tensor([[0, 1]], dtype=torch.int32),
+            compression_metadata=metadata,
+        )
+        with torch.inference_mode():
+            output = attn(q, current_k, current_v)
+    finally:
+        reset_context()
+
+    print(f"text-only visual prune output shape: {list(output.shape)}")
+    assert output.shape == q.shape
+    print("P6.6 text-only visual prune paged dispatch: PASS")

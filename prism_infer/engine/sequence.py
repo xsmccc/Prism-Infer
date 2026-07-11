@@ -5,6 +5,7 @@ from itertools import count        # count(): 无限自增迭代器(0,1,2,3,...)
 import torch
 
 from prism_infer.engine.vl_inputs import ImageInputs, SingleImageInputs, VideoInputs
+from prism_infer.engine.kv_layout import KVCacheLayoutDescriptor
 from prism_infer.sampling_params import SamplingParams
 
 
@@ -88,6 +89,7 @@ class Sequence:
         self.video_token_id = video_token_id
         self.video_token_count = video_token_count
         self.visual_pruning_decision_record: dict[str, object] | None = None
+        self.kv_layout: KVCacheLayoutDescriptor | None = None
 
     @classmethod
     def from_image_inputs(
@@ -197,6 +199,55 @@ class Sequence:
     def last_block_num_tokens(self):  # 最后一个块中的token数(可能不满)
         return self.num_tokens - (self.num_blocks - 1) * self.block_size
 
+    @property
+    def physical_kv_len(self) -> int:
+        """当前 attention 实际可见的 KV token 数。"""
+
+        return (
+            self.num_tokens
+            if self.kv_layout is None
+            else self.kv_layout.physical_kv_len
+        )
+
+    @property
+    def physical_num_blocks(self) -> int:
+        """当前 physical KV tail 所需 page 数。"""
+
+        return (self.physical_kv_len + self.block_size - 1) // self.block_size
+
+    @property
+    def physical_last_block_num_tokens(self) -> int:
+        """当前 physical KV 最后一页的有效 token 数。"""
+
+        return self.physical_kv_len - (
+            self.physical_num_blocks - 1
+        ) * self.block_size
+
+    @property
+    def has_compact_kv_layout(self) -> bool:
+        """是否已提交 visual KV physical compaction。"""
+
+        return self.kv_layout is not None
+
+    def install_kv_layout(self, layout: KVCacheLayoutDescriptor) -> None:
+        """在 GPU copy 和 block 回收后提交 physical layout。"""
+
+        if self.kv_layout is not None:
+            raise RuntimeError("sequence KV layout is already compacted")
+        expected_blocks = (
+            layout.physical_kv_len + self.block_size - 1
+        ) // self.block_size
+        if len(self.block_table) != expected_blocks:
+            raise ValueError(
+                "layout install requires the final compact block table"
+            )
+        layout.validate(block_size=self.block_size, block_table=self.block_table)
+        if layout.logical_context_len != self.num_tokens:
+            raise ValueError(
+                "layout logical length must match sequence length at install"
+            )
+        self.kv_layout = layout
+
     def block(self, i):              # 取第i个块对应的token子列表(用于hash匹配KV复用)
         assert 0 <= i < self.num_blocks
         return self.token_ids[i*self.block_size: (i+1)*self.block_size]
@@ -215,6 +266,8 @@ class Sequence:
         self.token_ids.append(token_id)
         self.last_token = token_id
         self.num_tokens += 1
+        if self.kv_layout is not None:
+            self.kv_layout.append_generated_token()
 
     # === 跨进程序列化优化 ===
     # Python pickle序列化对象时自动调用这两个方法
@@ -253,6 +306,13 @@ class Sequence:
             "video_token_id": self.video_token_id,
             "video_token_count": self.video_token_count,
             "visual_pruning_decision_record": self.visual_pruning_decision_record,
+            "kv_layout": (
+                None
+                if self.kv_layout is None
+                else self.kv_layout.to_record(
+                    block_table=self.block_table or self.cpu_block_table
+                )
+            ),
         }
 
     def __setstate__(self, state):
@@ -296,6 +356,18 @@ class Sequence:
             self.visual_pruning_decision_record = state.get(
                 "visual_pruning_decision_record"
             )
+            layout_record = state.get("kv_layout")
+            self.kv_layout = (
+                None
+                if layout_record is None
+                else KVCacheLayoutDescriptor.from_record(layout_record)
+            )
+            if self.kv_layout is not None:
+                self.kv_layout.validate(
+                    block_size=self.block_size,
+                    block_table=self.block_table or self.cpu_block_table,
+                    allow_pending_append=True,
+                )
         else:
             self.block_size = int(Sequence.block_size)
             self.temperature = 1.0
@@ -322,3 +394,4 @@ class Sequence:
             self.video_token_id = None
             self.video_token_count = 0
             self.visual_pruning_decision_record = None
+            self.kv_layout = None

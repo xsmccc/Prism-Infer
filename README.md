@@ -133,6 +133,8 @@ python -m pytest -q tests -s
 
 - `docs/ROADMAP.md`: 阶段路线图、当前真实状态、下一步计划。
 - `docs/VERIFICATION.md`: 各阶段验证命令、PASS 标准和禁止行为。
+- `docs/P6_SYSTEM_OPTIMIZATION_DESIGN.md`: 系统 benchmark、执行后端、视觉 KV 物理压缩和外部对比设计。
+- `docs/PERFORMANCE_REPORT.md`: P6 benchmark contract、可复现性能记录和结论边界。
 - `docs/KV_ANALYSIS_REPORT.md`: P4 KV trace 分析报告。
 - `docs/COMPRESSION_REPORT.md`: P5 KV cache 压缩研究报告。
 - `docs/ISSUE_LOG.md`: 已定位问题、修复记录和剩余风险。

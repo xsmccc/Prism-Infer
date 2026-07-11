@@ -480,37 +480,65 @@ class VisionEncoder(nn.Module):
         emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)  # [N, 72]
         return emb.cos(), emb.sin()  # each [N, 72]
 
-    def forward(self, pixel_values: torch.Tensor,
-                grid_thw: torch.Tensor) -> tuple:
-        """前向传播.
+    def prepare_tensor_region_inputs(
+        self,
+        pixel_values: torch.Tensor,
+        grid_thw: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """准备 Vision tensor region 的输入。
 
-        pixel_values: [N, 1536]
-        grid_thw: [[T, H, W]]
-        返回: (main [N/4, 4096], [ds0, ds1, ds2] each [N/4, 4096])
+        grid 驱动的位置插值、2D RoPE index 和分段边界包含 Python 动态控制流，
+        保留在 compile region 外；返回的四个 tensor 可供稳定 ViT blocks 使用。
+
+        pixel_values: [N, patch_input_dim]
+        grid_thw: [num_images, 3]
+        返回: x [N, dim]、cos/sin [N, head_dim]、cu_seqlens [segments + 1]
         """
-        # 1. Patch Embed + Position Embed (双线性插值)
-        x = self.patch_embed(pixel_values)  # [N, 1152]
-        x = x + self._pos_embed_interpolate(grid_thw, x.device)
 
-        # 2. RoPE cos/sin + 多图分段边界。HF VisionModel 使用
-        # cu_seqlens 将每张图的 patch 分开做双向 attention。
+        x = self.patch_embed(pixel_values)  # [N, dim]
+        x = x + self._pos_embed_interpolate(grid_thw, x.device)
         cos, sin = self._get_position_embeddings(grid_thw, x)
         cu_seqlens = torch.repeat_interleave(
             grid_thw[:, 1] * grid_thw[:, 2],
             grid_thw[:, 0],
         ).cumsum(dim=0, dtype=torch.int32)
         cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0).to(x.device)
+        return x, cos, sin, cu_seqlens
 
-        # 3. 27 ViT Blocks + DeepStack 提取
-        deepstack_features = []
-        for i, blk in enumerate(self.blocks):
-            x = blk(x, cos=cos, sin=sin, cu_seqlens=cu_seqlens)
-            if i in self.deepstack_visual_indexes:
-                ds_idx = self.deepstack_visual_indexes.index(i)
-                ds = self.deepstack_merger_list[ds_idx](x)
-                deepstack_features.append(ds)
+    def forward_tensor_region(
+        self,
+        x: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        """执行 ViT blocks、DeepStack mergers 和 main merger。
 
-        # 4. 主 Merger
+        x: [N, dim]
+        cos/sin: [N, head_dim]
+        cu_seqlens: [segments + 1]
+        返回: main [N / merge_size^2, out_dim] 和 DeepStack tensor list。
+        """
+
+        deepstack_features: list[torch.Tensor] = []
+        for layer_index, block in enumerate(self.blocks):
+            x = block(x, cos=cos, sin=sin, cu_seqlens=cu_seqlens)
+            if layer_index in self.deepstack_visual_indexes:
+                merger_index = self.deepstack_visual_indexes.index(layer_index)
+                deepstack_features.append(
+                    self.deepstack_merger_list[merger_index](x)
+                )
+
         main = self.merger(x)
+        return main, deepstack_features
 
-        return (main, deepstack_features)
+    def forward(self, pixel_values: torch.Tensor,
+                grid_thw: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        """前向传播。
+
+        pixel_values: [N, 1536]
+        grid_thw: [[T, H, W]]
+        返回: (main [N/4, 4096], [ds0, ds1, ds2] each [N/4, 4096])
+        """
+        tensor_inputs = self.prepare_tensor_region_inputs(pixel_values, grid_thw)
+        return self.forward_tensor_region(*tensor_inputs)

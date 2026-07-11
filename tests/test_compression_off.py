@@ -8,6 +8,7 @@ import torch
 
 from prism_infer.engine.compression import (
     COMPRESSION_FP8_KV,
+    COMPRESSION_VISUAL_COMPACT,
     COMPRESSION_VISUAL_PRUNE,
     CompressionMetadata,
     build_compression_metadata,
@@ -27,7 +28,9 @@ def test_compression_mode_validation():
     assert normalize_compression_mode(None) == "off"
     assert normalize_compression_mode("OFF") == "off"
     assert normalize_compression_mode("visual_prune") == COMPRESSION_VISUAL_PRUNE
+    assert normalize_compression_mode("visual_compact") == COMPRESSION_VISUAL_COMPACT
     assert normalize_compression_mode("fp8_kv") == COMPRESSION_FP8_KV
+    assert normalize_compression_mode("visual_compact_fp8") == "visual_compact_fp8"
     with pytest.raises(ValueError, match="supported compression_mode"):
         normalize_compression_mode("int4_kv")
     print("compression mode off validation: PASS")
@@ -199,6 +202,61 @@ def test_visual_prune_active_metadata_persists_prefill_to_decode():
     assert decode_metadata.visual_pruning_records_by_batch[0]["kept_visual_tokens"] == 2
     assert decode_metadata.visual_pruning_records_by_batch[0]["dropped_visual_tokens"] == 1
     print("visual pruning active metadata prefill->decode: PASS")
+
+
+def test_visual_compact_fp8_metadata_activates_both_physical_modes() -> None:
+    """组合模式必须同时请求 visual compaction 与 FP8 cache。"""
+
+    config = SimpleNamespace(
+        compression_mode="visual_compact_fp8",
+        kvcache_block_size=256,
+        enable_visual_pruning_shadow=False,
+        visual_pruning_keep_ratio=0.5,
+        visual_pruning_min_keep_tokens=1,
+        visual_pruning_strategy="uniform",
+    )
+    seq = Sequence(
+        [1, 99, 99, 2],
+        SamplingParams(temperature=0.0, max_tokens=1),
+        image_token_id=99,
+        image_token_count=2,
+    )
+    metadata = build_compression_metadata(config, [seq], is_prefill=True)
+
+    print(f"combined compression mode: {metadata.mode}")
+    print(f"combined visual compact active: {metadata.visual_compact_active}")
+    print(f"combined FP8 active: {metadata.fp8_kv_active}")
+    assert metadata.visual_compact_active
+    assert metadata.fp8_kv_active
+    assert not metadata.visual_pruning_active
+    assert seq.visual_pruning_decision_record is not None
+    print("P6.6 combined compression metadata: PASS")
+
+
+def test_visual_prune_keep_all_metadata_is_not_effective() -> None:
+    """keep-all logical mode 必须作为 attention no-op，而不是切换 backend。"""
+
+    metadata = CompressionMetadata(
+        mode="visual_prune",
+        is_prefill=False,
+        num_sequences=1,
+        total_prompt_tokens=4,
+        total_image_tokens=2,
+        total_video_tokens=0,
+        block_size=256,
+        visual_pruning_records_by_batch=(
+            {
+                "total_visual_tokens": 2,
+                "kept_visual_tokens": 2,
+                "dropped_visual_tokens": 0,
+            },
+        ),
+    )
+
+    print(f"keep-all visual pruning effective: {metadata.visual_pruning_effective}")
+    assert metadata.visual_pruning_active
+    assert not metadata.visual_pruning_effective
+    print("P6.6 visual-prune keep-all no-op metadata: PASS")
 
 
 def test_visual_prune_decision_survives_decode_serialization():

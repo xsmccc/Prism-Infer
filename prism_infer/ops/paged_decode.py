@@ -159,6 +159,11 @@ def paged_decode_attention(
         raise RuntimeError("Triton is required for paged_decode_attention")
     if not q.is_cuda:
         raise RuntimeError("paged_decode_attention requires CUDA tensors")
+    tensors = (q, k_cache, v_cache, block_tables, context_lens)
+    if not all(tensor.is_cuda for tensor in tensors):
+        raise RuntimeError("paged_decode_attention requires all tensors on CUDA")
+    if len({tensor.device for tensor in tensors}) != 1:
+        raise RuntimeError("paged_decode_attention requires all tensors on one device")
     if q.ndim != 3:
         raise ValueError(f"q must be [batch, num_heads, head_dim], got {list(q.shape)}")
     if k_cache.ndim != 4 or v_cache.ndim != 4:
@@ -168,13 +173,34 @@ def paged_decode_attention(
         )
     if k_cache.shape != v_cache.shape:
         raise ValueError(f"k_cache and v_cache shapes differ: {list(k_cache.shape)} vs {list(v_cache.shape)}")
+    if k_cache.dtype != v_cache.dtype:
+        raise ValueError(
+            f"k_cache/v_cache dtype mismatch: {k_cache.dtype} vs {v_cache.dtype}"
+        )
+    supported_query_dtypes = {torch.float16, torch.bfloat16, torch.float32}
+    if q.dtype not in supported_query_dtypes:
+        raise ValueError(f"unsupported paged decode query dtype: {q.dtype}")
+    supported_cache_dtypes = set(supported_query_dtypes)
+    if hasattr(torch, "float8_e4m3fn"):
+        supported_cache_dtypes.add(torch.float8_e4m3fn)
+    if k_cache.dtype not in supported_cache_dtypes:
+        raise ValueError(f"unsupported paged decode cache dtype: {k_cache.dtype}")
     if block_tables.ndim != 2:
         raise ValueError(f"block_tables must be [batch, max_blocks], got {list(block_tables.shape)}")
     if context_lens.ndim != 1:
         raise ValueError(f"context_lens must be [batch], got {list(context_lens.shape)}")
+    if block_tables.dtype != torch.int32 or context_lens.dtype != torch.int32:
+        raise ValueError(
+            "block_tables/context_lens must use torch.int32, got "
+            f"{block_tables.dtype}/{context_lens.dtype}"
+        )
+    if block_n <= 0 or block_n & (block_n - 1):
+        raise ValueError(f"block_n must be a positive power of two, got {block_n}")
 
     batch, num_heads, head_dim = q.shape
     _, page_block_size, num_kv_heads, cache_head_dim = k_cache.shape
+    if page_block_size <= 0:
+        raise ValueError("paged decode cache block size must be positive")
     if cache_head_dim != head_dim:
         raise ValueError(f"head_dim mismatch: q={head_dim}, cache={cache_head_dim}")
     if num_heads % num_kv_heads != 0:

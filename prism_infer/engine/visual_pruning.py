@@ -13,7 +13,7 @@ Inputs:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import ceil, isfinite
 
@@ -369,3 +369,54 @@ def build_retained_context_indices(
         )
 
     return tuple(idx for idx in range(context_len) if idx not in dropped_indices)
+
+
+def build_retained_slot_mapping(
+    decision_record: dict[str, object] | None,
+    context_len: int,
+    block_table: Sequence[int],
+    block_size: int,
+    *,
+    device: torch.device | str | None = None,
+) -> torch.Tensor:
+    """把 retained logical indices 映射为可跨 attention 层复用的 physical slots。
+
+    返回 shape 为 ``[retained_len]`` 的 int64 tensor。该 mapping 只改变 logical
+    pruning 的读取方式，不移动 KV、不释放 block，因此不是 physical compaction。
+    """
+
+    if block_size <= 0:
+        raise ValueError(f"block_size must be positive, got {block_size}")
+    retained_indices = build_retained_context_indices(decision_record, context_len)
+    if not retained_indices:
+        raise RuntimeError("visual pruning retained zero decode context tokens")
+
+    required_blocks = (context_len + block_size - 1) // block_size
+    if len(block_table) < required_blocks:
+        raise RuntimeError(
+            "visual pruning block table is shorter than decode context: "
+            f"context_len={context_len}, block_size={block_size}, "
+            f"required_blocks={required_blocks}, actual_blocks={len(block_table)}"
+        )
+
+    physical_slots: list[int] = []
+    for logical_index in retained_indices:
+        block_ordinal = logical_index // block_size
+        block_id = int(block_table[block_ordinal])
+        if block_id < 0:
+            raise RuntimeError(
+                "visual pruning logical index maps to an invalid block: "
+                f"logical_index={logical_index}, block_ordinal={block_ordinal}, "
+                f"block_id={block_id}"
+            )
+        block_offset = logical_index % block_size
+        physical_slots.append(block_id * block_size + block_offset)
+
+    target_device = torch.device("cpu" if device is None else device)
+    # physical_slots: [retained_len]
+    cpu_slots = torch.tensor(
+        physical_slots,
+        dtype=torch.long,
+        pin_memory=target_device.type == "cuda",
+    )
+    return cpu_slots.to(target_device, non_blocking=target_device.type == "cuda")

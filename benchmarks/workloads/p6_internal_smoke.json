@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "name": "p6_internal_smoke",
+  "cases": [
+    {
+      "id": "text_short",
+      "requests": [
+        {
+          "type": "text",
+          "prompt": "Describe the role of a KV cache in one sentence."
+        }
+      ]
+    },
+    {
+      "id": "single_image_448",
+      "requests": [
+        {
+          "type": "image",
+          "prompt": "Describe this image.",
+          "image": {
+            "width": 448,
+            "height": 448,
+            "color": [100, 150, 200]
+          }
+        }
+      ]
+    },
+    {
+      "id": "multi_image_2x448",
+      "requests": [
+        {
+          "type": "images",
+          "prompt": "Compare these images.",
+          "images": [
+            {
+              "width": 448,
+              "height": 448,
+              "color": [100, 150, 200]
+            },
+            {
+              "width": 448,
+              "height": 448,
+              "color": [200, 120, 80]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "video_4x448",
+      "requests": [
+        {
+          "type": "video",
+          "prompt": "Describe this video.",
+          "frames": [
+            {
+              "width": 448,
+              "height": 448,
+              "color": [80, 120, 180]
+            },
+            {
+              "width": 448,
+              "height": 448,
+              "color": [110, 120, 180]
+            },
+            {
+              "width": 448,
+              "height": 448,
+              "color": [140, 120, 180]
+            },
+            {
+              "width": 448,
+              "height": 448,
+              "color": [170, 120, 180]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mixed_text_image_video",
+      "requests": [
+        {
+          "type": "text",
+          "prompt": "Hello from the text request."
+        },
+        {
+          "type": "image",
+          "prompt": "Describe this image.",
+          "image": {
+            "width": 448,
+            "height": 448,
+            "color": [100, 150, 200]
+          }
+        },
+        {
+          "type": "video",
+          "prompt": "Describe this video.",
+          "frames": [
+            {
+              "width": 448,
+              "height": 448,
+              "color": [80, 120, 180]
+            },
+            {
+              "width": 448,
+              "height": 448,
+              "color": [110, 120, 180]
+            },
+            {
+              "width": 448,
+              "height": 448,
+              "color": [140, 120, 180]
+            },
+            {
+              "width": 448,
+              "height": 448,
+              "color": [170, 120, 180]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn.functional as F
+import pytest
 
 from prism_infer.ops.paged_decode import HAS_TRITON, paged_decode_attention
 
@@ -24,6 +25,9 @@ def _reference_decode(
     """用 PyTorch SDPA 作为 paged decode correctness reference。"""
 
     outputs = []
+    if k_cache.dtype != q.dtype:
+        k_cache = k_cache.to(q.dtype)
+        v_cache = v_cache.to(q.dtype)
     block_size = k_cache.shape[1]
     num_heads = q.shape[1]
     num_kv_heads = k_cache.shape[2]
@@ -159,3 +163,121 @@ def test_paged_decode_kernel_matches_sdpa_reference_qwen_shape() -> None:
         block_size=16,
         context_lens_list=[17, 33],
     )
+
+
+@pytest.mark.parametrize("cache_dtype_name", ["bf16", "fp8"])
+def test_paged_decode_qwen_batch_context_matrix(cache_dtype_name: str) -> None:
+    """P6.5 Qwen GQA BF16/FP8 paged kernel matrix 应对齐独立 SDPA。"""
+
+    _require_kernel()
+    if cache_dtype_name == "fp8" and not hasattr(torch, "float8_e4m3fn"):
+        pytest.skip("torch.float8_e4m3fn is required")
+    torch.manual_seed(20260711)
+    query_dtype = torch.bfloat16
+    cache_dtype = (
+        query_dtype
+        if cache_dtype_name == "bf16"
+        else torch.float8_e4m3fn
+    )
+    num_heads = 32
+    num_kv_heads = 8
+    head_dim = 128
+    block_size = 256
+    scale = head_dim ** -0.5
+
+    for batch in (1, 2, 4, 8):
+        for context_len in (128, 256, 1024, 4096):
+            blocks_per_seq = (context_len + block_size - 1) // block_size
+            num_blocks = batch * blocks_per_seq
+            q = torch.randn(
+                batch,
+                num_heads,
+                head_dim,
+                device="cuda",
+                dtype=query_dtype,
+            )
+            k_source = torch.randn(
+                num_blocks,
+                block_size,
+                num_kv_heads,
+                head_dim,
+                device="cuda",
+                dtype=query_dtype,
+            )
+            v_source = torch.randn_like(k_source)
+            k_cache = k_source.to(cache_dtype)
+            v_cache = v_source.to(cache_dtype)
+            block_tables = torch.arange(
+                num_blocks,
+                device="cuda",
+                dtype=torch.int32,
+            ).view(batch, blocks_per_seq)
+            context_lens = torch.full(
+                (batch,),
+                context_len,
+                device="cuda",
+                dtype=torch.int32,
+            )
+
+            with torch.inference_mode():
+                actual = paged_decode_attention(
+                    q,
+                    k_cache,
+                    v_cache,
+                    block_tables,
+                    context_lens,
+                    scale,
+                )
+                reference = _reference_decode(
+                    q,
+                    k_cache,
+                    v_cache,
+                    block_tables,
+                    context_lens,
+                    scale,
+                )
+            diff = (actual - reference).abs()
+            torch.cuda.synchronize()
+
+            print(
+                f"P6.5 case dtype={cache_dtype_name} batch={batch} "
+                f"context={context_len} q={list(q.shape)} "
+                f"cache={list(k_cache.shape)} blocks={list(block_tables.shape)}"
+            )
+            print(
+                "P6.5 output/reference mean/std: "
+                f"{actual.float().mean().item():.6e}/"
+                f"{actual.float().std().item():.6e} vs "
+                f"{reference.float().mean().item():.6e}/"
+                f"{reference.float().std().item():.6e}"
+            )
+            print(
+                f"P6.5 max/mean diff: {diff.max().item():.6e}/"
+                f"{diff.float().mean().item():.6e}"
+            )
+            assert actual.shape == reference.shape == q.shape
+            assert diff.max().item() < 1e-2
+            assert diff.float().mean().item() < 1e-3
+            print("P6.5 paged decode matrix case: PASS")
+
+
+def test_paged_decode_rejects_mismatched_cache_dtype() -> None:
+    """Unsupported mixed K/V dtype must fail instead of falling back."""
+
+    _require_kernel()
+    q = torch.randn(1, 2, 8, device="cuda", dtype=torch.bfloat16)
+    k_cache = torch.randn(1, 4, 1, 8, device="cuda", dtype=torch.bfloat16)
+    v_cache = k_cache.to(torch.float16)
+    block_tables = torch.tensor([[0]], device="cuda", dtype=torch.int32)
+    context_lens = torch.tensor([4], device="cuda", dtype=torch.int32)
+
+    with pytest.raises(ValueError, match="dtype mismatch"):
+        paged_decode_attention(
+            q,
+            k_cache,
+            v_cache,
+            block_tables,
+            context_lens,
+            8 ** -0.5,
+        )
+    print("P6.5 mixed cache dtype guard: PASS")

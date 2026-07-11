@@ -113,6 +113,32 @@ def test_block_manager_rejects_sequence_block_size_mismatch() -> None:
         Sequence.set_block_size(old_block_size)
 
 
+def test_block_manager_can_disable_prefix_hash_reuse() -> None:
+    """Capacity benchmark 可显式关闭 prefix caching，且默认行为不受影响。"""
+
+    old_block_size = Sequence.block_size
+    Sequence.set_block_size(4)
+    try:
+        manager = BlockManager(
+            num_blocks=4,
+            block_size=4,
+            enable_prefix_caching=False,
+        )
+        first = Sequence([1, 2, 3, 4])
+        second = Sequence([1, 2, 3, 4])
+        manager.allocate(first)
+        manager.allocate(second)
+
+        print(f"prefix-disabled first/second tables: {first.block_table}/{second.block_table}")
+        assert first.block_table != second.block_table
+        assert first.num_cached_tokens == second.num_cached_tokens == 0
+        assert manager.hash_to_block_id == {}
+        assert all(manager.blocks[block_id].hash == -1 for block_id in manager.used_block_ids)
+        print("P6.6 prefix-cache disable contract: PASS")
+    finally:
+        Sequence.set_block_size(old_block_size)
+
+
 def test_block_manager_swap_uses_separate_cpu_block_table() -> None:
     """swap_out 后 GPU block_table 必须清空，CPU block id 只能进入 cpu_block_table。"""
 

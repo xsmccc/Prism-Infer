@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from prism_infer.analysis.performance_profile import profile_region
 from prism_infer.layers.attention import Attention
 from prism_infer.utils.context import get_context
 from prism_infer.vision.vision_encoder import VisionEncoder
@@ -94,11 +95,45 @@ class Qwen3VLTextAttention(nn.Module):
         self.q_norm = Qwen3VLTextRMSNorm(head_dim, dtype=dtype)
         self.k_norm = Qwen3VLTextRMSNorm(head_dim, dtype=dtype)
         self.engine_attn = Attention(num_heads, head_dim, self.scale, num_kv_heads)
+        self._compiled_decode_forward = None
+
+    def enable_decode_compile(
+        self,
+        *,
+        mode: str,
+        emulate_precision_casts: bool,
+        force_same_precision: bool,
+    ) -> None:
+        """仅编译 engine decode attention，不改变 prefill 路径。
+
+        Inductor 是执行基础设施，不是 Prism 的核心 attention 实现；被编译函数仍是
+        本模块的 QKV/QK-Norm/M-RoPE 和自实现 KV store/paged attention。参考当前
+        PyTorch ``torch.compile`` API 与 ``torch._inductor.config`` options。
+        """
+
+        if self._compiled_decode_forward is not None:
+            raise RuntimeError("decode attention compile was already enabled")
+        compile_options = dict(torch._inductor.list_mode_options(mode))
+        compile_options["emulate_precision_casts"] = emulate_precision_casts
+        compile_options["force_same_precision"] = force_same_precision
+        self._compiled_decode_forward = torch.compile(
+            self._forward_engine,
+            backend="inductor",
+            fullgraph=True,
+            dynamic=False,
+            options=compile_options,
+        )
 
     def forward(self, hidden_states: torch.Tensor,
                 position_embeddings: tuple | None = None,
                 attention_mask: torch.Tensor | None = None) -> torch.Tensor:
         if hidden_states.ndim == 2:
+            context = get_context()
+            if not context.is_prefill and self._compiled_decode_forward is not None:
+                return self._compiled_decode_forward(
+                    hidden_states,
+                    position_embeddings,
+                )
             return self._forward_engine(hidden_states, position_embeddings)
 
         bsz, q_len, _ = hidden_states.shape
@@ -421,17 +456,22 @@ class Qwen3VLModel(nn.Module):
         video_grid_thw: [[T, H, W]] or None
         """
         # 1. 文本 embedding
-        inputs_embeds = self.language_model.embed_tokens(input_ids)
+        with profile_region("model.token_embedding"):
+            inputs_embeds = self.language_model.embed_tokens(input_ids)
 
         visual_masks: list[torch.Tensor] = []
         deepstack_by_modality: list[list[torch.Tensor]] = []
 
         # 2. Vision encoding + 特征注入 (参照 HF L1191-L1237)
         if pixel_values is not None and image_grid_thw is not None:
-            main_vis, deepstack_vis = self._encode_visual_payload(
-                pixel_values,
-                image_grid_thw,
-            )
+            with profile_region(
+                "model.vision.image",
+                metadata={"patch_tokens": int(pixel_values.shape[0])},
+            ):
+                main_vis, deepstack_vis = self._encode_visual_payload(
+                    pixel_values,
+                    image_grid_thw,
+                )
             # main_vis: [N_vis, 4096], deepstack_vis: list of 3 × [N_vis, 4096]
             main_vis = main_vis.to(inputs_embeds.device, inputs_embeds.dtype)
 
@@ -460,10 +500,14 @@ class Qwen3VLModel(nn.Module):
             deepstack_by_modality.append(deepstack_vis)
 
         if pixel_values_videos is not None and video_grid_thw is not None:
-            video_vis, deepstack_video = self._encode_visual_payload(
-                pixel_values_videos,
-                video_grid_thw,
-            )
+            with profile_region(
+                "model.vision.video",
+                metadata={"patch_tokens": int(pixel_values_videos.shape[0])},
+            ):
+                video_vis, deepstack_video = self._encode_visual_payload(
+                    pixel_values_videos,
+                    video_grid_thw,
+                )
             video_vis = video_vis.to(inputs_embeds.device, inputs_embeds.dtype)
 
             video_pos_masks_base = (input_ids == self.video_token_id)
@@ -509,14 +553,15 @@ class Qwen3VLModel(nn.Module):
                     deepstack_visual_embeds.append(joint)
 
         # 3. LLM forward (DeepStack 注入在 Qwen3VLTextModel.forward 内部)
-        hidden_states = self.language_model(
-            inputs_embeds=inputs_embeds,
-            position_embeddings=position_embeddings,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            visual_pos_masks=visual_pos_masks,
-            deepstack_visual_embeds=deepstack_visual_embeds,
-        )
+        with profile_region("model.language_model"):
+            hidden_states = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_embeddings=position_embeddings,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                visual_pos_masks=visual_pos_masks,
+                deepstack_visual_embeds=deepstack_visual_embeds,
+            )
         return hidden_states
 
 

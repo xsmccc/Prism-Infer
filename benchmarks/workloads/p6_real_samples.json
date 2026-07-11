@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "name": "p6_real_samples",
+  "cases": [
+    {
+      "id": "coco_000000039769",
+      "requests": [
+        {
+          "type": "image_file",
+          "prompt": "Describe this image in detail.",
+          "image": {
+            "path": "data/p6_real_samples/000000039769.jpg",
+            "source_url": "http://images.cocodataset.org/val2017/000000039769.jpg",
+            "sha256": "dea9e7ef97386345f7cff32f9055da4982da5471c48d575146c796ab4563b04e",
+            "width": 640,
+            "height": 480
+          }
+        }
+      ]
+    }
+  ]
+}

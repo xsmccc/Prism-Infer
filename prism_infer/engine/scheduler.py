@@ -16,7 +16,12 @@ class Scheduler:
         self.eos = config.eos
         Sequence.set_block_size(config.kvcache_block_size)
         # 负责 KV Cache 物理块的分配/释放
-        self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size, getattr(config, 'num_cpu_blocks', 0))
+        self.block_manager = BlockManager(
+            config.num_kvcache_blocks,
+            config.kvcache_block_size,
+            getattr(config, 'num_cpu_blocks', 0),
+            enable_prefix_caching=getattr(config, 'enable_prefix_caching', True),
+        )
         # waiting: 等待 prefill 的序列；running: 正在 decode 的序列
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()

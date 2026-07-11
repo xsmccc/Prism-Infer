@@ -17,6 +17,12 @@ import numpy as np
 import xxhash          # 超快哈希库，用于 Prefix Caching 的 block 内容指纹
 
 from prism_infer.engine.sequence import Sequence
+from prism_infer.engine.kv_layout import (
+    KVCacheLayoutDescriptor,
+    KVCompactionPlan,
+    KV_LAYOUT_VISUAL_COMPACT,
+)
+from prism_infer.engine.visual_pruning import build_retained_context_indices
 
 
 # ─── Block: 一个物理 KV Cache 块 ─────────────────────────────
@@ -47,8 +53,16 @@ class Block:
 # C++ 类比: class PageFrameAllocator + prefix hash table
 class BlockManager:
 
-    def __init__(self, num_blocks: int, block_size: int, num_cpu_blocks: int = 0):
+    def __init__(
+        self,
+        num_blocks: int,
+        block_size: int,
+        num_cpu_blocks: int = 0,
+        *,
+        enable_prefix_caching: bool = True,
+    ):
         self.block_size = block_size                            # 每个 block 容纳的 token 数 (如 16)
+        self.enable_prefix_caching = bool(enable_prefix_caching)
         # ── GPU 端 block 管理 ──
         self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]  # 所有物理块数组 (类似 C++ 的页帧数组)
         self.hash_to_block_id: dict[int, int] = dict()         # 哈希 → block_id 的映射 (Prefix Caching 索引)
@@ -140,7 +154,12 @@ class BlockManager:
         for i in range(seq.num_blocks):
             token_ids = seq.block(i)                            # 取出第 i 个 block 的 token 内容
             # 只有满块才算哈希 (不满的块随时会变, 缓存无意义)
-            h = self.compute_hash(token_ids, h) if len(token_ids) == self.block_size else -1
+            h = (
+                self.compute_hash(token_ids, h)
+                if self.enable_prefix_caching
+                and len(token_ids) == self.block_size
+                else -1
+            )
             block_id = self.hash_to_block_id.get(h, -1)        # 用哈希查找是否有缓存的 block
             if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
                 cache_miss = True                               # 哈希未命中 or 内容不匹配 → miss
@@ -180,6 +199,138 @@ class BlockManager:
         seq.cpu_block_table.clear()                             # 释放后不应残留 swap 页表
         seq.cpu_block_hashes.clear()
         seq.cpu_block_token_ids.clear()
+        seq.kv_layout = None
+
+    def build_compaction_plan(
+        self,
+        seq: Sequence,
+        *,
+        kv_dtype: str,
+    ) -> KVCompactionPlan | None:
+        """为已完成 prefill 的 visual sequence 构造原子 compaction plan。"""
+
+        self._assert_sequence_block_size(seq)
+        record = seq.visual_pruning_decision_record
+        if record is None:
+            if seq.image_token_count or seq.video_token_count:
+                raise RuntimeError(
+                    "visual_compact prefill requires a pruning decision record"
+                )
+            return None
+        if seq.kv_layout is not None:
+            raise RuntimeError("sequence KV cache was already compacted")
+        if seq.num_tokens != seq.num_prompt_tokens:
+            raise RuntimeError("visual KV compaction must run before first token append")
+        if seq.num_cached_tokens != 0:
+            raise RuntimeError(
+                "visual KV compaction does not support prefix-cache prefill"
+            )
+        if seq.cpu_block_table:
+            raise RuntimeError("visual KV compaction requires GPU-resident blocks")
+        if len(seq.block_table) != seq.num_blocks:
+            raise RuntimeError(
+                "visual KV compaction requires a complete prompt block table"
+            )
+        shared_blocks = [
+            block_id
+            for block_id in seq.block_table
+            if self.blocks[block_id].ref_count != 1
+        ]
+        if shared_blocks:
+            raise RuntimeError(
+                "visual KV compaction does not mutate prefix-shared blocks; "
+                f"shared_block_ids={shared_blocks}"
+            )
+
+        retained_positions = build_retained_context_indices(
+            record,
+            seq.num_prompt_tokens,
+        )
+        if not retained_positions:
+            raise RuntimeError("visual KV compaction retained zero prompt tokens")
+        physical_prompt_len = len(retained_positions)
+        new_num_blocks = (
+            physical_prompt_len + self.block_size - 1
+        ) // self.block_size
+        old_block_table = tuple(seq.block_table)
+        new_block_table = old_block_table[:new_num_blocks]
+        released_block_ids = old_block_table[new_num_blocks:]
+        source_slots = tuple(
+            old_block_table[position // self.block_size] * self.block_size
+            + position % self.block_size
+            for position in retained_positions
+        )
+        destination_slots = tuple(
+            new_block_table[index // self.block_size] * self.block_size
+            + index % self.block_size
+            for index in range(physical_prompt_len)
+        )
+        plan = KVCompactionPlan(
+            seq_id=seq.seq_id,
+            logical_prompt_len=seq.num_prompt_tokens,
+            physical_prompt_len=physical_prompt_len,
+            old_block_table=old_block_table,
+            new_block_table=new_block_table,
+            released_block_ids=released_block_ids,
+            retained_original_positions=retained_positions,
+            source_slots=source_slots,
+            destination_slots=destination_slots,
+            kv_dtype=kv_dtype,
+            compression_record=dict(record),
+        )
+        plan.validate(block_size=self.block_size)
+        return plan
+
+    def commit_compaction(
+        self,
+        seq: Sequence,
+        plan: KVCompactionPlan,
+    ) -> None:
+        """GPU copy 成功后提交页表、hash cleanup、block 回收和 descriptor。"""
+
+        self._assert_sequence_block_size(seq)
+        plan.validate(block_size=self.block_size)
+        if plan.seq_id != seq.seq_id:
+            raise RuntimeError("compaction plan sequence id mismatch")
+        if tuple(seq.block_table) != plan.old_block_table:
+            raise RuntimeError("sequence block table changed before compaction commit")
+        if any(self.blocks[block_id].ref_count != 1 for block_id in seq.block_table):
+            raise RuntimeError("compaction commit found a shared or released block")
+
+        compact_record = dict(plan.compression_record)
+        compact_record["physical_compaction"] = True
+        compact_record["logical_prompt_tokens"] = plan.logical_prompt_len
+        compact_record["physical_prompt_kv_tokens"] = plan.physical_prompt_len
+        compact_record["old_block_table"] = list(plan.old_block_table)
+        compact_record["new_block_table"] = list(plan.new_block_table)
+        compact_record["released_block_ids"] = list(plan.released_block_ids)
+
+        # Compact pages不再表示原始连续 token blocks，必须移除 prefix hash。
+        for block_id in plan.new_block_table:
+            block = self.blocks[block_id]
+            self._remove_hash_index_for_block(block)
+            block.hash = -1
+            block.token_ids = []
+        for block_id in plan.released_block_ids:
+            block = self.blocks[block_id]
+            block.ref_count -= 1
+            if block.ref_count != 0:
+                raise RuntimeError("released compact suffix block still has references")
+            self._deallocate_block(block_id)
+
+        seq.block_table = list(plan.new_block_table)
+        seq.visual_pruning_decision_record = compact_record
+        layout = KVCacheLayoutDescriptor(
+            mode=KV_LAYOUT_VISUAL_COMPACT,
+            logical_context_len=seq.num_tokens,
+            physical_kv_len=plan.physical_prompt_len,
+            prompt_logical_len=seq.num_prompt_tokens,
+            compressed_prompt_kv_len=plan.physical_prompt_len,
+            retained_original_positions=plan.retained_original_positions,
+            kv_dtype=plan.kv_dtype,
+            compression_record=compact_record,
+        )
+        seq.install_kv_layout(layout)
 
     # ── can_append: Decode 阶段检查是否能追加 1 个 token ──
     # scheduler._schedule_decode() 的 while not 循环调用
@@ -187,7 +338,9 @@ class BlockManager:
     # 其他情况不需要新块 (当前块还没满), 返回 True
     def can_append(self, seq: Sequence) -> bool:
         self._assert_sequence_block_size(seq)
-        return len(self.free_block_id_set) >= (len(seq) % self.block_size == 1)
+        return len(self.free_block_id_set) >= (
+            seq.physical_kv_len % self.block_size == 1
+        )
         # 注意: (len(seq) % block_size == 1) 是 bool, 转成 int 就是 0 或 1
         # >= 1 → 需要 1 个空闲块
         # >= 0 → 永远 True (不需要新块)
@@ -199,22 +352,25 @@ class BlockManager:
         self._assert_sequence_block_size(seq)
         block_table = seq.block_table
         last_block = self.blocks[block_table[-1]]               # 取当前最后一个 block
-        if len(seq) % self.block_size == 1:
+        physical_remainder = seq.physical_kv_len % self.block_size
+        if physical_remainder == 1:
             # ---- 情况1: 余数=1 → 刚好溢出到新 block ----
             # 上一个 block 刚填满(hash 已算好), 需要分配新块
-            assert last_block.hash != -1                        # 上一个块应该是满的(有hash)
+            if not seq.has_compact_kv_layout:
+                assert last_block.hash != -1                    # dense满块应有hash
             block = self._allocate_free_block()
             block_id = block.block_id
             block_table.append(block_id)                        # 新块加入页表
-        elif len(seq) % self.block_size == 0:
+        elif physical_remainder == 0:
             # ---- 情况2: 余数=0 → 当前 block 刚好填满 ----
             # 计算这个 block 的哈希, 注册到缓存索引
             assert last_block.hash == -1                        # 填满前应该是没 hash 的
-            token_ids = seq.block(seq.num_blocks-1)
-            prefix = self.blocks[block_table[-2]].hash if len(block_table) > 1 else -1
-            h = self.compute_hash(token_ids, prefix)
-            last_block.update(h, token_ids)                     # 记录哈希
-            self.hash_to_block_id[h] = last_block.block_id     # 注册到缓存索引
+            if not seq.has_compact_kv_layout:
+                token_ids = seq.block(seq.num_blocks-1)
+                prefix = self.blocks[block_table[-2]].hash if len(block_table) > 1 else -1
+                h = self.compute_hash(token_ids, prefix)
+                last_block.update(h, token_ids)                 # 记录哈希
+                self.hash_to_block_id[h] = last_block.block_id # 注册到缓存索引
         else:
             # ---- 情况3: 余数>1且!=0 → block 还没满, 什么都不用做 ----
             assert last_block.hash == -1                        # 没满的块不应该有 hash
@@ -238,6 +394,11 @@ class BlockManager:
         self._assert_sequence_block_size(seq)
         if seq.cpu_block_table:
             raise RuntimeError(f"seq {seq.seq_id} already has CPU block table")
+        if seq.kv_layout is not None:
+            seq.kv_layout.validate(
+                block_size=self.block_size,
+                block_table=seq.block_table,
+            )
         swap_map = []
         cpu_block_table = []
         cpu_block_hashes = []
@@ -257,6 +418,11 @@ class BlockManager:
         seq.cpu_block_hashes = cpu_block_hashes
         seq.cpu_block_token_ids = cpu_block_token_ids
         seq.block_table = []
+        if seq.kv_layout is not None:
+            seq.kv_layout.validate(
+                block_size=self.block_size,
+                block_table=seq.cpu_block_table,
+            )
         return swap_map
 
     def can_swap_in(self, seq: Sequence) -> bool:
@@ -273,6 +439,11 @@ class BlockManager:
             raise RuntimeError(f"seq {seq.seq_id} already has GPU block table")
         if not seq.cpu_block_table:
             raise RuntimeError(f"seq {seq.seq_id} has no CPU block table to swap in")
+        if seq.kv_layout is not None:
+            seq.kv_layout.validate(
+                block_size=self.block_size,
+                block_table=seq.cpu_block_table,
+            )
         cpu_block_hashes = getattr(seq, "cpu_block_hashes", [])
         cpu_block_token_ids = getattr(seq, "cpu_block_token_ids", [])
         if (
@@ -312,6 +483,11 @@ class BlockManager:
                 self.hash_to_block_id[block_hash] = block_id
         seq.cpu_block_hashes = []
         seq.cpu_block_token_ids = []
+        if seq.kv_layout is not None:
+            seq.kv_layout.validate(
+                block_size=self.block_size,
+                block_table=seq.block_table,
+            )
         return swap_map
 
         # ── copy_on_write: 写时复制 (CoW) ──
