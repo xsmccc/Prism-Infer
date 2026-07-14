@@ -517,6 +517,12 @@ data/p6_system/p612_multi_image_attention_quality_20260714.jsonl
 data/p6_system/p612_video_uniform_quality_20260714.jsonl
 data/p6_system/p612_video_attention_quality_20260714.jsonl
 data/p6_system/p612_*_attention_mmr025_quality_20260714.jsonl
+data/p6_system/p612_clean_coco_uniform_quality_20260714.jsonl
+data/p6_system/p612_clean_coco_attention_quality_20260714.jsonl
+data/p6_system/p612_clean_multi_image_uniform_quality_20260714.jsonl
+data/p6_system/p612_clean_multi_image_attention_quality_20260714.jsonl
+data/p6_system/p612_clean_video_uniform_quality_20260714.jsonl
+data/p6_system/p612_clean_video_attention_quality_20260714.jsonl
 ```
 
-所有 P6.12 records 为 commit `39802be`、`git_dirty=true` validation。P6.12-A engineering/correctness PASS、quality FAIL；提交后仍需 clean formal rerun，且外部 vLLM/SGLang ratio 没有更新。
+初始 P6.12 smoke/MMR records 为 commit `39802be`、`git_dirty=true` validation。COCO/multi-image/video 的 off/uniform/attention 9 条关键 quality records 已在 commit `c07fa34`、`git_dirty=false` 上 formal rerun，表中 prefix 与 physical-token 数据完全复现。P6.12-A engineering/correctness PASS、quality FAIL；外部 vLLM/SGLang ratio 没有更新，scorer 稳定性能矩阵也尚未执行。

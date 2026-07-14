@@ -2575,9 +2575,15 @@ data/p6_system/p612_video_uniform_quality_20260714.jsonl
 data/p6_system/p612_video_attention_quality_20260714.jsonl
 data/p6_system/p612_*_attention_mmr025_quality_20260714.jsonl
 data/p6_system/p612_full_regression_20260714.txt
+data/p6_system/p612_clean_coco_uniform_quality_20260714.jsonl
+data/p6_system/p612_clean_coco_attention_quality_20260714.jsonl
+data/p6_system/p612_clean_multi_image_uniform_quality_20260714.jsonl
+data/p6_system/p612_clean_multi_image_attention_quality_20260714.jsonl
+data/p6_system/p612_clean_video_uniform_quality_20260714.jsonl
+data/p6_system/p612_clean_video_attention_quality_20260714.jsonl
 ```
 
-P6.12-A engineering/correctness 判定为 PASS，quality 判定为 FAIL。当前 records 为 commit `39802be` 的 dirty validation；提交后才能进行 clean quality/performance formal rerun。
+P6.12-A engineering/correctness 判定为 PASS，quality 判定为 FAIL。初始 smoke/quality records 为 commit `39802be` 的 dirty validation；上述 9 条关键 quality records 已在 commit `c07fa34`、`git_dirty=false` 上 formal rerun，stable-prefix 和 physical-token 结论完全复现。当前没有 warmup/repeat `2/5` 的 clean scorer performance matrix，因此仍不做 TTFT overhead claim。
 
 ### P6 全局 Benchmark 规则
 
