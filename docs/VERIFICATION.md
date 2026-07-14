@@ -2435,22 +2435,22 @@ git diff --check
 - combo output128 eager/Graph 128-token exact，physical tokens 与 active bytes exact。
 - FP8 与 BF16 在既有长输出上可以产生不同 token；P6.11 只要求同一种 compression 的 eager/Graph exact，禁止跨 compression 归因。
 
-single-image output32、warmup/repeat `2/5`：
+clean commit `9e30e55` single-image output32、warmup/repeat `2/5`：
 
 | Compression | Eager decode median | Graph decode median | Speedup | Eager/Graph token |
 |---|---:|---:|---:|---|
-| `visual_compact` | `32.6250 ms` | `17.6456 ms` | `1.8489x` | SHA256 exact |
-| `fp8_kv` | `32.5049 ms` | `17.6604 ms` | `1.8406x` | SHA256 exact |
-| `visual_compact_fp8` | `32.5184 ms` | `17.5111 ms` | `1.8570x` | SHA256 exact |
+| `visual_compact` | `32.3903 ms` | `17.6382 ms` | `1.8364x` | SHA256 exact |
+| `fp8_kv` | `32.4378 ms` | `17.6575 ms` | `1.8371x` | SHA256 exact |
+| `visual_compact_fp8` | `32.4459 ms` | `17.5057 ms` | `1.8535x` | SHA256 exact |
 
-combo output32、warmup/repeat `2/5`：
+clean commit `9e30e55` combo output32、warmup/repeat `2/5`：
 
 | Batch | Eager decode median | Graph decode median | Speedup | Graph decode throughput |
 |---:|---:|---:|---:|---:|
-| 1 | `32.2251 ms` | `17.4964 ms` | `1.8418x` | `57.1429 tok/s` |
-| 2 | `33.3214 ms` | `17.7379 ms` | `1.8785x` | `112.7135 tok/s` |
-| 4 | `33.2346 ms` | `18.2919 ms` | `1.8169x` | `218.5697 tok/s` |
-| 8 | `33.3375 ms` | `19.1472 ms` | `1.7411x` | `417.6132 tok/s` |
+| 1 | `34.0119 ms` | `17.5069 ms` | `1.9428x` | `57.1120 tok/s` |
+| 2 | `33.6158 ms` | `17.7515 ms` | `1.8937x` | `112.6239 tok/s` |
+| 4 | `33.5902 ms` | `18.3016 ms` | `1.8354x` | `218.4745 tok/s` |
+| 8 | `33.6542 ms` | `19.1519 ms` | `1.7572x` | `417.3168 tok/s` |
 
 这里的 throughput 是 replicated single-image request 的 offline decode throughput，不是 online serving benchmark。所有记录都包含 `torch.cuda.synchronize()` timing boundary、median/p90/min/max、allocated/reserved/peak memory、input/config 和 KV physical metrics。
 
@@ -2480,9 +2480,11 @@ data/p6_system/p611_physical_graph_batch1_output32_20260714.jsonl
 data/p6_system/p611_combo_graph_batch_matrix_output32_20260714.jsonl
 data/p6_system/p611_combo_graph_output128_20260714.jsonl
 data/p6_system/p611_full_regression_20260714.txt
+data/p6_system/p611_clean_physical_graph_batch1_output32_20260714.jsonl
+data/p6_system/p611_clean_combo_graph_batch_matrix_output32_20260714.jsonl
 ```
 
-P6.11 correctness/engineering 判定为 PASS，但所有 benchmark 仍记录 commit `ac6e01d`、`git_dirty=true`，只能作为 validation evidence。该执行优化不改变 P6.6 uniform pruning quality FAIL，不产生新的 vLLM/SGLang external comparison claim。
+P6.11 correctness/engineering 判定为 PASS。最初 benchmark 记录 commit `ac6e01d`、`git_dirty=true`，只作为 validation evidence；关键 batch1 mode pairs 与 combo batch1-8 已在 commit `9e30e55`、`git_dirty=false` 上 formal rerun。该执行优化不改变 P6.6 uniform pruning quality FAIL，不产生新的 vLLM/SGLang external comparison claim。
 
 ### P6 全局 Benchmark 规则
 
