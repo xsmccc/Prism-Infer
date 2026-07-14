@@ -2486,6 +2486,99 @@ data/p6_system/p611_clean_combo_graph_batch_matrix_output32_20260714.jsonl
 
 P6.11 correctness/engineering 判定为 PASS。最初 benchmark 记录 commit `ac6e01d`、`git_dirty=true`，只作为 validation evidence；关键 batch1 mode pairs 与 combo batch1-8 已在 commit `9e30e55`、`git_dirty=false` 上 formal rerun。该执行优化不改变 P6.6 uniform pruning quality FAIL，不产生新的 vLLM/SGLang external comparison claim。
 
+### P6.12-A Runtime Attention Visual Pruning
+
+实现门禁：
+
+- `visual_pruning_strategy="attention"` 必须在真实 prefill q/k 上生成 score，禁止回退 uniform 或使用离线伪数据。
+- 默认聚合最后 4 个 decoder layers；每层使用当前序列最后 query 对完整 causal context 的 attention probability，并对 local Q heads 求均值。
+- q/k score tensor 保留在 device，完整 prefill 后一次性 materialize；TP 下每个 rank 的 head mean 必须 all-reduce 后再生成一致 decision。
+- decision 必须在 physical compaction 前写回 `Sequence`，并记录 score source/layers/min/max/mean。
+- score 缺层、重复层、GQA heads/dim、flatten token count 或 visual token score 不完整时显式失败。
+
+Focused verification（2026-07-14）：
+
+```bash
+cd /data/Prism-Infer
+.venv-local/bin/python -m pytest -q \
+  tests/test_visual_pruning.py \
+  tests/test_compression_off.py \
+  tests/test_visual_pruning_active.py \
+  tests/test_model_runner_vl_prefill.py \
+  tests/test_model_runner_vl_mixed_prefill.py \
+  tests/test_model_runner_context_reset.py \
+  tests/test_compile_execution_config.py \
+  tests/test_benchmark_schema.py -s
+# 79 passed in 7.31s
+```
+
+Independent reference 输出：
+
+```text
+q shape: [8, 4, 2]
+k shape: [8, 2, 2]
+score shape: [5]
+actual mean/std: 1.203456e-01 / 2.894921e-02
+reference mean/std: 1.203456e-01 / 2.894921e-02
+max diff: 0.000000e+00
+PASS
+```
+
+真实模型 smoke：
+
+- single-image BF16 compact eager/Graph output8 SHA256 exact，score layers `[32,33,34,35]`，visual tokens `196 -> 98`，physical prompt `210 -> 112`。
+- single-image compact FP8 eager/Graph output8 SHA256 exact，KV dtype `torch.float8_e4m3fn`，physical prompt `112`。
+- mixed text/image/video batch=3 Graph：text row `6 -> 6` dense；image/video `210 -> 112`、`422 -> 226`；24 output tokens repeat-stable。
+
+keep=0.5 quality preflight：
+
+| Workload | Output | Uniform stable prefix | Attention stable prefix | Logical -> physical prompt |
+|---|---:|---:|---:|---:|
+| COCO `000000039769` | 32 | `3` | `21` | `316 -> 166` |
+| multi-image `2x448` | 128 | `6` | `7` | `408 -> 212` |
+| video `4x448` | 128 | `14` | `14` | `422 -> 226` |
+
+该表只证明一个真实图片样例有明显改善，不能证明 dataset accuracy 或整体 quality PASS。multi-image/video 仍早期分叉，因此 P6.12 quality gate 继续 FAIL。
+
+Rejected ablation：coverage-aware Python MMR，weight `0.25`。
+
+- stable prefix 为 COCO/multi/video `7/6/14`，分别不如纯 attention 的 `21/7/14`。
+- greedy Python selection 使观察到的 prefill 增至约 `236-390 ms`。
+- 候选实现已删除；raw records只用于解释拒绝原因。
+
+Post-change full regression：
+
+```bash
+cd /data/Prism-Infer
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+HF_HUB_OFFLINE=1 \
+.venv-local/bin/python -m pytest -q tests -s \
+  | tee data/p6_system/p612_full_regression_20260714.txt
+```
+
+```text
+Running 213 items in this shard
+212 passed, 6 skipped in 299.59s (0:04:59)
+```
+
+Raw evidence：
+
+```text
+data/p6_system/p612_attention_graph_smoke_20260714.jsonl
+data/p6_system/p612_attention_combo_graph_smoke_20260714.jsonl
+data/p6_system/p612_attention_mixed_graph_smoke_20260714.jsonl
+data/p6_system/p612_coco_uniform_quality_20260714.jsonl
+data/p6_system/p612_coco_attention_quality_20260714.jsonl
+data/p6_system/p612_multi_image_uniform_quality_20260714.jsonl
+data/p6_system/p612_multi_image_attention_quality_20260714.jsonl
+data/p6_system/p612_video_uniform_quality_20260714.jsonl
+data/p6_system/p612_video_attention_quality_20260714.jsonl
+data/p6_system/p612_*_attention_mmr025_quality_20260714.jsonl
+data/p6_system/p612_full_regression_20260714.txt
+```
+
+P6.12-A engineering/correctness 判定为 PASS，quality 判定为 FAIL。当前 records 为 commit `39802be` 的 dirty validation；提交后才能进行 clean quality/performance formal rerun。
+
 ### P6 全局 Benchmark 规则
 
 每个 benchmark 必须输出:

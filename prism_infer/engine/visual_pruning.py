@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from math import ceil, isfinite
 
 import torch
+import torch.distributed as dist
 
 
 @dataclass(frozen=True)
@@ -27,14 +28,157 @@ class VisualPruningConfig:
     keep_ratio: float = 0.6
     min_keep_tokens: int = 32
     strategy: str = "uniform"
+    attention_last_n_layers: int = 4
 
     def __post_init__(self) -> None:
         if not 0.0 < self.keep_ratio <= 1.0:
             raise ValueError(f"keep_ratio must be in (0, 1], got {self.keep_ratio}")
         if self.min_keep_tokens < 1:
             raise ValueError(f"min_keep_tokens must be >= 1, got {self.min_keep_tokens}")
-        if self.strategy not in ("uniform", "score"):
+        if self.strategy not in ("uniform", "score", "attention"):
             raise ValueError(f"unsupported strategy: {self.strategy!r}")
+        if self.attention_last_n_layers < 1:
+            raise ValueError(
+                "attention_last_n_layers must be >= 1, got "
+                f"{self.attention_last_n_layers}"
+            )
+
+
+@dataclass(frozen=True)
+class _RuntimeScoreSequence:
+    """一个 flattened prefill row 的视觉索引。"""
+
+    seq_id: int
+    token_start: int
+    token_end: int
+    visual_token_indices: tuple[int, ...]
+
+
+class RuntimeVisualTokenScorer:
+    """在指定 decoder layers 聚合最后 query 对视觉 token 的 attention mass。
+
+    q: [total_tokens, local_q_heads, head_dim]
+    k: [total_tokens, local_kv_heads, head_dim]
+
+    scorer 仅保存每条序列的 device tensor；CPU materialization 延迟到完整
+    prefill forward 结束，避免在每个 attention layer 内触发 host synchronization。
+    TP 下每个 rank 先对本地 Q heads 求均值，finalize 时再 all-reduce 得到全局均值。
+    """
+
+    def __init__(
+        self,
+        seqs: Sequence[object],
+        *,
+        layer_ids: Sequence[int],
+    ) -> None:
+        normalized_layers = tuple(sorted({int(layer_id) for layer_id in layer_ids}))
+        if not normalized_layers or normalized_layers[0] < 0:
+            raise ValueError(f"layer_ids must be non-empty and non-negative: {layer_ids}")
+
+        specs: list[_RuntimeScoreSequence] = []
+        token_start = 0
+        for seq in seqs:
+            token_count = len(seq)
+            spans = find_visual_token_spans(seq)
+            visual_indices = _visual_token_indices(spans)
+            specs.append(
+                _RuntimeScoreSequence(
+                    seq_id=int(seq.seq_id),
+                    token_start=token_start,
+                    token_end=token_start + token_count,
+                    visual_token_indices=visual_indices,
+                )
+            )
+            token_start += token_count
+
+        self.layer_ids = normalized_layers
+        self.sequences = tuple(specs)
+        self.total_tokens = token_start
+        self._score_sums: dict[int, torch.Tensor] = {}
+        self._observed_layers: set[int] = set()
+
+    def observe(
+        self,
+        *,
+        layer_id: int,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        scale: float,
+    ) -> None:
+        """聚合一个目标 layer 的 query-aware visual attention score。"""
+
+        if layer_id not in self.layer_ids:
+            return
+        if layer_id in self._observed_layers:
+            raise RuntimeError(f"runtime visual scorer observed layer {layer_id} twice")
+        if q.ndim != 3 or k.ndim != 3:
+            raise ValueError(
+                "runtime visual scorer expects q/k [tokens, heads, dim], got "
+                f"{list(q.shape)} and {list(k.shape)}"
+            )
+        if q.shape[0] != self.total_tokens or k.shape[0] != self.total_tokens:
+            raise ValueError(
+                "runtime visual scorer token count mismatch: "
+                f"expected={self.total_tokens}, q={q.shape[0]}, k={k.shape[0]}"
+            )
+        if q.shape[2] != k.shape[2] or q.shape[1] % k.shape[1] != 0:
+            raise ValueError(
+                "runtime visual scorer requires compatible GQA heads/dim: "
+                f"q={list(q.shape)}, k={list(k.shape)}"
+            )
+
+        groups = q.shape[1] // k.shape[1]
+        for spec in self.sequences:
+            if not spec.visual_token_indices:
+                continue
+            # q_last: [local_q_heads, head_dim]
+            q_last = q[spec.token_end - 1].detach().float()
+            # keys: [seq_tokens, local_q_heads, head_dim]
+            keys = k[spec.token_start:spec.token_end].detach().float()
+            keys = keys.repeat_interleave(groups, dim=1)
+            # probs: [local_q_heads, seq_tokens]
+            logits = torch.einsum("hd,thd->ht", q_last, keys) * float(scale)
+            probs = torch.softmax(logits, dim=-1).mean(dim=0)
+            local_indices = torch.tensor(
+                spec.visual_token_indices,
+                dtype=torch.long,
+                device=probs.device,
+            )
+            visual_scores = probs.index_select(0, local_indices)
+            previous = self._score_sums.get(spec.seq_id)
+            self._score_sums[spec.seq_id] = (
+                visual_scores if previous is None else previous + visual_scores
+            )
+        self._observed_layers.add(layer_id)
+
+    def finalize(self) -> dict[int, dict[int, float]]:
+        """完成跨 layer/TP 聚合并返回 sequence-local token score maps。"""
+
+        missing = sorted(set(self.layer_ids) - self._observed_layers)
+        if missing:
+            raise RuntimeError(f"runtime visual scorer missing layers: {missing}")
+        observation_count = len(self._observed_layers)
+        world_size = dist.get_world_size() if dist.is_initialized() else 1
+        result: dict[int, dict[int, float]] = {}
+        for spec in self.sequences:
+            if not spec.visual_token_indices:
+                result[spec.seq_id] = {}
+                continue
+            scores = self._score_sums.get(spec.seq_id)
+            if scores is None:
+                raise RuntimeError(
+                    f"runtime visual scorer has no scores for seq_id={spec.seq_id}"
+                )
+            scores = scores / observation_count
+            if world_size > 1:
+                dist.all_reduce(scores, op=dist.ReduceOp.SUM)
+                scores = scores / world_size
+            values = scores.cpu().tolist()
+            result[spec.seq_id] = {
+                token_index: float(score)
+                for token_index, score in zip(spec.visual_token_indices, values)
+            }
+        return result
 
 
 @dataclass(frozen=True)
@@ -210,7 +354,9 @@ def _score_keep_indices(
     token_scores: Mapping[int, float] | None,
 ) -> tuple[int, ...]:
     if token_scores is None:
-        raise ValueError("strategy='score' requires token_scores keyed by sequence token index")
+        raise ValueError(
+            "score-based pruning requires token_scores keyed by sequence token index"
+        )
 
     scored_indices: list[tuple[float, int]] = []
     for token_index in visual_token_indices:
@@ -248,6 +394,12 @@ def compute_pruning_decision(
             target_keep,
             token_scores,
         )
+    elif config.strategy == "attention":
+        kept_token_indices = _score_keep_indices(
+            visual_token_indices,
+            target_keep,
+            token_scores,
+        )
     else:
         raise ValueError(f"unsupported strategy: {config.strategy!r}")
 
@@ -272,6 +424,71 @@ def compute_pruning_decision(
         kept_token_indices=kept_token_indices,
         dropped_token_indices=dropped_token_indices,
     )
+
+
+def build_runtime_visual_token_scorer(
+    seqs: Sequence[object],
+    *,
+    num_hidden_layers: int,
+    attention_last_n_layers: int,
+) -> RuntimeVisualTokenScorer:
+    """构造最后 N 个 decoder layers 的 runtime attention scorer。"""
+
+    if num_hidden_layers < 1:
+        raise ValueError(f"num_hidden_layers must be >= 1, got {num_hidden_layers}")
+    if not 1 <= attention_last_n_layers <= num_hidden_layers:
+        raise ValueError(
+            "attention_last_n_layers must be within model depth: "
+            f"last_n={attention_last_n_layers}, layers={num_hidden_layers}"
+        )
+    first_layer = num_hidden_layers - attention_last_n_layers
+    return RuntimeVisualTokenScorer(
+        seqs,
+        layer_ids=range(first_layer, num_hidden_layers),
+    )
+
+
+def finalize_attention_pruning_decisions(
+    seqs: Sequence[object],
+    config: VisualPruningConfig,
+    scorer: RuntimeVisualTokenScorer,
+) -> tuple[dict[str, object] | None, ...]:
+    """用 runtime attention scores 生成并持久化 batch-aligned decisions。"""
+
+    if config.strategy != "attention":
+        raise ValueError(
+            "runtime attention finalization requires strategy='attention', got "
+            f"{config.strategy!r}"
+        )
+    score_maps = scorer.finalize()
+    records: list[dict[str, object] | None] = []
+    for batch_index, seq in enumerate(seqs):
+        token_scores = score_maps.get(int(seq.seq_id))
+        if token_scores is None:
+            raise RuntimeError(f"missing runtime score map for seq_id={seq.seq_id}")
+        decision = compute_pruning_decision(
+            seq,
+            config,
+            token_scores=token_scores,
+        )
+        if decision is None:
+            records.append(None)
+            continue
+        values = tuple(token_scores.values())
+        record = decision.to_record()
+        record.update(
+            {
+                "batch_index": batch_index,
+                "score_source": "prefill_last_query_attention",
+                "score_layers": list(scorer.layer_ids),
+                "score_min": min(values),
+                "score_max": max(values),
+                "score_mean": sum(values) / len(values),
+            }
+        )
+        seq.visual_pruning_decision_record = record
+        records.append(record)
+    return tuple(records)
 
 
 def apply_pruning_to_slot_mapping(

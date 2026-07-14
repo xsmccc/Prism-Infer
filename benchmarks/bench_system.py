@@ -537,7 +537,10 @@ def _build_llm(
         enable_prefix_caching=getattr(args, "enable_prefix_caching", True),
         visual_pruning_keep_ratio=args.visual_pruning_keep_ratio,
         visual_pruning_min_keep_tokens=args.visual_pruning_min_keep_tokens,
-        visual_pruning_strategy="uniform",
+        visual_pruning_strategy=args.visual_pruning_strategy,
+        visual_pruning_attention_last_n_layers=(
+            args.visual_pruning_attention_last_n_layers
+        ),
     )
 
 
@@ -628,7 +631,10 @@ def _build_record(
             "compression": mode.compression,
             "visual_pruning_keep_ratio": args.visual_pruning_keep_ratio,
             "visual_pruning_min_keep_tokens": args.visual_pruning_min_keep_tokens,
-            "visual_pruning_strategy": "uniform",
+            "visual_pruning_strategy": args.visual_pruning_strategy,
+            "visual_pruning_attention_last_n_layers": (
+                args.visual_pruning_attention_last_n_layers
+            ),
         },
         "workload": {
             "manifest_name": manifest["name"],
@@ -1007,6 +1013,16 @@ def main() -> None:
         help="comma-separated keep-ratio matrix; overrides --visual-pruning-keep-ratio",
     )
     parser.add_argument("--visual-pruning-min-keep-tokens", type=int, default=32)
+    parser.add_argument(
+        "--visual-pruning-strategy",
+        choices=("uniform", "attention"),
+        default="uniform",
+    )
+    parser.add_argument(
+        "--visual-pruning-attention-last-n-layers",
+        type=int,
+        default=4,
+    )
     parser.add_argument("--output")
     parser.add_argument(
         "--profile-output",

@@ -280,6 +280,16 @@ class Attention(nn.Module):
                 with profile_region("attention.decode.sdpa"):
                     o = F.scaled_dot_product_attention(
                         q, k, v, is_causal=True, scale=self.scale)
+        visual_pruning_scorer = context.visual_pruning_scorer
+        if context.is_prefill and visual_pruning_scorer is not None:
+            if self.layer_idx is None:
+                raise RuntimeError("runtime visual scorer requires attention layer_idx")
+            visual_pruning_scorer.observe(
+                layer_id=self.layer_idx,
+                q=q,
+                k=k,
+                scale=self.scale,
+            )
         if is_trace_enabled():
             record_attention_layer(
                 layer_id=self.layer_idx,

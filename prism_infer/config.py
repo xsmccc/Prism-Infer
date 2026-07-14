@@ -31,7 +31,8 @@ class Config:
     enable_visual_pruning_shadow: bool = False  # off 模式下只记录 pruning decision, 不改变 KV
     visual_pruning_keep_ratio: float = 0.6       # visual pruning 目标保留比例
     visual_pruning_min_keep_tokens: int = 32     # 最少保留 visual token 数
-    visual_pruning_strategy: str = "uniform"     # "uniform" | "score"; runtime 当前不提供 score
+    visual_pruning_strategy: str = "uniform"     # "uniform" | "score" | "attention"
+    visual_pruning_attention_last_n_layers: int = 4  # runtime attention 聚合最后 N 层
     decode_compile_region: str = "none"          # "none" | "attention"; 仅作用于 decode
     decode_compile_mode: str = "default"         # Inductor mode: "default" | "reduce-overhead"
     decode_compile_emulate_precision_casts: bool = True  # 保持 BF16 eager 中间 cast 语义

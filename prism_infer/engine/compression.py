@@ -131,6 +131,9 @@ def build_visual_pruning_config(config) -> VisualPruningConfig:
         keep_ratio=float(getattr(config, "visual_pruning_keep_ratio", 0.6)),
         min_keep_tokens=int(getattr(config, "visual_pruning_min_keep_tokens", 32)),
         strategy=str(getattr(config, "visual_pruning_strategy", "uniform")),
+        attention_last_n_layers=int(
+            getattr(config, "visual_pruning_attention_last_n_layers", 4)
+        ),
     )
 
 
@@ -172,6 +175,10 @@ def _build_visual_pruning_records_by_batch(
 
     if is_prefill:
         pruning_config = build_visual_pruning_config(config)
+        if active and pruning_config.strategy == "attention":
+            # Runtime score 在选定 decoder layers 内收集；完整 prefill 结束后
+            # 才生成 decision，供 logical pruning 或 physical compaction 复用。
+            return tuple(None for _ in seqs)
         records: list[dict[str, object] | None] = []
         for batch_index, seq in enumerate(seqs):
             decision = compute_pruning_decision(seq, pruning_config)

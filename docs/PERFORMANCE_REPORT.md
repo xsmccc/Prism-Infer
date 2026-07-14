@@ -475,3 +475,48 @@ data/p6_system/p611_combo_graph_mixed_20260714.jsonl
 data/p6_system/p611_clean_physical_graph_batch1_output32_20260714.jsonl
 data/p6_system/p611_clean_combo_graph_batch_matrix_output32_20260714.jsonl
 ```
+
+### 5.16 P6.12-A Runtime Attention Pruning
+
+P6.12-A 将 P5 已存在但未接入 runtime 的 score decision 改为两阶段执行。prefill 前只创建 scorer；选定 decoder layers 在 device 上计算“最后 query 对 visual keys 的 attention probability”，完整 prefill 后才 materialize score、生成 decision，并进入 P6.4 compaction。decode 继续复用 P6.11 CUDA Graph，不在 replay 内重算 score。
+
+第一版选择最后 4 层 attention mean，理由是生成起点的最后 query 与任务文本直接相关，且 P4 trace 已有 `prefill_last_query` 独立语义可验证。拒绝只按 K norm 排序，因为 P5 已将它限定为弱 proxy；也拒绝每层写 CPU record，因为这会在 prefill 中引入同步。当前没有采用外部 pruning 实现，设计来自本项目 trace/compaction contract 和 first-principles relevance ranking。
+
+单元 reference 使用 q `[8,4,2]`、k `[8,2,2]` 的 GQA，runtime/reference score `[5]` mean/std 都为 `1.203456e-01/2.894921e-02`，max diff `0`。真实 Qwen3-VL 记录的 score layers 为 `[32,33,34,35]`，decision 同时保存 source、min/max/mean，便于后续审计 layer/strategy 变化。
+
+keep=0.5 quality preflight：
+
+| Workload | Output | Uniform prefix | Attention prefix | Logical/physical | Active BF16 bytes |
+|---|---:|---:|---:|---:|---:|
+| COCO `000000039769` | 32 | 3 | 21 | 316 / 166 | 37,748,736 |
+| multi-image `2x448` | 128 | 6 | 7 | 408 / 212 | 37,748,736 |
+| video `4x448` | 128 | 14 | 14 | 422 / 226 | 37,748,736 |
+
+attention ranking 没有改变 physical compression ratio。COCO 改善显著，但 multi-image 只多保持 1 token，video 无改善；3 个 workload 也没有任务级 accuracy，因此 quality gate 仍是 FAIL。不能把 COCO 的 `3 -> 21` 外推成“内容感知 pruning 已解决质量问题”。
+
+机制 smoke 覆盖：
+
+- single-image compact BF16 eager/Graph output8 exact。
+- single-image compact FP8 eager/Graph output8 exact，physical prompt `112`。
+- mixed batch=3 Graph 中 text row 保持 dense，image/video 分别 compact 到 `112/226`。
+
+尝试过 coverage-aware greedy MMR，weight `0.25`，希望缓解 pure top-k 的空间聚集。实测 COCO/multi/video prefix 为 `7/6/14`，不如 pure attention 的 `21/7/14`；Python greedy loop 还使单次观察 prefill 增至约 `236-390 ms`。该候选同时损害质量和 TTFT，代码已删除，raw record 只作为 rejected ablation evidence。
+
+当前 scorer 性能限制：每个选定层额外执行一次 last-query × full-context score matmul；TP finalize 还需要按 sequence all-reduce。P6.12-A 的 `warmup=1/repeat=1` 只用于质量/smoke，不满足稳定性能 claim。下一步若质量策略通过，必须用 warmup/repeat `2/5` 单独测 scorer TTFT overhead、Graph TPOT、memory 和 TP communication。
+
+Raw evidence：
+
+```text
+data/p6_system/p612_attention_graph_smoke_20260714.jsonl
+data/p6_system/p612_attention_combo_graph_smoke_20260714.jsonl
+data/p6_system/p612_attention_mixed_graph_smoke_20260714.jsonl
+data/p6_system/p612_coco_uniform_quality_20260714.jsonl
+data/p6_system/p612_coco_attention_quality_20260714.jsonl
+data/p6_system/p612_multi_image_uniform_quality_20260714.jsonl
+data/p6_system/p612_multi_image_attention_quality_20260714.jsonl
+data/p6_system/p612_video_uniform_quality_20260714.jsonl
+data/p6_system/p612_video_attention_quality_20260714.jsonl
+data/p6_system/p612_*_attention_mmr025_quality_20260714.jsonl
+```
+
+所有 P6.12 records 为 commit `39802be`、`git_dirty=true` validation。P6.12-A engineering/correctness PASS、quality FAIL；提交后仍需 clean formal rerun，且外部 vLLM/SGLang ratio 没有更新。

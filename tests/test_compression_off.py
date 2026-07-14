@@ -147,6 +147,7 @@ def test_visual_pruning_shadow_metadata_records_prefill_decisions():
         "keep_ratio": 0.5,
         "min_keep_tokens": 1,
         "strategy": "uniform",
+        "attention_last_n_layers": 4,
     }
     assert len(metadata.visual_pruning_decision_records) == 1
     assert record["total_visual_tokens"] == 3
@@ -206,6 +207,38 @@ def test_visual_pruning_shadow_score_mode_fails_without_runtime_scores():
     with pytest.raises(ValueError, match="requires token_scores"):
         build_compression_metadata(config, [seq], is_prefill=True)
     print("visual pruning shadow score-mode guard: PASS")
+
+
+def test_attention_pruning_active_prefill_defers_runtime_decision():
+    """Attention strategy must wait for prefill q/k instead of using uniform fallback."""
+
+    config = SimpleNamespace(
+        compression_mode="visual_compact",
+        kvcache_block_size=256,
+        enable_visual_pruning_shadow=False,
+        visual_pruning_keep_ratio=0.5,
+        visual_pruning_min_keep_tokens=1,
+        visual_pruning_strategy="attention",
+        visual_pruning_attention_last_n_layers=2,
+    )
+    seq = Sequence(
+        [1, 99, 99, 2],
+        SamplingParams(temperature=0.0, max_tokens=1),
+        image_token_id=99,
+        image_token_count=2,
+    )
+
+    metadata = build_compression_metadata(config, [seq], is_prefill=True)
+    assert metadata.visual_pruning_records_by_batch == (None,)
+    assert metadata.visual_pruning_decision_records == ()
+    assert seq.visual_pruning_decision_record is None
+    assert metadata.visual_pruning_config == {
+        "keep_ratio": 0.5,
+        "min_keep_tokens": 1,
+        "strategy": "attention",
+        "attention_last_n_layers": 2,
+    }
+    print("P6.12 attention pruning runtime-decision deferral: PASS")
 
 
 def test_visual_prune_active_metadata_persists_prefill_to_decode():

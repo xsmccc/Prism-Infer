@@ -29,10 +29,15 @@ from prism_infer.engine.compression import (
     COMPRESSION_VISUAL_COMPACT_FP8,
     build_compression_metadata,
     compression_supports_cuda_graph,
+    build_visual_pruning_config,
 )
 from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.kv_layout import KVCompactionPlan
-from prism_infer.engine.visual_pruning import build_retained_slot_mapping
+from prism_infer.engine.visual_pruning import (
+    build_retained_slot_mapping,
+    build_runtime_visual_token_scorer,
+    finalize_attention_pruning_decisions,
+)
 from prism_infer.ops.kv_compaction import compact_kv_slots
 try:
     from prism_infer.models.qwen3 import Qwen3ForCausalLM     # Qwen3 纯文本模型 (legacy)
@@ -675,11 +680,28 @@ class ModelRunner:
             seqs,
             is_prefill=True,
         )
+        visual_pruning_scorer = None
+        pruning_config = compression_metadata.visual_pruning_config
+        if (
+            pruning_config is not None
+            and pruning_config.get("strategy") == "attention"
+            and compression_metadata.enabled
+            and compression_metadata.total_visual_tokens > 0
+        ):
+            text_config = _text_hf_config(self.config.hf_config)
+            visual_pruning_scorer = build_runtime_visual_token_scorer(
+                seqs,
+                num_hidden_layers=int(text_config.num_hidden_layers),
+                attention_last_n_layers=int(
+                    pruning_config["attention_last_n_layers"]
+                ),
+            )
 
         # ── 设置全局上下文 (attention 层会读取这些信息) ──
         set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                     slot_mapping, None, block_tables, trace_metadata=trace_metadata,
-                    compression_metadata=compression_metadata)
+                    compression_metadata=compression_metadata,
+                    visual_pruning_scorer=visual_pruning_scorer)
         # True = is_prefill
         # attention 层通过 get_context() 获取这些信息来决定怎么计算
 
@@ -1018,6 +1040,16 @@ class ModelRunner:
             # 2. 前向推理
             with profile_region("runner.run_model"):
                 logits = self.run_model(model_inputs, is_prefill)
+
+            if is_prefill:
+                scorer = get_context().visual_pruning_scorer
+                if scorer is not None:
+                    with profile_region("runner.visual_prune.finalize_attention_scores"):
+                        finalize_attention_pruning_decisions(
+                            seqs,
+                            build_visual_pruning_config(self.config),
+                            scorer,
+                        )
 
             # 3. 采样
             with profile_region("runner.sampler"):

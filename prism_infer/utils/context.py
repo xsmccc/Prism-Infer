@@ -33,6 +33,7 @@ class Context:
     trace_metadata: Any | None = None              # KV trace 元数据; 默认关闭时为 None
     compression_metadata: Any | None = None        # KV 压缩元数据; P5.0 off baseline 为 no-op
     visual_pruning_slot_mappings: tuple[torch.Tensor, ...] = ()
+    visual_pruning_scorer: Any | None = None        # prefill runtime attention score collector
 
 # ── 模块级全局变量: 单例 Context ──
 _CONTEXT = Context()
@@ -54,6 +55,7 @@ def set_context(
     trace_metadata: Any | None = None,
     compression_metadata: Any | None = None,
     visual_pruning_slot_mappings: tuple[torch.Tensor, ...] = (),
+    visual_pruning_scorer: Any | None = None,
     logical_context_lens: torch.Tensor | None = None,
 ) -> None:
     """model_runner 调用: 设置当前步骤的上下文"""
@@ -71,6 +73,7 @@ def set_context(
         trace_metadata=trace_metadata,
         compression_metadata=compression_metadata,
         visual_pruning_slot_mappings=visual_pruning_slot_mappings,
+        visual_pruning_scorer=visual_pruning_scorer,
     )
     # 每次创建新的 Context 对象 (不是修改旧的)
     # dataclass 的 __init__ 按字段顺序接收参数
