@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from benchmarks.bench_system import (
+    MODE_SPECS,
     _annotate_comparisons,
     _describe_case_inputs,
     _expand_case_batch,
@@ -307,6 +308,27 @@ def test_execution_matrix_axis_parser_preserves_requested_order() -> None:
     with pytest.raises(ValueError, match="duplicate"):
         _parse_positive_ints("1,2,1", label="batch")
     print("P6 execution matrix axis parser: PASS")
+
+
+def test_p611_physical_compression_modes_have_eager_graph_pairs() -> None:
+    """P6.11 benchmark 必须只比较同一种 physical compression 的执行后端。"""
+
+    expected_pairs = (
+        ("visual_compact", "visual_compact_graph"),
+        ("fp8_kv", "fp8_kv_graph"),
+        ("visual_compact_fp8", "visual_compact_fp8_graph"),
+    )
+    for eager_name, graph_name in expected_pairs:
+        eager = MODE_SPECS[eager_name]
+        graph = MODE_SPECS[graph_name]
+        assert eager.compression == graph.compression
+        assert eager.attention == graph.attention
+        assert eager.execution == "eager"
+        assert eager.enforce_eager
+        assert graph.execution == "cuda_graph"
+        assert not graph.enforce_eager
+    assert MODE_SPECS["visual_prune"].enforce_eager
+    print("P6.11 physical compression eager/Graph mode pairs: PASS")
 
 
 def test_keep_ratio_matrix_parser_guards_range_and_duplicates() -> None:

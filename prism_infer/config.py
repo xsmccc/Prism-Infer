@@ -2,7 +2,11 @@ import os                           # os.path.isdir: 检查目录是否存在
 from dataclasses import dataclass   # @dataclass: 自动生成__init__的装饰器(类似C++ struct带默认值)
 from transformers import AutoConfig # HuggingFace: 根据模型目录自动加载config.json中的模型结构配置
 
-from prism_infer.engine.compression import build_visual_pruning_config, normalize_compression_mode
+from prism_infer.engine.compression import (
+    build_visual_pruning_config,
+    compression_mode_supports_cuda_graph,
+    normalize_compression_mode,
+)
 from prism_infer.engine.sequence import Sequence
 
 
@@ -40,6 +44,15 @@ class Config:
         assert self.kvcache_block_size % 256 == 0            # block_size需256对齐(FlashAttention kernel要求)
         assert 1 <= self.tensor_parallel_size <= 8           # TP并行数1~8(单机最多8块GPU)
         self.compression_mode = normalize_compression_mode(self.compression_mode)
+        if (
+            not self.enforce_eager
+            and not compression_mode_supports_cuda_graph(self.compression_mode)
+        ):
+            raise ValueError(
+                f"compression_mode={self.compression_mode!r} requires "
+                "enforce_eager=True because its dynamic decode metadata is not "
+                "CUDA Graph safe"
+            )
         if self.decode_compile_region not in ("none", "attention"):
             raise ValueError(
                 "decode_compile_region must be 'none' or 'attention', "

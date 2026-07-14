@@ -95,6 +95,13 @@ MODE_SPECS = {
         compression="visual_compact",
         enforce_eager=True,
     ),
+    "visual_compact_graph": ModeSpec(
+        name="visual_compact_graph",
+        execution="cuda_graph",
+        attention="prefill_sdpa_decode_compact_paged",
+        compression="visual_compact",
+        enforce_eager=False,
+    ),
     "fp8_kv": ModeSpec(
         name="fp8_kv",
         execution="eager",
@@ -102,12 +109,26 @@ MODE_SPECS = {
         compression="fp8_kv",
         enforce_eager=True,
     ),
+    "fp8_kv_graph": ModeSpec(
+        name="fp8_kv_graph",
+        execution="cuda_graph",
+        attention="prefill_sdpa_decode_fp8_paged_triton",
+        compression="fp8_kv",
+        enforce_eager=False,
+    ),
     "visual_compact_fp8": ModeSpec(
         name="visual_compact_fp8",
         execution="eager",
         attention="prefill_sdpa_decode_compact_fp8_paged_triton",
         compression="visual_compact_fp8",
         enforce_eager=True,
+    ),
+    "visual_compact_fp8_graph": ModeSpec(
+        name="visual_compact_fp8_graph",
+        execution="cuda_graph",
+        attention="prefill_sdpa_decode_compact_fp8_paged_triton",
+        compression="visual_compact_fp8",
+        enforce_eager=False,
     ),
 }
 

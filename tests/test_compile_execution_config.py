@@ -71,6 +71,47 @@ def test_attention_compile_config_requires_eager_off_baseline(
     print("P6.3 compile/Graph/compression config isolation: PASS")
 
 
+def test_p611_config_rejects_logical_prune_cuda_graph(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """logical retained-slot metadata 不能静默绕过用户请求的 CUDA Graph。"""
+
+    _patch_auto_config(monkeypatch)
+    with pytest.raises(ValueError, match="requires enforce_eager=True"):
+        Config(
+            str(tmp_path),
+            max_model_len=1024,
+            max_num_batched_tokens=1024,
+            enforce_eager=False,
+            compression_mode="visual_prune",
+        )
+    print("P6.11 logical visual-prune CUDA Graph rejection: PASS")
+
+
+@pytest.mark.parametrize(
+    "compression_mode",
+    ("fp8_kv", "visual_compact", "visual_compact_fp8"),
+)
+def test_p611_config_allows_physical_compression_cuda_graph(
+    compression_mode: str,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """物理 KV dtype/layout 模式必须允许显式 CUDA Graph execution。"""
+
+    _patch_auto_config(monkeypatch)
+    config = Config(
+        str(tmp_path),
+        max_model_len=1024,
+        max_num_batched_tokens=1024,
+        enforce_eager=False,
+        compression_mode=compression_mode,
+    )
+    assert config.compression_mode == compression_mode
+    print(f"P6.11 physical compression Graph config={compression_mode}: PASS")
+
+
 def test_attention_compile_dispatch_is_decode_only() -> None:
     attention = Qwen3VLTextAttention(
         hidden_size=8,

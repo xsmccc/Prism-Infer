@@ -28,6 +28,7 @@ from prism_infer.engine.compression import (
     COMPRESSION_FP8_KV,
     COMPRESSION_VISUAL_COMPACT_FP8,
     build_compression_metadata,
+    compression_supports_cuda_graph,
 )
 from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.kv_layout import KVCompactionPlan
@@ -880,8 +881,8 @@ class ModelRunner:
         input_ids = model_inputs.input_ids
         context = get_context()
         compression_metadata = context.compression_metadata
-        compression_requires_eager = (
-            compression_metadata is not None and compression_metadata.enabled
+        compression_requires_eager = not compression_supports_cuda_graph(
+            compression_metadata
         )
         if (
             is_prefill
@@ -890,8 +891,8 @@ class ModelRunner:
             or compression_requires_eager
         ):
             # ---- Prefill / Eager / batch 太大 → 直接跑模型 ----
-            # Active compression 也必须走 eager；CUDA Graph replay 不会重新进入
-            # Python attention 分支，不能感知 retained-token metadata。
+            # logical visual_prune 必须走 eager；其 retained-slot gather 依赖
+            # 动态 Python metadata。physical compact/FP8 由静态 tensor 表达。
             with profile_region(
                 "runner.model.forward",
                 metadata={

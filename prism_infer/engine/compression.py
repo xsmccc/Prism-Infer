@@ -30,6 +30,14 @@ SUPPORTED_COMPRESSION_MODES = {
     COMPRESSION_FP8_KV,
     COMPRESSION_VISUAL_COMPACT_FP8,
 }
+CUDA_GRAPH_SAFE_COMPRESSION_MODES = frozenset(
+    {
+        COMPRESSION_OFF,
+        COMPRESSION_FP8_KV,
+        COMPRESSION_VISUAL_COMPACT,
+        COMPRESSION_VISUAL_COMPACT_FP8,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -93,6 +101,27 @@ def normalize_compression_mode(mode: str | None) -> str:
             f"got {mode!r}"
         )
     return normalized
+
+
+def compression_mode_supports_cuda_graph(mode: str) -> bool:
+    """返回压缩模式是否能完全通过静态 replay tensor 表达。"""
+
+    return mode in CUDA_GRAPH_SAFE_COMPRESSION_MODES
+
+
+def compression_supports_cuda_graph(
+    metadata: CompressionMetadata | None,
+) -> bool:
+    """返回当前 decode 压缩状态能否复用静态 CUDA Graph。
+
+    FP8 和 physical compaction 只改变 KV dtype、physical context length 与
+    block table；这些状态均通过 capture 时绑定、replay 前更新的 tensor 表达。
+    logical ``visual_prune`` 仍依赖动态 retained-slot gather，因此显式拒绝。
+    """
+
+    if metadata is None:
+        return True
+    return compression_mode_supports_cuda_graph(metadata.mode)
 
 
 def build_visual_pruning_config(config) -> VisualPruningConfig:

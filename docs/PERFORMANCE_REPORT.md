@@ -425,3 +425,51 @@ P6 原阶段 Review full regression 为 `195 passed, 5 skipped in 245.50s`；var
 5. TP2 目前仍不是已验证能力：fixed 1 MiB control shared memory 已替换为 variable-size Pipe，4,817,396-byte 视觉 payload 双 worker focused test PASS；但当前只有一张 GPU，TP1/TP2 greedy、logits、NCCL、每卡显存与性能均未实测。
 
 因此 P6 的准确表述是“系统测量、关键优化和 variable-size TP control plane 闭环完成，并暴露出质量、framework overhead 与两卡动态验证三个下一阶段问题”，不是“吞吐超过 vLLM/SGLang”。clean commit 之前所有性能数字仍是内部 dirty-worktree evidence。
+
+### 5.15 P6.11 Compressed KV CUDA Graph
+
+P6.11 把 P6.3 已验证的 decode CUDA Graph 扩展到 physical KV compression。实现不修改 paged-attention kernel：capture 时 KV cache 已按 BF16 或 E4M3FN dtype 分配并绑定；每次 replay 前，runner 更新 physical `context_lens`、compact `block_tables` 和 decode append `slot_mapping`。因此 Graph 只消费压缩后的物理布局，不需要在 replay 中重做 pruning decision。
+
+模式边界是显式契约：`off/fp8_kv/visual_compact/visual_compact_fp8` Graph-safe；logical `visual_prune` 的 retained-slot gather 依赖动态 metadata，配置为 Graph 时直接报错。拒绝 silent eager fallback，是为了让 benchmark 的 `execution=cuda_graph` 始终代表真实 replay，而不是标签与执行不一致。
+
+同一 single-image `448x448`、prompt/image tokens `210/196`、output32、16 个 256-token blocks、warmup/repeat `2/5`：
+
+| Compression | Eager median | Graph median | Graph p90/min/max | Speedup | Graph peak allocated | Token/physical KV |
+|---|---:|---:|---:|---:|---:|---|
+| compact BF16 | 32.6250 ms | 17.6456 ms | 17.6813 / 17.4929 / 17.7122 ms | `1.8489x` | 19,709.5 MiB | exact |
+| FP8 dense | 32.5049 ms | 17.6604 ms | 17.6831 / 17.6247 / 17.7626 ms | `1.8406x` | 19,421.5 MiB | exact |
+| compact FP8 | 32.5184 ms | 17.5111 ms | 17.5347 / 17.4485 / 19.8011 ms | `1.8570x` | 19,421.5 MiB | exact |
+
+每一行只比较同一种 compression 和 attention backend 的 eager/Graph pair。三组 output SHA256 分别在 pair 内 exact，physical prompt tokens 为 `112/210/112`，active prompt bytes 为 `37,748,736/18,874,368/18,874,368`，Graph 没有改变压缩率或 KV dtype。compact FP8 Graph 的单个 `19.8011 ms` max outlier 没有被 median 隐藏，原始记录保留完整 p99 和五次 memory samples。
+
+compact FP8 batch matrix 使用同一请求复制形成 offline batch，output32、warmup/repeat `2/5`：
+
+| Batch | Eager median | Graph median | Graph p90/min/max | Speedup | Graph decode tok/s | Physical prompt tokens |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 32.2251 ms | 17.4964 ms | 17.5214 / 17.4142 / 17.5867 ms | `1.8418x` | 57.1429 | 112 |
+| 2 | 33.3214 ms | 17.7379 ms | 17.7770 / 17.6971 / 17.9138 ms | `1.8785x` | 112.7135 | 224 |
+| 4 | 33.2346 ms | 18.2919 ms | 18.3303 / 18.2455 / 18.6040 ms | `1.8169x` | 218.5697 | 448 |
+| 8 | 33.3375 ms | 19.1472 ms | 19.1809 / 19.1009 / 19.6279 ms | `1.7411x` | 417.6132 | 896 |
+
+batch1-8 的 eager/Graph output SHA256、physical token 数和 active bytes 均 exact；Graph peak allocated 从 batch1 的 `19,421.5 MiB` 增至 batch8 的 `19,468.9 MiB`。吞吐随 batch 增长，但这是 replicated-request offline decode throughput，不包含在线 arrival、queueing 或调度压力，不能写成 online serving 能力。
+
+correctness 另外覆盖 single-image、multi-image、video、mixed text/image/video、mixed batch=3 -> Graph bucket4，以及 compact FP8 output128；均为同 compression eager/Graph greedy token exact。output128 只做 warmup/repeat `1/1` correctness smoke，不作为稳定性能数字。
+
+边界结论：
+
+1. compressed layout 已不再被迫走约 32-33 ms 的 eager decode，当前 Graph 路径回到约 17.5-19.1 ms，消除了 P6.7 所定位的主要 eager framework/launch overhead。
+2. 这不是新的 external benchmark。P6.7 的 vLLM/SGLang 数字使用不同时间点和 eager 对比协议，提交后必须在同一 clean commit、同一 execution 条件下重跑，才能讨论新的 external ratio。
+3. Graph 加速 execution，不改善 compression quality。P6.6 uniform pruning quality gate 继续为 FAIL，FP8 与 BF16 长输出之间的既有分叉也继续保留。
+4. 所有 P6.11 raw records 都是 commit `ac6e01d`、`git_dirty=true` validation evidence；formal claim 需要 clean-commit rerun。
+
+Raw evidence：
+
+```text
+data/p6_system/p611_physical_graph_batch1_output32_20260714.jsonl
+data/p6_system/p611_combo_graph_batch_matrix_output32_20260714.jsonl
+data/p6_system/p611_combo_graph_output128_20260714.jsonl
+data/p6_system/p611_combo_graph_smoke_20260714.jsonl
+data/p6_system/p611_combo_graph_multi_image_20260714.jsonl
+data/p6_system/p611_combo_graph_video_20260714.jsonl
+data/p6_system/p611_combo_graph_mixed_20260714.jsonl
+```

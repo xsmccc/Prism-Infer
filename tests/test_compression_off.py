@@ -9,9 +9,11 @@ import torch
 from prism_infer.engine.compression import (
     COMPRESSION_FP8_KV,
     COMPRESSION_VISUAL_COMPACT,
+    COMPRESSION_VISUAL_COMPACT_FP8,
     COMPRESSION_VISUAL_PRUNE,
     CompressionMetadata,
     build_compression_metadata,
+    compression_supports_cuda_graph,
     ensure_compression_off,
     ensure_supported_compression_metadata,
     normalize_compression_mode,
@@ -34,6 +36,44 @@ def test_compression_mode_validation():
     with pytest.raises(ValueError, match="supported compression_mode"):
         normalize_compression_mode("int4_kv")
     print("compression mode off validation: PASS")
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("off", True),
+        (COMPRESSION_FP8_KV, True),
+        (COMPRESSION_VISUAL_COMPACT, True),
+        (COMPRESSION_VISUAL_COMPACT_FP8, True),
+        (COMPRESSION_VISUAL_PRUNE, False),
+    ],
+)
+def test_compression_cuda_graph_safety_contract(
+    mode: str,
+    expected: bool,
+) -> None:
+    """只有 tensor 可表达的 physical compression mode 可以 Graph replay。"""
+
+    metadata = CompressionMetadata(
+        mode=mode,
+        is_prefill=False,
+        num_sequences=1,
+        total_prompt_tokens=4,
+        total_image_tokens=2,
+        total_video_tokens=0,
+        block_size=256,
+    )
+
+    actual = compression_supports_cuda_graph(metadata)
+    print(f"compression Graph safety mode={mode}: {actual}")
+    assert actual is expected
+
+
+def test_missing_compression_metadata_is_cuda_graph_safe() -> None:
+    """capture warmup 没有 compression metadata 时必须保持 graph-safe。"""
+
+    assert compression_supports_cuda_graph(None)
+    print("compression Graph safety missing metadata: PASS")
 
 
 def test_compression_metadata_counts_visual_tokens():
