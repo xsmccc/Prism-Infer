@@ -1,8 +1,8 @@
 # Prism-Infer 性能报告
 
-> 更新日期: 2026-07-11
-> 当前阶段: P6.1 统一 benchmark contract
-> 报告性质: runner validation baseline，不是正式对外性能结论
+> 更新日期: 2026-07-15
+> 当前阶段: P6.12-B content-aware visual pruning quality research
+> 报告性质: 包含 dirty validation 与 clean formal evidence；每节单独标注结论边界
 
 ## 1. 结论边界
 
@@ -526,3 +526,38 @@ data/p6_system/p612_clean_video_attention_quality_20260714.jsonl
 ```
 
 初始 P6.12 smoke/MMR records 为 commit `39802be`、`git_dirty=true` validation。COCO/multi-image/video 的 off/uniform/attention 9 条关键 quality records 已在 commit `c07fa34`、`git_dirty=false` 上 formal rerun，表中 prefix 与 physical-token 数据完全复现。P6.12-A engineering/correctness PASS、quality FAIL；外部 vLLM/SGLang ratio 没有更新，scorer 稳定性能矩阵也尚未执行。
+
+### 5.17 P6.12-B Per-span Budget Ablation
+
+clean global-attention records 显示，multi-image 的两个 196-token image span
+分别保留 `124/72`，video 的两个 196-token span 分别保留
+`109/87`。这证明 global top-k 会在 span 之间形成不均匀预算，但它本身不能
+证明不均匀就是质量分叉的原因。
+
+为检验该假设，临时候选先按 span token capacity 分配 largest-remainder
+quota，再在 span 内做 attention top-k。它保持总 keep 数和 physical KV 不变，
+并将两个双 span workload 都改为 `98/98`。候选没有采用外部实现，
+来源是上述 clean decision 的 first-principles budget ablation。
+
+| Workload | Global prefix | Per-span prefix | Global/per-span physical | 结论 |
+|---|---:|---:|---:|---|
+| COCO `000000039769` | 21 | 21 | `166/166` | 32-token exact，无改善 |
+| multi-image `2x448` | 7 | 7 | `212/212` | 同一位置首次分叉，无改善 |
+| video `4x448` | 14 | 14 | `226/226` | 128-token exact，无改善 |
+
+该矩阵为 keep `0.5`、last 4 layers、greedy、`warmup=1/repeat=1`，
+仅用于 quality preflight。等额 quota 没有使任何 stable prefix 超过 global
+attention，所以候选代码已删除。当前支持的 `attention` 只增加
+`kept_visual_tokens_by_span` 审计字段，不改变 selection 语义。
+
+Raw evidence：
+
+```text
+data/p6_system/p612b_coco_attention_span_quality_20260715.jsonl
+data/p6_system/p612b_multi_image_attention_span_quality_20260715.jsonl
+data/p6_system/p612b_video_attention_span_quality_20260715.jsonl
+```
+
+这个结果拒绝了“只要平衡 span 预算就能改善质量”的假设。P6.12-B
+下一步应将候选与更大固定数据集一起设计，考察 grid coverage、跨 query/layer
+聚合或非等额动态预算；当前 quality 继续 FAIL，也没有新的性能收益 claim。

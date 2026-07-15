@@ -1,6 +1,6 @@
 # Prism-Infer 验证标准
 
-> 修订日期: 2026-07-05
+> 修订日期: 2026-07-15
 > 目的: 统一记录每个阶段的验证命令、PASS 标准和禁止行为。所有完成声明必须能追溯到本文件中的命令或等价验证输出。
 
 ## 全局规则
@@ -2584,6 +2584,59 @@ data/p6_system/p612_clean_video_attention_quality_20260714.jsonl
 ```
 
 P6.12-A engineering/correctness 判定为 PASS，quality 判定为 FAIL。初始 smoke/quality records 为 commit `39802be` 的 dirty validation；上述 9 条关键 quality records 已在 commit `c07fa34`、`git_dirty=false` 上 formal rerun，stable-prefix 和 physical-token 结论完全复现。当前没有 warmup/repeat `2/5` 的 clean scorer performance matrix，因此仍不做 TTFT overhead claim。
+
+### P6.12-B Per-span Budget Rejected Ablation
+
+调查动机来自 P6.12-A clean attention decision，而不是外部实现。两个双 span workload 的全局 top-k 分配为：
+
+| Workload | Span tokens | Global attention kept | Total kept | Physical prompt |
+|---|---:|---:|---:|---:|
+| multi-image `2x448` | `196 + 196` | `124 + 72` | 196 | 212 |
+| video `4x448` | `196 + 196` | `109 + 87` | 196 | 226 |
+
+为了将该现象纳入 runtime 审计，attention decision record 新增
+`kept_visual_tokens_by_span`，每项记录 `modality/span_index/kept_tokens`。
+
+Focused verification（2026-07-15）：
+
+```bash
+cd /data/Prism-Infer
+.venv-local/bin/python -m pytest -q \
+  tests/test_visual_pruning.py \
+  tests/test_compression_off.py \
+  tests/test_benchmark_schema.py -s
+# 58 passed in 4.11s
+```
+
+synthetic runtime attention decision 包含三个 span，审计输出为
+`image[0]=2, video[0]=0, image[1]=0`，其总和与 `kept_visual_tokens=2`
+一致。这个测试只验证审计字段和 global top-k 现有语义，不声称质量改善。
+
+临时 `attention_span` ablation 使用按 span token capacity 的 largest-remainder
+quota，总 keep target 不变，双 span 分别保留 `98/98`。质量预检结果：
+
+| Workload | Output | Global attention prefix | Per-span prefix | Attention exact | Physical prompt |
+|---|---:|---:|---:|---|---:|
+| COCO `000000039769` | 32 | 21 | 21 | 32 tokens exact | 166 |
+| multi-image `2x448` | 128 | 7 | 7 | no | 212 |
+| video `4x448` | 128 | 14 | 14 | 128 tokens exact | 226 |
+
+这三条记录使用 greedy、keep ratio `0.5`、last 4 layers、
+`warmup=1/repeat=1`。它们只是 quality preflight，不满足稳定性能报告条件。
+候选没有改善任何 workload 的 stable prefix，因此 `attention_span` 实现、
+config、CLI 和测试已删除，不进入支持策略。
+
+Raw evidence（dirty candidate validation，只用于 rejected ablation）：
+
+```text
+data/p6_system/p612b_coco_attention_span_quality_20260715.jsonl
+data/p6_system/p612b_multi_image_attention_span_quality_20260715.jsonl
+data/p6_system/p612b_video_attention_span_quality_20260715.jsonl
+```
+
+P6.12-B 仍为进行中，quality 继续 FAIL。本轮最终代码只新增 decision
+审计字段，没有改变 scorer、selection、compaction 或 decode 执行路径，
+所以未重跑 full model regression。
 
 ### P6 全局 Benchmark 规则
 

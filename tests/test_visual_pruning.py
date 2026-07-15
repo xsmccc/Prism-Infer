@@ -185,6 +185,15 @@ def test_runtime_attention_finalize_persists_auditable_decision():
     assert record["score_layers"] == [2, 3]
     assert record["kept_visual_tokens"] == 2
     assert record["dropped_visual_tokens"] == 3
+    kept_by_span = record["kept_visual_tokens_by_span"]
+    assert [
+        (str(item["modality"]), int(item["span_index"]))
+        for item in kept_by_span
+    ] == [("image", 0), ("video", 0), ("image", 1)]
+    assert sum(
+        int(item["kept_tokens"])
+        for item in kept_by_span
+    ) == 2
     assert float(record["score_min"]) <= float(record["score_mean"])
     assert float(record["score_mean"]) <= float(record["score_max"])
     print(f"runtime attention decision: {record}")
