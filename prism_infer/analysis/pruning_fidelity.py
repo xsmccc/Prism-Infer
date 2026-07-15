@@ -8,13 +8,15 @@ greedy token、physical KV 与 per-span 审计记录。输出衡量压缩保真�
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from statistics import fmean
 from typing import Any
 
 from prism_infer.analysis.benchmark_schema import summarize_values
 from prism_infer.analysis.pareto_summary import stable_prefix_lengths
+from prism_infer.analysis.reference_quality import score_reference_batch
 
 
-PRUNING_FIDELITY_SCHEMA_VERSION = 1
+PRUNING_FIDELITY_SCHEMA_VERSION = 2
 
 
 def _comparison_key(record: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -99,6 +101,9 @@ def _assert_comparable(
         "prefix_caching_enabled"
     ):
         mismatches.append("model.prefix_caching_enabled")
+    for key in ("reference_sources", "task_references"):
+        if baseline["workload"].get(key) != candidate["workload"].get(key):
+            mismatches.append(f"workload.{key}")
     if mismatches:
         raise ValueError(
             "baseline and candidate are not fidelity-comparable; mismatched fields: "
@@ -117,10 +122,157 @@ def _require_physical_kv(record: Mapping[str, Any]) -> Mapping[str, Any]:
     missing = [key for key in required if key not in kv_cache]
     if missing:
         raise ValueError(
-            "pruning fidelity requires schema-v4 physical KV evidence; missing "
+            "pruning fidelity requires schema-v4+ physical KV evidence; missing "
             f"{missing}"
         )
     return kv_cache
+
+
+def _task_quality_comparison(
+    baseline: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> dict[str, Any]:
+    """计算 baseline/candidate 相对同一任务 reference 的 lexical quality。"""
+
+    task_references = candidate["workload"].get("task_references")
+    baseline_batch = score_reference_batch(
+        baseline["correctness"].get("decoded_texts"),
+        task_references,
+    )
+    candidate_batch = score_reference_batch(
+        candidate["correctness"].get("decoded_texts"),
+        task_references,
+    )
+    if baseline_batch["available"] != candidate_batch["available"]:
+        raise ValueError(
+            "baseline and candidate task-quality evidence availability differs"
+        )
+    if not baseline_batch["available"]:
+        return {
+            "available": False,
+            "reason": baseline_batch["reason"],
+            "request_count": baseline_batch["request_count"],
+        }
+
+    baseline_scores = baseline_batch["scores"]
+    candidate_scores = candidate_batch["scores"]
+    identities = ("task", "reference_source", "image_id", "reference_count")
+    for index, (baseline_score, candidate_score) in enumerate(
+        zip(baseline_scores, candidate_scores, strict=True)
+    ):
+        mismatches = [
+            key
+            for key in identities
+            if baseline_score[key] != candidate_score[key]
+        ]
+        if mismatches:
+            raise ValueError(
+                f"request {index} task-quality identity mismatch: {mismatches}"
+            )
+    return {
+        "available": True,
+        "reason": None,
+        "request_count": len(baseline_scores),
+        "baseline_scores": baseline_scores,
+        "candidate_scores": candidate_scores,
+        "token_f1_delta": [
+            candidate_score["token_f1"] - baseline_score["token_f1"]
+            for baseline_score, candidate_score in zip(
+                baseline_scores,
+                candidate_scores,
+                strict=True,
+            )
+        ],
+        "rouge_l_f1_delta": [
+            candidate_score["rouge_l_f1"] - baseline_score["rouge_l_f1"]
+            for baseline_score, candidate_score in zip(
+                baseline_scores,
+                candidate_scores,
+                strict=True,
+            )
+        ],
+    }
+
+
+def _aggregate_task_quality(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    max_task_quality_drop: float,
+) -> dict[str, Any]:
+    """汇总 lexical reference quality，并按 preflight 阈值给出门禁。"""
+
+    unavailable = [
+        str(row["task_quality"]["reason"])
+        for row in rows
+        if not row["task_quality"]["available"]
+    ]
+    if unavailable:
+        return {
+            "available": False,
+            "reason": "; ".join(sorted(set(unavailable))),
+            "request_count": 0,
+            "gate": {
+                "eligible": False,
+                "passed": False,
+                "max_macro_score_drop": max_task_quality_drop,
+                "failures": ["reference task evidence is incomplete"],
+            },
+        }
+
+    baseline_scores = [
+        score
+        for row in rows
+        for score in row["task_quality"]["baseline_scores"]
+    ]
+    candidate_scores = [
+        score
+        for row in rows
+        for score in row["task_quality"]["candidate_scores"]
+    ]
+    result: dict[str, Any] = {
+        "available": True,
+        "reason": None,
+        "request_count": len(baseline_scores),
+        "tasks": sorted({str(score["task"]) for score in baseline_scores}),
+        "reference_sources": sorted(
+            {str(score["reference_source"]) for score in baseline_scores}
+        ),
+        "reference_counts": summarize_values(
+            [int(score["reference_count"]) for score in baseline_scores]
+        ),
+    }
+    failures: list[str] = []
+    for metric in ("token_f1", "rouge_l_f1"):
+        baseline_values = [float(score[metric]) for score in baseline_scores]
+        candidate_values = [float(score[metric]) for score in candidate_scores]
+        baseline_macro = fmean(baseline_values)
+        candidate_macro = fmean(candidate_values)
+        macro_delta = candidate_macro - baseline_macro
+        if baseline_macro <= 0.0:
+            failures.append(f"{metric} baseline macro score is zero")
+            retention = None
+        else:
+            retention = candidate_macro / baseline_macro
+        if macro_delta < -max_task_quality_drop:
+            failures.append(
+                f"{metric} macro drop {-macro_delta:.6f} exceeds "
+                f"{max_task_quality_drop:.6f}"
+            )
+        result[metric] = {
+            "baseline": summarize_values(baseline_values),
+            "candidate": summarize_values(candidate_values),
+            "baseline_macro": baseline_macro,
+            "candidate_macro": candidate_macro,
+            "macro_delta": macro_delta,
+            "retention": retention,
+        }
+    result["gate"] = {
+        "eligible": True,
+        "passed": not failures,
+        "max_macro_score_drop": max_task_quality_drop,
+        "failures": failures,
+    }
+    return result
 
 
 def _span_audit(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -291,6 +443,7 @@ def _case_row(
         "active_prompt_bytes_ratio": (
             int(candidate_kv["active_prompt_bytes"]) / baseline_active_bytes
         ),
+        "task_quality": _task_quality_comparison(baseline, candidate),
         "span_audit": _span_audit(candidate),
         "baseline_git_commit": baseline["environment"]["git_commit"],
         "baseline_git_dirty": baseline["environment"]["git_dirty"],
@@ -299,12 +452,17 @@ def _case_row(
     }
 
 
-def _aggregate_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _aggregate_rows(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    max_task_quality_drop: float,
+) -> list[dict[str, Any]]:
     grouped: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
     for row in rows:
         descriptor = row["candidate"]
         key = (
             row["manifest_sha256"],
+            int(row["max_tokens"]),
             *_candidate_identity(descriptor),
         )
         grouped.setdefault(key, []).append(row)
@@ -312,6 +470,12 @@ def _aggregate_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     aggregates: list[dict[str, Any]] = []
     for group_rows in grouped.values():
         first = group_rows[0]
+        case_ids = [str(row["case_id"]) for row in group_rows]
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError(
+                "duplicate case_id across benchmark replication cells: "
+                f"{case_ids}"
+            )
         prefix_tokens = [
             int(value)
             for row in group_rows
@@ -363,6 +527,7 @@ def _aggregate_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
                 "manifest_sha256": first["manifest_sha256"],
                 "baseline_mode": first["baseline_mode"],
                 "candidate": dict(first["candidate"]),
+                "max_tokens": int(first["max_tokens"]),
                 "case_count": len(group_rows),
                 "request_count": len(exact_values),
                 "case_ids": sorted(str(row["case_id"]) for row in group_rows),
@@ -389,6 +554,10 @@ def _aggregate_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
                         for row in group_rows
                     )
                     / baseline_active_bytes
+                ),
+                "task_quality": _aggregate_task_quality(
+                    group_rows,
+                    max_task_quality_drop=max_task_quality_drop,
                 ),
                 "span_audit": {
                     "available": (
@@ -429,7 +598,11 @@ def _aggregate_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         )
     return sorted(
         aggregates,
-        key=lambda row: (row["manifest_name"], row["candidate"]["label"]),
+        key=lambda row: (
+            row["manifest_name"],
+            row["candidate"]["label"],
+            row["max_tokens"],
+        ),
     )
 
 
@@ -437,9 +610,12 @@ def summarize_pruning_fidelity_records(
     records: Sequence[Mapping[str, Any]],
     *,
     baseline_mode: str = "off_graph",
+    max_task_quality_drop: float = 0.01,
 ) -> dict[str, Any]:
     """生成 case-level 和 dataset-level pruning fidelity 汇总。"""
 
+    if not 0.0 <= max_task_quality_drop <= 1.0:
+        raise ValueError("max_task_quality_drop must be in [0, 1]")
     if not records:
         raise ValueError("pruning fidelity requires at least one benchmark record")
     baselines: dict[tuple[Any, ...], Mapping[str, Any]] = {}
@@ -507,38 +683,76 @@ def summarize_pruning_fidelity_records(
         "summary_type": "pruning_fidelity",
         "baseline_mode": baseline_mode,
         "limitations": [
-            "Measures greedy-token fidelity to an uncompressed baseline, not task accuracy.",
-            "Stable-prefix agreement does not measure semantic equivalence after divergence.",
+            "Measures greedy-token fidelity to an uncompressed baseline, "
+            "not task accuracy.",
+            "Stable-prefix agreement does not measure semantic equivalence "
+            "after divergence.",
+            "Reference token-F1/ROUGE-L are lexical preflight metrics, "
+            "not COCO CIDEr/SPICE.",
         ],
-        "aggregates": _aggregate_rows(rows),
+        "task_quality_gate": {
+            "max_macro_score_drop": max_task_quality_drop,
+            "metrics": ["token_f1", "rouge_l_f1"],
+        },
+        "aggregates": _aggregate_rows(
+            rows,
+            max_task_quality_drop=max_task_quality_drop,
+        ),
         "cases": rows,
     }
 
 
 def render_pruning_fidelity_markdown(summary: Mapping[str, Any]) -> str:
-    """把 pruning fidelity 汇总渲染为可审计 Markdown。"""
+    """把 pruning fidelity 与 reference task quality 渲染为可审计 Markdown。"""
 
+    threshold = float(summary["task_quality_gate"]["max_macro_score_drop"])
     lines = [
-        "# P6.12 Pruning Fidelity Summary",
+        "# P6.12 Pruning Fidelity and Task Quality Summary",
         "",
-        "> Greedy-token fidelity to the uncompressed baseline; not task accuracy.",
+        "> Greedy-token fidelity plus optional multi-reference lexical quality; "
+        "token-F1/ROUGE-L are not COCO CIDEr/SPICE.",
+        f"> Task gate: every macro score drop must be <= {threshold:.6f}.",
         "",
         "## Dataset Aggregates",
         "",
-        "| Manifest | Candidate | Cases | Requests | Exact requests | Prefix micro | "
-        "Prefix min | Physical KV | Active bytes | Zero spans | Span audit |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|:---:|",
+        "| Manifest | Candidate | Max tokens | Cases | Requests | Exact requests | "
+        "Prefix micro | Prefix min | Physical KV | Active bytes | Token F1 B/C | "
+        "ROUGE-L B/C | Task gate | Zero spans | Span audit |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|:---:|",
     ]
     for aggregate in summary["aggregates"]:
         span_audit = aggregate["span_audit"]
+        task_quality = aggregate["task_quality"]
+        if task_quality["available"]:
+            token_f1 = task_quality["token_f1"]
+            rouge_l = task_quality["rouge_l_f1"]
+            token_f1_cell = (
+                f"{token_f1['baseline_macro']:.3f}/"
+                f"{token_f1['candidate_macro']:.3f}"
+            )
+            rouge_l_cell = (
+                f"{rouge_l['baseline_macro']:.3f}/"
+                f"{rouge_l['candidate_macro']:.3f}"
+            )
+            task_gate = (
+                "PASS"
+                if task_quality["gate"]["passed"]
+                else "FAIL: " + "; ".join(task_quality["gate"]["failures"])
+            )
+        else:
+            token_f1_cell = "n/a"
+            rouge_l_cell = "n/a"
+            task_gate = f"INELIGIBLE: {task_quality['reason']}"
         lines.append(
             f"| {aggregate['manifest_name']} | {aggregate['candidate']['label']} | "
-            f"{aggregate['case_count']} | {aggregate['request_count']} | "
+            f"{aggregate['max_tokens']} | {aggregate['case_count']} | "
+            f"{aggregate['request_count']} | "
             f"{aggregate['exact_request_rate']:.3f} | "
             f"{aggregate['stable_prefix_ratio_micro']:.3f} | "
             f"{aggregate['stable_prefix_ratios']['min']:.3f} | "
             f"{aggregate['physical_token_ratio']:.3f}x | "
             f"{aggregate['active_prompt_bytes_ratio']:.3f}x | "
+            f"{token_f1_cell} | {rouge_l_cell} | {task_gate} | "
             f"{span_audit['zero_kept_visual_spans']} | "
             f"{'yes' if span_audit['available'] else 'no'} |"
         )
@@ -547,17 +761,35 @@ def render_pruning_fidelity_markdown(summary: Mapping[str, Any]) -> str:
             "",
             "## Cases",
             "",
-            "| Case | Candidate | Requests | Stable prefixes | Prefix ratios | Exact | "
-            "Physical KV | Active bytes |",
-            "|---|---|---:|---|---|---:|---:|---:|",
+            "| Case | Candidate | Max tokens | Requests | Stable prefixes | "
+            "Prefix ratios | Exact | Physical KV | Active bytes | Token F1 B/C | "
+            "ROUGE-L B/C |",
+            "|---|---|---:|---:|---|---|---:|---:|---:|---:|---:|",
         ]
     )
     for row in summary["cases"]:
         ratios = ", ".join(f"{value:.3f}" for value in row["stable_prefix_ratios"])
+        task_quality = row["task_quality"]
+        if task_quality["available"]:
+            baseline_scores = task_quality["baseline_scores"]
+            candidate_scores = task_quality["candidate_scores"]
+            token_f1_cell = (
+                f"{fmean(float(score['token_f1']) for score in baseline_scores):.3f}/"
+                f"{fmean(float(score['token_f1']) for score in candidate_scores):.3f}"
+            )
+            rouge_l_cell = (
+                f"{fmean(float(score['rouge_l_f1']) for score in baseline_scores):.3f}/"
+                f"{fmean(float(score['rouge_l_f1']) for score in candidate_scores):.3f}"
+            )
+        else:
+            token_f1_cell = "n/a"
+            rouge_l_cell = "n/a"
         lines.append(
             f"| {row['case_id']} | {row['candidate']['label']} | "
-            f"{row['num_requests']} | {row['stable_prefix_tokens']} | [{ratios}] | "
+            f"{row['max_tokens']} | {row['num_requests']} | "
+            f"{row['stable_prefix_tokens']} | [{ratios}] | "
             f"{row['exact_request_rate']:.3f} | {row['physical_token_ratio']:.3f}x | "
-            f"{row['active_prompt_bytes_ratio']:.3f}x |"
+            f"{row['active_prompt_bytes_ratio']:.3f}x | "
+            f"{token_f1_cell} | {rouge_l_cell} |"
         )
     return "\n".join(lines) + "\n"

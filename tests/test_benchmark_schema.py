@@ -94,6 +94,9 @@ def _complete_record() -> dict[str, object]:
             "video_frame_count": 0,
             "max_tokens": 8,
             "preprocessing_included_in_e2e": True,
+            "output_decoding_included_in_e2e": False,
+            "reference_sources": {},
+            "task_references": [None],
         },
         "traffic": {
             "kind": "offline_closed_loop",
@@ -129,6 +132,8 @@ def _complete_record() -> dict[str, object]:
             "token_ids": [[785, 2168]],
             "output_tokens": 2,
             "output_sha256": canonical_json_sha256([[785, 2168]]),
+            "decoded_texts": ["hello world"],
+            "decoded_texts_sha256": canonical_json_sha256(["hello world"]),
         },
         "timing_ms": {
             "preprocessing": _stats(),
@@ -255,6 +260,28 @@ def test_real_workload_manifest_has_auditable_asset_identity() -> None:
         )
         for request in fidelity_requests
     )
+    reference_source = manifest["reference_sources"]["coco_captions_val2017"]
+    assert reference_source["content_sha256"] == (
+        "afe3b30e403dd7f228e2373023abbd60042a6e10ec6874d3652df034d289ebb9"
+    )
+    assert reference_source["mirror_revision"] == (
+        "50967f6f3616db2bf261e42b80377ab8cd8d4214"
+    )
+    assert all(
+        request["evaluation"]["task"] == "caption"
+        and len(request["evaluation"]["references"]) == 5
+        and len(
+            {
+                reference["annotation_id"]
+                for reference in request["evaluation"]["references"]
+            }
+        )
+        == 5
+        for request in fidelity_requests
+    )
+    assert {
+        request["evaluation"]["image_id"] for request in fidelity_requests
+    } == {39769, 37777, 87038, 174482, 252219, 397133, 403385}
     print("P6 real workload manifest contract: PASS")
 
 
@@ -660,3 +687,82 @@ def test_benchmark_record_rejects_inconsistent_offline_traffic() -> None:
     with pytest.raises(ValueError, match="must match workload.num_requests"):
         validate_benchmark_record(record)
     print("P6 benchmark offline-traffic consistency guard: PASS")
+
+
+def test_workload_manifest_rejects_unknown_reference_source() -> None:
+    manifest = load_workload_manifest(REAL_MANIFEST)
+    invalid = deepcopy(manifest)
+    invalid["cases"][0]["requests"][0]["evaluation"][
+        "reference_source"
+    ] = "missing"
+
+    with pytest.raises(ValueError, match="unknown source"):
+        validate_workload_manifest(invalid)
+    print("P6 task reference source guard: PASS")
+
+
+def test_workload_manifest_rejects_reference_task_mismatch() -> None:
+    manifest = load_workload_manifest(REAL_MANIFEST)
+    invalid = deepcopy(manifest)
+    invalid["reference_sources"]["coco_captions_val2017"]["task"] = (
+        "free_text_qa"
+    )
+
+    with pytest.raises(ValueError, match="does not match reference source"):
+        validate_workload_manifest(invalid)
+    print("P6 task/reference-source identity guard: PASS")
+
+
+def test_workload_manifest_rejects_reference_without_normalized_tokens() -> None:
+    manifest = load_workload_manifest(REAL_MANIFEST)
+    invalid = deepcopy(manifest)
+    invalid["cases"][0]["requests"][0]["evaluation"]["references"][0][
+        "text"
+    ] = "!!!"
+
+    with pytest.raises(ValueError, match="no normalized tokens"):
+        validate_workload_manifest(invalid)
+    print("P6 task reference normalized-token guard: PASS")
+
+
+def test_v4_benchmark_record_remains_backward_compatible() -> None:
+    record = _complete_record()
+    record["schema_version"] = 4
+    for key in (
+        "output_decoding_included_in_e2e",
+        "reference_sources",
+        "task_references",
+    ):
+        record["workload"].pop(key)
+    record["correctness"].pop("decoded_texts")
+    record["correctness"].pop("decoded_texts_sha256")
+
+    validate_benchmark_record(record)
+    print("P6 benchmark schema-v4 backward compatibility: PASS")
+
+
+def test_v5_benchmark_rejects_task_reference_count_mismatch() -> None:
+    record = _complete_record()
+    record["workload"]["task_references"] = []
+
+    with pytest.raises(ValueError, match="length must match"):
+        validate_benchmark_record(record)
+    print("P6 benchmark task-reference count guard: PASS")
+
+
+def test_v5_benchmark_rejects_output_decoding_inside_e2e() -> None:
+    record = _complete_record()
+    record["workload"]["output_decoding_included_in_e2e"] = True
+
+    with pytest.raises(ValueError, match="outside E2E timing"):
+        validate_benchmark_record(record)
+    print("P6 benchmark output-decoding timing guard: PASS")
+
+
+def test_v5_benchmark_rejects_decoded_text_hash_mismatch() -> None:
+    record = _complete_record()
+    record["correctness"]["decoded_texts_sha256"] = "0" * 64
+
+    with pytest.raises(ValueError, match="does not match decoded_texts"):
+        validate_benchmark_record(record)
+    print("P6 benchmark decoded-text hash guard: PASS")

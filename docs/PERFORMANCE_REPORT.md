@@ -90,12 +90,12 @@ PYTHONPATH=/data/Prism-Infer HF_HUB_OFFLINE=1 \
 
 `off_graph` 的 decode-step latency 低于 `off_eager`，但 TTFT 更高。`visual_prune` 和 `fp8_kv` 的慢路径根因尚未经过 profiler 归因；P6.2 之前不把现象直接归因到某个 kernel、同步点或 framework overhead。
 
-## 4. 当前限制与下一门禁
+## 4. P6.1 初始记录的限制与下一门禁
 
-- 当前记录为 dirty-worktree runner validation；提交后需要同命令 clean rerun。
+- 本节 P6.1 初始记录为 dirty-worktree runner validation；提交后需要同命令 clean rerun。
 - 只测了 synthetic single-image；manifest 其余 text/multi-image/video/mixed cases 尚未形成 P6 baseline 表。
 - 只测 8-token 输出；长 decode、长 visual context、batch/concurrency matrix 和 OOM boundary 尚未测量。
-- 没有真实任务 quality metric、teacher-forced logits/ppl 或稳定前缀矩阵。
+- 该初始记录当时没有真实任务 quality metric、teacher-forced logits/ppl 或稳定前缀矩阵；后续 reference-task evidence 见 5.19。
 - 没有外部 framework adapter 和公平对比结果。
 - 没有 GPU utilization、kernel count、CPU launch gap 或分模块 trace；这些属于 P6.2。
 
@@ -566,9 +566,9 @@ data/p6_system/p612b_video_attention_span_quality_20260715.jsonl
 
 固定真实集从单个 COCO 样例扩展为 7 张 COCO val2017 图片，
 按 `4+3` requests 分成两个 batch case。每个资产固定官方 URL、SHA256
-和尺寸。dataset summary 要求 schema-v4 physical KV、完整 candidate case
-coverage 和相同 model/execution config，并将 stable-prefix 、exact rate、KV ratio
-和 span starvation 聚合到同一记录。
+和尺寸。dataset summary 以 schema-v4+ physical KV、完整 candidate case
+coverage 和相同 model/execution config 汇总 stable-prefix、exact rate、KV ratio
+和 span starvation；schema-v5 reference-task evidence 见 5.19。
 
 quality preflight 使用 RTX 5090、bf16、CUDA Graph、greedy output32、keep=0.5、
 min keep=32、last 4 layers、warmup/repeat `1/1`。mixed-VL batch 显式关闭
@@ -585,9 +585,8 @@ prefix caching，实际开关已写入 benchmark model metadata。
 - uniform: `[3,6,6,10,18,19,6]`。
 
 这是 attention 相对 uniform 的 dataset-level greedy fidelity 改善，而不是 task
-accuracy PASS。attention 的最差 prefix 仍为 `7/32`，当前也没有 reference
-caption/answer。因此 P6.12 quality 继续 FAIL，下一步需要带 ground truth
-的任务集，并在其上比较跨 query/layer 或 grid-aware 候选。
+accuracy PASS。该段记录的是 reference 接入前的 fidelity-only preflight；随后
+schema-v5 多参考 caption 门禁已完成，结果与限制见 5.19。
 
 这些记录为 commit `225b289`、`git_dirty=true` validation，且 `1/1` 只用于
 quality preflight，不用于 TTFT/TPOT/throughput claim。
@@ -601,4 +600,45 @@ data/p6_system/p612b_coco_fidelity_batch_a_uniform_20260715.jsonl
 data/p6_system/p612b_coco_fidelity_batch_b_uniform_20260715.jsonl
 data/p6_system/p612b_coco_fidelity_strategy_summary_20260715.json
 data/p6_system/p612b_coco_fidelity_strategy_summary_20260715.md
+```
+
+### 5.19 P6.12-B Multi-reference Caption Quality Gate
+
+schema-v5 在 correctness 中保存每请求 decoded text/hash，在 workload 中保存
+COCO reference source 与 task identity；output decoding 明确发生在计时结束后。
+7 张固定 COCO val2017 图片各绑定 5 条 caption。token-F1 与 token-level
+ROUGE-L F1 分别在 5 条 reference 中取最高分，再对 7 个 requests 做 macro；
+candidate 相对 off baseline 的两项绝对下降都必须 `<=0.01`。
+
+| Strategy | Token-F1 B/C | Drop | ROUGE-L B/C | Drop | Gate |
+|---|---:|---:|---:|---:|:---:|
+| attention last4 | `0.321635/0.315285` | `0.006351` | `0.289116/0.276703` | `0.012413` | FAIL |
+| uniform | `0.321635/0.315486` | `0.006150` | `0.289116/0.252751` | `0.036365` | FAIL |
+
+attention 的 token-F1 drop 在阈值内，但 ROUGE-L drop 超出 `0.002413`，所以
+task gate FAIL。uniform 的 ROUGE-L drop 为 `0.036365`，退化更明显。结合
+5.18，attention 在 stable-prefix 和 ROUGE-L retention 上明显优于 uniform；但
+uniform candidate token-F1 略高于 attention，不能声称 attention 在所有 task
+metric 上支配 uniform。
+
+这是相对 off baseline 的 lexical quality preflight，不是 COCO 官方 CIDEr/SPICE。
+生成只到 32 tokens，而 prompt 多要求 detailed description、COCO references 较短，
+所以约 `0.3` 的绝对分数不应用作完整 caption 能力结论。固定 7-image suite 也不足
+以发布 `accuracy drop <1%` claim。
+
+本轮使用 RTX 5090、bf16、CUDA Graph、keep=0.5、min keep=32、last4、
+prefix cache off、warmup/repeat `1/1`。记录属于 commit `9e5db53`、
+`git_dirty=true` quality validation；output decoding 不进入 E2E，但该矩阵仍不
+支持 TTFT/TPOT/throughput claim。focused tests 为 `54 passed in 3.84s`，
+受影响回归为 `100 passed in 7.50s`。
+
+Raw evidence：
+
+```text
+data/p6_system/p612b_task_quality_batch_a_attention_20260715.jsonl
+data/p6_system/p612b_task_quality_batch_b_attention_20260715.jsonl
+data/p6_system/p612b_task_quality_batch_a_uniform_20260715.jsonl
+data/p6_system/p612b_task_quality_batch_b_uniform_20260715.jsonl
+data/p6_system/p612b_task_quality_strategy_summary_20260715.json
+data/p6_system/p612b_task_quality_strategy_summary_20260715.md
 ```

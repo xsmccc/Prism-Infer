@@ -14,6 +14,33 @@
             "sha256": "dea9e7ef97386345f7cff32f9055da4982da5471c48d575146c796ab4563b04e",
             "width": 640,
             "height": 480
+          },
+          "evaluation": {
+            "task": "caption",
+            "reference_source": "coco_captions_val2017",
+            "image_id": 39769,
+            "references": [
+              {
+                "annotation_id": 531790,
+                "text": "A couple of cats laying on top of a pink blanket."
+              },
+              {
+                "annotation_id": 536074,
+                "text": "There are two cats laying down with two remotes"
+              },
+              {
+                "annotation_id": 545122,
+                "text": "Two cats sleeping with a remote control near each of them."
+              },
+              {
+                "annotation_id": 547444,
+                "text": " two cats lying near two remotes on a purple sheets"
+              },
+              {
+                "annotation_id": 547942,
+                "text": "Two cats asleep on a sofa with a blanket on it."
+              }
+            ]
           }
         }
       ]
@@ -30,6 +57,33 @@
             "sha256": "dea9e7ef97386345f7cff32f9055da4982da5471c48d575146c796ab4563b04e",
             "width": 640,
             "height": 480
+          },
+          "evaluation": {
+            "task": "caption",
+            "reference_source": "coco_captions_val2017",
+            "image_id": 39769,
+            "references": [
+              {
+                "annotation_id": 531790,
+                "text": "A couple of cats laying on top of a pink blanket."
+              },
+              {
+                "annotation_id": 536074,
+                "text": "There are two cats laying down with two remotes"
+              },
+              {
+                "annotation_id": 545122,
+                "text": "Two cats sleeping with a remote control near each of them."
+              },
+              {
+                "annotation_id": 547444,
+                "text": " two cats lying near two remotes on a purple sheets"
+              },
+              {
+                "annotation_id": 547942,
+                "text": "Two cats asleep on a sofa with a blanket on it."
+              }
+            ]
           }
         },
         {
@@ -41,6 +95,33 @@
             "sha256": "fe513b68ba46bc146114c469fdff52c288226073f03d73d3300d4fa739937369",
             "width": 352,
             "height": 230
+          },
+          "evaluation": {
+            "task": "caption",
+            "reference_source": "coco_captions_val2017",
+            "image_id": 37777,
+            "references": [
+              {
+                "annotation_id": 597185,
+                "text": "The dining table near the kitchen has a bowl of fruit on it."
+              },
+              {
+                "annotation_id": 598568,
+                "text": "A small kitchen has various appliances and a table."
+              },
+              {
+                "annotation_id": 599939,
+                "text": "The kitchen is clean and ready for us to see."
+              },
+              {
+                "annotation_id": 601877,
+                "text": "A kitchen and dining area decorated in white."
+              },
+              {
+                "annotation_id": 603617,
+                "text": "A kitchen that has a bowl of fruit on the table."
+              }
+            ]
           }
         },
         {
@@ -52,6 +133,33 @@
             "sha256": "c6cfc7e454a432c31ac3c3a997d5f33ccebe120fc6b9465965609ce12995ede9",
             "width": 640,
             "height": 480
+          },
+          "evaluation": {
+            "task": "caption",
+            "reference_source": "coco_captions_val2017",
+            "image_id": 87038,
+            "references": [
+              {
+                "annotation_id": 647151,
+                "text": "A person on a skateboard and bike at a skate park."
+              },
+              {
+                "annotation_id": 653244,
+                "text": "A man on a skateboard performs a trick at the skate park"
+              },
+              {
+                "annotation_id": 653436,
+                "text": "A skateboarder jumps into the air as he performs a skateboard trick."
+              },
+              {
+                "annotation_id": 654318,
+                "text": "Athletes performing tricks on a BMX bicycle and a skateboard."
+              },
+              {
+                "annotation_id": 654543,
+                "text": "a man falls off his skateboard in a skate park."
+              }
+            ]
           }
         },
         {
@@ -63,6 +171,33 @@
             "sha256": "41fab00aad97dad3eb7d035420b8cc61ed0ca8f4f0b66a4fbc1bd0bba6f8a5b3",
             "width": 640,
             "height": 388
+          },
+          "evaluation": {
+            "task": "caption",
+            "reference_source": "coco_captions_val2017",
+            "image_id": 174482,
+            "references": [
+              {
+                "annotation_id": 429740,
+                "text": "a blue bike parked on a side walk "
+              },
+              {
+                "annotation_id": 430565,
+                "text": "A bicycle is chained to a fixture on a city street"
+              },
+              {
+                "annotation_id": 430589,
+                "text": "A blue bicycle sits on a sidewalk near a street."
+              },
+              {
+                "annotation_id": 431771,
+                "text": "A bicycle is locked up to a post"
+              },
+              {
+                "annotation_id": 435809,
+                "text": "a bike sits parked next to a street "
+              }
+            ]
           }
         }
       ]
@@ -79,6 +214,33 @@
             "sha256": "1cf48bddb1bcab80d9f4d18514ae438c3e4f57d18e80c4fbea9d5d22396f514a",
             "width": 640,
             "height": 428
+          },
+          "evaluation": {
+            "task": "caption",
+            "reference_source": "coco_captions_val2017",
+            "image_id": 252219,
+            "references": [
+              {
+                "annotation_id": 107395,
+                "text": "a person with a shopping cart on a city street "
+              },
+              {
+                "annotation_id": 109132,
+                "text": "City dwellers walk by as a homeless man begs for cash."
+              },
+              {
+                "annotation_id": 111433,
+                "text": "People walking past a homeless man begging on a city street"
+              },
+              {
+                "annotation_id": 114199,
+                "text": "a homeless man holding a cup and standing next to a shopping cart on a street"
+              },
+              {
+                "annotation_id": 114511,
+                "text": "People are walking on the street by a homeless person."
+              }
+            ]
           }
         },
         {
@@ -90,6 +252,33 @@
             "sha256": "09e1d25c75f7879bdaa69c327fece5cabacd53939c8c2ef9e87f1c97a2e478c4",
             "width": 640,
             "height": 427
+          },
+          "evaluation": {
+            "task": "caption",
+            "reference_source": "coco_captions_val2017",
+            "image_id": 397133,
+            "references": [
+              {
+                "annotation_id": 370509,
+                "text": "A man is in a kitchen making pizzas."
+              },
+              {
+                "annotation_id": 370584,
+                "text": "Man in apron standing on front of oven with pans and bakeware"
+              },
+              {
+                "annotation_id": 372252,
+                "text": "A baker is working in the kitchen rolling dough."
+              },
+              {
+                "annotation_id": 372765,
+                "text": "A person standing by a stove in a kitchen."
+              },
+              {
+                "annotation_id": 375891,
+                "text": "A table with pies being made and a person standing near a wall with pots and pans hanging on the wall."
+              }
+            ]
           }
         },
         {
@@ -101,9 +290,48 @@
             "sha256": "11632ed3fb470d62f7fe5f0445c4f10ec91225c4a820c95d1c3946af9426d4c7",
             "width": 640,
             "height": 511
+          },
+          "evaluation": {
+            "task": "caption",
+            "reference_source": "coco_captions_val2017",
+            "image_id": 403385,
+            "references": [
+              {
+                "annotation_id": 501985,
+                "text": "A bathroom that has a broken wall in the shower."
+              },
+              {
+                "annotation_id": 507367,
+                "text": "A bathroom looks clean but is missing tile at the shower stall."
+              },
+              {
+                "annotation_id": 508369,
+                "text": "A view of a bathroom that needs to be fixed up."
+              },
+              {
+                "annotation_id": 510313,
+                "text": "a shower toilet and sink in a basement bathroom"
+              },
+              {
+                "annotation_id": 510664,
+                "text": "A very big whit rest room with a shabby looking shower."
+              }
+            ]
           }
         }
       ]
     }
-  ]
+  ],
+  "reference_sources": {
+    "coco_captions_val2017": {
+      "dataset": "COCO 2017",
+      "split": "val2017",
+      "task": "caption",
+      "source_url": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
+      "annotation_file": "annotations/captions_val2017.json",
+      "content_sha256": "afe3b30e403dd7f228e2373023abbd60042a6e10ec6874d3652df034d289ebb9",
+      "mirror_url": "https://huggingface.co/OpenGVLab/MM-Interleaved/resolve/50967f6f3616db2bf261e42b80377ab8cd8d4214/assets/datasets/coco/annotations/captions_val2017.json",
+      "mirror_revision": "50967f6f3616db2bf261e42b80377ab8cd8d4214"
+    }
+  }
 }

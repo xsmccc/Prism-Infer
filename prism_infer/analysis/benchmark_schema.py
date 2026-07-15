@@ -14,9 +14,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from prism_infer.analysis.reference_quality import normalize_reference_text
 
-BENCHMARK_SCHEMA_VERSION = 4
-SUPPORTED_BENCHMARK_SCHEMA_VERSIONS = (1, 2, 3, 4)
+
+BENCHMARK_SCHEMA_VERSION = 5
+SUPPORTED_BENCHMARK_SCHEMA_VERSIONS = (1, 2, 3, 4, 5)
 WORKLOAD_SCHEMA_VERSION = 1
 STAT_KEYS = ("count", "median", "p90", "p99", "min", "max")
 
@@ -160,6 +162,78 @@ def _validate_file_image(spec: Mapping[str, Any], path: str) -> None:
     _require_int(spec, "height", path, minimum=1)
 
 
+def _validate_reference_sources(manifest: Mapping[str, Any]) -> set[str]:
+    """校验可复现的任务 reference 来源，并返回 source id 集合。"""
+
+    raw_sources = manifest.get("reference_sources", {})
+    if not isinstance(raw_sources, Mapping):
+        raise ValueError("manifest.reference_sources must be an object")
+    source_ids: set[str] = set()
+    for source_id, source in raw_sources.items():
+        path = f"manifest.reference_sources.{source_id}"
+        if not isinstance(source_id, str) or not source_id:
+            raise ValueError("manifest reference source ids must be non-empty strings")
+        if not isinstance(source, Mapping):
+            raise ValueError(f"{path} must be an object")
+        for key in (
+            "dataset",
+            "split",
+            "task",
+            "source_url",
+            "annotation_file",
+            "mirror_url",
+            "mirror_revision",
+        ):
+            _require_string(source, key, path)
+        _require_sha256(source, "content_sha256", path)
+        source_ids.add(source_id)
+    return source_ids
+
+
+def _validate_task_reference(
+    evaluation: Mapping[str, Any],
+    path: str,
+    *,
+    source_ids: set[str] | None = None,
+    source_tasks: Mapping[str, str] | None = None,
+) -> None:
+    """校验一条 caption/free-text 多参考任务定义。"""
+
+    task = _require_string(evaluation, "task", path)
+    if task not in ("caption", "free_text_qa"):
+        raise ValueError(f"{path}.task must be 'caption' or 'free_text_qa'")
+    source_id = _require_string(evaluation, "reference_source", path)
+    if source_ids is not None and source_id not in source_ids:
+        raise ValueError(
+            f"{path}.reference_source references unknown source {source_id!r}"
+        )
+    if source_tasks is not None and source_tasks.get(source_id) != task:
+        raise ValueError(
+            f"{path}.task does not match reference source {source_id!r}"
+        )
+    _require_int(evaluation, "image_id", path, minimum=1)
+    references = _require_list(evaluation, "references", path)
+    if not references:
+        raise ValueError(f"{path}.references must not be empty")
+    annotation_ids: set[int] = set()
+    for reference_index, reference in enumerate(references):
+        reference_path = f"{path}.references[{reference_index}]"
+        if not isinstance(reference, Mapping):
+            raise ValueError(f"{reference_path} must be an object")
+        annotation_id = _require_int(
+            reference,
+            "annotation_id",
+            reference_path,
+            minimum=1,
+        )
+        if annotation_id in annotation_ids:
+            raise ValueError(f"{path} has duplicate annotation_id {annotation_id}")
+        annotation_ids.add(annotation_id)
+        text = _require_string(reference, "text", reference_path)
+        if not normalize_reference_text(text):
+            raise ValueError(f"{reference_path}.text has no normalized tokens")
+
+
 def validate_workload_manifest(manifest: Mapping[str, Any]) -> None:
     """校验 deterministic synthetic/固定真实 workload manifest contract。"""
 
@@ -169,6 +243,11 @@ def validate_workload_manifest(manifest: Mapping[str, Any]) -> None:
             f"{manifest.get('schema_version')!r}"
         )
     _require_string(manifest, "name", "manifest")
+    reference_source_ids = _validate_reference_sources(manifest)
+    reference_source_tasks = {
+        source_id: str(source["task"])
+        for source_id, source in manifest.get("reference_sources", {}).items()
+    }
     cases = _require_list(manifest, "cases", "manifest")
     if not cases:
         raise ValueError("manifest.cases must not be empty")
@@ -192,6 +271,16 @@ def validate_workload_manifest(manifest: Mapping[str, Any]) -> None:
                 raise ValueError(f"{request_path} must be an object")
             request_type = _require_string(request, "type", request_path)
             _require_string(request, "prompt", request_path)
+            evaluation = request.get("evaluation")
+            if evaluation is not None:
+                if not isinstance(evaluation, Mapping):
+                    raise ValueError(f"{request_path}.evaluation must be an object")
+                _validate_task_reference(
+                    evaluation,
+                    f"{request_path}.evaluation",
+                    source_ids=reference_source_ids,
+                    source_tasks=reference_source_tasks,
+                )
             if request_type == "text":
                 continue
             if request_type == "image":
@@ -388,6 +477,66 @@ def validate_benchmark_record(record: Mapping[str, Any]) -> None:
         "preprocessing_included_in_e2e",
         "record.workload",
     )
+    if schema_version >= 5:
+        if _require_bool(
+            workload,
+            "output_decoding_included_in_e2e",
+            "record.workload",
+        ):
+            raise ValueError(
+                "schema-v5 benchmark output decoding must remain outside E2E timing"
+            )
+        reference_sources = _require_mapping(
+            workload,
+            "reference_sources",
+            "record.workload",
+        )
+        reference_source_ids = set(reference_sources)
+        for source_id, source in reference_sources.items():
+            path = f"record.workload.reference_sources.{source_id}"
+            if not isinstance(source_id, str) or not source_id:
+                raise ValueError(
+                    "record.workload reference source ids must be non-empty strings"
+                )
+            if not isinstance(source, Mapping):
+                raise ValueError(f"{path} must be an object")
+            for key in (
+                "dataset",
+                "split",
+                "task",
+                "source_url",
+                "annotation_file",
+                "mirror_url",
+                "mirror_revision",
+            ):
+                _require_string(source, key, path)
+            _require_sha256(source, "content_sha256", path)
+        reference_source_tasks = {
+            source_id: str(source["task"])
+            for source_id, source in reference_sources.items()
+        }
+        task_references = _require_list(
+            workload,
+            "task_references",
+            "record.workload",
+        )
+        if len(task_references) != num_requests:
+            raise ValueError(
+                "record.workload.task_references length must match "
+                "workload.num_requests"
+            )
+        for request_index, task_reference in enumerate(task_references):
+            if task_reference is None:
+                continue
+            path = f"record.workload.task_references[{request_index}]"
+            if not isinstance(task_reference, Mapping):
+                raise ValueError(f"{path} must be an object or null")
+            _validate_task_reference(
+                task_reference,
+                path,
+                source_ids=reference_source_ids,
+                source_tasks=reference_source_tasks,
+            )
 
     traffic = _require_mapping(record, "traffic", "record")
     if _require_string(traffic, "kind", "record.traffic") != "offline_closed_loop":
@@ -628,6 +777,27 @@ def validate_benchmark_record(record: Mapping[str, Any]) -> None:
     )
     if output_sha256 != canonical_json_sha256(token_ids):
         raise ValueError("record.correctness.output_sha256 does not match token_ids")
+    if schema_version >= 5:
+        decoded_texts = _require_list(
+            correctness,
+            "decoded_texts",
+            "record.correctness",
+        )
+        if len(decoded_texts) != num_requests or not all(
+            isinstance(text, str) for text in decoded_texts
+        ):
+            raise ValueError(
+                "record.correctness.decoded_texts must contain one string per request"
+            )
+        decoded_texts_sha256 = _require_sha256(
+            correctness,
+            "decoded_texts_sha256",
+            "record.correctness",
+        )
+        if decoded_texts_sha256 != canonical_json_sha256(decoded_texts):
+            raise ValueError(
+                "record.correctness.decoded_texts_sha256 does not match decoded_texts"
+            )
 
     timing = _require_mapping(record, "timing_ms", "record")
     for key in (

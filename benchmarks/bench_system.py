@@ -138,6 +138,7 @@ class IterationResult:
     """一次 deterministic workload 执行的原始测量。"""
 
     token_ids: list[list[int]]
+    decoded_texts: list[str]
     preprocessing_ms: float
     ttft_ms: float
     prefill_step_ms: list[float]
@@ -481,6 +482,15 @@ def _run_iteration(
         )
 
     ordered_outputs = [outputs[seq_id] for seq_id in seq_ids]
+    # 解码不计入 engine/E2E timing，只为 schema-v5 reference task 评估留证。
+    decoded_texts = [
+        llm.tokenizer.decode(
+            token_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
+        for token_ids in ordered_outputs
+    ]
     engine_ms = sum(prefill_step_ms) + sum(decode_step_ms)
     end_to_end_ms = preprocessing_ms + engine_ms
     output_tokens = sum(len(tokens) for tokens in ordered_outputs)
@@ -489,6 +499,7 @@ def _run_iteration(
     prompt_tokens, image_tokens, video_tokens = token_counts
     return IterationResult(
         token_ids=ordered_outputs,
+        decoded_texts=decoded_texts,
         preprocessing_ms=preprocessing_ms,
         ttft_ms=sum(prefill_step_ms),
         prefill_step_ms=prefill_step_ms,
@@ -559,7 +570,10 @@ def _build_record(
 
     first = results[0]
     outputs_identical = all(result.token_ids == first.token_ids for result in results)
-    if not outputs_identical:
+    decoded_texts_identical = all(
+        result.decoded_texts == first.decoded_texts for result in results
+    )
+    if not outputs_identical or not decoded_texts_identical:
         raise RuntimeError(
             f"deterministic greedy outputs changed across {len(results)} repeats"
         )
@@ -654,6 +668,11 @@ def _build_record(
             "video_frame_count": video_frame_count,
             "max_tokens": args.max_tokens,
             "preprocessing_included_in_e2e": True,
+            "output_decoding_included_in_e2e": False,
+            "reference_sources": deepcopy(manifest.get("reference_sources", {})),
+            "task_references": [
+                deepcopy(request.get("evaluation")) for request in case["requests"]
+            ],
         },
         "traffic": {
             "kind": "offline_closed_loop",
@@ -693,6 +712,8 @@ def _build_record(
             "token_ids": first.token_ids,
             "output_tokens": output_tokens,
             "output_sha256": canonical_json_sha256(first.token_ids),
+            "decoded_texts": first.decoded_texts,
+            "decoded_texts_sha256": canonical_json_sha256(first.decoded_texts),
         },
         "timing_ms": {
             "preprocessing": summarize_values(

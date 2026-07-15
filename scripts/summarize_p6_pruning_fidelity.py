@@ -33,6 +33,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("inputs", nargs="+", help="P6 system benchmark JSONL files")
     parser.add_argument("--baseline-mode", default="off_graph")
+    parser.add_argument(
+        "--max-task-quality-drop",
+        type=float,
+        default=0.01,
+        help="maximum absolute macro token-F1/ROUGE-L drop versus baseline",
+    )
     parser.add_argument("--cases", help="comma-separated case allowlist")
     parser.add_argument("--strategies", help="comma-separated candidate strategy allowlist")
     parser.add_argument("--json-output")
@@ -68,6 +74,7 @@ def main() -> None:
     summary = summarize_pruning_fidelity_records(
         records,
         baseline_mode=args.baseline_mode,
+        max_task_quality_drop=args.max_task_quality_drop,
     )
     json_payload = json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     markdown = render_pruning_fidelity_markdown(summary)
