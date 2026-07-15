@@ -561,3 +561,44 @@ data/p6_system/p612b_video_attention_span_quality_20260715.jsonl
 这个结果拒绝了“只要平衡 span 预算就能改善质量”的假设。P6.12-B
 下一步应将候选与更大固定数据集一起设计，考察 grid coverage、跨 query/layer
 聚合或非等额动态预算；当前 quality 继续 FAIL，也没有新的性能收益 claim。
+
+### 5.18 P6.12-B Seven-image Fidelity Matrix
+
+固定真实集从单个 COCO 样例扩展为 7 张 COCO val2017 图片，
+按 `4+3` requests 分成两个 batch case。每个资产固定官方 URL、SHA256
+和尺寸。dataset summary 要求 schema-v4 physical KV、完整 candidate case
+coverage 和相同 model/execution config，并将 stable-prefix 、exact rate、KV ratio
+和 span starvation 聚合到同一记录。
+
+quality preflight 使用 RTX 5090、bf16、CUDA Graph、greedy output32、keep=0.5、
+min keep=32、last 4 layers、warmup/repeat `1/1`。mixed-VL batch 显式关闭
+prefix caching，实际开关已写入 benchmark model metadata。
+
+| Strategy | Exact requests | Prefix micro | Median | Min | Physical KV | Active bytes | Zero spans |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| attention last4 | `3/7` | `0.696` | `0.875` | `0.219` | `0.535x` | `0.538x` | `0/7` |
+| uniform | `0/7` | `0.304` | `0.188` | `0.094` | `0.535x` | `0.538x` | `0/7` |
+
+单请求 prefix 为：
+
+- attention: `[7,11,32,28,14,32,32]`。
+- uniform: `[3,6,6,10,18,19,6]`。
+
+这是 attention 相对 uniform 的 dataset-level greedy fidelity 改善，而不是 task
+accuracy PASS。attention 的最差 prefix 仍为 `7/32`，当前也没有 reference
+caption/answer。因此 P6.12 quality 继续 FAIL，下一步需要带 ground truth
+的任务集，并在其上比较跨 query/layer 或 grid-aware 候选。
+
+这些记录为 commit `225b289`、`git_dirty=true` validation，且 `1/1` 只用于
+quality preflight，不用于 TTFT/TPOT/throughput claim。
+
+Raw evidence：
+
+```text
+data/p6_system/p612b_coco_fidelity_batch_a_attention_20260715.jsonl
+data/p6_system/p612b_coco_fidelity_batch_b_attention_20260715.jsonl
+data/p6_system/p612b_coco_fidelity_batch_a_uniform_20260715.jsonl
+data/p6_system/p612b_coco_fidelity_batch_b_uniform_20260715.jsonl
+data/p6_system/p612b_coco_fidelity_strategy_summary_20260715.json
+data/p6_system/p612b_coco_fidelity_strategy_summary_20260715.md
+```

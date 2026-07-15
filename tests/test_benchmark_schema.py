@@ -64,6 +64,7 @@ def _complete_record() -> dict[str, object]:
             "kvcache_block_size": 256,
             "num_kvcache_blocks": 16,
             "gpu_memory_utilization": 0.9,
+            "prefix_caching_enabled": False,
         },
         "mode": {
             "name": "off_eager",
@@ -216,16 +217,44 @@ def test_default_workload_manifest_is_valid_and_unique() -> None:
 
 def test_real_workload_manifest_has_auditable_asset_identity() -> None:
     manifest = load_workload_manifest(REAL_MANIFEST)
+    cases = {case["id"]: case for case in manifest["cases"]}
     request = manifest["cases"][0]["requests"][0]
     image = request["image"]
+    fidelity_requests = [
+        request
+        for case_id in ("coco_fidelity_batch_a", "coco_fidelity_batch_b")
+        for request in cases[case_id]["requests"]
+    ]
 
     print(f"P6 real workload image metadata: {image}")
+    print(
+        "P6.12 fidelity asset ids: "
+        f"{[request['image']['path'] for request in fidelity_requests]}"
+    )
     assert request["type"] == "image_file"
     assert image["path"] == "data/p6_real_samples/000000039769.jpg"
     assert image["sha256"] == (
         "dea9e7ef97386345f7cff32f9055da4982da5471c48d575146c796ab4563b04e"
     )
     assert (image["width"], image["height"]) == (640, 480)
+    assert len(fidelity_requests) == 7
+    assert {
+        request["image"]["path"] for request in fidelity_requests
+    } == {
+        "data/p6_real_samples/000000039769.jpg",
+        "data/p6_real_samples/000000037777.jpg",
+        "data/p6_real_samples/000000087038.jpg",
+        "data/p6_real_samples/000000174482.jpg",
+        "data/p6_real_samples/000000252219.jpg",
+        "data/p6_real_samples/000000397133.jpg",
+        "data/p6_real_samples/000000403385.jpg",
+    }
+    assert all(
+        request["image"]["source_url"].startswith(
+            "http://images.cocodataset.org/val2017/"
+        )
+        for request in fidelity_requests
+    )
     print("P6 real workload manifest contract: PASS")
 
 
@@ -257,6 +286,50 @@ def test_real_workload_materialization_checks_file_identity() -> None:
     with pytest.raises(ValueError, match="SHA256 mismatch"):
         _materialize_requests(invalid_case)
     print("P6 real workload file identity: PASS")
+
+
+def test_real_fidelity_batches_materialize_all_fixed_assets() -> None:
+    manifest = load_workload_manifest(REAL_MANIFEST)
+    cases = {case["id"]: case for case in manifest["cases"]}
+    fidelity_cases = [
+        cases["coco_fidelity_batch_a"],
+        cases["coco_fidelity_batch_b"],
+    ]
+    asset_paths = [
+        REPO_ROOT / request["image"]["path"]
+        for case in fidelity_cases
+        for request in case["requests"]
+    ]
+    if not all(path.is_file() for path in asset_paths):
+        pytest.skip("run scripts/download_p6_real_samples.sh to install fidelity assets")
+
+    materialized_batches = [
+        _materialize_requests(case) for case in fidelity_cases
+    ]
+    sizes = [
+        request["image"].size
+        for batch in materialized_batches
+        for request in batch
+    ]
+
+    print(f"P6.12 real fidelity image sizes: {sizes}")
+    assert [len(batch) for batch in materialized_batches] == [4, 3]
+    assert sizes == [
+        (640, 480),
+        (352, 230),
+        (640, 480),
+        (640, 388),
+        (640, 428),
+        (640, 427),
+        (640, 511),
+    ]
+    assert all(
+        request["type"] == "image"
+        and request["image"].mode == "RGB"
+        for batch in materialized_batches
+        for request in batch
+    )
+    print("P6.12 real fidelity asset materialization: PASS")
 
 
 def test_real_workload_manifest_rejects_missing_asset_hash() -> None:
@@ -560,6 +633,15 @@ def test_benchmark_record_rejects_output_hash_mismatch() -> None:
     with pytest.raises(ValueError, match="does not match token_ids"):
         validate_benchmark_record(record)
     print("P6 benchmark output-hash guard: PASS")
+
+
+def test_benchmark_record_rejects_invalid_prefix_cache_flag() -> None:
+    record = _complete_record()
+    record["model"]["prefix_caching_enabled"] = "false"
+
+    with pytest.raises(ValueError, match="prefix_caching_enabled must be a bool"):
+        validate_benchmark_record(record)
+    print("P6 benchmark prefix-cache metadata guard: PASS")
 
 
 def test_benchmark_record_rejects_invalid_stat_order() -> None:

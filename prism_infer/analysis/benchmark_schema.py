@@ -316,6 +316,8 @@ def validate_benchmark_record(record: Mapping[str, Any]) -> None:
     ):
         _require_int(model, key, "record.model", minimum=1)
     _require_number(model, "gpu_memory_utilization", "record.model")
+    if "prefix_caching_enabled" in model:
+        _require_bool(model, "prefix_caching_enabled", "record.model")
 
     mode = _require_mapping(record, "mode", "record")
     for key in (

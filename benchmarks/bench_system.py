@@ -623,6 +623,7 @@ def _build_record(
             "kvcache_block_size": config.kvcache_block_size,
             "num_kvcache_blocks": config.num_kvcache_blocks,
             "gpu_memory_utilization": config.gpu_memory_utilization,
+            "prefix_caching_enabled": config.enable_prefix_caching,
         },
         "mode": {
             "name": mode.name,
@@ -1002,6 +1003,13 @@ def main() -> None:
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     parser.add_argument("--num-kvcache-blocks", type=int, default=16)
     parser.add_argument("--kvcache-block-size", type=int, default=256)
+    parser.add_argument(
+        "--disable-prefix-caching",
+        action="store_false",
+        dest="enable_prefix_caching",
+        help="disable full-block prefix reuse for mixed-VL fidelity batches",
+    )
+    parser.set_defaults(enable_prefix_caching=True)
     parser.add_argument(
         "--decode-compile-mode",
         choices=("default", "reduce-overhead"),

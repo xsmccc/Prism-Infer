@@ -17,6 +17,93 @@
           }
         }
       ]
+    },
+    {
+      "id": "coco_fidelity_batch_a",
+      "requests": [
+        {
+          "type": "image_file",
+          "prompt": "Describe this image in detail.",
+          "image": {
+            "path": "data/p6_real_samples/000000039769.jpg",
+            "source_url": "http://images.cocodataset.org/val2017/000000039769.jpg",
+            "sha256": "dea9e7ef97386345f7cff32f9055da4982da5471c48d575146c796ab4563b04e",
+            "width": 640,
+            "height": 480
+          }
+        },
+        {
+          "type": "image_file",
+          "prompt": "Describe the room and the prominent objects.",
+          "image": {
+            "path": "data/p6_real_samples/000000037777.jpg",
+            "source_url": "http://images.cocodataset.org/val2017/000000037777.jpg",
+            "sha256": "fe513b68ba46bc146114c469fdff52c288226073f03d73d3300d4fa739937369",
+            "width": 352,
+            "height": 230
+          }
+        },
+        {
+          "type": "image_file",
+          "prompt": "Describe the actions and setting in this image.",
+          "image": {
+            "path": "data/p6_real_samples/000000087038.jpg",
+            "source_url": "http://images.cocodataset.org/val2017/000000087038.jpg",
+            "sha256": "c6cfc7e454a432c31ac3c3a997d5f33ccebe120fc6b9465965609ce12995ede9",
+            "width": 640,
+            "height": 480
+          }
+        },
+        {
+          "type": "image_file",
+          "prompt": "Describe the main object and its surroundings.",
+          "image": {
+            "path": "data/p6_real_samples/000000174482.jpg",
+            "source_url": "http://images.cocodataset.org/val2017/000000174482.jpg",
+            "sha256": "41fab00aad97dad3eb7d035420b8cc61ed0ca8f4f0b66a4fbc1bd0bba6f8a5b3",
+            "width": 640,
+            "height": 388
+          }
+        }
+      ]
+    },
+    {
+      "id": "coco_fidelity_batch_b",
+      "requests": [
+        {
+          "type": "image_file",
+          "prompt": "Describe the people, objects, and street scene.",
+          "image": {
+            "path": "data/p6_real_samples/000000252219.jpg",
+            "source_url": "http://images.cocodataset.org/val2017/000000252219.jpg",
+            "sha256": "1cf48bddb1bcab80d9f4d18514ae438c3e4f57d18e80c4fbea9d5d22396f514a",
+            "width": 640,
+            "height": 428
+          }
+        },
+        {
+          "type": "image_file",
+          "prompt": "Describe the people and objects in this kitchen.",
+          "image": {
+            "path": "data/p6_real_samples/000000397133.jpg",
+            "source_url": "http://images.cocodataset.org/val2017/000000397133.jpg",
+            "sha256": "09e1d25c75f7879bdaa69c327fece5cabacd53939c8c2ef9e87f1c97a2e478c4",
+            "width": 640,
+            "height": 427
+          }
+        },
+        {
+          "type": "image_file",
+          "prompt": "Describe the room, including its fixtures and condition.",
+          "image": {
+            "path": "data/p6_real_samples/000000403385.jpg",
+            "source_url": "http://images.cocodataset.org/val2017/000000403385.jpg",
+            "sha256": "11632ed3fb470d62f7fe5f0445c4f10ec91225c4a820c95d1c3946af9426d4c7",
+            "width": 640,
+            "height": 511
+          }
+        }
+      ]
     }
   ]
 }

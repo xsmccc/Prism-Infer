@@ -2634,9 +2634,107 @@ data/p6_system/p612b_multi_image_attention_span_quality_20260715.jsonl
 data/p6_system/p612b_video_attention_span_quality_20260715.jsonl
 ```
 
-P6.12-B 仍为进行中，quality 继续 FAIL。本轮最终代码只新增 decision
-审计字段，没有改变 scorer、selection、compaction 或 decode 执行路径，
-所以未重跑 full model regression。
+P6.12-B 仍为进行中，quality 继续 FAIL。该 rejected-ablation 提交只新增
+decision 审计字段，没有改变 scorer、selection、compaction 或 decode
+执行路径，所以当时未重跑 full model regression。
+
+### P6.12-B Dataset-level Pruning Fidelity Harness
+
+目标是将 P6.12-A 的三个单点 prefix 数字升级为可复现的 dataset
+fidelity 汇总，但不把“接近未压缩输出”写成“任务答案正确”。
+
+实现 contract：
+
+- `prism_infer.analysis.pruning_fidelity` 只读取已通过 benchmark schema
+  校验的 JSONL，不执行模型。
+- baseline/candidate 必须同 manifest、case、request count、output length、
+  model config 和 execution backend；不可比字段显式失败。
+- 只接受带 physical prompt tokens/bytes/layouts 的 schema-v4 证据。
+- 同一 candidate 必须覆盖所有已选 baseline case；缺 case、重复
+  baseline/candidate cell 显式失败。
+- 汇总 exact request/case rate、stable-prefix token/ratio distribution、micro
+  prefix ratio、physical-token ratio、active-byte ratio 和 span starvation。
+- `kept_visual_tokens_by_span` 下沉到通用 `PruningDecision.to_record()`，
+  uniform/score/attention 共用同一审计 schema。
+
+固定输入：
+
+- `p6_real_samples.json` 从 1 张扩展到 7 张 COCO val2017 图片，
+  包含室内、运动、街景、单一主体和多人场景。
+- 两个 case 分别为 `coco_fidelity_batch_a` 4 requests 和
+  `coco_fidelity_batch_b` 3 requests。
+- 每张图片保存 COCO 官方 URL、SHA256、width/height；下载脚本
+  先校验全部 temporary files，再替换最终资产。
+
+资产与 focused verification（2026-07-15）：
+
+```bash
+cd /data/Prism-Infer
+scripts/download_p6_real_samples.sh
+.venv-local/bin/python -m pytest -q \
+  tests/test_visual_pruning.py \
+  tests/test_compression_off.py \
+  tests/test_pruning_fidelity.py \
+  tests/test_benchmark_schema.py -s
+# 65 passed in 4.02s
+```
+
+受影响扩大回归另外加入 `tests/test_visual_pruning_active.py`、
+`tests/test_model_runner_vl_prefill.py`、
+`tests/test_model_runner_vl_mixed_prefill.py`、
+`tests/test_model_runner_context_reset.py` 和 `tests/test_pareto_summary.py`：
+
+```text
+82 passed in 7.23s
+active pruning independent-reference max diff: 0.000000e+00
+keep-all off equivalence max diff: 0.000000e+00
+mixed text/image/video prefill/decode: PASS
+```
+
+汇总 CLI：
+
+```bash
+.venv-local/bin/python scripts/summarize_p6_pruning_fidelity.py \
+  data/p6_system/p612b_coco_fidelity_batch_a_attention_20260715.jsonl \
+  data/p6_system/p612b_coco_fidelity_batch_b_attention_20260715.jsonl \
+  data/p6_system/p612b_coco_fidelity_batch_a_uniform_20260715.jsonl \
+  data/p6_system/p612b_coco_fidelity_batch_b_uniform_20260715.jsonl \
+  --baseline-mode off_graph \
+  --json-output data/p6_system/p612b_coco_fidelity_strategy_summary_20260715.json \
+  --markdown-output data/p6_system/p612b_coco_fidelity_strategy_summary_20260715.md
+```
+
+quality preflight config：RTX 5090，bf16，CUDA Graph，greedy output32，keep
+`0.5`，min keep `32`，last 4 layers，warmup/repeat `1/1`，prefix caching
+显式关闭。首次不带该开关的 batch A 在 prefill 前被已有 mixed-VL
+prefix-hit guard 拒绝，未写入 benchmark record；主 runner 因此新增
+`--disable-prefix-caching` 并把实际开关写入 model metadata，没有放宽
+engine guard。
+
+| Strategy | Exact requests | Prefix micro | Prefix median | Prefix min | Physical tokens | Active bytes | Span audit |
+|---|---:|---:|---:|---:|---:|---:|:---:|
+| attention last4 | `3/7` | `0.696` | `0.875` | `0.219` | `0.535x` | `0.538x` | `7/7`, zero-starved `0` |
+| uniform | `0/7` | `0.304` | `0.188` | `0.094` | `0.535x` | `0.538x` | `7/7`, zero-starved `0` |
+
+attention 七条 stable prefix 为 `[7,11,32,28,14,32,32]`，uniform 为
+`[3,6,6,10,18,19,6]`。这证明在当前固定集合和相同物理压缩下，
+runtime attention 的 greedy fidelity 明显高于 uniform。但最差 attention 请求仍在
+`7/32` 分叉，而且没有 reference answer/caption 任务指标，所以
+P6.12-B task-quality gate 继续 FAIL。
+
+Raw evidence（commit `225b289`、`git_dirty=true` validation）：
+
+```text
+data/p6_system/p612b_coco_fidelity_batch_a_attention_20260715.jsonl
+data/p6_system/p612b_coco_fidelity_batch_b_attention_20260715.jsonl
+data/p6_system/p612b_coco_fidelity_batch_a_uniform_20260715.jsonl
+data/p6_system/p612b_coco_fidelity_batch_b_uniform_20260715.jsonl
+data/p6_system/p612b_coco_fidelity_strategy_summary_20260715.json
+data/p6_system/p612b_coco_fidelity_strategy_summary_20260715.md
+```
+
+该矩阵不用于稳定性能 claim；提交后仍需 clean rerun 才能升级为 formal
+fidelity evidence。
 
 ### P6 全局 Benchmark 规则
 

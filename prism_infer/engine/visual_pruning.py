@@ -224,6 +224,7 @@ class PruningDecision:
     def to_record(self) -> dict[str, object]:
         """Convert the decision into a JSON-serializable audit record."""
 
+        kept_set = set(self.kept_token_indices)
         return {
             "seq_id": self.seq_id,
             "prompt_token_count": self.prompt_token_count,
@@ -235,6 +236,17 @@ class PruningDecision:
             "strategy": self.strategy,
             "physical_compaction": self.physical_compaction,
             "visual_token_spans": [span.to_record() for span in self.visual_token_spans],
+            "kept_visual_tokens_by_span": [
+                {
+                    "modality": span.modality,
+                    "span_index": span.index,
+                    "kept_tokens": sum(
+                        token_index in kept_set
+                        for token_index in range(span.start, span.end)
+                    ),
+                }
+                for span in self.visual_token_spans
+            ],
             "kept_token_indices": list(self.kept_token_indices),
             "dropped_token_indices": list(self.dropped_token_indices),
         }
@@ -476,7 +488,6 @@ def finalize_attention_pruning_decisions(
             continue
         values = tuple(token_scores.values())
         record = decision.to_record()
-        kept_set = set(decision.kept_token_indices)
         record.update(
             {
                 "batch_index": batch_index,
@@ -485,17 +496,6 @@ def finalize_attention_pruning_decisions(
                 "score_min": min(values),
                 "score_max": max(values),
                 "score_mean": sum(values) / len(values),
-                "kept_visual_tokens_by_span": [
-                    {
-                        "modality": span.modality,
-                        "span_index": span.index,
-                        "kept_tokens": sum(
-                            token_index in kept_set
-                            for token_index in range(span.start, span.end)
-                        ),
-                    }
-                    for span in decision.visual_token_spans
-                ],
             }
         )
         seq.visual_pruning_decision_record = record

@@ -56,6 +56,11 @@ def test_uniform_pruning_decision_records_keep_and_drop_counts():
     assert decision.keep_ratio_actual == pytest.approx(0.4)
     assert decision.kept_token_indices == (1, 7)
     assert decision.dropped_token_indices == (2, 4, 5)
+    assert record["kept_visual_tokens_by_span"] == [
+        {"modality": "image", "span_index": 0, "kept_tokens": 1},
+        {"modality": "video", "span_index": 0, "kept_tokens": 0},
+        {"modality": "image", "span_index": 1, "kept_tokens": 1},
+    ]
     assert not decision.physical_compaction
     print("visual pruning uniform decision: PASS")
 
