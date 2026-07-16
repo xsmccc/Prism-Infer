@@ -676,9 +676,44 @@ off，也不是 COCO 官方 CIDEr/SPICE 或 `accuracy drop <1%`。
 保持兼容。该结果来自项目内部 layer ablation，不能归因为 PoRe、SnapKV 或
 TokenCarve 的复现。
 
-本轮仍为 `warmup=1/repeat=1` quality preflight，不能用于 TTFT、TPOT 或
-throughput claim。默认切换后还需在新 clean commit 上完成 multi-image/video/
-mixed smoke、`warmup=2/repeat=5` 稳定矩阵和 full regression。
+默认层数切换提交 `e51c16d` 后，不传 last-N 参数、显式选择 attention 的两个
+COCO batch 继续记录 `attention:last1` 与 `score_layers=[35]`，两项 task drop
+完全复现为 `0.003288/0.003710`，baseline/candidate 均为 clean。默认切换没有
+改变 decision schema，也没有破坏显式 last4 override。
+
+multi-image/video/mixed clean smoke：
+
+| Workload | Output | Stable prefixes | Physical token ratio | Active bytes | Span starvation |
+|---|---:|---|---:|---:|:---:|
+| multi-image 2x448 | 128 | `[7]` | `0.520x` | `0.500x` | no |
+| video 4x448 | 128 | `[14]` | `0.536x` | `0.500x` | no |
+| mixed text/image/video | 32 | `[32,28,14]` | `0.539x` | `0.750x` | no |
+
+这些 smoke 与历史 last4 的 multi-image/video prefix `7/14` 一致，只证明默认层数
+切换没有引入执行或多 span 回归；它们没有 reference task evidence，不能扩展
+7-image caption gate 的质量结论。
+
+同一 clean commit 的 COCO batch A、batch4、output32、CUDA Graph、
+`warmup=2/repeat=5` 稳定矩阵：
+
+| Mode | Prefill median | Decode-step median | Decode tok/s | Engine output tok/s | E2E median | Physical tokens | Active bytes |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| off_graph | `221.874 ms` | `18.945 ms` | `211.008` | `158.048` | `993.238 ms` | `988` | `264,241,152` |
+| attention last1 compact Graph | `224.179 ms` | `18.553 ms` | `215.571` | `160.087` | `988.486 ms` | `530` | `150,994,944` |
+
+last1 相对 off 的 prefill ratio 为 `1.010x`，decode-step speedup `1.021x`，
+decode throughput `1.022x`，engine output throughput `1.013x`，E2E speedup
+`1.005x`；physical token/active-byte ratio 为 `0.536x/0.571x`。固定 KV pool
+导致 peak allocated 基本不变，因此 active bytes/page reclamation 才是该矩阵的
+容量证据。
+
+显式 last4 同条件 prefill/decode median 为 `223.938/18.544 ms`；last1/last4
+差异小于 `0.2%`，不能声称 last1 减少 scorer 成本。last1 的默认选择由 task
+quality PASS 驱动，decode 收益来自两者共有的 physical compaction 与更短 context。
+
+最终 full regression 生成 JUnit evidence，结果为
+`238 passed, 6 skipped in 232.90s`。skip 继续包含单卡环境无法执行的 TP2
+integration；没有新增回归失败。
 
 Raw evidence：
 
@@ -689,4 +724,14 @@ data/p6_system/p612c_clean_task_quality_batch_a_attention_last1_20260716.jsonl
 data/p6_system/p612c_clean_task_quality_batch_b_attention_last1_20260716.jsonl
 data/p6_system/p612c_clean_attention_last1_quality_summary_20260716.json
 data/p6_system/p612c_clean_attention_last1_quality_summary_20260716.md
+data/p6_system/p612c_default_clean_task_quality_batch_a_20260716.jsonl
+data/p6_system/p612c_default_clean_task_quality_batch_b_20260716.jsonl
+data/p6_system/p612c_default_clean_quality_summary_20260716.json
+data/p6_system/p612c_default_clean_multi_image_output128_20260716.jsonl
+data/p6_system/p612c_default_clean_video_output128_20260716.jsonl
+data/p6_system/p612c_default_clean_mixed_output32_20260716.jsonl
+data/p6_system/p612c_default_clean_multimodal_fidelity_summary_20260716.json
+data/p6_system/p612c_default_clean_performance_batch_a_output32_20260716.jsonl
+data/p6_system/p612c_clean_performance_batch_a_attention_last4_output32_20260716.jsonl
+data/p6_system/p612c_full_regression_20260716.xml
 ```

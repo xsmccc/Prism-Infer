@@ -2804,6 +2804,48 @@ data/p6_system/p612c_clean_attention_last1_quality_summary_20260716.json
 data/p6_system/p612c_clean_attention_last1_quality_summary_20260716.md
 ```
 
+默认切换后的 clean commit `e51c16d` 不传 last-N 参数，两个 COCO batch 均记录
+`attention_last_n_layers=1` 与 `score_layers=[35]`，质量汇总完全复现 PASS。
+
+多模态 smoke：
+
+| Case | Output | Stable prefixes | Physical tokens | Active bytes | Zero-kept spans |
+|---|---:|---|---:|---:|---:|
+| multi_image_2x448 | 128 | `[7]` | `0.520x` | `0.500x` | `0` |
+| video_4x448 | 128 | `[14]` | `0.536x` | `0.500x` | `0` |
+| mixed_text_image_video | 32 | `[32,28,14]` | `0.539x` | `0.750x` | `0` |
+
+稳定性能矩阵使用 COCO batch A、batch4、output32、CUDA Graph、
+`warmup=2/repeat=5`：
+
+| Mode | Prefill | Decode step | Decode tok/s | Engine tok/s | E2E | Physical tokens |
+|---|---:|---:|---:|---:|---:|---:|
+| off_graph | `221.874 ms` | `18.945 ms` | `211.008` | `158.048` | `993.238 ms` | `988` |
+| attention last1 compact Graph | `224.179 ms` | `18.553 ms` | `215.571` | `160.087` | `988.486 ms` | `530` |
+
+判定：last1 prefill ratio `1.010x`，decode-step speedup `1.021x`，engine output
+throughput ratio `1.013x`，E2E speedup `1.005x`；active bytes ratio `0.571x`。
+显式 last4 的 prefill/decode 为 `223.938/18.544 ms`，与 last1 差异小于
+`0.2%`，所以不形成 last1 scorer 加速 claim。
+
+完整回归：
+
+```bash
+.venv-local/bin/python -m pytest -q \
+  --junitxml=data/p6_system/p612c_full_regression_20260716.xml tests
+# 238 passed, 6 skipped in 232.90s
+```
+
+新增 raw evidence：
+
+```text
+data/p6_system/p612c_default_clean_quality_summary_20260716.json
+data/p6_system/p612c_default_clean_multimodal_fidelity_summary_20260716.json
+data/p6_system/p612c_default_clean_performance_batch_a_output32_20260716.jsonl
+data/p6_system/p612c_clean_performance_batch_a_attention_last4_output32_20260716.jsonl
+data/p6_system/p612c_full_regression_20260716.xml
+```
+
 ### P6 全局 Benchmark 规则
 
 每个 benchmark 必须输出:
