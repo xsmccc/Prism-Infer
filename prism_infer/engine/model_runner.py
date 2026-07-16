@@ -127,8 +127,14 @@ class ModelRunner:
         torch.set_default_device("cuda")              # 后续 torch.empty() 等默认在 GPU 上
         if self._is_vl_config(hf_config) or Qwen3ForCausalLM is None:
             self.model = Qwen3VLForCausalLM(hf_config)  # Qwen3-VL 模型结构
+            self.model.logits_precision = config.logits_precision
             self.is_vl_model = True
         else:
+            if config.logits_precision != "model":
+                raise ValueError(
+                    "logits_precision='fp32' historical reproduction is "
+                    "currently supported only for Qwen3-VL"
+                )
             self.model = Qwen3ForCausalLM(hf_config)    # legacy Qwen3 纯文本结构
             self.is_vl_model = False
         load_model(self.model, config.model)           # 从文件加载权重到模型

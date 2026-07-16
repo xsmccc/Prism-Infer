@@ -271,6 +271,14 @@ def main() -> None:
             "framework's CUDA Graph path. Defaults from --enforce-eager."
         ),
     )
+    parser.add_argument(
+        "--cuda-profiler-range",
+        action="store_true",
+        help=(
+            "wrap measured repeats in cudaProfilerStart/Stop so Nsight "
+            "captures generation without model load and warmup"
+        ),
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -379,16 +387,23 @@ def main() -> None:
     reserved_mb: list[float] = []
     peak_allocated_mb: list[float] = []
     prompt_token_counts: list[int] = []
-    for _ in range(args.repeat):
-        tokens, elapsed, request_ttft, request_tpot, prompt_token_counts = run_once()
-        token_runs.append(tokens)
-        e2e_ms.append(elapsed)
-        ttft_ms.extend(request_ttft)
-        tpot_ms.extend(request_tpot)
-        throughput.append(sum(len(row) for row in tokens) / (elapsed / 1000.0))
-        allocated_mb.append(torch.cuda.memory_allocated() / 1024 / 1024)
-        reserved_mb.append(torch.cuda.memory_reserved() / 1024 / 1024)
-        peak_allocated_mb.append(torch.cuda.max_memory_allocated() / 1024 / 1024)
+    if args.cuda_profiler_range:
+        torch.cuda.cudart().cudaProfilerStart()
+    try:
+        for _ in range(args.repeat):
+            tokens, elapsed, request_ttft, request_tpot, prompt_token_counts = run_once()
+            token_runs.append(tokens)
+            e2e_ms.append(elapsed)
+            ttft_ms.extend(request_ttft)
+            tpot_ms.extend(request_tpot)
+            throughput.append(sum(len(row) for row in tokens) / (elapsed / 1000.0))
+            allocated_mb.append(torch.cuda.memory_allocated() / 1024 / 1024)
+            reserved_mb.append(torch.cuda.memory_reserved() / 1024 / 1024)
+            peak_allocated_mb.append(torch.cuda.max_memory_allocated() / 1024 / 1024)
+    finally:
+        if args.cuda_profiler_range:
+            torch.cuda.synchronize()
+            torch.cuda.cudart().cudaProfilerStop()
     if any(tokens != token_runs[0] for tokens in token_runs[1:]):
         raise RuntimeError("vLLM greedy token ids changed across measured repeats")
 
@@ -470,6 +485,7 @@ def main() -> None:
             "warmup": args.warmup,
             "repeat": args.repeat,
             "cuda_synchronize_timing": True,
+            "cuda_profiler_range": args.cuda_profiler_range,
             "engine_ttft_scope": "vllm_request_metrics_first_token_latency",
             "decode_tpot_scope": "first_to_last_token_divided_by_output_intervals",
             "end_to_end_scope": "prompt_build_plus_llm_generate",

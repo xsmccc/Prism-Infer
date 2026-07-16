@@ -168,7 +168,7 @@ def _teacher_forced_our_logits(
     config,
     our_kwargs: dict,
     generated_ids: list[int],
-) -> torch.Tensor:
+) -> dict[str, torch.Tensor]:
     generated = torch.tensor([generated_ids], dtype=torch.long)
     full_input_ids = torch.cat([our_kwargs["input_ids"], generated], dim=1)
     full_attention = torch.ones_like(full_input_ids)
@@ -185,7 +185,15 @@ def _teacher_forced_our_logits(
 
     with torch.inference_mode():
         hidden = our_model(**_to_cuda_kwargs(our_full))
-        return our_model.compute_logits(hidden)[:, -MAX_TOKENS - 1:-1, :].detach().cpu()
+        results = {}
+        for precision in ("fp32", "model"):
+            our_model.logits_precision = precision
+            results[precision] = (
+                our_model.compute_logits(hidden)[:, -MAX_TOKENS - 1:-1, :]
+                .detach()
+                .cpu()
+            )
+        return results
 
 
 def _compare_distribution(case_name: str, hf_logits: torch.Tensor, our_logits: torch.Tensor, generated_ids: list[int]) -> None:
@@ -281,14 +289,20 @@ def test_vl_teacher_forced_logits_distribution_and_ppl_match_hf() -> None:
     torch.cuda.empty_cache()
     try:
         for case, our_kwargs, generated_ids, hf_logits in hf_references:
-            our_logits = _teacher_forced_our_logits(
+            logits_by_precision = _teacher_forced_our_logits(
                 our_model,
                 hf_config,
                 our_kwargs,
                 generated_ids,
             )
-            _compare_distribution(case["name"], hf_logits, our_logits, generated_ids)
-            del hf_logits, our_logits
+            for precision, our_logits in logits_by_precision.items():
+                _compare_distribution(
+                    f"{case['name']}[{precision}]",
+                    hf_logits,
+                    our_logits,
+                    generated_ids,
+                )
+            del hf_logits, logits_by_precision
             torch.cuda.empty_cache()
     finally:
         del our_model

@@ -588,6 +588,10 @@ class Qwen3VLForCausalLM(nn.Module):
                                                default=151936))
         self.model = Qwen3VLModel(config, dtype=dtype)
         self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False, dtype=dtype)
+        # HF uses the loaded model dtype for lm_head.  Keep fp32 as an explicit
+        # historical-reproduction mode; converting the full weight every decode
+        # step is both slower and less numerically faithful to HF BF16 logits.
+        self.logits_precision = "model"
         tie_word_embeddings = _cfg_get(
             config, "tie_word_embeddings",
             default=_cfg_get(text_config, "tie_word_embeddings", default=False),
@@ -617,6 +621,10 @@ class Qwen3VLForCausalLM(nn.Module):
             context = get_context()
             if context.is_prefill and context.cu_seqlens_q is not None:
                 hidden_states = hidden_states[context.cu_seqlens_q[1:] - 1].contiguous()
-        if hidden_states.is_cuda and hidden_states.dtype in (torch.float16, torch.bfloat16):
+        if (
+            self.logits_precision == "fp32"
+            and hidden_states.is_cuda
+            and hidden_states.dtype in (torch.float16, torch.bfloat16)
+        ):
             return F.linear(hidden_states.float(), self.lm_head.weight.float())
         return self.lm_head(hidden_states)

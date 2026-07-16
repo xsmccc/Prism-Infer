@@ -580,6 +580,7 @@ def _build_llm(
         visual_pruning_attention_last_n_layers=(
             args.visual_pruning_attention_last_n_layers
         ),
+        logits_precision=args.logits_precision,
     )
 
 
@@ -678,6 +679,7 @@ def _build_record(
             "gpu_memory_utilization": config.gpu_memory_utilization,
             "prefix_caching_enabled": config.enable_prefix_caching,
             "chunked_prefill_enabled": config.enable_chunked_prefill,
+            "logits_precision": config.logits_precision,
         },
         "mode": {
             "name": mode.name,
@@ -1100,6 +1102,12 @@ def main() -> None:
         "--visual-pruning-attention-last-n-layers",
         type=int,
         default=1,
+    )
+    parser.add_argument(
+        "--logits-precision",
+        choices=("fp32", "model"),
+        default="model",
+        help="lm_head projection precision; model uses the loaded model dtype",
     )
     parser.add_argument("--output")
     parser.add_argument(

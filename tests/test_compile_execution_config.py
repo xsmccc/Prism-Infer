@@ -112,6 +112,36 @@ def test_p611_config_allows_physical_compression_cuda_graph(
     print(f"P6.11 physical compression Graph config={compression_mode}: PASS")
 
 
+def test_p74_logits_precision_is_explicit_and_validated(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """模型原生 logits 是默认路径，fp32 只保留历史复现能力。"""
+
+    _patch_auto_config(monkeypatch)
+    default = Config(
+        str(tmp_path),
+        max_model_len=1024,
+        max_num_batched_tokens=1024,
+    )
+    candidate = Config(
+        str(tmp_path),
+        max_model_len=1024,
+        max_num_batched_tokens=1024,
+        logits_precision="fp32",
+    )
+    assert default.logits_precision == "model"
+    assert candidate.logits_precision == "fp32"
+
+    with pytest.raises(ValueError, match="logits_precision"):
+        Config(
+            str(tmp_path),
+            max_model_len=1024,
+            max_num_batched_tokens=1024,
+            logits_precision="int8",
+        )
+
+
 def test_attention_compile_dispatch_is_decode_only() -> None:
     attention = Qwen3VLTextAttention(
         hidden_size=8,

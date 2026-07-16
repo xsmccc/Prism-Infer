@@ -33,6 +33,7 @@ class Config:
     visual_pruning_min_keep_tokens: int = 32     # 最少保留 visual token 数
     visual_pruning_strategy: str = "uniform"     # "uniform" | "score" | "attention"
     visual_pruning_attention_last_n_layers: int = 1  # P6.12-C 质量门禁通过的最后一层默认值
+    logits_precision: str = "model"                # "model" 默认；"fp32" 仅复现旧路径
     decode_compile_region: str = "none"          # "none" | "attention"; 仅作用于 decode
     decode_compile_mode: str = "default"         # Inductor mode: "default" | "reduce-overhead"
     decode_compile_emulate_precision_casts: bool = True  # 保持 BF16 eager 中间 cast 语义
@@ -63,6 +64,11 @@ class Config:
             raise ValueError(
                 "decode_compile_mode must be 'default' or 'reduce-overhead', "
                 f"got {self.decode_compile_mode!r}"
+            )
+        if self.logits_precision not in ("fp32", "model"):
+            raise ValueError(
+                "logits_precision must be 'fp32' or 'model', "
+                f"got {self.logits_precision!r}"
             )
         if self.decode_compile_region != "none" and not self.enforce_eager:
             raise ValueError(
