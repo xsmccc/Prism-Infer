@@ -188,6 +188,34 @@ def _git_metadata() -> tuple[str, bool]:
         return "unknown", True
 
 
+def _gpu_metadata() -> dict[str, Any]:
+    """Capture hardware identity separately from framework versions."""
+
+    properties = torch.cuda.get_device_properties(0)
+    metadata: dict[str, Any] = {
+        "gpu": properties.name,
+        "compute_capability": f"{properties.major}.{properties.minor}",
+        "total_memory_bytes": properties.total_memory,
+    }
+    try:
+        raw = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=uuid,driver_version",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).splitlines()[0]
+        uuid, driver = (part.strip() for part in raw.split(",", maxsplit=1))
+        metadata["gpu_uuid"] = uuid
+        metadata["driver"] = driver
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
+        metadata["gpu_uuid"] = "unknown"
+        metadata["driver"] = "unknown"
+    return metadata
+
+
 def _mb(num_bytes: int) -> float:
     return num_bytes / 1024 / 1024
 
@@ -595,8 +623,10 @@ def _build_record(
                 f"prompt KV metric changed across repeats: {metric_name}"
             )
     commit, dirty = _git_metadata()
+    gpu_metadata = _gpu_metadata()
     kv_cache = llm.model_runner.kv_cache
     config = llm.config
+    model_config_path = Path(args.model) / "config.json"
     request_types = [request["type"] for request in case["requests"]]
     input_shapes, image_count, video_count, video_frame_count = (
         _describe_case_inputs(case)
@@ -618,6 +648,10 @@ def _build_record(
         "schema_version": BENCHMARK_SCHEMA_VERSION,
         "record_type": "system_benchmark",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "protocol": {
+            "name": "p7.1_prism_offline_v2",
+            "process_scope": "fresh_model_per_case_and_mode",
+        },
         "environment": {
             "git_commit": commit,
             "git_dirty": dirty,
@@ -625,10 +659,15 @@ def _build_record(
             "torch": torch.__version__,
             "transformers": transformers.__version__,
             "cuda": torch.version.cuda,
-            "gpu": torch.cuda.get_device_name(0),
+            **gpu_metadata,
         },
         "model": {
             "path": str(Path(args.model).resolve()),
+            "config_sha256": (
+                hashlib.sha256(model_config_path.read_bytes()).hexdigest()
+                if model_config_path.is_file()
+                else "unknown"
+            ),
             "dtype": str(llm.model_runner.model_dtype),
             "tensor_parallel_size": config.tensor_parallel_size,
             "max_model_len": config.max_model_len,
@@ -638,6 +677,7 @@ def _build_record(
             "num_kvcache_blocks": config.num_kvcache_blocks,
             "gpu_memory_utilization": config.gpu_memory_utilization,
             "prefix_caching_enabled": config.enable_prefix_caching,
+            "chunked_prefill_enabled": config.enable_chunked_prefill,
         },
         "mode": {
             "name": mode.name,
@@ -680,6 +720,11 @@ def _build_record(
             "concurrency": len(case["requests"]),
             "request_rate_per_s": None,
         },
+        "sampling": {
+            "temperature": 0.0,
+            "ignore_eos": True,
+            "max_tokens": args.max_tokens,
+        },
         "execution_backend": {
             "prefill_backend": "eager",
             "decode_backend": mode.execution,
@@ -706,6 +751,9 @@ def _build_record(
             "warmup": args.warmup,
             "repeat": args.repeat,
             "cuda_synchronize_timing": True,
+            "engine_ttft_scope": "sum_of_synchronized_prefill_steps",
+            "decode_tpot_scope": "synchronized_engine_decode_step",
+            "end_to_end_scope": "request_preprocessing_plus_engine_steps",
         },
         "correctness": {
             "outputs_identical_across_repeats": outputs_identical,
@@ -759,6 +807,7 @@ def _build_record(
             ),
         },
         "memory_mb": {
+            "measurement": "torch_cuda_allocator",
             "allocated": summarize_values(
                 [result.allocated_mb for result in results]
             ),
