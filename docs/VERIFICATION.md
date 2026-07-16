@@ -2936,6 +2936,41 @@ semantic CUDA region profile 与 JUnit 均保存在忽略跟踪的
 `data/p7_external/`；发布结论见 `PERFORMANCE_REPORT.md` 6.2-6.9，问题定位见
 `docs/issues/P7-000` 至 `P7-006`。
 
+### P7.2 Engine Contract Refactor
+
+合同 focused gate：
+
+```bash
+.venv-local/bin/python -m pytest -q \
+  tests/test_engine_contracts.py \
+  tests/test_scheduler_swap_tables.py \
+  tests/test_kv_engine_hardening.py \
+  tests/test_model_runner_context_reset.py -s
+```
+
+必须覆盖：
+
+- Request FSM合法 transition与 terminal不可复活。
+- frozen `BatchPlan`的 phase/membership/token budget/KV transfer不可变。
+- `SchedulerPolicy` admission/chunk/preemption决策可独立测试。
+- executor严格按 plan执行 CoW、swap、model和 compaction。
+- metrics observer不驱动 scheduler；request/batch时间字段可复算。
+- admission reject、cancel和 swapped CPU KV page回收。
+- engine exit释放 executor持有的 runner引用，同进程下一模型加载不残留显存。
+
+clean full regression：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+PRISM_MODEL_PATH="$PRISM_MODEL_PATH" \
+.venv-local/bin/python -m pytest -q \
+  --junitxml=data/p7_engine/p72_full_regression_8b27edc.xml
+```
+
+JUnit：`tests=255`、`failures=0`、`errors=0`、`skipped=6`、
+`time=239.200s`，即 `249 passed, 6 skipped`。架构与 P7.3 online合同见
+`docs/P7_ENGINE_ONLINE_DESIGN.md`。
+
 ### P7.4-A Trace-driven Model-precision Logits
 
 root-cause capture使用 CUDA Profiler API排除模型加载、warmup和 Graph capture，

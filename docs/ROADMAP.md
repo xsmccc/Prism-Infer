@@ -634,7 +634,10 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
   - [x] 汇总器按完整 comparability gates 拒绝不公平 cell，并保持 schema-v1兼容。
   - [x] clean `b17f933` 上完成 5 workloads × 2 profiles × Prism off/compact 的 20-row 自动汇总，全部 comparability gates PASS。
   - [x] same-workload semantic CUDA trace 将 Prism TPOT 分解为 Graph replay `13.394 ms`、logits `4.068 ms`、copy `0.129 ms`、sampler `0.175 ms`；下一 profiling 目标为 Graph 内 decoder 与 logits。
-- [ ] P7.2 Engine 架构边界重构：Request FSM、immutable BatchPlan、SchedulerPolicy、KV manager/executor/metrics contract。
+- [x] P7.2 Engine 架构边界重构：Request FSM、immutable BatchPlan、SchedulerPolicy、KV manager/executor/metrics contract。
+  - [x] `BatchPlan/StepResult` 强类型主路径与旧 `step()`/五元组解包兼容层。
+  - [x] FCFS policy、admission、cancel、swapped CPU page回收和 executor资源释放合同。
+  - [x] clean `8b27edc` 完整回归 `249 passed, 6 skipped in 239.20s`。
 - [ ] P7.3 online arrival、continuous batching、mixed/chunked prefill、admission/preemption 和 SLO goodput。
 - [ ] P7.4 CUDA Graph replay coverage、bucket/padding、Graph 外固定成本与 CPU/GPU overlap：
   - [x] P7.4-A node-level trace 定位并移除每 decode 的 FP32 lm-head 整权重转换；logits CUDA `4.068 -> 0.762 ms`。
@@ -652,7 +655,7 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
 
 ### 当前状态
 
-- P7.0/P7.1 与 P7.4-A 已完成；协议和命令见
+- P7.0/P7.1、P7.2 与 P7.4-A 已完成；协议和命令见
   `docs/P7_OFFLINE_COMPARISON_DESIGN.md`，性能结果见 `docs/PERFORMANCE_REPORT.md`
   6.2-6.9。
 - P7.1 matched eager 下 Prism TPOT约为 vLLM 的 `1.91x-1.97x`；P7.4-A 后双方 best-stable Graph 下，quality-qualified compact Prism 与 vLLM 的差距从 `1.65x-1.78x` 缩小到 `1.34x-1.40x`，仍未反超。
@@ -687,7 +690,8 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
 当前应优先执行:
 
 1. ~~完成 P7.1 clean `diagnostic_matched/best_stable` formal matrix，先固定真实 external gap。~~ 已完成。
-2. P7.2 在 `241 passed, 6 skipped` 回归保护下重构 engine/scheduler contract，不与性能算法同时改。
+2. ~~P7.2 在完整回归保护下重构 engine/scheduler contract。~~ clean `8b27edc`
+   已完成，`249 passed, 6 skipped`。
 3. P7.3 建立 online arrival/queueing、continuous batching 和 SLO goodput；不得用 replicated-request offline throughput 代替 online serving。
 4. P7.4-A logits 闭环已完成；后续 P7.4/P7.5 只依据优化后约 `12.93 ms` Graph replay 的 Systems/NCU 证据推进 Inductor 或 TK kernel。
 5. 两卡平台补 P6.8/P7.6；开放 hardware counter 平台补 P6.2-B，不阻塞单卡主线。
