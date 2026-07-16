@@ -2754,6 +2754,56 @@ data/p6_system/p612b_task_quality_strategy_summary_20260715.md
 task-quality evidence。P6.12-B 下一步是研究跨 query/layer 聚合、视觉网格
 coverage 或动态预算，而不是放宽门禁。
 
+### P6.12-C Final-layer Attention Quality Gate
+
+保持 last-query/global-top-k 与 keep `0.5` 不变，先对 decoder layer 聚合做
+last1/last4/last8 单变量消融。last1 在 batch A 通过后，于 clean commit
+`a7588d3` 对两个固定 COCO batch 成对重跑 off/last1：
+
+```bash
+.venv-local/bin/python benchmarks/bench_system.py \
+  --model <model_path> \
+  --manifest benchmarks/workloads/p6_real_samples.json \
+  --case coco_fidelity_batch_a \
+  --modes off_graph,visual_compact_graph \
+  --max-tokens 32 --warmup 1 --repeat 1 \
+  --disable-prefix-caching \
+  --visual-pruning-strategy attention \
+  --visual-pruning-attention-last-n-layers 1 \
+  --output data/p6_system/p612c_clean_task_quality_batch_a_attention_last1_20260716.jsonl
+```
+
+batch B 使用相同参数，仅替换 case/output。汇总结果：
+
+| Metric | Off | Last1 | Delta / ratio | Gate |
+|---|---:|---:|---:|:---:|
+| token-F1 macro | `0.321635` | `0.318347` | `-0.003288` | PASS |
+| ROUGE-L macro | `0.289116` | `0.285406` | `-0.003710` | PASS |
+| physical prompt tokens | - | - | `0.535x` | PASS |
+| active prompt bytes | - | - | `0.538x` | PASS |
+
+baseline/candidate 的 `environment.git_dirty` 均为 `false`；7 个 decisions 均记录
+单层 `score_layers=[35]`。exact requests 为 `3/7`，prefix micro/min 为
+`0.652/0.094`。因此 task gate PASS，但 token fidelity 并非全面优于 last4，
+也不能外推为标准 COCO accuracy。
+
+默认切换 focused regression：
+
+```bash
+.venv-local/bin/python -m pytest -q \
+  tests/test_visual_pruning.py tests/test_compression_off.py
+# 30 passed
+```
+
+Raw evidence：
+
+```text
+data/p6_system/p612c_clean_task_quality_batch_a_attention_last1_20260716.jsonl
+data/p6_system/p612c_clean_task_quality_batch_b_attention_last1_20260716.jsonl
+data/p6_system/p612c_clean_attention_last1_quality_summary_20260716.json
+data/p6_system/p612c_clean_attention_last1_quality_summary_20260716.md
+```
+
 ### P6 全局 Benchmark 规则
 
 每个 benchmark 必须输出:

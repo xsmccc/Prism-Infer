@@ -132,7 +132,7 @@ def build_visual_pruning_config(config) -> VisualPruningConfig:
         min_keep_tokens=int(getattr(config, "visual_pruning_min_keep_tokens", 32)),
         strategy=str(getattr(config, "visual_pruning_strategy", "uniform")),
         attention_last_n_layers=int(
-            getattr(config, "visual_pruning_attention_last_n_layers", 4)
+            getattr(config, "visual_pruning_attention_last_n_layers", 1)
         ),
     )
 

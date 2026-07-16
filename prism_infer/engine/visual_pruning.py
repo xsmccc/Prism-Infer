@@ -28,7 +28,7 @@ class VisualPruningConfig:
     keep_ratio: float = 0.6
     min_keep_tokens: int = 32
     strategy: str = "uniform"
-    attention_last_n_layers: int = 4
+    attention_last_n_layers: int = 1
 
     def __post_init__(self) -> None:
         if not 0.0 < self.keep_ratio <= 1.0:

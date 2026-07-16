@@ -642,3 +642,51 @@ data/p6_system/p612b_task_quality_batch_b_uniform_20260715.jsonl
 data/p6_system/p612b_task_quality_strategy_summary_20260715.json
 data/p6_system/p612b_task_quality_strategy_summary_20260715.md
 ```
+
+### 5.20 P6.12-C Final-layer Attention Quality Pass
+
+P6.12-C 保持 last-query attention、global top-k、keep ratio `0.5`、min keep
+`32`、physical compaction 和 CUDA Graph 不变，只消融聚合的 decoder layer
+数量。batch A 的 last1/last4/last8 结果表明，增加层数没有带来 task-quality
+改善：
+
+| Strategy | Prefix micro | Token-F1 drop | ROUGE-L drop | Batch-A gate |
+|---|---:|---:|---:|:---:|
+| attention last1 | `0.531` | `0.008275` | `0.008275` | PASS |
+| attention last4 | `0.609` | `0.012899` | `0.012899` | FAIL |
+| attention last8 | `0.609` | `0.012899` | `0.012899` | FAIL |
+
+随后在 clean commit `a7588d3` 上对两个 COCO batch 重新成对执行
+`off_graph,visual_compact_graph`，baseline/candidate 都为 `git_dirty=false`。
+last1 的 7-image/35-reference 正式 preflight 为：
+
+| Strategy | Exact requests | Prefix micro/min | Physical KV | Active bytes | Token-F1 B/C | ROUGE-L B/C | Gate |
+|---|---:|---:|---:|---:|---:|---:|:---:|
+| attention last1 | `3/7` | `0.652/0.094` | `0.535x` | `0.538x` | `0.321635/0.318347` | `0.289116/0.285406` | PASS |
+
+token-F1 drop 为 `0.003288`，ROUGE-L drop 为 `0.003710`，均低于
+`0.01`。这满足项目定义的首个 reference-task preflight gate，同时保持与 last4
+相同的物理压缩率。last1 的 prefix micro 低于 last4 (`0.652 < 0.696`) 且最差
+样本 prefix 只有 3/32，因此结论是“任务词法门禁通过”，不是所有输出都更接近
+off，也不是 COCO 官方 CIDEr/SPICE 或 `accuracy drop <1%`。
+
+当前实现据此把 attention scorer 默认层数从 4 改为 1；decision 继续记录
+`score_layers=[35]`，benchmark mode 继续记录
+`visual_pruning_attention_last_n_layers=1`，显式 override 与历史 last4 records
+保持兼容。该结果来自项目内部 layer ablation，不能归因为 PoRe、SnapKV 或
+TokenCarve 的复现。
+
+本轮仍为 `warmup=1/repeat=1` quality preflight，不能用于 TTFT、TPOT 或
+throughput claim。默认切换后还需在新 clean commit 上完成 multi-image/video/
+mixed smoke、`warmup=2/repeat=5` 稳定矩阵和 full regression。
+
+Raw evidence：
+
+```text
+data/p6_system/p612c_batch_a_attention_last1_20260716.jsonl
+data/p6_system/p612c_batch_a_attention_last8_20260716.jsonl
+data/p6_system/p612c_clean_task_quality_batch_a_attention_last1_20260716.jsonl
+data/p6_system/p612c_clean_task_quality_batch_b_attention_last1_20260716.jsonl
+data/p6_system/p612c_clean_attention_last1_quality_summary_20260716.json
+data/p6_system/p612c_clean_attention_last1_quality_summary_20260716.md
+```

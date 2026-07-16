@@ -157,6 +157,21 @@ def test_runtime_attention_scorer_matches_independent_reference():
     print("P6.12 runtime attention score reference: PASS")
 
 
+def test_runtime_attention_quality_default_selects_final_decoder_layer():
+    """The quality-qualified default must observe only the final decoder layer."""
+
+    config = VisualPruningConfig(strategy="attention")
+    scorer = build_runtime_visual_token_scorer(
+        [_mixed_visual_sequence()],
+        num_hidden_layers=36,
+        attention_last_n_layers=config.attention_last_n_layers,
+    )
+
+    assert config.attention_last_n_layers == 1
+    assert scorer.layer_ids == (35,)
+    print("P6.12-C attention default final-layer selection: PASS")
+
+
 def test_runtime_attention_finalize_persists_auditable_decision():
     """Finalization must persist selected layers, score stats, and top tokens."""
 

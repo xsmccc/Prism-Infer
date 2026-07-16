@@ -1050,7 +1050,7 @@ def main() -> None:
     parser.add_argument(
         "--visual-pruning-attention-last-n-layers",
         type=int,
-        default=4,
+        default=1,
     )
     parser.add_argument("--output")
     parser.add_argument(

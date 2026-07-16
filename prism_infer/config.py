@@ -32,7 +32,7 @@ class Config:
     visual_pruning_keep_ratio: float = 0.6       # visual pruning 目标保留比例
     visual_pruning_min_keep_tokens: int = 32     # 最少保留 visual token 数
     visual_pruning_strategy: str = "uniform"     # "uniform" | "score" | "attention"
-    visual_pruning_attention_last_n_layers: int = 4  # runtime attention 聚合最后 N 层
+    visual_pruning_attention_last_n_layers: int = 1  # P6.12-C 质量门禁通过的最后一层默认值
     decode_compile_region: str = "none"          # "none" | "attention"; 仅作用于 decode
     decode_compile_mode: str = "default"         # Inductor mode: "default" | "reduce-overhead"
     decode_compile_emulate_precision_casts: bool = True  # 保持 BF16 eager 中间 cast 语义

@@ -147,7 +147,7 @@ def test_visual_pruning_shadow_metadata_records_prefill_decisions():
         "keep_ratio": 0.5,
         "min_keep_tokens": 1,
         "strategy": "uniform",
-        "attention_last_n_layers": 4,
+        "attention_last_n_layers": 1,
     }
     assert len(metadata.visual_pruning_decision_records) == 1
     assert record["total_visual_tokens"] == 3
