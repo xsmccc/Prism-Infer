@@ -17,7 +17,8 @@ def _build_synthetic_nsys_sqlite(path: Path) -> None:
             start INTEGER, end INTEGER, text TEXT, textId INTEGER
         );
         CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (
-            start INTEGER, end INTEGER, correlationId INTEGER
+            start INTEGER, end INTEGER, correlationId INTEGER,
+            demangledName INTEGER, shortName INTEGER, mangledName INTEGER
         );
         CREATE TABLE CUPTI_ACTIVITY_KIND_RUNTIME (
             start INTEGER, end INTEGER, correlationId INTEGER, nameId INTEGER
@@ -25,19 +26,24 @@ def _build_synthetic_nsys_sqlite(path: Path) -> None:
         CREATE TABLE CUPTI_ACTIVITY_KIND_GRAPH_TRACE (
             start INTEGER, end INTEGER, correlationId INTEGER
         );
+        CREATE TABLE CUPTI_ACTIVITY_KIND_MEMCPY (
+            start INTEGER, end INTEGER, correlationId INTEGER, bytes INTEGER
+        );
         INSERT INTO StringIds VALUES (1, 'prism::engine.model_runner');
         INSERT INTO StringIds VALUES (2, 'cudaLaunchKernel_v7000');
         INSERT INTO StringIds VALUES (3, 'cudaMemcpyAsync_v3020');
         INSERT INTO StringIds VALUES (4, 'cudaStreamSynchronize_v3020');
         INSERT INTO StringIds VALUES (5, 'cudaGraphLaunch_v10000');
         INSERT INTO StringIds VALUES (6, 'prism::target');
+        INSERT INTO StringIds VALUES (7, 'internal::gemvx::kernel');
+        INSERT INTO StringIds VALUES (8, '_paged_decode_attention_kernel');
         INSERT INTO NVTX_EVENTS VALUES (0, 1000, NULL, 1);
         INSERT INTO NVTX_EVENTS VALUES (2000, 3000, NULL, 1);
         INSERT INTO NVTX_EVENTS VALUES (4000, 5000, NULL, 1);
-        INSERT INTO NVTX_EVENTS VALUES (2100, 2500, NULL, 6);
-        INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (200, 300, 10);
-        INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (2200, 2300, 20);
-        INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (4200, 4400, 30);
+        INSERT INTO NVTX_EVENTS VALUES (2100, 2250, NULL, 6);
+        INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (200, 300, 10, 8, NULL, NULL);
+        INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (2200, 2300, 20, 7, NULL, NULL);
+        INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (4200, 4400, 30, 8, NULL, NULL);
         INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME VALUES (100, 150, 10, 2);
         INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME VALUES (2100, 2150, 20, 2);
         INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME VALUES (4100, 4150, 30, 2);
@@ -45,6 +51,7 @@ def _build_synthetic_nsys_sqlite(path: Path) -> None:
         INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME VALUES (2180, 2190, 41, 4);
         INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME VALUES (4050, 4060, 42, 5);
         INSERT INTO CUPTI_ACTIVITY_KIND_GRAPH_TRACE VALUES (4250, 4350, 42);
+        INSERT INTO CUPTI_ACTIVITY_KIND_MEMCPY VALUES (2210, 2220, 40, 4096);
         """
     )
     connection.commit()
@@ -71,11 +78,18 @@ def test_analyze_nsys_sqlite_reports_phase_and_target_metrics(tmp_path: Path) ->
     assert result["phase_summary"]["decode"]["graph_execution_ms"]["max"] == 0.0001
     assert result["target_ranges"]["prism::target"]["kernel_count_total"] == 1
     assert result["target_ranges"]["prism::target"]["memcpy_async_count_total"] == 1
+    assert result["schema_version"] == 2
+    target = result["target_ranges"]["prism::target"]
+    assert target["memcpy_bytes_total"] == 4096
+    assert target["gpu_busy_ms_per_range"]["median"] == 0.0001
+    assert target["gpu_span_ms_per_range"]["median"] == 0.0001
+    assert target["cpu_gpu_busy_overlap_ms_per_range"]["median"] == 0.00005
+    assert target["gpu_tail_after_cpu_ms_per_range"]["median"] == 0.00005
+    assert target["kernel_categories"]["linear_gemv"]["kernel_count_total"] == 1
+    assert target["kernel_categories"]["linear_gemv"]["kernel_time_fraction"] == 1
+    assert target["top_kernels"][0]["name"] == "internal::gemvx::kernel"
     assert (
-        result["target_ranges"]["prism::target"][
-            "stream_synchronize_count_total"
-        ]
-        == 1
+        result["target_ranges"]["prism::target"]["stream_synchronize_count_total"] == 1
     )
     print("P6.2 Nsight SQLite phase/target analysis: PASS")
 
