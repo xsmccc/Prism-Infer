@@ -1,6 +1,6 @@
 # P7-003: CUDA Graph 后仍存在的 vLLM 差距
 
-- 状态: `INVESTIGATING`（差距已确认，kernel root cause 待 Systems/NCU）
+- 状态: `INVESTIGATING`（logits 子问题已解决，Graph replay kernel归因待 Systems/NCU）
 - 首次观察 commit: `c970c61`（preflight）
 - 正式证据 commit: `b17f933`
 - 硬件/软件: RTX 5090；Prism Torch `2.6.0a0+nv25.01`；vLLM
@@ -116,9 +116,11 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 
 1. ~~正式跑 `diagnostic_matched` 和 `best_stable`。~~ 已完成。
 2. ~~分离 Prism replay 与 Graph 外 input/logits/sampler。~~ semantic profile 已完成。
-3. 对 Prism/vLLM Graph 各采一条相同 workload 的 Nsight Systems timeline。
-4. 对比每 token 的 GEMM、RMSNorm/RoPE/KV store、paged attention kernel 数和总时长。
-5. 只对 top kernels 使用 NCU；根据结果决定 Inductor fusion、TK kernel 或调度。
+3. ~~对 Prism/vLLM Graph 各采一条相同 workload 的 Nsight Systems timeline。~~ 已完成。
+4. ~~定位 Graph 外 logits。~~ P7-006 已将 `4.068 ms` 降至 `0.762 ms`。
+5. 对比 Graph replay 内每 token 的 GEMM、RMSNorm/RoPE/KV store、paged attention
+   kernel 数和总时长。
+6. 只对 replay top kernels使用 NCU；根据结果决定 Inductor fusion、TK kernel或调度。
 
 ## 为什么这个顺序有效
 
@@ -134,12 +136,20 @@ Systems 先回答“时间花在哪些 kernel/空隙”，NCU 再回答“top ke
 
 ## 剩余限制
 
-- 当前只有 Prism 的语义 region 分解，还没有双方同条件的 Nsight Systems kernel
-  timeline，不能把 `1.65x-1.78x` 归因给某一个 kernel。
+- 双方同条件的 Nsight Systems node capture 已完成，并已闭环 Graph 外 logits；但
+  Graph replay 内 top kernels 的 NCU counter 与逐类归因尚未完成，不能把优化后
+  `1.34x-1.40x` 的剩余差距归因给某一个 kernel。
 - 结果限定 RTX 5090、Qwen3-VL-8B、短输出 offline closed-loop；不代表 online
   goodput，也不外推到其他模型、GPU 或长输出。
 - semantic profiler 会改变整步延迟，因此其 region duration 只用于定位，不替代
   无 profiler 的正式 TPOT。
+
+## P7.4-A 更新
+
+model-precision logits后，五类 clean best-stable workload的 compact Prism/vLLM
+TPOT ratio从 `1.65x-1.78x` 缩小为 `1.34x-1.40x`。优化后 node trace中 logits
+median为 `0.762 ms`，Graph replay median约 `12.93 ms`，因此剩余差距已进一步
+收敛到 Graph 内 decoder执行。详见 `P7-006-LOGITS-FP32-WEIGHT-CAST.md`。
 
 ## 面试表达
 

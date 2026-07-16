@@ -859,3 +859,93 @@ data/p7_external/p71_full_regression_20260716.xml
   `20 performance_comparable / 0 non-comparable`。
 - full regression JUnit：`tests=246`、`failures=0`、`errors=0`、`skipped=6`、
   `time=232.301s`，即 `240 passed, 6 skipped`。
+
+### 6.9 P7.4-A Trace-driven Logits Projection
+
+P7.1 的 semantic profile 已把 Graph 外 logits 定位为 `4.068 ms/step`，但没有
+解释 kernel。P7.4 在同一 single-image/output32 workload 上启用 Nsight Systems
+node-level CUDA Graph trace，并与 vLLM best-stable capture 对照。旧 Prism capture
+中最显著的 Graph 外工作是：
+
+- BF16→FP32 `direct_copy`：全 capture `96.141 ms`。
+- FP32 vocab GEMV：32 次合计 `48.282 ms`，median约 `1.509 ms`。
+- `compute_logits` region：median `4.068 ms`。
+
+根因是旧 `Qwen3VLForCausalLM.compute_logits()` 在每个 prefill/decode step 调用
+`F.linear(hidden_states.float(), lm_head.weight.float())`。Qwen3-VL-8B 的 lm-head
+为 `151,936 × 4,096`；每步把整张 BF16 权重临时转成 FP32既产生大显存流量，也
+产生约 `2.3 GiB` transient allocation。vLLM capture 没有对应整权重转换路径。
+
+commit `a33e7ed` 将默认改为模型原生精度 lm-head，保留显式
+`logits_precision=fp32` 只用于历史复现；benchmark record同步记录该字段，vLLM
+harness增加 CUDA Profiler API capture range。优化后 clean `cc070b3` trace：
+
+| Region / metric | FP32 historical | Model precision | 变化 |
+|---|---:|---:|---:|
+| logits CUDA median | `4.068 ms` | `0.762 ms` | `5.34x` faster |
+| logits kernels/range median | `4` | `1` | `-3` |
+| Graph replay CUDA median | `13.359 ms` | `12.927 ms` | 不归因，属于运行间波动/后续目标 |
+| full decode TPOT, single off Graph | `17.887 ms` | `14.151 ms` | `1.264x` faster |
+| peak allocated, single off Graph | `19,708.6 MiB` | `17,391.5 MiB` | `-2,317.2 MiB` |
+
+#### 6.9.1 Clean single-variable matrix
+
+所有行来自同一 clean `a33e7ed`、相同 workload/mode、`warmup=2/repeat=5`；只改变
+`logits_precision`。
+
+| Workload | Mode | FP32 TPOT | Model TPOT | Speedup | Peak saved |
+|---|---|---:|---:|---:|---:|
+| single image | off / compact | `17.887 / 17.636` | `14.151 / 14.059` | `1.264x / 1.254x` | `2,317 / 2,317 MiB` |
+| two images | off / compact | `18.483 / 17.943` | `14.445 / 14.192` | `1.280x / 1.264x` | `2,287 / 2,287 MiB` |
+| real COCO | off / compact | `18.205 / 17.812` | `14.286 / 14.129` | `1.274x / 1.261x` | `2,309 / 2,308 MiB` |
+| fidelity A (4) | off / compact | `18.946 / 18.563` | `15.578 / 15.184` | `1.216x / 1.223x` | `2,230 / 2,230 MiB` |
+| fidelity B (3) | off / compact | `18.529 / 18.119` | `15.158 / 14.738` | `1.222x / 1.229x` | `2,239 / 2,239 MiB` |
+
+真实 COCO 的 model-precision greedy token 不要求与历史 FP32 path exact；正确性参考
+是 HF 模型精度与固定 reference task。single-image、multi-image、video 的 32-token
+teacher-forced logits和 PPL相对 HF均为 `max diff=0 / mean diff=0 / ppl diff=0`。
+7-image content-aware gate 同样 PASS：
+
+| Metric | Dense | Compact | Delta | Gate |
+|---|---:|---:|---:|:---:|
+| token-F1 macro | `0.318842` | `0.314482` | `-0.004360` | PASS |
+| ROUGE-L macro | `0.285863` | `0.289953` | `+0.004090` | PASS |
+| physical tokens | - | - | `0.535x` | PASS |
+| active prompt bytes | - | - | `0.538x` | PASS |
+
+#### 6.9.2 Updated vLLM best-stable comparison
+
+vLLM `0.24.0/ee0da84ab` 在同一 clean harness、GPU、model hash、KV pool、block、
+sampling 和 `warmup/repeat=2/5` 下重跑；10/10 rows通过 comparability gates。
+
+| Workload | Prism off | Prism compact | vLLM | Compact/vLLM | Peak compact/vLLM |
+|---|---:|---:|---:|---:|---:|
+| single image | `14.151` | `14.059` | `10.098 ms` | `1.392x` | `17,392.8 / 17,741.2 MiB` |
+| two images | `14.445` | `14.192` | `10.119 ms` | `1.402x` | `17,428.7 / 17,794.3 MiB` |
+| real COCO | `14.286` | `14.129` | `10.106 ms` | `1.398x` | `17,404.3 / 17,769.3 MiB` |
+| fidelity A (4) | `15.578` | `15.184` | `10.828 ms` | `1.402x` | `17,504.7 / 17,934.4 MiB` |
+| fidelity B (3) | `15.158` | `14.738` | `10.970 ms` | `1.343x` | `17,492.4 / 17,913.8 MiB` |
+
+优化将 compact Prism 的 TPOT差距从 P7.1 的 `1.65x-1.78x` 缩小到
+`1.34x-1.40x`，并让 torch allocator peak低于同条件 vLLM；但 Prism仍未反超
+TPOT，E2E throughput也仍受 prefill/TTFT影响，因此禁止写“性能超过 vLLM”。
+
+首次 full regression 暴露两个旧 mixed-batch 测试把 batch1 GEMV 与 batch4 GEMM
+要求 token exact。model precision 与 HF逐值一致，但低精度跨 shape 的视频首 token
+可在低 margin下分叉。最终合同要求同一 mixed shape重复 exact、image/multi-image
+跨 shape 长前缀、HF logits/PPL exact和 reference-quality PASS；clean `cc070b3`
+JUnit为 `247 tests / 0 failures / 0 errors / 6 skipped / 264.664s`，即
+`241 passed, 6 skipped`。
+
+Raw evidence：
+
+```text
+data/p7_external/p74_prism_*_{fp32,model}_formal_a33e7ed.jsonl
+data/p7_external/p74_model_quality_summary_a33e7ed.{json,md}
+data/p7_external/p74_vllm_*_best_stable_formal_a33e7ed.json
+data/p7_external/p74_best_stable_summary_a33e7ed.{json,md}
+data/p7_external/prism_single_image_off_graph_nsys_66e6f9f.{nsys-rep,sqlite}
+data/p7_external/p74_prism_single_image_model_nsys_cc070b3.{nsys-rep,sqlite}
+data/p7_external/p74_prism_single_image_model_nsys_summary_cc070b3.json
+data/p7_external/p74_full_regression_cc070b3.xml
+```

@@ -1304,6 +1304,16 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 - P3.4 仍不覆盖随机采样输出文本一致性；采样模式只应比较分布或 ppl。
 - 长上下文压力和 prefix-cache/chunked-prefill VL mixed batch 仍未完成。
 
+后续 P7.4-A 更新（2026-07-16）:
+
+- 上述 mixed VL rows跨 batch shape exact是 P3.4 当时 logits路径的历史合同。
+  默认改为 model precision后，同一 mixed shape重复生成仍 exact，但 batch1 GEMV与
+  batch4 GEMM可在低 margin视频 token上分叉，不能继续把跨 shape exact当作通用
+  correctness门槛。
+- 当前合同要求 image/multi-image跨 shape长前缀、video分叉点显式记录，并由 HF
+  teacher-forced logits/PPL exact与独立 reference-task quality gate共同约束；详见
+  `docs/issues/P7-006-LOGITS-FP32-WEIGHT-CAST.md`。
+
 ## P3-005: VL CUDA Graph decode 支持 3D position ids 与非标准 batch 档位
 
 状态: Verified

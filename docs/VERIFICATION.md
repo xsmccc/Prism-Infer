@@ -1,6 +1,6 @@
 # Prism-Infer 验证标准
 
-> 修订日期: 2026-07-15
+> 修订日期: 2026-07-16
 > 目的: 统一记录每个阶段的验证命令、PASS 标准和禁止行为。所有完成声明必须能追溯到本文件中的命令或等价验证输出。
 
 ## 全局规则
@@ -20,6 +20,10 @@ export PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cb
 - 2026-06-25 完成 P3.2 后，单请求 synthetic video processor、position ids、full logits 和 1-token greedy 已 strict PASS。
 - 2026-06-25 完成 P3.3 后，text-only/single-image/multi-image/video non-prefix mixed batch 1-token greedy 已与 fresh 单请求独立运行一致。
 - 2026-06-25 完成 P3.4 后，single-image/multi-image/video `max_tokens=8/16/32` greedy 已与 HF exact match，32-token teacher-forced logits/ppl 与 HF exact match；mixed batch 中 VL rows 32-token 与 fresh 单请求一致。text-only row 的 32-token mixed 分叉已证明是 HF/Prism 共有的 bf16 batch-size 数值敏感性。
+- 2026-07-16 完成 P7.4-A 后，默认 logits改为模型原生 BF16；P3.3/P3.4 的跨
+  batch-shape exact结果保留为历史证据，不再作为通用合同。当前要求同一 mixed
+  shape重复 exact，并以 HF teacher-forced logits/PPL exact和独立任务质量门禁
+  约束跨 shape低 margin分叉。
 - 2026-06-25 完成 P3.7 后，P3 当前门禁已通过: grouped regression `49 passed in 356.34s`，纯文本/单图/多图/视频 full logits 均 strict PASS，VL CUDA Graph decode 与 paged decode kernel 均有 correctness 和 benchmark 基线。
 - 2026-07-05 使用本地 Qwen3-VL 权重和 transformers 5.13 刷新门禁: `pytest -q tests -s` 为 `84 passed, 5 skipped in 250.07s`；5 个 skipped 均为 manual GPU debug script。当前长输出门禁采用稳定前缀 + teacher-forced logits/ppl 分布口径: 单图/多图 `prefix@8/16` 与 HF 一致，视频因第 6 个 token 的 bf16 tie-break 固定为 `prefix@5`，完整 32-token 仍打印用于诊断。完整门禁无 warning。
 - GPU 不可用时可以降级为“未验证风险”，但不能把缺失验证写成通过。
@@ -631,7 +635,9 @@ PASS 标准:
 
 - 同一 prefill batch 支持 text-only、single-image、multi-image、video 请求混合。
 - 同一 decode batch 支持上述请求混合，并正确使用各自的 1D/3D position ids 和 rope_delta。
-- 每条请求在 mixed batch 中的 logits 或 greedy token ids 与单请求独立运行一致。
+- 同一 mixed batching/execution shape重复运行 token exact；跨 batch shape 的
+  FP16/BF16低 margin分叉必须显式记录，不能把跨 shape exact当作通用正确性。
+- model-precision logits须用 HF teacher-forced分布/PPL与独立任务质量门禁验证。
 - `slot_mapping/block_tables/context_lens` 不串扰，KV cache 写入/读取 shape 和 max diff 有输出。
 - 不支持 prefix-cache/chunked prefill 的组合必须显式报错，不能 silent fallback。
 
@@ -663,14 +669,18 @@ mixed decode position_ids shape: [3, 3]
 mixed decode context_lens: [6, 211, 421]
 ```
 
-- mixed 公开入口:
+- mixed 公开入口（P7.4 model precision更新）:
 
 ```text
-1 passed in 33.67s
-single token_ids: [[11], [785], [785], [785]]
+2 passed in 37.053s
+single token_ids: [[11], [785], [785], [1986]]
 mixed token_ids: [[11], [785], [785], [785]]
-LLM.generate_mixed mixed batch single-run equivalence: PASS
+mixed repeat token_ids: [[11], [785], [785], [785]]
+LLM.generate_mixed model-precision determinism contract: PASS
 ```
+
+video row 的 batch1/batch4首 token分叉是显式数值边界；同一 mixed shape重复 exact，
+image/multi-image 1-token仍跨 shape exact。它不替代下面的 HF logits/PPL门禁。
 
 - 当前 P3.3 不覆盖 prefix-cache/chunked-prefill VL mixed batch；该组合仍作为后续风险，不并入 P3.3 PASS。
 
@@ -716,36 +726,35 @@ video first mismatch: 5
 
 ```text
 mixed text prefix@8 match: True
-mixed single-image first mismatch: 28
-mixed multi-image first mismatch: None
-mixed video first mismatch: None
-LLM.generate_mixed VL rows mixed batch long-prefix stability: PASS
+mixed image/multi-image first mismatch: None or >=16
+mixed video first mismatch: 0
+mixed repeat long token_ids: exact
+LLM.generate_mixed model-precision long-output contract: PASS
 ```
 
-- logits/ppl 分布:
+- logits/ppl 分布（P7.4 默认 model precision）:
 
 ```text
 single-image logits shape HF/Prism: [1, 32, 151936]
-single-image logits max diff: 1.248589e-01
-single-image logits mean diff: 5.297278e-03
-single-image ppl diff: 1.208782e-04
+single-image logits max/mean/ppl diff: 0 / 0 / 0
 multi-image logits shape HF/Prism: [1, 32, 151936]
-multi-image logits max diff: 1.247787e-01
-multi-image logits mean diff: 4.746439e-03
-multi-image ppl diff: 2.867579e-03
+multi-image logits max/mean/ppl diff: 0 / 0 / 0
 video logits shape HF/Prism: [1, 32, 151936]
-video logits max diff: 1.234474e-01
-video logits mean diff: 5.005680e-03
-video ppl diff: 6.533861e-03
+video logits max/mean/ppl diff: 0 / 0 / 0
 ```
+
+同一测试也保留显式 FP32历史路径，三类 max logit diff约
+`0.123-0.125`、PPL diff均 `<0.007`，用于证明 model precision更贴近 HF而不是
+以性能换取更大数值误差。
 
 - text-only mixed batch numeric sensitivity:
 
 ```text
 HF duplicate batch max diff: 5.312500e-01
 HF duplicate batch mean diff: 1.473503e-01
-Prism duplicate batch max diff: 5.340242e-01
-Prism duplicate batch mean diff: 1.473883e-01
+Prism fp32 duplicate batch max/mean diff: 5.340242e-01 / 1.473883e-01
+Prism model duplicate batch max/mean diff: 5.312500e-01 / 1.473503e-01
+HF/Prism model argmax single/batch: 11/11
 HF/Prism duplicate batch numeric sensitivity: PASS
 ```
 
@@ -2924,8 +2933,87 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 JUnit 结果为 `tests=246`、`failures=0`、`errors=0`、`skipped=6`、
 `time=232.301s`，即 `240 passed, 6 skipped`。正式矩阵、汇总、稳定性实验、
 semantic CUDA region profile 与 JUnit 均保存在忽略跟踪的
-`data/p7_external/`；发布结论见 `PERFORMANCE_REPORT.md` 6.2-6.8，问题定位见
-`docs/issues/P7-000` 至 `P7-005`。
+`data/p7_external/`；发布结论见 `PERFORMANCE_REPORT.md` 6.2-6.9，问题定位见
+`docs/issues/P7-000` 至 `P7-006`。
+
+### P7.4-A Trace-driven Model-precision Logits
+
+root-cause capture使用 CUDA Profiler API排除模型加载、warmup和 Graph capture，
+并展开 Graph nodes：
+
+```bash
+nsys profile --trace=cuda,nvtx,osrt --sample=none --cpuctxsw=none \
+  --capture-range=cudaProfilerApi --capture-range-end=stop \
+  --cuda-graph-trace=node --force-overwrite=true \
+  --output=data/p7_external/p74_prism_logits \
+  .venv-local/bin/python benchmarks/bench_system.py \
+  --model "$PRISM_MODEL_PATH" \
+  --manifest benchmarks/workloads/p6_internal_smoke.json \
+  --case single_image_448 --modes off_graph \
+  --max-tokens 32 --warmup 2 --repeat 1 \
+  --max-model-len 1280 --max-num-batched-tokens 2048 \
+  --num-kvcache-blocks 16 --kvcache-block-size 256 \
+  --disable-prefix-caching --profile-repeat 1 --cuda-profiler-range \
+  --profile-output data/p7_external/p74_prism_logits_semantic.jsonl
+```
+
+SQLite analyzer的相同 NVTX ranges结果：
+
+| Region | FP32 historical | Model precision |
+|---|---:|---:|
+| `runner.model.compute_logits` CUDA median | `4.067604 ms` | `0.761571 ms` |
+| logits kernels/range median | `4` | `1` |
+| `runner.cudagraph.replay` CUDA median | `13.359404 ms` | `12.927219 ms` |
+
+clean `a33e7ed` 单变量正式矩阵覆盖五类 workload、off/compact Graph、output32、
+`warmup=2/repeat=5`。十个 cell均为相同 commit、`git_dirty=false`；model precision
+相对显式 FP32 TPOT speedup为 `1.216x-1.280x`，peak allocated减少
+`2,230-2,317 MiB`。
+
+7-image quality汇总：
+
+```bash
+.venv-local/bin/python scripts/summarize_p6_pruning_fidelity.py \
+  data/p7_external/p74_prism_coco_fidelity_batch_a_model_formal_a33e7ed.jsonl \
+  data/p7_external/p74_prism_coco_fidelity_batch_b_model_formal_a33e7ed.jsonl \
+  --baseline-mode off_graph --max-task-quality-drop 0.01 \
+  --json-output data/p7_external/p74_model_quality_summary_a33e7ed.json \
+  --markdown-output data/p7_external/p74_model_quality_summary_a33e7ed.md
+```
+
+结果为 token-F1 `0.318842 -> 0.314482`（drop `0.004360`）、ROUGE-L
+`0.285863 -> 0.289953`（改善 `0.004090`）、physical tokens `0.535x`、active
+bytes `0.538x`，task gate PASS。
+
+更新 external best-stable：
+
+```bash
+.venv-local/bin/python scripts/summarize_p7_external.py \
+  --comparison-profile best_stable \
+  --prism data/p7_external/p74_prism_*_model_formal_a33e7ed.jsonl \
+  --external data/p7_external/p74_vllm_*_best_stable_formal_a33e7ed.json \
+  --prism-modes off_graph visual_compact_graph --prism-keep-ratio 0.5 \
+  --json-output data/p7_external/p74_best_stable_summary_a33e7ed.json \
+  --markdown-output data/p7_external/p74_best_stable_summary_a33e7ed.md
+# compared 10 cells; 10 comparable / 0 non-comparable
+```
+
+compact Prism/vLLM TPOT为 `1.34x-1.40x`，Prism peak allocated约
+`17.39-17.50 GiB`，vLLM约 `17.74-17.93 GiB`。这仍是 offline closed-loop，
+不形成反超或 online goodput claim。
+
+最终 full regression：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+PRISM_MODEL_PATH="$PRISM_MODEL_PATH" \
+.venv-local/bin/python -m pytest -q \
+  --junitxml=data/p7_external/p74_full_regression_cc070b3.xml
+```
+
+JUnit：`tests=247`、`failures=0`、`errors=0`、`skipped=6`、
+`time=264.664s`，即 `241 passed, 6 skipped`。详细 root cause、第一次 regression
+失败及被拒绝方案见 `docs/issues/P7-006-LOGITS-FP32-WEIGHT-CAST.md`。
 
 交付前必须检查:
 
