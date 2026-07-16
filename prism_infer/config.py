@@ -29,6 +29,7 @@ class Config:
     enable_prefix_caching: bool = True       # full-block token prefix hash/reuse
     scheduler_policy: str = "fcfs"           # 可替换调度策略；P7.2 首个稳定策略为 FCFS
     max_queue_size: int | None = None         # admission queue上限；None表示不额外限制
+    max_consecutive_prefill_batches: int = 1  # online arrival下防止decode无限饥饿
     compression_mode: str = "off"           # off | visual_prune | visual_compact | fp8_kv | visual_compact_fp8
     enable_visual_pruning_shadow: bool = False  # off 模式下只记录 pruning decision, 不改变 KV
     visual_pruning_keep_ratio: float = 0.6       # visual pruning 目标保留比例
@@ -81,6 +82,11 @@ class Config:
             raise ValueError(
                 "max_queue_size must be positive when set, "
                 f"got {self.max_queue_size}"
+            )
+        if self.max_consecutive_prefill_batches <= 0:
+            raise ValueError(
+                "max_consecutive_prefill_batches must be positive, "
+                f"got {self.max_consecutive_prefill_batches}"
             )
         if self.decode_compile_region != "none" and not self.enforce_eager:
             raise ValueError(

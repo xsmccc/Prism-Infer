@@ -208,3 +208,103 @@ def test_engine_attention_decode_reads_paged_kv_cache():
     assert list(engine_o.shape) == [1, num_heads, head_dim]
     assert diff.max().item() < 1e-2
     print("engine attention decode paged KV kernel: PASS")
+
+
+def test_engine_attention_chunked_prefill_reads_paged_history():
+    """Q<K chunked prefill must use a bottom-right causal paged history."""
+
+    torch.manual_seed(20260716)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dtype = torch.float32
+    num_heads = 4
+    num_kv_heads = 2
+    head_dim = 8
+    query_len = 2
+    context_len = 6
+    block_size = 4
+
+    attn = Qwen3VLTextAttention(
+        hidden_size=num_heads * head_dim,
+        num_heads=num_heads,
+        num_kv_heads=num_kv_heads,
+        head_dim=head_dim,
+        dtype=dtype,
+    ).to(device).eval()
+    engine_attn = attn.engine_attn
+    k_cache = torch.zeros(
+        2,
+        block_size,
+        num_kv_heads,
+        head_dim,
+        device=device,
+        dtype=dtype,
+    )
+    v_cache = torch.zeros_like(k_cache)
+    historical_k = torch.randn(
+        context_len - query_len,
+        num_kv_heads,
+        head_dim,
+        device=device,
+        dtype=dtype,
+    )
+    historical_v = torch.randn_like(historical_k)
+    k_cache[0] = historical_k
+    v_cache[0] = historical_v
+    current_q = torch.randn(
+        query_len, num_heads, head_dim, device=device, dtype=dtype
+    )
+    current_k = torch.randn(
+        query_len, num_kv_heads, head_dim, device=device, dtype=dtype
+    )
+    current_v = torch.randn_like(current_k)
+    engine_attn.k_cache = k_cache
+    engine_attn.v_cache = v_cache
+
+    set_context(
+        True,
+        cu_seqlens_q=torch.tensor(
+            [0, query_len], device=device, dtype=torch.int32
+        ),
+        cu_seqlens_k=torch.tensor(
+            [0, context_len], device=device, dtype=torch.int32
+        ),
+        max_seqlen_q=query_len,
+        max_seqlen_k=context_len,
+        slot_mapping=torch.tensor([4, 5], device=device, dtype=torch.int32),
+        context_lens=torch.tensor(
+            [context_len], device=device, dtype=torch.int32
+        ),
+        block_tables=torch.tensor([[0, 1]], device=device, dtype=torch.int32),
+    )
+    try:
+        output = engine_attn(current_q, current_k, current_v)
+
+        full_k = torch.cat((historical_k, current_k), dim=0)
+        full_v = torch.cat((historical_v, current_v), dim=0)
+        full_k = full_k.repeat_interleave(num_heads // num_kv_heads, dim=1)
+        full_v = full_v.repeat_interleave(num_heads // num_kv_heads, dim=1)
+        queries = current_q.transpose(0, 1).unsqueeze(0)
+        keys = full_k.transpose(0, 1).unsqueeze(0)
+        values = full_v.transpose(0, 1).unsqueeze(0)
+        query_positions = torch.arange(4, 6, device=device)
+        key_positions = torch.arange(6, device=device)
+        mask = (
+            key_positions.unsqueeze(0) <= query_positions.unsqueeze(1)
+        ).unsqueeze(0).unsqueeze(0)
+        reference = torch.nn.functional.scaled_dot_product_attention(
+            queries,
+            keys,
+            values,
+            attn_mask=mask,
+            is_causal=False,
+            scale=engine_attn.scale,
+        ).squeeze(0).transpose(0, 1)
+    finally:
+        reset_context()
+
+    diff = (output - reference).abs()
+    assert list(output.shape) == [query_len, num_heads, head_dim]
+    assert diff.max().item() < 1e-5
+    assert torch.equal(k_cache[1, :2], current_k)
+    assert torch.equal(v_cache[1, :2], current_v)
+    print("engine paged chunked-prefill attention: PASS")

@@ -11,6 +11,7 @@ from prism_infer.engine.block_manager import BlockManager
 from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.engine.sequence import Sequence
 from prism_infer.layers.attention import store_kvcache
+from prism_infer.utils.context import get_context, reset_context
 
 
 def _sequence(token_ids: list[int], block_size: int) -> Sequence:
@@ -139,6 +140,37 @@ def test_block_manager_can_disable_prefix_hash_reuse() -> None:
         Sequence.set_block_size(old_block_size)
 
 
+def test_block_manager_never_hash_reuses_multimodal_placeholders() -> None:
+    """Equal image token ids do not imply equal visual embeddings."""
+
+    old_block_size = Sequence.block_size
+    Sequence.set_block_size(4)
+    try:
+        manager = BlockManager(
+            num_blocks=4,
+            block_size=4,
+            enable_prefix_caching=True,
+        )
+        kwargs = {
+            "position_ids": torch.arange(4).view(1, 1, 4).expand(3, 1, 4),
+            "rope_delta": torch.zeros(1, 1),
+            "image_token_id": 99,
+            "image_token_count": 4,
+        }
+        first = Sequence([99, 99, 99, 99], **kwargs)
+        second = Sequence([99, 99, 99, 99], **kwargs)
+
+        manager.allocate(first)
+        manager.allocate(second)
+
+        assert first.block_table != second.block_table
+        assert first.num_cached_tokens == second.num_cached_tokens == 0
+        assert manager.hash_to_block_id == {}
+        print("multimodal prefix hash isolation: PASS")
+    finally:
+        Sequence.set_block_size(old_block_size)
+
+
 def test_block_manager_swap_uses_separate_cpu_block_table() -> None:
     """swap_out 后 GPU block_table 必须清空，CPU block id 只能进入 cpu_block_table。"""
 
@@ -213,8 +245,8 @@ def test_block_manager_swap_in_restores_hash_from_metadata_after_decode_pickle()
         Sequence.set_block_size(old_block_size)
 
 
-def test_prepare_prefill_rejects_prefix_cache_before_attention() -> None:
-    """prefix-cache prefill 未实现前，应在 ModelRunner 准备阶段显式失败。"""
+def test_prepare_prefill_builds_paged_prefix_context() -> None:
+    """Prefix-hit Q<K prefill must expose exact paged history metadata."""
 
     block_size = 4
     old_block_size = Sequence.block_size
@@ -227,8 +259,17 @@ def test_prepare_prefill_rejects_prefix_cache_before_attention() -> None:
         seq.block_table = [0, 1]
         seq.num_cached_tokens = block_size
 
-        with pytest.raises(RuntimeError, match="paged prefix-cache prefill is not supported"):
-            runner.prepare_prefill([seq])
-        print("prefix-cache prefill early gate: PASS")
+        model_inputs = runner.prepare_prefill([seq])
+        context = get_context()
+        try:
+            assert model_inputs.input_ids.tolist() == [5, 6]
+            assert context.cu_seqlens_q.tolist() == [0, 2]
+            assert context.cu_seqlens_k.tolist() == [0, 6]
+            assert context.context_lens.tolist() == [6]
+            assert context.block_tables.tolist() == [[0, 1]]
+            assert context.slot_mapping.tolist() == [4, 5]
+        finally:
+            reset_context()
+        print("prefix-cache paged prefill context: PASS")
     finally:
         Sequence.set_block_size(old_block_size)

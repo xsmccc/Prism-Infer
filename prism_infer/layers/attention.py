@@ -196,11 +196,13 @@ class Attention(nn.Module):
 
         if context.is_prefill:
             if context.block_tables is not None:
-                raise RuntimeError(
-                    "paged prefix-cache prefill is not supported by the local "
-                    "flash_attn_varlen_func signature"
+                o = self._forward_prefill_paged(
+                    q,
+                    k_cache,
+                    v_cache,
+                    context,
                 )
-            if HAS_FLASH_ATTN and q.is_cuda:
+            elif HAS_FLASH_ATTN and q.is_cuda:
                 with profile_region("attention.prefill.flash_attn_varlen"):
                     o = flash_attn_varlen_func(
                         q, k, v,
@@ -306,6 +308,83 @@ class Attention(nn.Module):
                 scale=self.scale,
             )
         return o
+
+    def _forward_prefill_paged(
+        self,
+        q: torch.Tensor,
+        k_cache: torch.Tensor,
+        v_cache: torch.Tensor,
+        context,
+    ) -> torch.Tensor:
+        """Correctness path for chunked/prefix-hit paged prefill.
+
+        Newly computed K/V have already been stored in the paged cache.  Each
+        query chunk attends to its full cached history with an explicit
+        bottom-right causal mask; ``is_causal=True`` would use an upper-left
+        mask when Q and K lengths differ and is therefore incorrect here.
+        """
+
+        if (
+            context.block_tables is None
+            or context.context_lens is None
+            or context.cu_seqlens_q is None
+        ):
+            raise RuntimeError(
+                "paged prefill requires block_tables/context_lens/cu_seqlens_q"
+            )
+        outputs: list[torch.Tensor] = []
+        for seq_index in range(context.context_lens.numel()):
+            query_start = int(context.cu_seqlens_q[seq_index].item())
+            query_end = int(context.cu_seqlens_q[seq_index + 1].item())
+            query_len = query_end - query_start
+            context_len = int(context.context_lens[seq_index].item())
+            if query_len <= 0 or context_len < query_len:
+                raise RuntimeError(
+                    "invalid paged prefill lengths: "
+                    f"query={query_len} context={context_len}"
+                )
+            prefix_len = context_len - query_len
+            with profile_region(
+                "attention.prefill.paged_gather",
+                metadata={
+                    "query_len": query_len,
+                    "context_len": context_len,
+                },
+            ):
+                keys, values = self._gather_paged_kv_for_sequence(
+                    k_cache,
+                    v_cache,
+                    context.block_tables[seq_index],
+                    context_len,
+                )
+                keys = self._dequantize_cache_for_attention(keys, q.dtype)
+                values = self._dequantize_cache_for_attention(values, q.dtype)
+                keys, values = self._expand_gqa_kv(keys, values)
+
+            queries = q[query_start:query_end].transpose(0, 1).unsqueeze(0)
+            keys = keys.transpose(0, 1).unsqueeze(0)
+            values = values.transpose(0, 1).unsqueeze(0)
+            query_positions = torch.arange(
+                prefix_len,
+                context_len,
+                device=q.device,
+            )
+            key_positions = torch.arange(context_len, device=q.device)
+            causal_mask = (
+                key_positions.unsqueeze(0)
+                <= query_positions.unsqueeze(1)
+            ).unsqueeze(0).unsqueeze(0)
+            with profile_region("attention.prefill.paged_sdpa"):
+                output = F.scaled_dot_product_attention(
+                    queries,
+                    keys,
+                    values,
+                    attn_mask=causal_mask,
+                    is_causal=False,
+                    scale=self.scale,
+                )
+            outputs.append(output.squeeze(0).transpose(0, 1))
+        return torch.cat(outputs, dim=0)
 
     def _gather_paged_kv_for_sequence(
         self,

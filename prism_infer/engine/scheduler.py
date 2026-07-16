@@ -7,6 +7,7 @@ handoff and GPU execution behind explicit contracts.
 from __future__ import annotations
 
 from collections import deque
+from time import perf_counter_ns
 from typing import Iterable
 
 from prism_infer.config import Config
@@ -36,6 +37,7 @@ class Scheduler:
         *,
         policy: SchedulerPolicy | None = None,
         kv_manager: KVCacheManager | None = None,
+        clock_ns=perf_counter_ns,
     ):
         self.max_num_seqs = config.max_num_seqs
         self.max_num_batched_tokens = config.max_num_batched_tokens
@@ -47,6 +49,7 @@ class Scheduler:
             config, "max_model_len", self.max_num_batched_tokens
         )
         self.eos = config.eos
+        self.clock_ns = clock_ns
         Sequence.set_block_size(config.kvcache_block_size)
         self.block_manager: KVCacheManager = kv_manager or BlockManager(
             config.num_kvcache_blocks,
@@ -63,12 +66,30 @@ class Scheduler:
             enable_chunked_prefill=self.enable_chunked_prefill,
             max_chunk_size=self.max_chunk_size,
             max_queue_size=getattr(config, "max_queue_size", None),
+            max_consecutive_prefill_batches=getattr(
+                config, "max_consecutive_prefill_batches", 1
+            ),
         )
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
         self.swapped: deque[Sequence] = deque()
         self.rejected: deque[Sequence] = deque()
         self.cancelled: deque[Sequence] = deque()
+        self.requests: dict[int, Sequence] = {}
+        self.consecutive_prefill_batches = 0
+        self.admitted_requests = 0
+        self.rejected_requests = 0
+        self.cancelled_requests = 0
+        self.completed_requests = 0
+        self.swap_in_operations = 0
+        self.swap_preemptions = 0
+        self.recompute_preemptions = 0
+        self.peak_waiting = 0
+        self.peak_running = 0
+        self.peak_swapped = 0
+        self.peak_active = 0
+        self.peak_gpu_kv_blocks = 0
+        self.peak_cpu_kv_blocks = 0
 
     def is_finished(self) -> bool:
         return not self.waiting and not self.running and not self.swapped
@@ -83,6 +104,9 @@ class Scheduler:
         *,
         raise_on_reject: bool = True,
     ) -> AdmissionDecision:
+        if seq.seq_id in self.requests:
+            raise RuntimeError(f"duplicate request id: {seq.seq_id}")
+        self.requests[seq.seq_id] = seq
         decision = self.policy.admit(
             seq,
             queued_requests=self.num_active_requests,
@@ -93,11 +117,78 @@ class Scheduler:
                 reason=decision.reason or "admission rejected",
             )
             self.rejected.append(seq)
+            self.rejected_requests += 1
+            self._observe_state()
             if raise_on_reject:
                 raise ValueError(decision.reason or "request rejected")
             return decision
         self.waiting.append(seq)
+        self.admitted_requests += 1
+        self._observe_state()
         return decision
+
+    def get_request(self, request_id: int) -> Sequence | None:
+        return self.requests.get(request_id)
+
+    def _observe_state(self) -> None:
+        self.peak_waiting = max(self.peak_waiting, len(self.waiting))
+        self.peak_running = max(self.peak_running, len(self.running))
+        self.peak_swapped = max(self.peak_swapped, len(self.swapped))
+        self.peak_active = max(self.peak_active, self.num_active_requests)
+        used_gpu = len(getattr(self.block_manager, "used_block_ids", ()))
+        self.peak_gpu_kv_blocks = max(self.peak_gpu_kv_blocks, used_gpu)
+        num_cpu_blocks = int(
+            getattr(self.block_manager, "num_cpu_blocks", 0)
+        )
+        free_cpu = len(
+            getattr(self.block_manager, "cpu_free_block_ids", ())
+        )
+        self.peak_cpu_kv_blocks = max(
+            self.peak_cpu_kv_blocks,
+            num_cpu_blocks - free_cpu,
+        )
+
+    def metrics_snapshot(self) -> dict[str, int | str]:
+        return {
+            "policy": self.policy.name,
+            "admitted_requests": self.admitted_requests,
+            "rejected_requests": self.rejected_requests,
+            "cancelled_requests": self.cancelled_requests,
+            "completed_requests": self.completed_requests,
+            "swap_in_operations": self.swap_in_operations,
+            "swap_preemptions": self.swap_preemptions,
+            "recompute_preemptions": self.recompute_preemptions,
+            "peak_waiting": self.peak_waiting,
+            "peak_running": self.peak_running,
+            "peak_swapped": self.peak_swapped,
+            "peak_active": self.peak_active,
+            "peak_gpu_kv_blocks": self.peak_gpu_kv_blocks,
+            "peak_cpu_kv_blocks": self.peak_cpu_kv_blocks,
+        }
+
+    def reset_metrics(self) -> None:
+        if not self.is_finished():
+            raise RuntimeError("scheduler metrics can reset only while idle")
+        self.requests.clear()
+        self.rejected.clear()
+        self.cancelled.clear()
+        self.consecutive_prefill_batches = 0
+        for name in (
+            "admitted_requests",
+            "rejected_requests",
+            "cancelled_requests",
+            "completed_requests",
+            "swap_in_operations",
+            "swap_preemptions",
+            "recompute_preemptions",
+            "peak_waiting",
+            "peak_running",
+            "peak_swapped",
+            "peak_active",
+            "peak_gpu_kv_blocks",
+            "peak_cpu_kv_blocks",
+        ):
+            setattr(self, name, 0)
 
     def _prefill_plan(self) -> BatchPlan | None:
         scheduled: list[Sequence] = []
@@ -172,6 +263,7 @@ class Scheduler:
             sequences=tuple(scheduled),
             scheduled_token_counts=tuple(token_counts),
             policy_name=self.policy.name,
+            created_ns=self.clock_ns(),
         )
 
     def _decode_plan(self) -> BatchPlan:
@@ -184,6 +276,7 @@ class Scheduler:
             seq = self.swapped.popleft()
             pairs = self.block_manager.swap_in(seq)
             swap_in_map.extend(pairs)
+            self.swap_in_operations += 1
             seq.transition_to(
                 RequestState.DECODING,
                 reason="KV swap-in completed",
@@ -224,6 +317,7 @@ class Scheduler:
         if not scheduled:
             raise RuntimeError("scheduler decode step produced no runnable sequences")
         self.running.extendleft(reversed(scheduled))
+        self._observe_state()
         return BatchPlan(
             phase=BatchPhase.DECODE,
             sequences=tuple(scheduled),
@@ -234,13 +328,29 @@ class Scheduler:
                 swap_out=tuple(swap_out_map),
             ),
             policy_name=self.policy.name,
+            created_ns=self.clock_ns(),
         )
 
     def schedule(self) -> BatchPlan:
-        prefill_plan = self._prefill_plan()
-        if prefill_plan is not None:
-            return prefill_plan
-        return self._decode_plan()
+        has_prefill = bool(self.waiting) or any(
+            seq.status is RequestState.PREFILLING for seq in self.running
+        )
+        has_decode = bool(self.swapped) or any(
+            seq.status is RequestState.DECODING for seq in self.running
+        )
+        if self.policy.should_schedule_prefill(
+            has_prefill=has_prefill,
+            has_decode=has_decode,
+            consecutive_prefill_batches=self.consecutive_prefill_batches,
+        ):
+            prefill_plan = self._prefill_plan()
+            if prefill_plan is not None:
+                self.consecutive_prefill_batches += 1
+                self._observe_state()
+                return prefill_plan
+        plan = self._decode_plan()
+        self.consecutive_prefill_batches = 0
+        return plan
 
     def preempt(
         self,
@@ -255,6 +365,7 @@ class Scheduler:
                 reason="decode KV capacity preemption",
             )
             self.swapped.append(seq)
+            self.swap_preemptions += 1
         else:
             self.block_manager.deallocate(seq)
             seq.num_computed_tokens = 0
@@ -263,6 +374,8 @@ class Scheduler:
                 reason="recompute preemption",
             )
             self.waiting.appendleft(seq)
+            self.recompute_preemptions += 1
+        self._observe_state()
 
     def postprocess(
         self,
@@ -307,6 +420,7 @@ class Scheduler:
                         ),
                     )
                 )
+                self.completed_requests += 1
             elif seq.status is RequestState.PREFILLING:
                 seq.transition_to(
                     RequestState.DECODING,
@@ -316,6 +430,7 @@ class Scheduler:
                 raise RuntimeError(
                     "prefill result received for request outside PREFILLING state"
                 )
+        self._observe_state()
         return tuple(outputs)
 
     def cancel(self, request_id: int) -> bool:
@@ -333,5 +448,7 @@ class Scheduler:
                     reason="cancelled by caller",
                 )
                 self.cancelled.append(seq)
+                self.cancelled_requests += 1
+                self._observe_state()
                 return True
         return False

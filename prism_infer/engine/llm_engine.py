@@ -63,6 +63,7 @@ class LLMEngine:
 
     def __init__(self, model, **kwargs):
         metrics_sink = kwargs.pop("metrics_sink", None)
+        clock_ns = kwargs.pop("clock_ns", perf_counter_ns)
         # --- 参数过滤: 只保留Config认识的参数, 忽略其他 ---
         config_fields = {field.name for field in fields(Config)}  # Config的所有字段名集合
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}  # 过滤
@@ -92,7 +93,8 @@ class LLMEngine:
         self.vl_processor = load_vl_processor(config.model) if self.model_runner.is_vl_model else None
         self.config = config
         config.eos = self.tokenizer.eos_token_id  # 从tokenizer获取EOS token id(Config创建时还不知道)
-        self.scheduler = Scheduler(config)  # 调度器
+        self.clock_ns = clock_ns
+        self.scheduler = Scheduler(config, clock_ns=clock_ns)  # 调度器
         self.executor = ModelExecutor(
             config,
             self.model_runner,
@@ -120,37 +122,74 @@ class LLMEngine:
         for p in getattr(self, "ps", []):
             p.join()                     # 等待所有子进程退出(类似C++ thread.join)
 
-    def add_request(self, prompt: str | list[int], sampling_params: SamplingParams) -> int:
+    def add_request(
+        self,
+        prompt: str | list[int],
+        sampling_params: SamplingParams,
+        *,
+        submitted_ns: int | None = None,
+        raise_on_reject: bool = True,
+    ) -> int:
         """添加一条推理请求: 文本→tokenize→创建Sequence→加入调度队列"""
         if isinstance(prompt, str):
             with profile_region("preprocess.tokenizer", cuda=False):
                 prompt = self.tokenizer.encode(prompt)  # 文本→token_ids
         seq = Sequence(prompt, sampling_params)      # 创建序列对象
-        return self._submit_sequence(seq)
+        return self._submit_sequence(
+            seq,
+            submitted_ns=submitted_ns,
+            raise_on_reject=raise_on_reject,
+        )
 
-    def _submit_sequence(self, seq: Sequence) -> int:
+    def _submit_sequence(
+        self,
+        seq: Sequence,
+        *,
+        submitted_ns: int | None = None,
+        raise_on_reject: bool = True,
+    ) -> int:
         """Submit one prepared request through admission and metrics contracts."""
 
         if not hasattr(self, "metrics"):
             # Lightweight construction tests and embedders may instantiate an
             # engine shell via ``__new__`` and attach scheduler/processor only.
             self.metrics = EngineMetrics()
-        submitted_ns = perf_counter_ns()
-        self.metrics.on_request_submitted(seq, timestamp_ns=submitted_ns)
+        clock_ns = getattr(self, "clock_ns", perf_counter_ns)
+        arrival_ns = clock_ns() if submitted_ns is None else submitted_ns
+        self.metrics.on_request_submitted(seq, timestamp_ns=arrival_ns)
         try:
-            self.scheduler.add(seq)
+            decision = self.scheduler.add(
+                seq,
+                raise_on_reject=raise_on_reject,
+            )
         except Exception:
             marker = getattr(self.metrics, "mark_terminal", None)
             if marker is not None:
                 marker(
                     seq.seq_id,
                     reason="rejected",
-                    timestamp_ns=perf_counter_ns(),
+                    timestamp_ns=clock_ns(),
                 )
             raise
+        if not decision.accepted:
+            marker = getattr(self.metrics, "mark_terminal", None)
+            if marker is not None:
+                marker(
+                    seq.seq_id,
+                    reason="rejected",
+                    timestamp_ns=clock_ns(),
+                )
         return seq.seq_id
 
-    def add_vl_request(self, prompt: str, image, sampling_params: SamplingParams) -> int:
+    def add_vl_request(
+        self,
+        prompt: str,
+        image,
+        sampling_params: SamplingParams,
+        *,
+        submitted_ns: int | None = None,
+        raise_on_reject: bool = True,
+    ) -> int:
         """添加一条图像 VL 请求。
 
         image 可以是一张图片，也可以是多张图片的 list/tuple。processor 作为
@@ -174,23 +213,39 @@ class LLMEngine:
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
-        return self._submit_sequence(seq)
+        return self._submit_sequence(
+            seq,
+            submitted_ns=submitted_ns,
+            raise_on_reject=raise_on_reject,
+        )
 
     def add_images_request(
         self,
         prompt: str,
         images,
         sampling_params: SamplingParams,
+        *,
+        submitted_ns: int | None = None,
+        raise_on_reject: bool = True,
     ) -> int:
         """添加一条多图 VL 请求，语义化别名。"""
 
-        return self.add_vl_request(prompt, images, sampling_params)
+        return self.add_vl_request(
+            prompt,
+            images,
+            sampling_params,
+            submitted_ns=submitted_ns,
+            raise_on_reject=raise_on_reject,
+        )
 
     def add_video_request(
         self,
         prompt: str,
         video,
         sampling_params: SamplingParams,
+        *,
+        submitted_ns: int | None = None,
+        raise_on_reject: bool = True,
     ) -> int:
         """添加一条视频 VL 请求。"""
 
@@ -211,7 +266,11 @@ class LLMEngine:
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
-        return self._submit_sequence(seq)
+        return self._submit_sequence(
+            seq,
+            submitted_ns=submitted_ns,
+            raise_on_reject=raise_on_reject,
+        )
 
     def step_result(self) -> StepResult:
         """Execute one strongly typed schedule → execute → commit cycle."""
@@ -242,9 +301,10 @@ class LLMEngine:
                     scheduled_tokens=plan.num_scheduled_tokens,
                     scheduler_policy=plan.policy_name,
                 )
-            started_ns = perf_counter_ns()
+            clock_ns = getattr(self, "clock_ns", perf_counter_ns)
+            started_ns = clock_ns()
             execution = self.executor.execute(plan)
-            finished_ns = perf_counter_ns()
+            finished_ns = clock_ns()
             self.metrics.on_batch_completed(
                 plan,
                 execution,
@@ -255,7 +315,7 @@ class LLMEngine:
                 outputs = self.scheduler.postprocess(
                     plan, execution.token_ids
                 )
-            completed_ns = perf_counter_ns()
+            completed_ns = clock_ns()
             self.metrics.on_requests_finished(
                 outputs,
                 timestamp_ns=completed_ns,
@@ -291,7 +351,7 @@ class LLMEngine:
                 marker(
                     request_id,
                     reason="cancelled",
-                    timestamp_ns=perf_counter_ns(),
+                    timestamp_ns=getattr(self, "clock_ns", perf_counter_ns)(),
                 )
         return cancelled
 
@@ -302,6 +362,21 @@ class LLMEngine:
         if snapshot is None:
             raise RuntimeError("configured metrics sink does not expose snapshots")
         return snapshot()
+
+    def reset_metrics(self) -> None:
+        """Reset request/batch/scheduler ledgers between idle benchmark runs."""
+
+        reset = getattr(self.metrics, "reset", None)
+        if reset is None:
+            raise RuntimeError("configured metrics sink cannot be reset")
+        self.scheduler.reset_metrics()
+        reset()
+
+    def request_state(self, request_id: int):
+        """Return the authoritative FSM state for a submitted request."""
+
+        seq = self.scheduler.get_request(request_id)
+        return None if seq is None else seq.status
 
     def generate(
         self,

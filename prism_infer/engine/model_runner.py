@@ -594,6 +594,7 @@ class ModelRunner:
         max_seqlen_k = 0        # 最长的 K 序列长度
         slot_mapping = []       # 每个 token 在 KV Cache 中的全局槽位编号
         block_tables = None     # Prefix Cache 命中时才需要
+        context_lens = None     # paged chunk/prefix prefill 的完整 K 长度
         pixel_value_chunks = []
         image_grid_chunks = []
         video_value_chunks = []
@@ -609,20 +610,35 @@ class ModelRunner:
             # 如果没有 cache hit, num_cached_tokens=0 → 喂全部 token
 
             if has_vl_positions:
-                if seq.num_cached_tokens != 0:
-                    raise ValueError("P3 mixed VL prefill does not support prefix/chunk cache hits yet")
                 if seq.position_ids is not None:
                     # seq.position_ids: [3, 1, seqlen] -> current chunk [3, seqlen_q]
                     vl_position_chunks.append(seq.position_ids[:, 0, seq.num_cached_tokens:seqlen])
                 else:
                     text_pos = torch.arange(seq.num_cached_tokens, seqlen, dtype=torch.long)
                     vl_position_chunks.append(text_pos.view(1, -1).expand(3, -1))
+                current_tokens = seq[seq.num_cached_tokens:seqlen]
                 if seq.pixel_values is not None:
-                    pixel_value_chunks.append(seq.pixel_values)
-                    image_grid_chunks.append(seq.image_grid_thw)
+                    image_tokens = current_tokens.count(seq.image_token_id)
+                    if image_tokens not in (0, seq.image_token_count):
+                        raise ValueError(
+                            "chunk boundary splits image token payload: "
+                            f"seq={seq.seq_id} chunk_tokens={image_tokens} "
+                            f"expected={seq.image_token_count}"
+                        )
+                    if image_tokens:
+                        pixel_value_chunks.append(seq.pixel_values)
+                        image_grid_chunks.append(seq.image_grid_thw)
                 if seq.pixel_values_videos is not None:
-                    video_value_chunks.append(seq.pixel_values_videos)
-                    video_grid_chunks.append(seq.video_grid_thw)
+                    video_tokens = current_tokens.count(seq.video_token_id)
+                    if video_tokens not in (0, seq.video_token_count):
+                        raise ValueError(
+                            "chunk boundary splits video token payload: "
+                            f"seq={seq.seq_id} chunk_tokens={video_tokens} "
+                            f"expected={seq.video_token_count}"
+                        )
+                    if video_tokens:
+                        video_value_chunks.append(seq.pixel_values_videos)
+                        video_grid_chunks.append(seq.video_grid_thw)
             else:
                 positions.extend(list(range(seq.num_cached_tokens, seqlen)))
                 # 位置编号: [num_cached_tokens, num_cached_tokens+1, ..., seqlen-1]
@@ -643,23 +659,15 @@ class ModelRunner:
                 continue
 
             # ── slot_mapping: 计算每个(非 cached) token 存到 KV Cache 的哪个位置 ──
-            for i in range(seq.num_cached_blocks, seq.num_blocks):
-                # 从第一个非 cached block 开始
-                start = seq.block_table[i] * self.block_size
-                # block_table[i] 是物理 block_id, 乘以 block_size = 全局起始槽位
-                # 例: block_id=5, block_size=16 → start=80
-                if i != seq.num_blocks - 1:
-                    end = start + self.block_size       # 不是最后一个 block → 满的
-                else:
-                    end = start + seq.last_block_num_tokens  # 最后一个 block → 可能不满
-                slot_mapping.extend(list(range(start, end)))
-                # slot_mapping 告诉 attention 层: "这个 token 的 KV 写到 cache 的第几号槽"
+            for token_index in range(seq.num_cached_tokens, seqlen):
+                block_index = token_index // self.block_size
+                block_offset = token_index % self.block_size
+                slot_mapping.append(
+                    seq.block_table[block_index] * self.block_size
+                    + block_offset
+                )
 
-        if cu_seqlens_k[-1] > cu_seqlens_q[-1]:         # K 总长 > Q 总长 → 有 Prefix Cache
-            raise RuntimeError(
-                "paged prefix-cache prefill is not supported yet; "
-                "disable prefix-cache hits for prefill or implement paged prefill attention"
-            )
+        paged_prefill = cu_seqlens_k[-1] > cu_seqlens_q[-1]
 
         # ── 全部转成 GPU tensor ──
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
@@ -670,6 +678,13 @@ class ModelRunner:
         cu_seqlens_q = torch.tensor(cu_seqlens_q, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         cu_seqlens_k = torch.tensor(cu_seqlens_k, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
+        if paged_prefill:
+            block_tables = self.prepare_block_tables(seqs)
+            context_lens = torch.tensor(
+                [len(seq) for seq in seqs],
+                dtype=torch.int32,
+                pin_memory=True,
+            ).cuda(non_blocking=True)
 
         trace_metadata = build_trace_metadata(
             seqs,
@@ -678,7 +693,7 @@ class ModelRunner:
             position_ids=positions,
             slot_mapping=slot_mapping,
             block_tables=block_tables,
-            context_lens=None,
+            context_lens=context_lens,
             block_size=self.block_size,
         )
         compression_metadata = build_compression_metadata(
@@ -693,6 +708,7 @@ class ModelRunner:
             and pruning_config.get("strategy") == "attention"
             and compression_metadata.enabled
             and compression_metadata.total_visual_tokens > 0
+            and (pixel_value_chunks or video_value_chunks)
         ):
             text_config = _text_hf_config(self.config.hf_config)
             visual_pruning_scorer = build_runtime_visual_token_scorer(
@@ -705,7 +721,7 @@ class ModelRunner:
 
         # ── 设置全局上下文 (attention 层会读取这些信息) ──
         set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                    slot_mapping, None, block_tables, trace_metadata=trace_metadata,
+                    slot_mapping, context_lens, block_tables, trace_metadata=trace_metadata,
                     compression_metadata=compression_metadata,
                     visual_pruning_scorer=visual_pruning_scorer)
         # True = is_prefill
@@ -1018,13 +1034,6 @@ class ModelRunner:
 
         # warmup 时 block_table 为空, 不走 chunked prefill
         is_warmup = any(not seq.block_table for seq in seqs)
-        if is_prefill and enable_chunked and not is_warmup:
-            for seq in seqs:
-                if seq.is_multimodal and seq.remaining_prefill_tokens > max_chunk:
-                    raise ValueError(
-                        "P2 VL chunked prefill is not supported when one request "
-                        "needs multiple chunks"
-                    )
         chunked_active = is_prefill and enable_chunked and not is_warmup
         if chunked_active:
             # ── Chunked Prefill: 限制每条 seq 只暴露 chunk 大小的 token ──

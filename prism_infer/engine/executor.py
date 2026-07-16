@@ -71,6 +71,7 @@ class ModelExecutor:
                 plans = [
                     compaction_plan
                     for seq in plan.sequences
+                    if seq.is_prefill_finished
                     if (
                         compaction_plan
                         := self.kv_manager.build_compaction_plan(

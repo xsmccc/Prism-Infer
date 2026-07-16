@@ -157,6 +157,7 @@ class BlockManager:
             h = (
                 self.compute_hash(token_ids, h)
                 if self.enable_prefix_caching
+                and not seq.is_multimodal
                 and len(token_ids) == self.block_size
                 else -1
             )
@@ -360,7 +361,11 @@ class BlockManager:
         if physical_remainder == 1:
             # ---- 情况1: 余数=1 → 刚好溢出到新 block ----
             # 上一个 block 刚填满(hash 已算好), 需要分配新块
-            if not seq.has_compact_kv_layout:
+            if (
+                not seq.has_compact_kv_layout
+                and self.enable_prefix_caching
+                and not seq.is_multimodal
+            ):
                 assert last_block.hash != -1                    # dense满块应有hash
             block = self._allocate_free_block()
             block_id = block.block_id
@@ -369,7 +374,11 @@ class BlockManager:
             # ---- 情况2: 余数=0 → 当前 block 刚好填满 ----
             # 计算这个 block 的哈希, 注册到缓存索引
             assert last_block.hash == -1                        # 填满前应该是没 hash 的
-            if not seq.has_compact_kv_layout:
+            if (
+                not seq.has_compact_kv_layout
+                and self.enable_prefix_caching
+                and not seq.is_multimodal
+            ):
                 token_ids = seq.block(seq.num_blocks-1)
                 prefix = self.blocks[block_table[-2]].hash if len(block_table) > 1 else -1
                 h = self.compute_hash(token_ids, prefix)

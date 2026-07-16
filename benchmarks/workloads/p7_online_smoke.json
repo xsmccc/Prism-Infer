@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "name": "p7_online_smoke",
+  "cases": [
+    {
+      "id": "text_long_chunked",
+      "requests": [
+        {
+          "type": "text",
+          "prompt": "Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation. Explain how a paged KV cache supports continuous batching while preserving request isolation."
+        }
+      ]
+    },
+    {
+      "id": "image_long_tail_chunked",
+      "requests": [
+        {
+          "type": "image",
+          "prompt": "Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations. Describe the image carefully, then discuss composition, color, lighting, possible context, uncertainty, and alternative interpretations.",
+          "image": {
+            "width": 448,
+            "height": 448,
+            "color": [100, 150, 200]
+          }
+        }
+      ]
+    },
+    {
+      "id": "mixed_text_image_video_online",
+      "requests": [
+        {
+          "type": "text",
+          "prompt": "Summarize continuous batching in one sentence."
+        },
+        {
+          "type": "image",
+          "prompt": "Describe this image.",
+          "image": {
+            "width": 448,
+            "height": 448,
+            "color": [100, 150, 200]
+          }
+        },
+        {
+          "type": "video",
+          "prompt": "Describe this short video.",
+          "frames": [
+            {"width": 448, "height": 448, "color": [80, 120, 180]},
+            {"width": 448, "height": 448, "color": [110, 120, 180]},
+            {"width": 448, "height": 448, "color": [140, 120, 180]},
+            {"width": 448, "height": 448, "color": [170, 120, 180]}
+          ]
+        }
+      ]
+    }
+  ]
+}
