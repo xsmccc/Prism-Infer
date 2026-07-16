@@ -319,7 +319,8 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 剩余风险:
 
 - 该记录完成时只覆盖数据结构和 rope index；后续 P2-003/P2-004 已完成 `ModelRunner.prepare_prefill` 消费、engine KV attention 和单图 `generate_vl` 入口。
-- 当前项目总体仍只支持 P2 单图 eager correctness；多图、视频和 batch 混合图文仍未支持。
+- 该记录完成时项目总体只支持 P2 单图 eager correctness；后续 P3 已补多图、视频和
+  mixed batch，P7.3 又补齐 online mixed-VL 与 chunked paged prefill。
 
 ## P2-003: Qwen3-VL engine attention 接入 KV cache 时的 flash-attn API 不兼容
 
@@ -608,7 +609,7 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 - 当前 P2 完成范围是单图、单请求、`enforce_eager=True` correctness。
 - 该记录完成时 HF token 对齐只覆盖 1-token greedy exact match；后续 P2-005 已补齐单图图文 last logits 和 full-model layerwise strict PASS。
 - 长输出、多轮、吞吐、延迟和显存 benchmark 还未评估。
-- 该记录完成时多图、视频、batch 混合图文、VL CUDA Graph decode、高性能 paged decode kernel、paged prefix-cache prefill 仍未完成；后续 P3 已补齐前五项，paged prefix-cache/chunked-prefill VL mixed batch 仍未支持。
+- 该记录完成时多图、视频、batch 混合图文、VL CUDA Graph decode、高性能 paged decode kernel、paged prefix-cache prefill 仍未完成；后续 P3 已补齐前五项，P7.3 已补 chunked paged prefill与 online mixed-VL。VL token-id prefix hash因像素语义不安全而显式禁用。
 
 ## P2-005: 图文 full logits 未严格对齐，根因在 VisionEncoder RoPE 初始化与 PatchMerger eps
 
@@ -792,7 +793,7 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 剩余风险:
 
 - 当前图文 strict PASS 覆盖单图、单请求、`enforce_eager=True`、最后 token logits 和 1-token greedy。
-- 该记录完成时多图、视频、batch 混合图文、VL CUDA Graph decode、高性能 paged decode kernel、paged prefix-cache prefill、长输出分布/质量评估和吞吐/延迟 benchmark 仍未完成；后续 P3 已补齐多图、视频、mixed batch、32-token 长输出、logits/ppl 分布、VL CUDA Graph 和 paged decode baseline，paged prefix-cache/chunked-prefill VL mixed batch 仍未支持。
+- 该记录完成时多图、视频、batch 混合图文、VL CUDA Graph decode、高性能 paged decode kernel、paged prefix-cache prefill、长输出分布/质量评估和吞吐/延迟 benchmark 仍未完成；后续 P3 已补齐多图、视频、mixed batch、32-token 长输出、logits/ppl 分布、VL CUDA Graph 和 paged decode baseline，P7.3 已补 chunked paged prefill与 online mixed-VL。VL token-id prefix hash保持禁用。
 
 ## P3-001: 多图 full logits 不对齐，根因是 VisionEncoder 多图跨图 attention
 
@@ -945,7 +946,7 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 剩余风险:
 
 - 该记录完成时 P3.1 只覆盖单请求多图、`enforce_eager=True` correctness；后续 P3.3/P3.5 已覆盖 mixed batch 和 CUDA Graph decode。
-- 该记录完成时视频输入、batch 混合图文、长输出多 token 质量评估、VL CUDA Graph decode、高性能 paged decode kernel、paged prefix-cache prefill 和吞吐/延迟 benchmark 仍未完成；后续 P3 已补齐前五项和基础 benchmark，paged prefix-cache/chunked-prefill VL mixed batch 仍未支持。
+- 该记录完成时视频输入、batch 混合图文、长输出多 token 质量评估、VL CUDA Graph decode、高性能 paged decode kernel、paged prefix-cache prefill 和吞吐/延迟 benchmark 仍未完成；后续 P3 已补齐前五项和基础 benchmark，P7.3 已补 chunked paged prefill与 online mixed-VL。VL prefix hash因像素语义不安全而禁用。
 
 ## P3-002: 视频输入 correctness 建立，核心风险是 video_grid_thw 的帧展开语义
 
@@ -1087,7 +1088,7 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 剩余风险:
 
 - 该记录完成时 P3.2 只覆盖单请求 synthetic video、`enforce_eager=True` correctness；后续 P3.3/P3.5 已覆盖 mixed batch 和 CUDA Graph decode。
-- 该记录完成时 batch 混合图文、长输出多 token 质量评估、VL CUDA Graph decode、高性能 paged decode kernel、真实视频文件采样策略、paged prefix-cache prefill 和吞吐/延迟 benchmark 仍未完成；后续 P3 已补齐 mixed batch、32-token 长输出、logits/ppl 分布、CUDA Graph、paged decode baseline 和基础 benchmark，真实视频文件采样策略与 paged prefix-cache/chunked-prefill VL mixed batch 仍未支持。
+- 该记录完成时 batch 混合图文、长输出多 token 质量评估、VL CUDA Graph decode、高性能 paged decode kernel、真实视频文件采样策略、paged prefix-cache prefill 和吞吐/延迟 benchmark 仍未完成；后续 P3 已补齐 mixed batch、32-token 长输出、logits/ppl 分布、CUDA Graph、paged decode baseline 和基础 benchmark，P7.3 已补 chunked paged prefill与 online mixed-VL；真实视频文件采样策略仍未覆盖，VL prefix hash保持禁用。
 
 ## P3-003: mixed batch 单序列限制解除，prefix-cache 干扰需要明确排除
 
@@ -1101,7 +1102,7 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 
 - 补齐真实 VL engine 的 batch 混合图文 correctness 基线。
 - 涉及 scheduler 形成同批请求后的 flatten position ids、visual payload concat、slot mapping、decode position 延续。
-- 当前不覆盖 prefix-cache/chunked-prefill 的 VL mixed batch 优化，也不覆盖 CUDA Graph mixed decode。
+- P3.3 当时不覆盖 prefix-cache/chunked-prefill 的 VL mixed batch，也不覆盖 CUDA Graph mixed decode；后者由 P3.5补齐，前者由 P7.3补齐 correctness路径。
 
 触发命令:
 
@@ -1207,7 +1208,7 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 剩余风险:
 
 - 该记录完成时 P3.3 只覆盖 non-prefix、non-chunked、`enforce_eager=True` mixed batch 1-token greedy correctness；后续 P3.4/P3.5 已覆盖 mixed batch VL rows 32-token、text row batch 数值敏感性解释和 CUDA Graph。
-- mixed batch full logits 对 HF batch reference、prefix-cache/chunked-prefill VL mixed batch 仍未完成；P3 已补齐 long greedy、VL CUDA Graph、高性能 paged decode baseline 和性能 benchmark。
+- mixed batch full logits 对 HF batch reference在该记录中未完成；P3 后续补齐 long greedy、VL CUDA Graph、高性能 paged decode baseline和性能 benchmark，P7.3补齐 chunked paged prefill与 online mixed-VL。VL prefix hash不作为支持能力开放。
 
 ## P3-004: 长输出 32-token greedy 与 logits/ppl 分布门槛建立
 
@@ -1302,7 +1303,9 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 剩余风险:
 
 - P3.4 仍不覆盖随机采样输出文本一致性；采样模式只应比较分布或 ppl。
-- 长上下文压力和 prefix-cache/chunked-prefill VL mixed batch 仍未完成。
+- 该记录完成时长上下文压力和 prefix-cache/chunked-prefill VL mixed batch未完成；
+  P7.3后续用 301-token text与646-token image+text建立了 chunked correctness基线，
+  但 gather+SDPA长上下文性能仍待专用 kernel。
 
 后续 P7.4-A 更新（2026-07-16）:
 
@@ -1679,7 +1682,8 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 剩余风险:
 
 - P3 固定长输出门槛已提升到 `max_tokens=32` greedy 和 teacher-forced logits/ppl；长上下文压力未纳入当前门禁。
-- prefix-cache/chunked-prefill VL mixed batch 仍未支持。
+- P7.3 已补 chunked paged prefill与 online mixed-VL；VL token-id prefix hash因不同像素
+  可共享相同 placeholder ids而显式禁用，不能表述为 VL prefix cache支持。
 - 当前 paged decode Triton kernel 是 baseline kernel，batch=1/context=4096 慢于 SDPA reference。
 - P3 benchmark 只覆盖本机 RTX 5090；4070/4090、多卡 TP、真实视频文件采样策略、vLLM/SGLang 同条件对比留到 P6/P7。
 

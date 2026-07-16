@@ -4,7 +4,7 @@
 >
 > P7.2 状态: `COMPLETE`（commit `8b27edc`）
 >
-> P7.3 状态: `IMPLEMENTING`
+> P7.3 状态: `COMPLETE`（commit `e7796e9`）
 
 ## 1. 目标与边界
 
@@ -94,3 +94,30 @@ JUnit：`tests=255`、`failures=0`、`errors=0`、`skipped=6`、
 - queue/admission/cancel/swap/recompute/chunked paths均有显式测试。
 - clean 单卡 online matrix 与结构化 summary。
 - full regression 通过，README/ROADMAP/VERIFICATION/claim边界同步。
+
+## 8. P7.3 完成证据
+
+实现补齐了原先只存在调度外壳的 chunked prefill：Q<K 时从 paged KV收集完整
+history并使用 bottom-right causal mask；slot mapping按实际 query token精确构造。
+视觉 payload从首个到最后一个视觉占位 token作为 atomic region，后续 text tail
+可以继续 paged chunk。VL 请求禁止按 token-id hash复用 prefix，因为相同占位 token
+不代表相同像素 embedding；text-only concurrent prefix hit继续支持。
+
+clean `e7796e9` formal matrix共 9 cells：
+
+- text-short 20 req/s、single-image 4 req/s。
+- mixed text/image/video 4 和 10 req/s，off/compact Graph。
+- 301-token text按 `128/128/45` chunk。
+- 646-token image+text按 `512/134` chunk。
+
+所有 cell均完成全部请求，按各 cell声明的 TTFT/TPOT SLO，goodput fraction均为
+`1.0`。mixed 10 req/s 的 peak active为 off `5`、compact `4`；两条路径逐请求
+8-token输出 exact。完整矩阵见
+`data/p7_online/p73_online_matrix_summary_e7796e9.{json,md}`。
+
+clean full regression JUnit：`tests=268`、`failures=0`、`errors=0`、`skipped=6`、
+`time=245.361s`，即 `262 passed, 6 skipped`。
+
+剩余边界：paged chunk/prefix prefill当前是正确性优先的 gather+SDPA路径，不是优化
+kernel；online control loop是单进程 engine harness，不是 HTTP/gRPC server；尚未形成
+与外部框架相同 arrival/SLO配置的 online goodput ratio。

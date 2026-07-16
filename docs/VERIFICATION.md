@@ -24,6 +24,10 @@ export PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cb
   batch-shape exact结果保留为历史证据，不再作为通用合同。当前要求同一 mixed
   shape重复 exact，并以 HF teacher-forced logits/PPL exact和独立任务质量门禁
   约束跨 shape低 margin分叉。
+- 2026-07-16 完成 P7.3 后，Q<K chunked/prefix prefill已有 correctness-first paged
+  gather+SDPA路径；online engine harness覆盖 wall-clock arrival、continuous batching、
+  admission/cancel、queue/TTFT/TPOT/goodput。VL token-id prefix hash因不包含像素语义
+  而禁用；这不是网络 server或外部框架 online对比。
 - 2026-06-25 完成 P3.7 后，P3 当前门禁已通过: grouped regression `49 passed in 356.34s`，纯文本/单图/多图/视频 full logits 均 strict PASS，VL CUDA Graph decode 与 paged decode kernel 均有 correctness 和 benchmark 基线。
 - 2026-07-05 使用本地 Qwen3-VL 权重和 transformers 5.13 刷新门禁: `pytest -q tests -s` 为 `84 passed, 5 skipped in 250.07s`；5 个 skipped 均为 manual GPU debug script。当前长输出门禁采用稳定前缀 + teacher-forced logits/ppl 分布口径: 单图/多图 `prefix@8/16` 与 HF 一致，视频因第 6 个 token 的 bf16 tie-break 固定为 `prefix@5`，完整 32-token 仍打印用于诊断。完整门禁无 warning。
 - GPU 不可用时可以降级为“未验证风险”，但不能把缺失验证写成通过。
@@ -639,7 +643,8 @@ PASS 标准:
   FP16/BF16低 margin分叉必须显式记录，不能把跨 shape exact当作通用正确性。
 - model-precision logits须用 HF teacher-forced分布/PPL与独立任务质量门禁验证。
 - `slot_mapping/block_tables/context_lens` 不串扰，KV cache 写入/读取 shape 和 max diff 有输出。
-- 不支持 prefix-cache/chunked prefill 的组合必须显式报错，不能 silent fallback。
+- P3.3 当时不支持的 prefix-cache/chunked prefill组合必须显式报错，不能 silent
+  fallback；P7.3后续实现见本文件 P7.3节。
 
 当前状态:
 
@@ -682,7 +687,8 @@ LLM.generate_mixed model-precision determinism contract: PASS
 video row 的 batch1/batch4首 token分叉是显式数值边界；同一 mixed shape重复 exact，
 image/multi-image 1-token仍跨 shape exact。它不替代下面的 HF logits/PPL门禁。
 
-- 当前 P3.3 不覆盖 prefix-cache/chunked-prefill VL mixed batch；该组合仍作为后续风险，不并入 P3.3 PASS。
+- P3.3 的历史 PASS不覆盖 prefix-cache/chunked-prefill VL mixed batch；P7.3后续
+  单独建立了 chunked paged prefill与 online mixed-VL门禁，不追溯改写 P3.3范围。
 
 ### 5. 长输出多 token 质量评估
 
@@ -758,7 +764,9 @@ HF/Prism model argmax single/batch: 11/11
 HF/Prism duplicate batch numeric sensitivity: PASS
 ```
 
-- 剩余风险: 随机采样文本一致性不作为 PASS 标准；长上下文压力、prefix-cache/chunked-prefill VL mixed batch 仍未完成。
+- P3.4 完成时的剩余风险包括随机采样文本一致性、长上下文压力和
+  prefix-cache/chunked-prefill VL mixed batch；P7.3已补 301/646-token chunked
+  correctness基线，长上下文优化 kernel仍未完成。
 
 ### 6. VL CUDA Graph decode
 
@@ -1019,7 +1027,8 @@ PASS
 
 - P3 剩余风险:
   - P3.4 固定门槛已覆盖 `max_tokens=32` greedy 和 teacher-forced logits/ppl；随机采样文本一致性、长上下文压力仍属于后续扩展。
-  - prefix-cache/chunked-prefill VL mixed batch 仍未支持。
+  - P7.3 已补 chunked paged prefill与 online mixed-VL；VL prefix hash因像素语义
+    不安全而显式禁用，当前 paged prefill仍是 correctness-first gather+SDPA。
   - P3.6 kernel 是 baseline kernel；batch=1/context=4096 慢于 SDPA reference。
   - 真实视频文件采样策略、多卡 TP、4070/4090 benchmark 和 vLLM/SGLang 同条件对比未在 P3 完成。
 
@@ -2970,6 +2979,80 @@ PRISM_MODEL_PATH="$PRISM_MODEL_PATH" \
 JUnit：`tests=255`、`failures=0`、`errors=0`、`skipped=6`、
 `time=239.200s`，即 `249 passed, 6 skipped`。架构与 P7.3 online合同见
 `docs/P7_ENGINE_ONLINE_DESIGN.md`。
+
+### P7.3 Online Arrival、Continuous Batching 与 Chunked Prefill
+
+合同与 schema focused gate：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+PRISM_MODEL_PATH="$PRISM_MODEL_PATH" \
+.venv-local/bin/python -m pytest -q \
+  tests/test_online_serving.py \
+  tests/test_online_summary.py \
+  tests/test_llm_online_serving.py \
+  tests/test_engine_contracts.py \
+  tests/test_qwen3_vl_attention_kv.py \
+  tests/test_model_runner_vl_prefill.py \
+  tests/test_model_runner_context_reset.py
+```
+
+门禁覆盖：
+
+- wall-clock constant/poisson/burst arrival与动态 batch membership。
+- admission reject、cancel、prefill/decode防饥饿 interleave、swap/recompute合同。
+- request queue/TTFT/TPOT/latency与 terminal accounting可复算，summary拒绝篡改记录。
+- Q<K bottom-right causal attention、逐 query token slot mapping和 chunk结束后的状态恢复。
+- 视觉 payload atomic region、text-only concurrent full-block prefix reuse，以及 VL hash禁用。
+
+单个正式 cell的最小复现示例：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+.venv-local/bin/python benchmarks/bench_online.py \
+  --model "$PRISM_MODEL_PATH" \
+  --manifest benchmarks/workloads/p6_internal_smoke.json \
+  --case text_short --mode off_graph \
+  --requests 16 --arrival-process constant --request-rate 20 \
+  --max-tokens 8 --max-model-len 512 \
+  --max-num-batched-tokens 512 --max-num-seqs 8 \
+  --max-chunk-size 128 --num-kvcache-blocks 8 \
+  --kvcache-block-size 256 --ttft-slo-ms 500 --tpot-slo-ms 50 \
+  --output /tmp/p73_text_short.json
+```
+
+正式 9-cell summary重算：
+
+```bash
+.venv-local/bin/python scripts/summarize_p7_online.py \
+  data/p7_online/p73_*_formal_e7796e9.json \
+  --json-output /tmp/p73_online_summary.json \
+  --markdown-output /tmp/p73_online_summary.md
+```
+
+clean `e7796e9` matrix覆盖 text-short 20 req/s、single-image 4 req/s、mixed
+text/image/video 4/10 req/s的 off/compact Graph，以及 301-token text和646-token
+image+text chunked输入。9/9 cells均完成全部请求，按各 cell预先声明的 SLO，
+goodput fraction均为 `1.0`。长输入分别形成 `128/128/45` 与 `512/134` chunks，
+chunked/unchunked输出 exact；10 req/s mixed形成 peak active `4-5`。
+
+完整回归：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+PRISM_MODEL_PATH="$PRISM_MODEL_PATH" \
+.venv-local/bin/python -m pytest -q \
+  --junitxml=data/p7_online/p73_full_regression_e7796e9.xml
+```
+
+JUnit：`tests=268`、`failures=0`、`errors=0`、`skipped=6`、
+`time=245.361s`，即 `262 passed, 6 skipped`。
+
+限制：每个正式 cell是一次多请求 engine-level run，不是 HTTP/gRPC server，也没有
+process-level repeats；off/compact差异不能形成 speedup claim。正式 matrix未触发
+preemption，preemption仅有 deterministic contract tests。当前也没有相同 arrival/SLO
+配置的 vLLM online record。详细结果见 `PERFORMANCE_REPORT.md` 6.10，根因见
+`docs/issues/P7-007-CHUNKED-PREFILL-STATE.md`。
 
 ### P7.4-A Trace-driven Model-precision Logits
 

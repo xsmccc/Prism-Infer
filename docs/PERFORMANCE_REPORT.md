@@ -949,3 +949,56 @@ data/p7_external/p74_prism_single_image_model_nsys_cc070b3.{nsys-rep,sqlite}
 data/p7_external/p74_prism_single_image_model_nsys_summary_cc070b3.json
 data/p7_external/p74_full_regression_cc070b3.xml
 ```
+
+### 6.10 P7.3 Online Arrival、Continuous Batching 与 SLO Goodput
+
+P7.1/P7.4 的 offline matrix在开始测量前一次性提交固定 batch，不能回答 queue、
+arrival或 SLO goodput。P7.3 新增 wall-clock arrival loop；请求可在其他 batch执行期间
+到达，并在下一调度点进入 immutable `BatchPlan`。每个 request记录 intended arrival、
+first scheduled、first token、逐 token和 terminal时间。
+
+实现过程中确认旧 chunked prefill只有 scheduler外壳：第二个 chunk的 Q<K没有 paged
+attention。修复后采用 correctness-first paged gather + bottom-right causal SDPA，并将
+视觉 payload整体作为 atomic region。详细根因见
+`docs/issues/P7-007-CHUNKED-PREFILL-STATE.md`。
+
+clean `e7796e9` formal matrix：
+
+| Workload | Mode / rate | Requests | Queue p99 | TTFT p99 | TPOT p99 | Req/s | Goodput/s | Peak active |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| text short | off Graph / 20 req/s | 16 | `13.434` | `41.502` | `31.096` | `18.245` | `18.245` | `5` |
+| single image | off Graph / 4 req/s | 8 | `10.579` | `146.157` | `18.632` | `4.025` | `4.025` | `1` |
+| single image | compact Graph / 4 req/s | 8 | `8.094` | `91.992` | `14.383` | `4.197` | `4.197` | `1` |
+| mixed text/image/video | off Graph / 4 req/s | 6 | `13.860` | `180.475` | `14.574` | `3.911` | `3.911` | `1` |
+| mixed text/image/video | compact Graph / 4 req/s | 6 | `16.376` | `235.634` | `14.216` | `3.767` | `3.767` | `1` |
+| mixed text/image/video | off Graph / 10 req/s | 6 | `104.806` | `244.236` | `81.708` | `6.947` | `6.947` | `5` |
+| mixed text/image/video | compact Graph / 10 req/s | 6 | `58.482` | `206.415` | `59.567` | `7.327` | `7.327` | `4` |
+| text 301-token chunked | off Graph / 4 req/s | 4 | `0.894` | `105.263` | `13.594` | `4.465` | `4.465` | `1` |
+| image+text 646-token chunked | off Graph / 2 req/s | 2 | `15.322` | `151.996` | `15.555` | `2.863` | `2.863` | `1` |
+
+SLO不是跨 workload统一后倒推：text-short为 TTFT/TPOT `500/50 ms`，single-image为
+`1000/50 ms`，mixed与长输入为 `2000/100 ms`（text-long TTFT为 `1000 ms`）。
+9/9 cells的 completed request均满足各自预先声明的 SLO，goodput fraction为 `1.0`。
+
+机制/correctness证据：
+
+- text 301 tokens固定形成 `128/128/45` 三个 prefill chunks；image+text 646 tokens
+  固定形成 `512/134`，两者相对 single-prefill输出 exact。
+- 10 req/s mixed-VL形成 batch size `1..5`，证明不是 offline replicated batch。
+- single-image和 mixed rate10 的 off/compact逐 request 8-token输出 exact。
+- concurrent text prefix hit中第二条复用 256-token full block且输出 exact；VL prefix
+  hash显式禁用，因为 token id不包含像素语义。
+- admission reject、cancel、swap/recompute preemption、queue/KV peaks均有 deterministic
+  contract tests；正式 matrix未触发 preemption，不能据此声称 swap性能。
+
+每个 cell是一次含多个 arrival/request的 formal run，没有跨进程 repeat，因此表中
+off/compact差异只作为当前 online observation，不形成“compact speedup”结论。当前也
+没有相同 arrival/SLO的 vLLM online record，禁止把这些 goodput数字写成外部反超。
+
+Raw evidence：
+
+```text
+data/p7_online/p73_*_formal_e7796e9.json
+data/p7_online/p73_online_matrix_summary_e7796e9.{json,md}
+data/p7_online/p73_full_regression_e7796e9.xml
+```

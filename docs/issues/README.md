@@ -37,6 +37,7 @@
 - [P7-004：物理 token 减少不保证 page/bytes 回收](P7-004-PAGE_GRANULARITY.md)
 - [P7-005：offline TTFT/vision prefill 双峰](P7-005-TTFT_VISION_BIMODALITY.md)
 - [P7-006：逐 decode 的 FP32 lm-head 整权重转换](P7-006-LOGITS-FP32-WEIGHT-CAST.md)
+- [P7-007：Chunked prefill 只有调度外壳且 cache 状态重载](P7-007-CHUNKED-PREFILL-STATE.md)
 
 ## 新 issue 模板
 

@@ -1,6 +1,7 @@
 # Prism-Infer Claim Ledger
 
-> 冻结基线: `p6.12-content-aware-kv` (`c970c61`)
+> P6 冻结基线: `p6.12-content-aware-kv` (`c970c61`)
+> 当前 P7.3 验证点: `e7796e9`
 > 更新日期: 2026-07-16
 
 本表区分“已实现”“已验证”和“性能占优”。README、简历和面试中的数字必须能
@@ -25,6 +26,10 @@
 | P7.4 后 Prism/vLLM Graph TPOT 差距明显缩小但尚未反超 | clean `a33e7ed`，同 GPU/KV budget/output32，10/10 comparability PASS | quality-qualified compact Prism 为 vLLM `1.34x-1.40x`；Prism peak allocated 约 `17.39-17.50 GiB`，低于 vLLM `17.74-17.93 GiB` |
 | model-precision logits 通过 HF 与项目质量门禁 | single/multi-image/video teacher-forced + 7-image COCO lexical gate | HF logits/PPL max diff `0`；token-F1 drop `0.004360`、ROUGE-L 改善 `0.004090`，task gate PASS |
 | P7.4 后全量回归通过 | clean `cc070b3`，单卡环境 | JUnit `241 passed, 6 skipped in 264.664s`，0 failure/error |
+| engine-level online arrival 与 continuous batching 已实现 | clean `e7796e9`，单进程 RTX 5090 harness | constant arrival、动态 active batch、admission/cancel、prefill/decode interleave、request FSM 与 queue/TTFT/TPOT/goodput schema，见 `PERFORMANCE_REPORT.md` 6.10 |
+| chunked paged prefill 已有 correctness 路径 | text 与 image+text 长输入 | 301-token text 为 `128/128/45`，646-token image+text 为 `512/134`；chunked/unchunked 输出 exact |
+| P7.3 online matrix 的已完成请求全部满足各 cell 声明的 SLO | clean `e7796e9`，9 cells | 9/9 cell goodput fraction `1.0`；text-short 20 req/s peak active `5`，mixed 10 req/s peak active `4-5` |
+| P7.3 后全量回归通过 | clean `e7796e9`，单卡环境 | JUnit `262 passed, 6 skipped in 245.36s`，0 failure/error |
 
 ## 必须带限制的结论
 
@@ -36,6 +41,9 @@
 | P6.12 reference token-F1/ROUGE-L drop 小于 0.004 | 不是标准 COCO CIDEr/SPICE，也不是通用 VQA accuracy |
 | external eager baseline 比 Prism eager 快约 2 倍 | 仅为 P6 diagnostic matched eager；P7 重新比较双方 Graph |
 | model-precision 相对旧 FP32 输出并非所有真实 case token exact | model precision 与 HF BF16 logits/PPL 逐值 exact；跨 batch shape 的低 margin argmax 允许分叉，同一 shape 必须 deterministic |
+| P7.3 的 9-cell goodput fraction 为 `1.0` | 每个 cell 是一次多请求正式运行，SLO 按 workload 预先声明；不是跨进程统计置信区间，也不是网络 server 结果 |
+| online off/compact 数字可并列报告 | 当前只能称为 observation；未做 process-level repeats，不能据此声称 compact online speedup |
+| text-only prefix reuse 已验证 | 只复用并发请求仍持有的 full block；尚无独立 persistent prefix store，VL token-id prefix hash因不包含像素语义而禁用 |
 
 ## 当前禁止的结论
 
@@ -44,6 +52,8 @@
 - “标准 COCO accuracy 下降小于 1%”。
 - “FP8 KV 已通过质量门禁”。
 - “offline batch tok/s 等价于 online serving throughput/goodput”。
+- “P7.3 已证明 HTTP/gRPC 服务性能”或“已证明相对 vLLM 的 online goodput 优势”。
+- “P7.3 正式矩阵证明了 swap/recompute 性能”；正式 9-cell matrix 未触发 preemption。
 - “TP2 已验证”或“多卡可扩展”；当前机器只有一张可见 RTX 5090。
 - “已实现 megakernel/PD 分离/投机解码”。
 
@@ -52,7 +62,9 @@
 - `diagnostic_matched`: Prism eager TPOT约为 vLLM eager 的 `1.91x-1.97x`。
 - `best_stable`: Prism off Graph约为 vLLM Graph 的 `1.69x-1.83x`；quality-qualified compact Graph约为 `1.65x-1.78x`。
 - 双方 E2E throughput 当前也是 vLLM 更高，但部分 Prism offline TTFT存在双峰，E2E不作为压缩收益归因。
-- 这是 offline closed-loop，不形成 online SLO goodput claim；P7.3 需要把 KV page容量转化为在线 admission/goodput 后重新比较。
+- 这是 offline closed-loop，不形成 online SLO goodput claim。P7.3 已建立 Prism 内部
+  engine-level arrival/queue/SLO goodput 基线，但尚无相同 arrival/SLO 配置的 vLLM
+  online record，因此仍不能形成外部 online ratio。
 - P7.4 使用 node-level Systems trace 定位到旧 `compute_logits` 每 decode 都执行
   `lm_head.weight.float()`；改用模型原生 BF16 后，该 region 从 `4.068 ms` 降至
   `0.762 ms`，clean 五 workload TPOT提升 `1.216x-1.280x`。
