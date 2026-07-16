@@ -628,12 +628,12 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
   - [x] 推送 `e51c16d/c970c61`，创建并推送 `p6.12-content-aware-kv` tag。
   - [x] 修复 ROADMAP 顶部过期质量状态，新增 `docs/CLAIMS.md`。
   - [x] 新建 `docs/issues/` 和性能调优记录规范。
-- [ ] P7.1 offline external baseline v2:
+- [x] P7.1 offline external baseline v2:
   - [x] 分离 `diagnostic_matched` 与 `best_stable`，禁止 eager/Graph 跨协议 ratio。
   - [x] external schema-v2 记录 effective cudagraph/compile mode、GPU UUID、model hash、KV pool、sampling 和 clean state。
   - [x] 汇总器按完整 comparability gates 拒绝不公平 cell，并保持 schema-v1兼容。
-  - [ ] 在 clean harness 上完成 synthetic/COCO formal matrix 和自动汇总。
-  - [ ] 用同 workload trace 确认 Graph 后 residual gap 的下一 profiling 目标。
+  - [x] clean `b17f933` 上完成 5 workloads × 2 profiles × Prism off/compact 的 20-row 自动汇总，全部 comparability gates PASS。
+  - [x] same-workload semantic CUDA trace 将 Prism TPOT 分解为 Graph replay `13.394 ms`、logits `4.068 ms`、copy `0.129 ms`、sampler `0.175 ms`；下一 profiling 目标为 Graph 内 decoder 与 logits。
 - [ ] P7.2 Engine 架构边界重构：Request FSM、immutable BatchPlan、SchedulerPolicy、KV manager/executor/metrics contract。
 - [ ] P7.3 online arrival、continuous batching、mixed/chunked prefill、admission/preemption 和 SLO goodput。
 - [ ] P7.4 CUDA Graph replay coverage、bucket/padding、Graph 外固定成本与 CPU/GPU overlap。
@@ -646,6 +646,15 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
 - online benchmark 能输出 arrival/queueing、p50/p90/p99 TTFT/TPOT、throughput、goodput、KV occupancy 和 preemption。
 - 至少一个优化从 trace 到 root cause、实现、correctness、E2E/SLO 形成完整闭环；无收益候选也保留 rejected evidence。
 - 与 vLLM 的结论限定模型、硬件、workload、质量和执行配置，不写“全面超过”。
+
+### 当前状态
+
+- P7.0/P7.1 已完成；协议和命令见 `docs/P7_OFFLINE_COMPARISON_DESIGN.md`，性能结果见 `docs/PERFORMANCE_REPORT.md` 6.2-6.7。
+- matched eager 下 Prism TPOT约为 vLLM 的 `1.91x-1.97x`；双方 best-stable Graph 下，quality-qualified compact Prism 仍为 vLLM 的 `1.65x-1.78x`。
+- Prism compact 相对自身 off Graph 的 TPOT改善约 `1.5%-3.0%`，主要优势仍是跨 page boundary 后的 active KV bytes/capacity。
+- clean semantic trace 将 single-image Prism Graph decode 的主要时间定位为 replay `13.394 ms` 和 Graph 外 logits `4.068 ms`；P7.4/P7.5 应从这两部分继续分解。
+- offline TTFT/vision prefill 存在双峰，当前不把 E2E中位数差异归因为压缩；见 `docs/issues/P7-005-TTFT_VISION_BIMODALITY.md`。
+- focused regression `42 passed`；完整回归 JUnit 为 `240 passed, 6 skipped`，无 failure/error。
 
 ## P8: 项目交付
 

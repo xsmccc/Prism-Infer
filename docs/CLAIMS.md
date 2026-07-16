@@ -18,6 +18,9 @@
 | 压缩 CUDA Graph 路径有效 | RTX 5090，offline decode，batch1-8 | eager/Graph token exact；decode speedup约 `1.76x-1.94x`，见 P6.11 |
 | 当前质量合格压缩的短 workload 性能收益很小 | COCO batch4/output32 | decode-step `1.021x`，engine output throughput `1.013x`，E2E `1.005x` |
 | P6.12 后全量回归通过 | 单卡环境 | `238 passed, 6 skipped in 232.90s` |
+| P7.1 外部比较协议可自动拒绝不公平 cell | schema-v2 offline closed-loop | 两条 profile 共 20 rows 全部通过 model/GPU/KV/execution/clean-state gates |
+| Prism Graph 明显缩小 eager 开销，但当前仍慢于 vLLM Graph | RTX 5090、固定五类 workload、output32 | quality-qualified compact Graph TPOT 为 vLLM `1.65x-1.78x`；不能声称已超过 |
+| content-aware compaction 对当前短/中 visual context只有小幅 TPOT收益 | 同一 P7.1 matrix | compact 相对 Prism off Graph约改善 `1.5%-3.0%` |
 
 ## 必须带限制的结论
 
@@ -39,11 +42,9 @@
 - “TP2 已验证”或“多卡可扩展”；当前机器只有一张可见 RTX 5090。
 - “已实现 megakernel/PD 分离/投机解码”。
 
-## P7.1 待填结论
+## P7.1 当前结论
 
-P7.1 只在 schema-v2 全部 comparability checks 通过后填写：
-
-- `diagnostic_matched`: Prism eager vs vLLM eager。
-- `best_stable`: Prism Graph vs vLLM effective Graph。
-- Prism off 与 quality-qualified `visual_compact_graph` 必须同时出现。
-- 当前 P7.1 仍是 offline closed-loop，不形成 online SLO goodput claim。
+- `diagnostic_matched`: Prism eager TPOT约为 vLLM eager 的 `1.91x-1.97x`。
+- `best_stable`: Prism off Graph约为 vLLM Graph 的 `1.69x-1.83x`；quality-qualified compact Graph约为 `1.65x-1.78x`。
+- 双方 E2E throughput 当前也是 vLLM 更高，但部分 Prism offline TTFT存在双峰，E2E不作为压缩收益归因。
+- 这是 offline closed-loop，不形成 online SLO goodput claim；P7.3 需要把 KV page容量转化为在线 admission/goodput 后重新比较。

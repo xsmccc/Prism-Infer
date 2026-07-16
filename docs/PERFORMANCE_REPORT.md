@@ -735,3 +735,127 @@ data/p6_system/p612c_default_clean_performance_batch_a_output32_20260716.jsonl
 data/p6_system/p612c_clean_performance_batch_a_attention_last4_output32_20260716.jsonl
 data/p6_system/p612c_full_regression_20260716.xml
 ```
+
+## 6. P7 单机性能与外部对标
+
+### 6.1 P7.0 P6.12 Freeze
+
+P6.12 content-aware BF16 主线冻结在 commit `c970c61`，annotated tag
+`p6.12-content-aware-kv` 已推送。允许/禁止 claim 独立记录在
+`docs/CLAIMS.md`；性能问题的调查过程记录在 `docs/issues/`。
+
+### 6.2 P7.1 External Benchmark Protocol v2
+
+benchmark harness commit 为 clean `b17f933`。双方固定同一 RTX 5090 GPU UUID、
+Qwen3-VL config SHA256、BF16、TP1、max model len 1280、max batched tokens 2048、
+block 256、KV pool `603,979,776` bytes、prefix cache off、output32、temperature 0、
+ignore EOS、warmup/repeat `2/5`。
+
+vLLM 固定 `0.24.0/ee0da84ab`、Torch `2.11.0+cu130`、`FLASH_ATTN` 和 PyTorch
+native sampler。Prism 使用 Torch `2.6.0a0+nv25.01` 和自实现 paged decode。
+runtime/framework/backend版本属于被比较系统，可以不同，但已写入每条 record。
+
+schema-v2 对 model hash、GPU UUID、prompt token、KV pool、block、sampling、
+warmup/repeat、计时 scope、effective execution 和 clean state逐项校验。两组共
+20 个 comparison rows 全部 `performance_comparable=true`，没有手工放行 cell。
+
+### 6.3 Diagnostic Matched Eager
+
+`diagnostic_matched` 中双方关闭 CUDA Graph；vLLM 额外关闭 chunked prefill 和
+async scheduling。下表只列 dense Prism off；content-aware eager TPOT 与 off
+差异小于约 `0.3%`，不能消除 eager execution gap。
+
+| Workload | Prompt | Prism eager TPOT | vLLM eager TPOT | Prism/vLLM | Prism/vLLM E2E output tok/s |
+|---|---:|---:|---:|---:|---:|
+| single image | 210 | `32.524 ms` | `17.012 ms` | `1.912x` | `29.218/53.691` |
+| two images | 408 | `32.403 ms` | `16.946 ms` | `1.912x` | `28.940/53.077` |
+| real COCO | 316 | `32.363 ms` | `16.810 ms` | `1.925x` | `29.272/54.625` |
+| fidelity batch A (4) | 988 | `33.341 ms` | `17.363 ms` | `1.920x` | `92.121/188.758` |
+| fidelity batch B (3) | 899 | `33.860 ms` | `17.172 ms` | `1.972x` | `69.102/137.561` |
+
+这复现了 P6.7 的约 2 倍 eager 差距，并证明差距不是旧 dirty commit 或 prompt
+token 不一致造成。
+
+### 6.4 Best-stable CUDA Graph
+
+Prism 使用 `off_graph/visual_compact_graph`；vLLM effective config 逐条记录为
+`VLLM_COMPILE + FULL_AND_PIECEWISE`，chunked prefill/async scheduling enabled。
+
+| Workload | Prism off | Prism compact | vLLM | Off/vLLM | Compact/vLLM |
+|---|---:|---:|---:|---:|---:|
+| single image | `17.932` | `17.671` | `10.098 ms` | `1.776x` | `1.750x` |
+| two images | `18.501` | `17.959` | `10.119 ms` | `1.828x` | `1.775x` |
+| real COCO | `18.234` | `17.822` | `10.105 ms` | `1.805x` | `1.764x` |
+| fidelity batch A (4) | `18.966` | `18.574` | `10.822 ms` | `1.752x` | `1.716x` |
+| fidelity batch B (3) | `18.536` | `18.120` | `10.970 ms` | `1.690x` | `1.652x` |
+
+Prism 的 Graph 相对同 compression eager约快 `1.75x-1.86x`，但 vLLM 也从 eager约
+`16.8-17.4 ms` 降至 `10.1-11.0 ms`。因此 Graph缩小但没有消除 external gap；
+当前不能声称 Prism 的 raw latency/throughput 超过 vLLM。
+
+content-aware compact 相对 Prism off Graph 的 TPOT改善约 `1.5%-3.0%`。这与
+P6.12 的结论一致：压缩的第一收益仍是物理 KV/page容量，不是短 context 的
+大幅 latency。
+
+### 6.5 Physical KV 与固定 pool 显存
+
+| Workload | Physical tokens off/compact | Active prompt bytes off/compact |
+|---|---:|---:|
+| single image | `210/112` | `37,748,736/37,748,736` |
+| two images | `408/212` | `75,497,472/37,748,736` |
+| real COCO | `316/166` | `75,497,472/37,748,736` |
+| fidelity A | `988/530` | `264,241,152/150,994,944` |
+| fidelity B | `899/479` | `226,492,416/113,246,208` |
+
+single-image 的 retained tokens 仍落在同一个 256-token page，因而没有 active
+byte下降。固定 pool 下 Prism peak allocated 约 `19.7 GiB`，vLLM 约
+`17.7-17.9 GiB`；active page 回收不会缩小预分配 pool 或模型权重峰值。
+
+### 6.6 Graph Residual Gap Attribution
+
+clean single-image semantic CUDA profile（只用于归因）将 Prism decode 分解为：
+
+| Region | Off Graph | Compact Graph |
+|---|---:|---:|
+| Graph replay | `13.394 ms` | `13.124 ms` |
+| logits | `4.068 ms` | `4.068 ms` |
+| Graph input copy | `0.129 ms` | `0.130 ms` |
+| sampler GPU | `0.175 ms` | `0.174 ms` |
+
+Graph replay 约占 TPOT四分之三，Graph 外 logits 约占 23%；压缩只将 replay
+减少约 `0.27 ms`。所以下一轮 profiling 应优先比较 Graph 内 decoder kernels
+和 logits，不再继续优化已非关键路径的 compaction copy。
+
+### 6.7 Variance Boundary
+
+TPOT分布稳定，但 offline vision prefill/TTFT 出现双峰。single-image
+`warmup=5/repeat=15` 中 off Graph TTFT median/p90/min/max 为
+`131.468/139.074/50.040/141.531 ms`，compact Graph 为
+`58.037/132.139/51.271/136.011 ms`；对应 TPOT p90 仅
+`17.957/17.709 ms`。semantic profile 将主要波动定位到 eager vision prefill，
+但当前环境不能锁 GPU clocks，根因尚未充分证明。
+
+因此本节 headline 使用稳定 TPOT。E2E/TTFT原始分布保留，但不把 compact/off
+E2E中位数差异归因于压缩；详见
+`docs/issues/P7-005-TTFT_VISION_BIMODALITY.md`。
+
+Raw evidence：
+
+```text
+data/p7_external/prism_*_formal_b17f933.jsonl
+data/p7_external/vllm_*_diagnostic_matched_formal_b17f933.json
+data/p7_external/vllm_*_best_stable_formal_b17f933.json
+data/p7_external/p7_diagnostic_matched_summary_b17f933.{json,md}
+data/p7_external/p7_best_stable_summary_b17f933.{json,md}
+data/p7_external/prism_single_image_graph_stability_b17f933.jsonl
+data/p7_external/prism_single_image_graph_semantic_profile_b17f933.jsonl
+data/p7_external/p71_full_regression_20260716.xml
+```
+
+### 6.8 Verification
+
+- focused schema/summary regression：`42 passed in 3.79s`。
+- 两条 summary 从正式 raw records 重生成后与保存结果逐字节一致；共 20 rows，
+  `20 performance_comparable / 0 non-comparable`。
+- full regression JUnit：`tests=246`、`failures=0`、`errors=0`、`skipped=6`、
+  `time=232.301s`，即 `240 passed, 6 skipped`。

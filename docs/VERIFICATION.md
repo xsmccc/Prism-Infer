@@ -2870,6 +2870,63 @@ data/p6_system/p612c_full_regression_20260716.xml
 
 ## P7: 交付验证
 
+### P7.0/P7.1 Freeze and Offline External Baseline v2
+
+P7.0 将 P6.12 content-aware BF16 主线冻结在 `c970c61`，annotated tag
+`p6.12-content-aware-kv` 已推送。P7.1 benchmark/schema 实现在 clean pushed
+commit `b17f933` 上执行；正式 raw records 均记录 `git_dirty=false`。
+
+focused schema 与兼容性回归：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+.venv-local/bin/python -m pytest -q \
+  tests/test_external_comparison.py tests/test_benchmark_schema.py
+# 42 passed in 3.79s
+```
+
+两条 profile 的正式汇总验证：
+
+```bash
+.venv-local/bin/python scripts/summarize_p7_external.py \
+  --comparison-profile diagnostic_matched \
+  --prism data/p7_external/prism_*_formal_b17f933.jsonl \
+  --external data/p7_external/vllm_*_diagnostic_matched_formal_b17f933.json \
+  --prism-modes off_eager visual_compact \
+  --prism-keep-ratio 0.5 \
+  --json-output /tmp/p7_diagnostic_matched.json \
+  --markdown-output /tmp/p7_diagnostic_matched.md
+
+.venv-local/bin/python scripts/summarize_p7_external.py \
+  --comparison-profile best_stable \
+  --prism data/p7_external/prism_*_formal_b17f933.jsonl \
+  --external data/p7_external/vllm_*_best_stable_formal_b17f933.json \
+  --prism-modes off_graph visual_compact_graph \
+  --prism-keep-ratio 0.5 \
+  --json-output /tmp/p7_best_stable.json \
+  --markdown-output /tmp/p7_best_stable.md
+```
+
+两次命令各比较 10 个 cell。重生成 JSON/Markdown 与保存结果逐字节一致；合计
+`20 performance_comparable / 0 non-comparable`。门禁覆盖 model config hash、
+GPU UUID、prompt tokens、KV pool、block size、sampling、warmup/repeat、timing
+scope、effective execution 和 source/harness clean state；schema-v1 历史输入继续兼容。
+
+完整回归：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+.venv-local/bin/python -m pytest -q \
+  --junitxml=data/p7_external/p71_full_regression_20260716.xml
+```
+
+JUnit 结果为 `tests=246`、`failures=0`、`errors=0`、`skipped=6`、
+`time=232.301s`，即 `240 passed, 6 skipped`。正式矩阵、汇总、稳定性实验、
+semantic CUDA region profile 与 JUnit 均保存在忽略跟踪的
+`data/p7_external/`；发布结论见 `PERFORMANCE_REPORT.md` 6.2-6.8，问题定位见
+`docs/issues/P7-000` 至 `P7-005`。
+
 交付前必须检查:
 
 ```bash

@@ -34,6 +34,8 @@
 - [P7-001：跨执行协议的性能数字不能直接比较](P7-001-CROSS_PROTOCOL_COMPARISON.md)
 - [P7-002：FlashInfer SM120 CUDA toolkit capability probe](P7-002-FLASHINFER_SM120_TOOLKIT_PROBE.md)
 - [P7-003：CUDA Graph 后仍存在的 vLLM 差距](P7-003-GRAPH_RESIDUAL_GAP.md)
+- [P7-004：物理 token 减少不保证 page/bytes 回收](P7-004-PAGE_GRANULARITY.md)
+- [P7-005：offline TTFT/vision prefill 双峰](P7-005-TTFT_VISION_BIMODALITY.md)
 
 ## 新 issue 模板
 
