@@ -13,6 +13,7 @@ from benchmarks.bench_system import (
     _materialize_requests,
     _parse_keep_ratios,
     _parse_positive_ints,
+    _resolve_engine_max_num_seqs,
 )
 from prism_infer.analysis.benchmark_schema import (
     BENCHMARK_SCHEMA_VERSION,
@@ -200,6 +201,14 @@ def test_summarize_values_reports_required_percentiles() -> None:
         "max": 4.0,
     }
     print("P6 benchmark summary contract: PASS")
+
+
+def test_engine_max_num_seqs_can_exceed_workload_batch_for_padding() -> None:
+    assert _resolve_engine_max_num_seqs(None, 3) == 3
+    assert _resolve_engine_max_num_seqs(8, 3) == 8
+    with pytest.raises(ValueError, match="must cover every requested batch"):
+        _resolve_engine_max_num_seqs(2, 3)
+    print("CUDA Graph capture ceiling / workload batch separation: PASS")
 
 
 def test_default_workload_manifest_is_valid_and_unique() -> None:

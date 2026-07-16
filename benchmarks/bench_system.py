@@ -852,7 +852,14 @@ def _bench_mode(
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """运行基准和可选的独立 profiling iterations。"""
 
-    llm = _build_llm(args, mode, max_num_seqs=len(case["requests"]))
+    llm = _build_llm(
+        args,
+        mode,
+        max_num_seqs=_resolve_engine_max_num_seqs(
+            getattr(args, "max_num_seqs", None),
+            len(case["requests"]),
+        ),
+    )
     sampling = SamplingParams(
         temperature=0.0,
         max_tokens=args.max_tokens,
@@ -1027,6 +1034,24 @@ def _parse_keep_ratios(value: str) -> list[float]:
     return values
 
 
+def _resolve_engine_max_num_seqs(
+    configured: int | None,
+    actual_batch_size: int,
+) -> int:
+    """解耦 workload batch 与预录制 Graph 的 engine batch 上限。"""
+
+    if actual_batch_size <= 0:
+        raise ValueError("actual batch size must be positive")
+    if configured is None:
+        return actual_batch_size
+    if configured < actual_batch_size:
+        raise ValueError(
+            "--max-num-seqs must cover every requested batch: "
+            f"configured={configured}, actual={actual_batch_size}"
+        )
+    return configured
+
+
 def _write_records(records: list[dict[str, Any]], output: str | None) -> None:
     lines = [json.dumps(record, ensure_ascii=False, sort_keys=True) for record in records]
     if output is not None:
@@ -1072,6 +1097,14 @@ def main() -> None:
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--max-model-len", type=int, default=1280)
     parser.add_argument("--max-num-batched-tokens", type=int, default=2048)
+    parser.add_argument(
+        "--max-num-seqs",
+        type=int,
+        help=(
+            "engine/CUDA Graph capture batch ceiling; defaults to each cell's "
+            "actual batch size"
+        ),
+    )
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     parser.add_argument("--num-kvcache-blocks", type=int, default=16)
     parser.add_argument("--kvcache-block-size", type=int, default=256)
@@ -1151,6 +1184,10 @@ def main() -> None:
         if args.batch_sizes is not None
         else [source_batch_size]
     )
+    if args.max_num_seqs is not None and args.max_num_seqs < max(batch_sizes):
+        raise SystemExit(
+            "--max-num-seqs must be >= the largest requested --batch-sizes value"
+        )
     keep_ratios = (
         _parse_keep_ratios(args.visual_pruning_keep_ratios)
         if args.visual_pruning_keep_ratios is not None
