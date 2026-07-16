@@ -75,3 +75,39 @@ def test_model_runner_run_restores_chunked_sequence_when_prepare_raises() -> Non
     assert get_context().slot_mapping is None
     reset_context()
     print("ModelRunner chunked state restore on exception: PASS")
+
+
+def test_model_runner_chunk_progress_does_not_become_prefix_hit_state() -> None:
+    """Chunk progress and shared prefix-cache hits are separate contracts."""
+
+    runner = _runner(enable_chunked_prefill=True)
+    seq = Sequence([1, 2, 3])
+    seq.block_table = [0]
+
+    def prepare_prefill(self, seqs):
+        return SimpleNamespace(
+            input_ids=torch.tensor([1]),
+            position_ids=torch.tensor([0]),
+        )
+
+    def prepare_sample(self, seqs):
+        return torch.tensor([0.0])
+
+    def run_model(self, model_inputs, is_prefill):
+        return torch.tensor([[1.0]])
+
+    runner.prepare_prefill = MethodType(prepare_prefill, runner)
+    runner.prepare_sample = MethodType(prepare_sample, runner)
+    runner.run_model = MethodType(run_model, runner)
+    runner.sampler = lambda logits, temperatures: torch.tensor([7])
+
+    first = runner.run([seq], True, [2])
+    assert first == [None]
+    assert seq.num_computed_tokens == 2
+    assert seq.num_cached_tokens == 0
+
+    second = runner.run([seq], True, [1])
+    assert second == [7]
+    assert seq.num_computed_tokens == 3
+    assert seq.num_cached_tokens == 0
+    print("chunk progress/prefix-hit separation: PASS")

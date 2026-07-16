@@ -1103,7 +1103,12 @@ class ModelRunner:
                 for i, seq in enumerate(seqs):
                     chunk = seq.num_tokens - seq.num_computed_tokens  # 本次 chunk 大小
                     seq.num_computed_tokens += chunk
-                    seq.num_cached_tokens = seq.num_computed_tokens  # 同步: 下次 prepare 跳过已算的
+                    # ``num_computed_tokens`` owns chunk progress.
+                    # ``num_cached_tokens`` remains the persistent prefix-hit
+                    # count so compaction/admission do not mistake ordinary
+                    # chunking for shared prefix-cache state.  The next run
+                    # temporarily maps computed progress back to query_start.
+                    seq.num_cached_tokens = seq._orig_num_cached_tokens
                     seq.num_tokens = seq._orig_num_tokens  # 恢复真实总 token 数
                     seq.token_ids = seq._orig_token_ids     # 恢复完整 token 列表
                     del seq._orig_num_tokens, seq._orig_token_ids, seq._orig_num_cached_tokens
