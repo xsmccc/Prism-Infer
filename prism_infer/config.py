@@ -27,6 +27,8 @@ class Config:
     enable_chunked_prefill: bool = True     # 是否启用Chunked Prefill(分块预填充)
     max_chunk_size: int = 512               # 每次Prefill最多处理的token数
     enable_prefix_caching: bool = True       # full-block token prefix hash/reuse
+    scheduler_policy: str = "fcfs"           # 可替换调度策略；P7.2 首个稳定策略为 FCFS
+    max_queue_size: int | None = None         # admission queue上限；None表示不额外限制
     compression_mode: str = "off"           # off | visual_prune | visual_compact | fp8_kv | visual_compact_fp8
     enable_visual_pruning_shadow: bool = False  # off 模式下只记录 pruning decision, 不改变 KV
     visual_pruning_keep_ratio: float = 0.6       # visual pruning 目标保留比例
@@ -69,6 +71,16 @@ class Config:
             raise ValueError(
                 "logits_precision must be 'fp32' or 'model', "
                 f"got {self.logits_precision!r}"
+            )
+        if self.scheduler_policy != "fcfs":
+            raise ValueError(
+                "scheduler_policy currently supports only 'fcfs', "
+                f"got {self.scheduler_policy!r}"
+            )
+        if self.max_queue_size is not None and self.max_queue_size <= 0:
+            raise ValueError(
+                "max_queue_size must be positive when set, "
+                f"got {self.max_queue_size}"
             )
         if self.decode_compile_region != "none" and not self.enforce_eager:
             raise ValueError(

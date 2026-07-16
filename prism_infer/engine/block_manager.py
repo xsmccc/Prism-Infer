@@ -194,6 +194,10 @@ class BlockManager:
             if block.ref_count == 0:                            # 没有其他序列引用了
                 self._deallocate_block(block_id)                # 真正释放回空闲池
             # 如果 ref_count > 0 → 别的序列还在用, 不释放 (Prefix Caching 共享)
+        # A cancelled request may still own CPU swap pages.  They are physical
+        # capacity too and must be returned even when the GPU table is empty.
+        for cpu_block_id in seq.cpu_block_table:
+            self.cpu_free_block_ids.append(cpu_block_id)
         seq.num_cached_tokens = 0                               # 重置缓存计数
         seq.block_table.clear()                                 # 清空页表
         seq.cpu_block_table.clear()                             # 释放后不应残留 swap 页表

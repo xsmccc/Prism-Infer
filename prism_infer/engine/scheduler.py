@@ -1,154 +1,337 @@
+"""Request scheduling and KV ownership coordination.
+
+P7.2 keeps queue mutation here while moving policy decisions, immutable batch
+handoff and GPU execution behind explicit contracts.
+"""
+
+from __future__ import annotations
+
 from collections import deque
+from typing import Iterable
 
 from prism_infer.config import Config
-from prism_infer.engine.sequence import Sequence, SequenceStatus
 from prism_infer.engine.block_manager import BlockManager
+from prism_infer.engine.contracts import (
+    BatchPhase,
+    BatchPlan,
+    KVCacheManager,
+    KVTransferPlan,
+    RequestOutput,
+)
+from prism_infer.engine.request import RequestState
+from prism_infer.engine.scheduler_policy import (
+    AdmissionDecision,
+    FCFSSchedulerPolicy,
+    SchedulerPolicy,
+)
+from prism_infer.engine.sequence import Sequence
 
 
 class Scheduler:
+    """Own request queues and turn policy decisions into immutable plans."""
 
-    def __init__(self, config: Config):
-        # 两个调度上限：并发序列数上限 + 单批 token 数上限
+    def __init__(
+        self,
+        config: Config,
+        *,
+        policy: SchedulerPolicy | None = None,
+        kv_manager: KVCacheManager | None = None,
+    ):
         self.max_num_seqs = config.max_num_seqs
         self.max_num_batched_tokens = config.max_num_batched_tokens
-        self.enable_chunked_prefill = getattr(config, 'enable_chunked_prefill', False)
-        self.max_chunk_size = getattr(config, 'max_chunk_size', 512)
+        self.enable_chunked_prefill = getattr(
+            config, "enable_chunked_prefill", False
+        )
+        self.max_chunk_size = getattr(config, "max_chunk_size", 512)
+        self.max_model_len = getattr(
+            config, "max_model_len", self.max_num_batched_tokens
+        )
         self.eos = config.eos
         Sequence.set_block_size(config.kvcache_block_size)
-        # 负责 KV Cache 物理块的分配/释放
-        self.block_manager = BlockManager(
+        self.block_manager: KVCacheManager = kv_manager or BlockManager(
             config.num_kvcache_blocks,
             config.kvcache_block_size,
-            getattr(config, 'num_cpu_blocks', 0),
-            enable_prefix_caching=getattr(config, 'enable_prefix_caching', True),
+            getattr(config, "num_cpu_blocks", 0),
+            enable_prefix_caching=getattr(
+                config, "enable_prefix_caching", True
+            ),
         )
-        # waiting: 等待 prefill 的序列；running: 正在 decode 的序列
+        self.policy = policy or FCFSSchedulerPolicy(
+            max_model_len=self.max_model_len,
+            max_num_batched_tokens=self.max_num_batched_tokens,
+            max_num_seqs=self.max_num_seqs,
+            enable_chunked_prefill=self.enable_chunked_prefill,
+            max_chunk_size=self.max_chunk_size,
+            max_queue_size=getattr(config, "max_queue_size", None),
+        )
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
-        self.swapped: deque[Sequence] = deque()  # KV Cache 在 CPU 上的序列 (Swap)
+        self.swapped: deque[Sequence] = deque()
+        self.rejected: deque[Sequence] = deque()
+        self.cancelled: deque[Sequence] = deque()
 
-    def is_finished(self):
-        # 两个队列都空，表示所有请求都处理完成
+    def is_finished(self) -> bool:
         return not self.waiting and not self.running and not self.swapped
 
-    def add(self, seq: Sequence):
-        # 新请求先进入 waiting 队尾（FIFO）
-        self.waiting.append(seq)
+    @property
+    def num_active_requests(self) -> int:
+        return len(self.waiting) + len(self.running) + len(self.swapped)
 
-    def schedule(self) -> tuple[list[Sequence], bool, list[tuple[int, int]], list[tuple[int, int]], list[tuple[int, int]]]:
-        # ---------- prefill 分支：优先从 waiting 拉新序列 ----------
-        scheduled_seqs = []
-        num_seqs = 0
+    def add(
+        self,
+        seq: Sequence,
+        *,
+        raise_on_reject: bool = True,
+    ) -> AdmissionDecision:
+        decision = self.policy.admit(
+            seq,
+            queued_requests=self.num_active_requests,
+        )
+        if not decision.accepted:
+            seq.transition_to(
+                RequestState.REJECTED,
+                reason=decision.reason or "admission rejected",
+            )
+            self.rejected.append(seq)
+            if raise_on_reject:
+                raise ValueError(decision.reason or "request rejected")
+            return decision
+        self.waiting.append(seq)
+        return decision
+
+    def _prefill_plan(self) -> BatchPlan | None:
+        scheduled: list[Sequence] = []
+        token_counts: list[int] = []
         num_batched_tokens = 0
 
-        if not self.enable_chunked_prefill:
-            # ── 传统模式: 整个 Prefill 一次跑完, 不和 Decode 混跑 ──
-            while self.waiting and num_seqs < self.max_num_seqs:
-                seq = self.waiting[0]
-                if num_batched_tokens + len(seq) > self.max_num_batched_tokens or not self.block_manager.can_allocate(seq):
+        if self.enable_chunked_prefill:
+            # Continue prior chunks before admitting new work.  Decode requests
+            # remain in the same running queue but are ignored by this pass.
+            for seq in tuple(self.running):
+                if seq.status is not RequestState.PREFILLING:
+                    continue
+                if len(scheduled) >= self.max_num_seqs:
                     break
-                num_seqs += 1
-                self.block_manager.allocate(seq)
-                num_batched_tokens += len(seq) - seq.num_cached_tokens
-                seq.status = SequenceStatus.RUNNING
-                self.waiting.popleft()
-                self.running.append(seq)
-                scheduled_seqs.append(seq)
-            if scheduled_seqs:
-                return scheduled_seqs, True, [], [], []
-        else:
-            # ── Chunked Prefill: 分块处理, 每次最多 max_chunk_size 个 token ──
-            # 先处理还没 Prefill 完的 running 序列 (上一轮 chunk 的后续)
-            for seq in list(self.running):
-                if not seq.is_prefill_finished:
-                    chunk = min(seq.remaining_prefill_tokens, self.max_chunk_size,
-                                self.max_num_batched_tokens - num_batched_tokens)
-                    if chunk <= 0:
-                        break
-                    num_batched_tokens += chunk
-                    num_seqs += 1
-                    scheduled_seqs.append(seq)
-
-            # 再从 waiting 拉新序列
-            while self.waiting and num_seqs < self.max_num_seqs:
-                seq = self.waiting[0]
-                if not self.block_manager.can_allocate(seq):
+                count = self.policy.prefill_token_count(
+                    seq,
+                    available_tokens=(
+                        self.max_num_batched_tokens - num_batched_tokens
+                    ),
+                )
+                if count <= 0:
                     break
-                chunk = min(len(seq) - seq.num_cached_tokens, self.max_chunk_size,
-                            self.max_num_batched_tokens - num_batched_tokens)
-                if chunk <= 0:
-                    break
-                num_seqs += 1
-                self.block_manager.allocate(seq)
-                num_batched_tokens += chunk
-                seq.status = SequenceStatus.RUNNING
-                self.waiting.popleft()
-                self.running.append(seq)
-                scheduled_seqs.append(seq)
+                scheduled.append(seq)
+                token_counts.append(count)
+                num_batched_tokens += count
 
-            if scheduled_seqs:
-                return scheduled_seqs, True, [], [], []
+        while self.waiting and len(scheduled) < self.max_num_seqs:
+            seq = self.waiting[0]
+            available = self.max_num_batched_tokens - num_batched_tokens
+            count = self.policy.prefill_token_count(
+                seq,
+                available_tokens=available,
+            )
+            if count <= 0 or not self.block_manager.can_allocate(seq):
+                break
+            self.block_manager.allocate(seq)
+            # Prefix-cache hits are already materialized.  Chunk progress must
+            # begin after that prefix rather than recomputing it.
+            seq.num_computed_tokens = max(
+                seq.num_computed_tokens, seq.num_cached_tokens
+            )
+            if self.enable_chunked_prefill:
+                count = self.policy.prefill_token_count(
+                    seq,
+                    available_tokens=available,
+                )
+            else:
+                count = len(seq) - seq.num_cached_tokens
+            if count <= 0:
+                # A fully cached prompt still needs a model step to produce the
+                # next-token logits; current prefix caching intentionally never
+                # caches an incomplete tail, so this is an invariant violation.
+                self.block_manager.deallocate(seq)
+                raise RuntimeError(
+                    "scheduler admitted a fully cached prompt without a "
+                    "computable tail"
+                )
+            seq.transition_to(
+                RequestState.PREFILLING,
+                reason="admitted to prefill batch",
+            )
+            self.waiting.popleft()
+            self.running.append(seq)
+            scheduled.append(seq)
+            token_counts.append(count)
+            num_batched_tokens += count
 
-        # ---------- decode 分支：从 running 中继续生成 ----------
-        cow_pairs = []  # CoW 需要 GPU 端复制的 (src, dst) block 对
-        swap_in_map = []   # CPU→GPU 搬运对
-        swap_out_map = []  # GPU→CPU 搬运对
-        # ── 先尝试换入 swapped 序列 (如果 GPU 有足够空间) ──
+        if not scheduled:
+            return None
+        return BatchPlan(
+            phase=BatchPhase.PREFILL,
+            sequences=tuple(scheduled),
+            scheduled_token_counts=tuple(token_counts),
+            policy_name=self.policy.name,
+        )
+
+    def _decode_plan(self) -> BatchPlan:
+        cow_pairs: list[tuple[int, int]] = []
+        swap_in_map: list[tuple[int, int]] = []
+        swap_out_map: list[tuple[int, int]] = []
+        scheduled: list[Sequence] = []
+
         while self.swapped and self.block_manager.can_swap_in(self.swapped[0]):
             seq = self.swapped.popleft()
             pairs = self.block_manager.swap_in(seq)
             swap_in_map.extend(pairs)
-            seq.status = SequenceStatus.RUNNING
+            seq.transition_to(
+                RequestState.DECODING,
+                reason="KV swap-in completed",
+            )
             self.running.append(seq)
-            print(f"[SwapIn] seq={seq.seq_id} blocks={len(pairs)} CPU→GPU")
-        while self.running and num_seqs < self.max_num_seqs:
-            seq = self.running.popleft()
+
+        decode_candidates = deque(
+            seq
+            for seq in self.running
+            if seq.status is RequestState.DECODING
+        )
+        # Remove selected decode candidates from the shared queue.  Prefilling
+        # requests stay in place for the next chunk.
+        for seq in decode_candidates:
+            self.running.remove(seq)
+
+        while decode_candidates and len(scheduled) < self.max_num_seqs:
+            seq = decode_candidates.popleft()
             while not self.block_manager.can_append(seq):
-                if self.running:
-                    # 空间不足时，驱逐 running 队尾（后进先出）释放空间
-                    self.preempt(self.running.pop(), swap_out_map)
+                victim = self.policy.preemption_candidate(
+                    tuple(decode_candidates)
+                )
+                if victim is not None:
+                    decode_candidates.remove(victim)
+                    self.preempt(victim, swap_out_map)
                 else:
-                    # 连当前序列也放不下，只能驱逐它，结束本轮尝试
                     self.preempt(seq, swap_out_map)
                     break
             else:
-                # while ... else: 仅在未触发 break 时执行（说明可正常 append）
-                num_seqs += 1
-                # ── CoW 检查: 写共享 block 前先复制 ──
                 cow_pair = self.block_manager.copy_on_write(seq)
                 if cow_pair is not None:
                     cow_pairs.append(cow_pair)
                 self.block_manager.may_append(seq)
-                scheduled_seqs.append(seq)
-        if not scheduled_seqs:
-            raise RuntimeError("scheduler decode step produced no runnable sequences")
-        # popleft 取出的序列仍需保留在 running，放回队头准备下一轮 decode
-        self.running.extendleft(reversed(scheduled_seqs))
-        return scheduled_seqs, False, cow_pairs, swap_in_map, swap_out_map
+                scheduled.append(seq)
 
-    def preempt(self, seq: Sequence, swap_out_map: list = None):
-        # 驱逐: 优先 swap_out (保留 KV Cache), 其次彻底释放
+        # Candidates beyond max_num_seqs were not preempted; restore queue order.
+        self.running.extend(decode_candidates)
+        if not scheduled:
+            raise RuntimeError("scheduler decode step produced no runnable sequences")
+        self.running.extendleft(reversed(scheduled))
+        return BatchPlan(
+            phase=BatchPhase.DECODE,
+            sequences=tuple(scheduled),
+            scheduled_token_counts=(1,) * len(scheduled),
+            kv_transfers=KVTransferPlan(
+                copy_on_write=tuple(cow_pairs),
+                swap_in=tuple(swap_in_map),
+                swap_out=tuple(swap_out_map),
+            ),
+            policy_name=self.policy.name,
+        )
+
+    def schedule(self) -> BatchPlan:
+        prefill_plan = self._prefill_plan()
+        if prefill_plan is not None:
+            return prefill_plan
+        return self._decode_plan()
+
+    def preempt(
+        self,
+        seq: Sequence,
+        swap_out_map: list[tuple[int, int]] | None = None,
+    ) -> None:
         if swap_out_map is not None and self.block_manager.can_swap_out(seq):
-            # Swap Out: GPU→CPU, 保留 KV Cache 到 CPU 内存
             pairs = self.block_manager.swap_out(seq)
             swap_out_map.extend(pairs)
-            seq.status = SequenceStatus.SWAPPED
+            seq.transition_to(
+                RequestState.SWAPPED,
+                reason="decode KV capacity preemption",
+            )
             self.swapped.append(seq)
-            print(f"[SwapOut] seq={seq.seq_id} blocks={len(pairs)} GPU→CPU")
         else:
-            # 彻底释放: CPU 也满了, 只能丢弃 KV Cache
-            seq.status = SequenceStatus.WAITING
             self.block_manager.deallocate(seq)
+            seq.num_computed_tokens = 0
+            seq.transition_to(
+                RequestState.WAITING,
+                reason="recompute preemption",
+            )
             self.waiting.appendleft(seq)
 
-    def postprocess(self, seqs: list[Sequence], token_ids: list[int]) -> list[bool]:
-        # 将本轮生成结果写回序列，并检查是否达到终止条件
+    def postprocess(
+        self,
+        plan_or_seqs: BatchPlan | Iterable[Sequence],
+        token_ids: Iterable[int | None],
+    ) -> tuple[RequestOutput, ...]:
+        if isinstance(plan_or_seqs, BatchPlan):
+            plan = plan_or_seqs
+            seqs = plan.sequences
+        else:
+            seqs = tuple(plan_or_seqs)
+            plan = None
+
+        outputs: list[RequestOutput] = []
         for seq, token_id in zip(seqs, token_ids):
             if token_id is None:
-                # Chunked Prefill 中间 chunk: 不采样, 跳过
                 continue
             seq.append_token(token_id)
-            if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
-                seq.status = SequenceStatus.FINISHED
+            finished = (
+                (not seq.ignore_eos and token_id == self.eos)
+                or seq.num_completion_tokens == seq.max_tokens
+            )
+            if finished:
+                seq.transition_to(
+                    RequestState.FINISHED,
+                    reason=(
+                        "eos"
+                        if not seq.ignore_eos and token_id == self.eos
+                        else "length"
+                    ),
+                )
                 self.block_manager.deallocate(seq)
                 self.running.remove(seq)
+                outputs.append(
+                    RequestOutput(
+                        request_id=seq.seq_id,
+                        token_ids=tuple(seq.completion_token_ids),
+                        finish_reason=(
+                            "eos"
+                            if not seq.ignore_eos and token_id == self.eos
+                            else "length"
+                        ),
+                    )
+                )
+            elif seq.status is RequestState.PREFILLING:
+                seq.transition_to(
+                    RequestState.DECODING,
+                    reason="prefill completed and first token sampled",
+                )
+            elif plan is not None and plan.phase is BatchPhase.PREFILL:
+                raise RuntimeError(
+                    "prefill result received for request outside PREFILLING state"
+                )
+        return tuple(outputs)
+
+    def cancel(self, request_id: int) -> bool:
+        """Cancel one queued/running/swapped request and release its KV state."""
+
+        for queue in (self.waiting, self.running, self.swapped):
+            for seq in tuple(queue):
+                if seq.seq_id != request_id:
+                    continue
+                queue.remove(seq)
+                if seq.block_table or seq.cpu_block_table:
+                    self.block_manager.deallocate(seq)
+                seq.transition_to(
+                    RequestState.CANCELLED,
+                    reason="cancelled by caller",
+                )
+                self.cancelled.append(seq)
+                return True
+        return False

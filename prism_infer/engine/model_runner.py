@@ -997,10 +997,24 @@ class ModelRunner:
                 return self.model.compute_logits(graph_vars["outputs"][:bs])
             # graph 输出写到 graph_vars["outputs"], 取前 bs 个
 
-    def run(self, seqs: list[Sequence], is_prefill: bool) -> list[int]:
+    def run(
+        self,
+        seqs: list[Sequence],
+        is_prefill: bool,
+        scheduled_token_counts: list[int] | None = None,
+    ) -> list[int]:
         """对外入口: scheduler 调用, 完成一次推理并返回采样的 token_ids"""
         enable_chunked = getattr(self.config, 'enable_chunked_prefill', False)
         max_chunk = getattr(self.config, 'max_chunk_size', 512)
+
+        if scheduled_token_counts is not None:
+            if len(scheduled_token_counts) != len(seqs):
+                raise ValueError(
+                    "scheduled_token_counts must match sequences: "
+                    f"{len(scheduled_token_counts)} != {len(seqs)}"
+                )
+            if any(count <= 0 for count in scheduled_token_counts):
+                raise ValueError("scheduled token counts must be positive")
 
         # warmup 时 block_table 为空, 不走 chunked prefill
         is_warmup = any(not seq.block_table for seq in seqs)
@@ -1015,10 +1029,20 @@ class ModelRunner:
         if chunked_active:
             # ── Chunked Prefill: 限制每条 seq 只暴露 chunk 大小的 token ──
             # 保存原始 num_cached_tokens, 并设临时值使 prepare_prefill 只看到 chunk
-            for seq in seqs:
+            for index, seq in enumerate(seqs):
                 # 当前 chunk 的实际 token 数
                 remaining = seq.num_prompt_tokens - seq.num_computed_tokens
-                chunk = min(remaining, max_chunk)
+                chunk = (
+                    min(remaining, max_chunk)
+                    if scheduled_token_counts is None
+                    else scheduled_token_counts[index]
+                )
+                if chunk > remaining or chunk > max_chunk:
+                    raise ValueError(
+                        "invalid scheduled prefill chunk: "
+                        f"seq={seq.seq_id} chunk={chunk} "
+                        f"remaining={remaining} max_chunk={max_chunk}"
+                    )
                 # 设 num_cached_tokens = num_computed_tokens, 让 prepare_prefill 从这里开始
                 seq._orig_num_cached_tokens = seq.num_cached_tokens
                 seq.num_cached_tokens = seq.num_computed_tokens

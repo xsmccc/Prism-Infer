@@ -1,20 +1,16 @@
 from copy import copy              # copy模块: 浅拷贝(复制列表本身, 不复制元素)
-from enum import Enum, auto        # Enum: 枚举类(类似C++ enum class); auto: 自动分配值
 from itertools import count        # count(): 无限自增迭代器(0,1,2,3,...)
 
 import torch
 
 from prism_infer.engine.vl_inputs import ImageInputs, SingleImageInputs, VideoInputs
 from prism_infer.engine.kv_layout import KVCacheLayoutDescriptor
+from prism_infer.engine.request import (
+    RequestLifecycle,
+    RequestState,
+    SequenceStatus,
+)
 from prism_infer.sampling_params import SamplingParams
-
-
-# 序列状态枚举: WAITING→RUNNING→FINISHED 三阶段生命周期
-class SequenceStatus(Enum):
-    WAITING = auto()    # 等待prefill(在scheduler.waiting队列中)
-    RUNNING = auto()    # 正在decode(在scheduler.running队列中)
-    FINISHED = auto()   # 生成结束(从队列移除)
-    SWAPPED = auto()    # KV Cache已换出到CPU内存(等待换回)
 
 
 class Sequence:
@@ -61,7 +57,7 @@ class Sequence:
 
         self.seq_id = next(Sequence.counter)          # 全局唯一ID: 0, 1, 2, ...
         self.block_size = int(type(self).block_size)  # 实例级快照，避免多 Config 运行时互相污染
-        self.status = SequenceStatus.WAITING           # 初始状态=等待prefill
+        self.lifecycle = RequestLifecycle(self.seq_id)
         self.token_ids = copy(token_ids)               # 浅拷贝prompt的token列表(值语义, 类似C++ vector拷贝)
         self.last_token = token_ids[-1]                # 最后一个token(序列化优化用)
         self.num_tokens = len(self.token_ids)           # 当前总token数(prompt+生成)
@@ -162,6 +158,26 @@ class Sequence:
     @property
     def is_finished(self):       # seq.is_finished → bool
         return self.status == SequenceStatus.FINISHED
+
+    @property
+    def status(self) -> RequestState:
+        """Backwards-compatible lifecycle state view."""
+
+        return self.lifecycle.state
+
+    @status.setter
+    def status(self, state: RequestState) -> None:
+        # Older tests/integrations assign status directly.  Scheduler code uses
+        # transition_to(), which validates the finite-state machine.
+        if not hasattr(self, "lifecycle"):
+            self.lifecycle = RequestLifecycle(self.seq_id, state=state)
+        else:
+            self.lifecycle.restore(state)
+
+    def transition_to(self, state: RequestState, *, reason: str) -> None:
+        """Apply one validated main-process request lifecycle transition."""
+
+        self.lifecycle.transition(state, reason=reason)
 
     @property
     def num_completion_tokens(self):  # 已生成的token数 = 总数 - prompt数
@@ -321,7 +337,7 @@ class Sequence:
         state[:-1] = 前4个值, state[-1] = token_ids(list)或last_token(int)
         """
         self.seq_id = next(Sequence.counter)
-        self.status = SequenceStatus.WAITING
+        self.lifecycle = RequestLifecycle(self.seq_id)
 
         if isinstance(state, dict):
             self.block_size = int(state.get("block_size", Sequence.block_size))

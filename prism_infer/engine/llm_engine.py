@@ -1,6 +1,6 @@
 import atexit                           # atexit.register: 注册进程退出时的清理函数(类似C++ std::atexit)
 from dataclasses import fields          # fields(Config): 获取dataclass的所有字段信息
-from time import perf_counter           # 高精度计时(类似C++ chrono::high_resolution_clock)
+from time import perf_counter, perf_counter_ns
 from tqdm.auto import tqdm              # 进度条库, auto版本自动适配终端/Jupyter
 from transformers import AutoTokenizer  # HuggingFace分词器: 文本↔token_ids
 import torch
@@ -20,10 +20,9 @@ from prism_infer.engine.vl_inputs import (
 )
 from prism_infer.engine.scheduler import Scheduler
 from prism_infer.engine.model_runner import ModelRunner
-from prism_infer.engine.compression import (
-    COMPRESSION_VISUAL_COMPACT,
-    COMPRESSION_VISUAL_COMPACT_FP8,
-)
+from prism_infer.engine.contracts import MetricsSink, StepResult
+from prism_infer.engine.executor import ModelExecutor
+from prism_infer.engine.metrics import EngineMetrics
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 
 
@@ -63,6 +62,7 @@ class LLMEngine:
     """
 
     def __init__(self, model, **kwargs):
+        metrics_sink = kwargs.pop("metrics_sink", None)
         # --- 参数过滤: 只保留Config认识的参数, 忽略其他 ---
         config_fields = {field.name for field in fields(Config)}  # Config的所有字段名集合
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}  # 过滤
@@ -93,6 +93,14 @@ class LLMEngine:
         self.config = config
         config.eos = self.tokenizer.eos_token_id  # 从tokenizer获取EOS token id(Config创建时还不知道)
         self.scheduler = Scheduler(config)  # 调度器
+        self.executor = ModelExecutor(
+            config,
+            self.model_runner,
+            self.scheduler.block_manager,
+        )
+        self.metrics: MetricsSink = (
+            metrics_sink if metrics_sink is not None else EngineMetrics()
+        )
         atexit.register(self.exit)  # 注册退出清理函数(类似RAII析构+atexit)
 
     def exit(self):
@@ -103,6 +111,11 @@ class LLMEngine:
         model_runner = getattr(self, "model_runner", None)
         if model_runner is not None:
             model_runner.call("exit")  # 通过IPC通知所有子进程退出无限循环
+            # ModelExecutor intentionally owns a backend reference.  Drop that
+            # boundary before deleting the public compatibility attribute so
+            # model weights/KV cache are actually released between engines.
+            if hasattr(self, "executor"):
+                del self.executor
             del self.model_runner      # 释放主进程的ModelRunner(含GPU资源)
         for p in getattr(self, "ps", []):
             p.join()                     # 等待所有子进程退出(类似C++ thread.join)
@@ -113,7 +126,28 @@ class LLMEngine:
             with profile_region("preprocess.tokenizer", cuda=False):
                 prompt = self.tokenizer.encode(prompt)  # 文本→token_ids
         seq = Sequence(prompt, sampling_params)      # 创建序列对象
-        self.scheduler.add(seq)                      # 加入scheduler.waiting队列
+        return self._submit_sequence(seq)
+
+    def _submit_sequence(self, seq: Sequence) -> int:
+        """Submit one prepared request through admission and metrics contracts."""
+
+        if not hasattr(self, "metrics"):
+            # Lightweight construction tests and embedders may instantiate an
+            # engine shell via ``__new__`` and attach scheduler/processor only.
+            self.metrics = EngineMetrics()
+        submitted_ns = perf_counter_ns()
+        self.metrics.on_request_submitted(seq, timestamp_ns=submitted_ns)
+        try:
+            self.scheduler.add(seq)
+        except Exception:
+            marker = getattr(self.metrics, "mark_terminal", None)
+            if marker is not None:
+                marker(
+                    seq.seq_id,
+                    reason="rejected",
+                    timestamp_ns=perf_counter_ns(),
+                )
+            raise
         return seq.seq_id
 
     def add_vl_request(self, prompt: str, image, sampling_params: SamplingParams) -> int:
@@ -140,8 +174,7 @@ class LLMEngine:
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
-        self.scheduler.add(seq)
-        return seq.seq_id
+        return self._submit_sequence(seq)
 
     def add_images_request(
         self,
@@ -178,90 +211,97 @@ class LLMEngine:
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
-        self.scheduler.add(seq)
-        return seq.seq_id
+        return self._submit_sequence(seq)
 
-    def step(self):
-        """执行一步推理(一次完整的 调度→推理→后处理 循环)
-        返回: (已完成的序列列表, num_tokens)
-        num_tokens > 0 表示prefill(值=总token数), < 0 表示decode(值=-批次大小)
-        """
+    def step_result(self) -> StepResult:
+        """Execute one strongly typed schedule → execute → commit cycle."""
+
         profile_session = get_performance_profile_session()
         if profile_session is not None:
             profile_session.begin_step()
         step_status = "error"
         try:
             with profile_region("engine.scheduler.schedule", cuda=False):
-                seqs, is_prefill, cow_pairs, swap_in_map, swap_out_map = (
-                    self.scheduler.schedule()
-                )
+                plan = self.scheduler.schedule()
+            self.metrics.on_batch_planned(plan)
             if profile_session is not None:
                 profile_session.annotate_step(
-                    phase="prefill" if is_prefill else "decode",
-                    batch_size=len(seqs),
-                    sequence_ids=[seq.seq_id for seq in seqs],
-                    sequence_lengths=[len(seq) for seq in seqs],
-                    prompt_tokens=sum(seq.num_prompt_tokens for seq in seqs),
-                    image_tokens=sum(seq.image_token_count for seq in seqs),
-                    video_tokens=sum(seq.video_token_count for seq in seqs),
+                    phase=plan.phase.value,
+                    batch_size=plan.batch_size,
+                    sequence_ids=list(plan.sequence_ids),
+                    sequence_lengths=[len(seq) for seq in plan.sequences],
+                    prompt_tokens=sum(
+                        seq.num_prompt_tokens for seq in plan.sequences
+                    ),
+                    image_tokens=sum(
+                        seq.image_token_count for seq in plan.sequences
+                    ),
+                    video_tokens=sum(
+                        seq.video_token_count for seq in plan.sequences
+                    ),
+                    scheduled_tokens=plan.num_scheduled_tokens,
+                    scheduler_policy=plan.policy_name,
                 )
-
-            # CoW: 在 GPU 上复制共享 block 的 KV 数据。
-            if cow_pairs:
-                with profile_region("engine.kv.copy_on_write"):
-                    self.model_runner.call("copy_kv_blocks", cow_pairs)
-            # Swap: GPU ↔ CPU KV Cache 数据搬运。
-            if swap_out_map:
-                with profile_region("engine.kv.swap_out"):
-                    self.model_runner.call("swap_blocks", swap_out_map, "out")
-            if swap_in_map:
-                with profile_region("engine.kv.swap_in"):
-                    self.model_runner.call("swap_blocks", swap_in_map, "in")
-
-            with profile_region("engine.model_runner"):
-                token_ids = self.model_runner.call("run", seqs, is_prefill)
-            if (
-                is_prefill
-                and self.config.compression_mode in (
-                    COMPRESSION_VISUAL_COMPACT,
-                    COMPRESSION_VISUAL_COMPACT_FP8,
-                )
-            ):
-                with profile_region("engine.kv.visual_compact"):
-                    plans = [
-                        plan
-                        for seq in seqs
-                        if (
-                            plan := self.scheduler.block_manager.build_compaction_plan(
-                                seq,
-                                kv_dtype=str(self.model_runner.kv_cache_dtype),
-                            )
-                        ) is not None
-                    ]
-                    self.model_runner.call("compact_kv_cache", plans)
-                    plans_by_seq_id = {plan.seq_id: plan for plan in plans}
-                    for seq in seqs:
-                        plan = plans_by_seq_id.get(seq.seq_id)
-                        if plan is not None:
-                            self.scheduler.block_manager.commit_compaction(seq, plan)
+            started_ns = perf_counter_ns()
+            execution = self.executor.execute(plan)
+            finished_ns = perf_counter_ns()
+            self.metrics.on_batch_completed(
+                plan,
+                execution,
+                started_ns=started_ns,
+                finished_ns=finished_ns,
+            )
             with profile_region("engine.scheduler.postprocess", cuda=False):
-                self.scheduler.postprocess(seqs, token_ids)
-
-            outputs = [
-                (seq.seq_id, seq.completion_token_ids)
-                for seq in seqs
-                if seq.is_finished
-            ]
-            num_tokens = sum(len(seq) for seq in seqs) if is_prefill else -len(seqs)
+                outputs = self.scheduler.postprocess(
+                    plan, execution.token_ids
+                )
+            completed_ns = perf_counter_ns()
+            self.metrics.on_requests_finished(
+                outputs,
+                timestamp_ns=completed_ns,
+            )
+            result = StepResult(
+                plan=plan,
+                outputs=outputs,
+                execution=execution,
+                elapsed_ns=completed_ns - plan.created_ns,
+            )
             step_status = "ok"
-            return outputs, num_tokens
+            return result
         finally:
             if profile_session is not None:
                 profile_session.end_step(status=step_status)
 
+    def step(self):
+        """Compatibility API returning ``(finished, signed_token_count)``."""
+
+        return self.step_result().as_legacy_tuple()
+
     def is_finished(self):
         """所有请求是否处理完毕(waiting和running都为空)"""
         return self.scheduler.is_finished()
+
+    def cancel_request(self, request_id: int) -> bool:
+        """Cancel an admitted request and release owned KV blocks."""
+
+        cancelled = self.scheduler.cancel(request_id)
+        if cancelled:
+            marker = getattr(self.metrics, "mark_terminal", None)
+            if marker is not None:
+                marker(
+                    request_id,
+                    reason="cancelled",
+                    timestamp_ns=perf_counter_ns(),
+                )
+        return cancelled
+
+    def metrics_snapshot(self) -> dict[str, object]:
+        """Return an immutable-by-convention copy of engine metrics records."""
+
+        snapshot = getattr(self.metrics, "snapshot", None)
+        if snapshot is None:
+            raise RuntimeError("configured metrics sink does not expose snapshots")
+        return snapshot()
 
     def generate(
         self,
