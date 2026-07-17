@@ -6,22 +6,24 @@ build-backend = "setuptools.build_meta"
 name = "prism-infer"
 version = "0.3.0"
 authors = [{ name = "Xingkai Yu" }]
-license = "MIT"
-license-files = ["LICENSE"]
+license = { file = "LICENSE" }
 readme = "README.md"
 description = "A multi-modal inference engine with KV Cache optimization — built from nano-vllm"
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "torch>=2.4.0",
-    "triton>=3.0.0",
-    "transformers>=4.51.0",
-    "flash-attn",
-    "xxhash",
-    "Pillow",
+    "transformers==5.13.0",
+    "numpy>=1.26",
+    "safetensors>=0.4",
+    "tqdm>=4.66",
+    "xxhash>=3.0",
+    "Pillow>=10.0",
 ]
 
 [project.urls]
-Homepage="https://github.com/GeeeekExplorer/nano-vllm"
+Homepage = "https://github.com/xsmccc/Prism-Infer"
+Repository = "https://github.com/xsmccc/Prism-Infer.git"
+Issues = "https://github.com/xsmccc/Prism-Infer/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
