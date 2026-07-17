@@ -29,6 +29,7 @@ from benchmarks.bench_system import (
 from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import load_workload_manifest
 from prism_infer.analysis.online_serving import (
+    ONLINE_BENCHMARK_SCHEMA_VERSION,
     summarize_online_run,
     validate_online_benchmark_record,
 )
@@ -129,6 +130,7 @@ def _build_engine(args: argparse.Namespace):
             args.visual_pruning_attention_last_n_layers
         ),
         logits_precision=args.logits_precision,
+        mlp_projection_mode=args.mlp_projection_mode,
     )
 
 
@@ -190,6 +192,11 @@ def main() -> None:
     parser.add_argument(
         "--logits-precision", choices=("model", "fp32"), default="model"
     )
+    parser.add_argument(
+        "--mlp-projection-mode",
+        choices=("legacy", "packed"),
+        default="packed",
+    )
     parser.add_argument("--output")
     args = parser.parse_args()
 
@@ -247,7 +254,7 @@ def main() -> None:
         commit, dirty = _git_metadata()
         config_path = Path(args.model) / "config.json"
         record = {
-            "schema_version": 1,
+            "schema_version": ONLINE_BENCHMARK_SCHEMA_VERSION,
             "record_type": "prism_online_run",
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "git_commit": commit,
@@ -297,6 +304,7 @@ def main() -> None:
                 "kvcache_block_size": args.kvcache_block_size,
                 "enable_prefix_caching": args.enable_prefix_caching,
                 "logits_precision": args.logits_precision,
+                "mlp_projection_mode": args.mlp_projection_mode,
             },
             "memory": {
                 "allocated_mib": torch.cuda.memory_allocated() / (1024 ** 2),

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from prism_infer.analysis.online_serving import (
+    ONLINE_BENCHMARK_SCHEMA_VERSION,
     percentile,
     summarize_online_run,
     validate_online_benchmark_record,
@@ -187,6 +188,61 @@ def test_online_session_preserves_arrival_and_continuous_batching() -> None:
     validate_online_benchmark_record(record)
     record["summary"] = {**summary, "counts": {**summary["counts"], "good": 0}}
     with pytest.raises(ValueError, match="does not match"):
+        validate_online_benchmark_record(record)
+
+
+def test_online_schema_v2_requires_projection_mode() -> None:
+    clock = _FakeClock()
+    result = OnlineServingSession(
+        _engine(clock),
+        clock_ns=clock,
+        sleep_fn=clock.advance,
+    ).run((_request("a", 0.0),))
+    summary = summarize_online_run(
+        result.to_record(),
+        ttft_slo_ms=100.0,
+        tpot_slo_ms=100.0,
+    )
+    record = {
+        "schema_version": ONLINE_BENCHMARK_SCHEMA_VERSION,
+        "record_type": "prism_online_run",
+        "git_commit": "abc123",
+        "git_dirty": False,
+        "hardware": {
+            "gpu": "test-gpu",
+            "gpu_uuid": "GPU-test",
+            "total_memory_bytes": 1,
+        },
+        "workload": {
+            "manifest": "test",
+            "case": "test",
+            "requests": 1,
+            "max_tokens": 3,
+        },
+        "arrival": {
+            "process": "burst",
+            "request_rate_per_s": 1.0,
+            "seed": 1,
+            "offsets_s": [0.0],
+        },
+        "engine": {
+            "mode": "off_eager",
+            "max_model_len": 32,
+            "max_num_batched_tokens": 8,
+            "max_num_seqs": 4,
+            "max_chunk_size": 2,
+            "num_kvcache_blocks": 32,
+            "kvcache_block_size": 4,
+            "enable_prefix_caching": False,
+            "mlp_projection_mode": "packed",
+        },
+        "run": result.to_record(),
+        "summary": summary,
+    }
+    validate_online_benchmark_record(record)
+
+    del record["engine"]["mlp_projection_mode"]
+    with pytest.raises(ValueError, match="mlp_projection_mode"):
         validate_online_benchmark_record(record)
 
 

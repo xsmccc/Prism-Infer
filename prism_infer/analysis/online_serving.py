@@ -7,7 +7,8 @@ from typing import Mapping, Sequence
 
 
 ONLINE_SUMMARY_SCHEMA_VERSION = 1
-ONLINE_BENCHMARK_SCHEMA_VERSION = 1
+ONLINE_BENCHMARK_SCHEMA_VERSION = 2
+SUPPORTED_ONLINE_BENCHMARK_SCHEMA_VERSIONS = (1, 2)
 
 
 def percentile(values: Sequence[float], quantile: float) -> float:
@@ -162,7 +163,8 @@ def summarize_online_run(
 def validate_online_benchmark_record(record: Mapping[str, object]) -> None:
     """Fail closed on malformed/tampered formal online benchmark records."""
 
-    if record.get("schema_version") != ONLINE_BENCHMARK_SCHEMA_VERSION:
+    schema_version = record.get("schema_version")
+    if schema_version not in SUPPORTED_ONLINE_BENCHMARK_SCHEMA_VERSIONS:
         raise ValueError("unsupported online benchmark schema_version")
     if record.get("record_type") != "prism_online_run":
         raise ValueError("online benchmark record_type must be prism_online_run")
@@ -208,6 +210,12 @@ def validate_online_benchmark_record(record: Mapping[str, object]) -> None:
     ):
         if key not in engine:
             raise ValueError(f"engine missing {key}")
+    if schema_version >= 2:
+        projection_mode = engine.get("mlp_projection_mode")
+        if projection_mode not in ("legacy", "packed"):
+            raise ValueError(
+                "engine.mlp_projection_mode must be 'legacy' or 'packed'"
+            )
     run = _require_mapping(record.get("run"), "run")
     results = run.get("requests")
     if not isinstance(results, list) or len(results) != request_count:
