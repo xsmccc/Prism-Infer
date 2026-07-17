@@ -30,8 +30,8 @@ Prism-Infer 的交付目标不是单个 demo，而是一套可验证、可复现
 | KV Engine Hardening | P4.5 已完成当前门禁 | 已统一 canonical 4D paged KV layout 写入语义，修复 CPU fallback、prefix hash 释放清理、swap CPU/GPU 页表混用，补齐 Sequence/Config block size contract，并把 prefix-cache prefill 提前显式拒绝。 |
 | KV Cache 压缩 | P5 当前门禁已完成 | 已保留 `compression_mode="off"` baseline，新增 `visual_prune` logical decode retention，并完成 `fp8_kv` physical KV storage baseline；固定 16 blocks 下 FP8 KV cache bytes 为 BF16 的 `0.5x`，质量矩阵 32/32 token exact match；FP8 当前 latency 更慢，吞吐优化进入 P6。 |
 | 系统性能优化 | P6.12-C BF16 content-aware 主线已完成并冻结 | 默认 last-layer attention scorer 在 7 张固定 COCO 图片、35 条 caption reference 上通过当前 lexical task gate：token-F1/ROUGE-L drop 为 `0.003288/0.003710`；7-image aggregate physical token/active-byte ratio 为 `0.535x/0.538x`。COCO batch4稳定性能 cell为 `0.536x/0.571x`。freeze tag 为 `p6.12-content-aware-kv`。这不是标准 COCO accuracy，FP8 quality、两卡动态 TP 和 RTX hardware counter 仍未完成。 |
-| 单机性能与外部对标 | P7.0-P7.4 已完成，P7.5 PARTIAL | online engine、external protocol、logits优化和Graph replay分析已闭环；packed gate/up仅完成组件 correctness。完整8B与性能门禁被同一物理GPU的隐藏外部负载阻塞。 |
-| 项目交付 | P8 文档交付已完成，动态GPU验收待补 | README、技术报告、复现手册、Known Issues、投递材料和安装preflight已落地；隔离安装与CPU smoke `40 passed`，fresh环境完整8B demo尚待稳定独占GPU。 |
+| 单机性能与外部对标 | P7.0-P7.5 已完成 | online engine、external protocol、logits优化、Graph replay分析与 packed gate/up 均闭环；8 个 clean offline cell 的 packed decode TPOT 改善 `0.483%–0.762%`，不声称稳定 E2E 加速。 |
+| 项目交付 | P8 PASS | README、技术报告、复现手册、Known Issues、投递材料、fresh editable install、完整8B demo与当前主线 full regression 均已验收。 |
 
 ## 阶段门禁总览
 
@@ -651,10 +651,11 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
   - [x] P7.4-B clean 31-step trace将 replay分为八类：`2,000` kernels/step、kernel busy `12.921 ms`，linear/GEMV占 `70.55%`；Graph 外 kernel busy差约 `0.769 ms`。
   - [x] 固定 `max_num_seqs=8` 的 batch1-8 matrix验证 `[1,2,4,8]` bucket/padding、repeat稳定和 padding row输出隔离；该 matrix不用于 padding性能 claim。
   - [x] CPU/GPU timeline确认 replay CPU range只是异步提交窗口；sampler CPU时间暴露 stream同步，不能与 replay重复相加。
-- [ ] P7.5 profiling触发的 projection/custom-op/Blackwell kernel优化：
+- [x] P7.5 profiling触发的 projection候选评估与优化：
   - [x] trace将 linear/GEMV映射为每步 `253` 次 projection；QKV packed候选因 batch2/4/8 K/V BF16 max diff `1.0`在计时前拒绝。
   - [x] gate/up共享 packed storage实现已落地，保持旧 state-dict strict load；batch `1/2/4/8/210/408/988` MLP output bitwise exact，focused `32 passed`。
-  - [ ] 干净独占 GPU上补 paired microbenchmark、完整 8B HF/E2E/online回归、TPOT和 Systems kernel count；当前隐藏外部占用 `17,282 MiB`，不形成性能 claim。
+  - [x] clean `396702d/8293851/021d4e2` 完成 formal micro、完整 HF logits/PPL、8 个 offline cell、2 个 online A/B、fresh demo与 node-level Systems trace；所有 correctness gate PASS。
+  - [x] 实测 replay linear `253 -> 217`、总 kernels `2,000 -> 1,964`；8 个 unprofiled offline cell 的 packed/legacy TPOT ratio 为 `0.9924x–0.9952x`，保留 packed 默认。E2E受 vision prefill双峰影响，不形成稳定加速 claim。
 - [ ] P7.6 两卡可用时补 TP2 correctness/communication/performance，不阻塞单卡主线。
 
 ### 出口标准
@@ -676,11 +677,13 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
   `2,000` kernels/step；linear/GEMV占 `70.55%`，attention占 `13.17%`，小型
   elementwise/copy/reduction合计约 `15.15%`。P7.5只从这些证据选择候选，不再优化
   已退出 critical path 的 logits。
-- P7.5已完成低显存 projection preflight：QKV fusion由严格数值证据拒绝，gate/up
-  packing通过组件与代表性 prefill/decode shape correctness。完整 engine与性能闭环
-  因平台侧隐藏 GPU workload暂缓，P7.5仍保持未完成。
+- P7.5已完成 projection闭环：QKV fusion由严格数值证据拒绝；gate/up在组件、HF
+  logits/PPL、text/单图/多图/video/mixed、7-image COCO、online SLO与完整回归中通过。
+  clean Systems trace确认每 replay少 36 个 linear，8 个 offline cell 的 decode TPOT
+  均小幅改善 `0.483%–0.762%`。该收益很小，且不外推到 E2E或online speedup。
 - offline TTFT/vision prefill 存在双峰，当前不把 E2E中位数差异归因为压缩；见 `docs/issues/P7-005-TTFT_VISION_BIMODALITY.md`。
-- P7.4 focused regression、HF logits/PPL、7-image task gate均 PASS；clean完整回归 JUnit 为 `241 passed, 6 skipped in 264.664s`，无 failure/error。
+- 当前主线 clean `021d4e2` 完整回归 JUnit 为 `281 passed, 6 skipped in 297.622s`，
+  `287 tests / 0 failure / 0 error`；P7.5 HF model-precision logits/PPL三类 VL case均 exact。
 
 ## P8: 项目交付
 
@@ -699,7 +702,8 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
 
 ### 出口标准
 
-- [ ] 新环境能按 README 跑通完整8B最小 demo；package/API/CPU smoke已PASS，权重加载因KI-001当前不可执行。
+- [x] fresh venv按 README 安装依赖与 editable wheel，并跑通完整8B最小 demo；输出
+  8 个 token IDs 与 decoded text，退出后 GPU恢复到 `1 MiB` baseline。
 - [x] 所有README与投递材料关键 claim均能追溯到验证输出、报告或源码。
 - [x] 项目有清楚的限制说明、恢复门禁和下一步方向。
 
@@ -709,8 +713,9 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
 - clean `568f7bb` 修复PEP 621/setuptools metadata、项目URL和核心依赖；隔离venv
   editable wheel构建与`LLM` import PASS。
 - clean `d547385` 新增无权重加载的环境/model/CUDA检查器及3个单测。
-- P8阶段保持 `PARTIAL`：fresh环境完整8B demo和主线full regression必须在KI-001
-  外部GPU占用消失后执行，不能由CPU smoke替代。
+- P8动态出口已完成：fresh editable venv 的 8B demo PASS；clean `021d4e2` full
+  regression为 `281 passed, 6 skipped`；P7.5动态门禁已闭环。宿主 DALI/`six`
+  pip-check warning、TP2、NCU counter和网络server仍按 Known Issues限定，但不阻塞P8。
 
 ## 下一步执行顺序
 
@@ -722,13 +727,13 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
 3. ~~P7.3 建立 online arrival/queueing、continuous batching 和 SLO goodput。~~
    clean `e7796e9` 已完成 9-cell matrix；下一步不再用 offline throughput替代 online指标。
 4. ~~完成 P7.4 Graph replay、CPU/GPU timeline和 fixed-bucket coverage。~~ clean
-   trace与8-cell matrix已闭环；P7.5按 `70.55%` linear/GEMV和约 `15.15%` 小 kernel
-   证据评估 Inductor/custom kernel，硬件 counter缺失时不虚构结论。
-5. 稳定独占GPU恢复后完成P7.5 clean paired micro、full HF/E2E/online、TPOT、Systems
-   trace；无稳定端到端收益则回退packed gate/up。
-6. 同一恢复窗口完成P8 fresh环境8B demo、当前主线full regression和最终requirement audit。
+   trace与8-cell matrix已闭环，并形成 `70.55%` linear/GEMV与约 `15.15%` 小 kernel
+   的候选证据；P7.5先闭环 gate/up projection，其余候选仍须由counter与独立门禁驱动。
+5. ~~完成P7.5 clean paired micro、full HF/E2E/online、TPOT与Systems trace。~~ packed
+   默认保留；只声明 `0.483%–0.762%` decode TPOT改善，不声明稳定E2E/online加速。
+6. ~~完成P8 fresh环境8B demo、当前主线full regression和最终requirement audit。~~
+   clean JUnit、demo输出与P8 Gate Review均已落盘。
 7. 两卡平台补P6.8/P7.6；开放hardware counter平台补P6.2-B，不阻塞单卡文档交付。
-8. ~~P8重写README、技术报告、复现手册、Known Issues和投递材料。~~ 静态交付已完成，
-   动态GPU出口见第6项。
+8. ~~P8重写README、技术报告、复现手册、Known Issues和投递材料。~~ 静态与动态出口均完成。
 
 P3/P4/P4.5/P5 已建立多模态 FP baseline、KV trace、KV 语义硬化、logical pruning 和 FP8 storage baseline。P6 只允许在统一 benchmark 和固定外部版本下形成性能 claim；没有真实 megakernel实现或 launch-bound 证据时，不开展 megakernel 对比。

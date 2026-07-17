@@ -290,11 +290,13 @@ P7.5 按 trace证据检查 projection fusion：
   被严格拒绝；
 - packed gate/up在 rows `1/2/4/8/210/408/988` 的完整 MLP output bitwise exact，
   focused regression `32 passed`；
-- 理论调用数由每层三次 MLP linear变两次，预计全 replay linear count
-  `253 → 217`，但这不是实测结果。
+- clean node trace实测调用数由每层三次 MLP linear变两次，全 replay linear count
+  `253 → 217`、总 kernels `2,000 → 1,964`。
 
-完整 8B、online、TPOT和 Systems trace因同一物理 GPU 的隐藏外部占用暂未完成，
-因此当前不能声称 gate/up packing有 full-engine加速。
+完整HF logits/PPL、text/单图/多图/video/mixed、7-image COCO、online SLO与full
+regression均已通过。8个clean offline cell token exact，unprofiled decode TPOT改善
+`0.483%–0.762%`。该收益在记录cell中方向一致但很小；vision prefill仍双峰，所以
+不声称稳定E2E或online goodput加速。
 
 ## 8. 外部框架对比
 
@@ -328,23 +330,20 @@ Plan → Implement → Verify → Teach → Document → Gate Review
 - [REPRODUCIBILITY](REPRODUCIBILITY.md)：外部用户最小复现路径；
 - [STAGE_DELIVERY_TEMPLATE](STAGE_DELIVERY_TEMPLATE.md)：阶段验收模板。
 
-最新完整 formal regression仍是 P7.4 clean `cc070b3` 的
-`241 passed, 6 skipped in 264.664s`。P7.5新增 packed MLP后只完成 focused regression；
-主线 full regression必须在完整 8B可加载时重跑。
+最新完整 formal regression是 clean `021d4e2` 的
+`281 passed, 6 skipped in 297.622s`；JUnit为`287 tests / 0 failures / 0 errors / 6 skipped`。
 
 ## 10. 局限与下一步
 
 最高优先级：
 
-1. 在稳定独占 GPU 上完成 P7.5 paired microbenchmark、full HF/E2E/online、TPOT和
-   node trace；无稳定 E2E收益则回退 packing。
-2. 在两卡机器完成 TP2 logits/greedy、NCCL、per-GPU memory和 latency。
-3. 在可用 NCU counter 的平台采集真实 SM utilization；kernel busy不能替代。
-4. 扩大 visual compaction质量集到标准 caption/VQA指标和长上下文。
-5. 建立真实网络 server后再做 arrival/SLO external online goodput。
+1. 在两卡机器完成 TP2 logits/greedy、NCCL、per-GPU memory和 latency。
+2. 在可用 NCU counter 的平台采集真实 SM utilization；kernel busy不能替代。
+3. 扩大 visual compaction质量集到标准 caption/VQA指标和长上下文。
+4. 建立真实网络 server后再做 arrival/SLO external online goodput。
 
-P8 文档、安装 smoke和投递材料可以在低显存环境完成，但上述动态硬件门禁只有真实
-证据才能关闭。
+P8 fresh venv、完整8B demo与full regression已完成；上述剩余条件项仍只能由对应
+两卡、counter、标准数据集或网络环境的真实证据关闭。
 
 ## 结论
 
@@ -352,5 +351,5 @@ Prism-Infer 已形成一套可运行、可追踪、可压缩和可解释的 Qwen
 最重要的工程结果不是单个 speedup，而是把模型数值对齐、视觉 KV 物理语义、质量
 门禁、CUDA Graph执行和系统 profiling放进同一证据链。当前压缩主线在受限 lexical
 gate下减少约一半 active visual KV，但短 workload性能收益有限；trace-driven logits
-修复显著降低了无效转换成本，而 external TPOT仍落后。剩余工作边界清楚，未验证能力
-没有被包装成完成结论。
+修复显著降低了无效转换成本，packed gate/up又以36个更少的linear带来不足1%的decode
+TPOT改善，而 external TPOT仍落后。剩余工作边界清楚，未验证能力没有被包装成完成结论。

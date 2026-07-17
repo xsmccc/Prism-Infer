@@ -1,9 +1,11 @@
 # P7-009: Projection fusion 的数值门禁与 gate/up packing
 
-- 状态: `INVESTIGATING`（实现与 component correctness完成，full-engine/performance待干净 GPU）
+- 状态: `RESOLVED`（QKV correctness-first拒绝；gate/up完成full-engine动态闭环并保留）
 - profiling commit: `0fdd4a6`
 - implementation commit: `8767b7a`
 - correctness evidence commit: `01b3625`
+- full-engine A/B commit: `8293851`
+- online/Systems/final gate commit: `021d4e2`
 - 硬件/软件: RTX 5090，Torch `2.6.0a0+nv25.01`，BF16
 - 影响: Graph replay的 linear/GEMV占 `70.55%`；错误 fusion会改变 K/V数值，
   未经 full-engine门禁不能进入性能 claim。
@@ -50,8 +52,8 @@ row view；state-dict隐藏 packed内部 key，只保留 HF-compatible三键。f
 一次 packed projection、chunk view、SiLU/mul和原 down projection。
 
 该布局不会复制权重；`Module.to/_apply`后显式 rebind view，防止 device/dtype转换
-创建长期副本。理论 linear count从每层3降到2，整步 `253 -> 217`，但这只是源码
-推导，必须由 clean node trace确认。
+创建长期副本。显式`legacy|packed`执行模式共享同一storage/state-dict，用于同commit
+单变量A/B。clean node trace确认linear count从每层3降到2，整步`253 -> 217`。
 
 ## 验证
 
@@ -73,26 +75,27 @@ PRISM_MODEL_PATH="$PRISM_MODEL_PATH" \
 均为 `0`。HF legacy state-dict strict load、storage alias和 dtype conversion rebind均有
 单元合同。
 
-## 当前 GPU 阻塞
+## Full-engine关闭证据
 
-同一物理 UUID在三个重建容器中均保留不可见的 `17,282 MiB`占用与约
-`0-35%`外部 SM activity；容器内无对应 CUDA PID，5090不支持 in-place reset。
-benchmark formal gate要求启动显存 `<=1024 MiB`、utilization `<=5%`和 clean commit，
-因此本轮正确输出 `formal_eligible=false`，没有保存 timing数字。
+历史不可见GPU占用恢复后，formal baseline稳定为`1–4 MiB / 0–2%`。关闭结果：
 
-## 待完成门禁
+- clean `396702d` formal micro七个rows全部bitwise exact；
+- clean `8293851/021d4e2`八个offline cells全部token exact，packed decode TPOT改善
+  `0.483%–0.762%`；
+- single/multi-image/video 32-token HF model-precision logits/PPL diff均为`0`；
+- single-image与mixed-rate10 online A/B token exact、双方SLO goodput fraction均`1.0`；
+- 31-step node trace：all kernels `2,000 -> 1,964`、linear `253 -> 217`、kernel busy
+  `12.815 -> 12.721 ms`；
+- clean full regression `281 passed, 6 skipped`，0 failure/error。
 
-1. 干净 GPU上运行 packed/legacy交替顺序 eager与 Graph microbenchmark。
-2. 完整 8B single/multi-image/video HF teacher-forced logits/PPL。
-3. offline五 workload、online arrival/SLO与长输出 greedy correctness。
-4. 无 profiler TPOT/E2E，以及 node trace验证 linear `253 -> 217`和真实 kernel time。
-5. 若无稳定 E2E收益，保留实现或回退必须依据同条件数据，而不是 micro speedup。
+最终保留packed默认。E2E包含已知vision prefill双峰，online没有process-level repeats，
+所以只声明记录workload的unprofiled decode TPOT小幅收益，不声明稳定E2E或online加速。
 
 ## 被拒绝的方法
 
 - 直接合并 QKV并只检查最终一个 token：K/V内部已不 exact，会污染缓存和长输出。
-- 在当前共享/污染 GPU报告 paired timing：交替顺序只能降低 drift，不能消除另一
-  namespace workload的干扰。
+- 在共享/污染 GPU报告 paired timing：交替顺序只能降低 drift，不能消除另一
+  namespace workload的干扰；正式结果只使用恢复后的clean baseline。
 - 把理论 kernel count下降写成实测 speedup：CUDA Graph已降低 host launch成本，
   GEMV memory/algorithm变化必须实测。
 
@@ -100,5 +103,5 @@ benchmark formal gate要求启动显存 `<=1024 MiB`、utilization `<=5%`和 cle
 
 > Trace显示七成 replay时间在 linear后，我没有直接把所有 projection都拼起来。
 > QKV micro门禁发现 batch2以上 K/V会因 cuBLAS shape选择产生 BF16差异，所以在
-> 计时前拒绝；gate/up则在 decode和代表性 prefill shape保持 bitwise exact，才进入
-> 实现。平台 GPU被其他 namespace占用时，runner也会拒绝生成正式性能结论。
+> 计时前拒绝；gate/up通过组件、HF、E2E与online门禁后，trace确认每步少36个linear，
+> 8个clean cell的decode TPOT改善约0.48%–0.76%。收益很小，所以没有包装成E2E加速。

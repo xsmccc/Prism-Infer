@@ -1,15 +1,15 @@
 # Prism-Infer Known Issues
 
 > 更新日期：2026-07-17  
-> 本表只记录当前主线限制。历史 root cause 见 `docs/issues/` 与
-> [ISSUE_LOG](ISSUE_LOG.md)。任何条目只能由可复现证据关闭。
+> 本表记录当前主线限制，并保留本轮关闭项作为审计轨迹。历史 root cause 见
+> `docs/issues/` 与 [ISSUE_LOG](ISSUE_LOG.md)。任何条目只能由可复现证据关闭。
 
 ## 总览
 
 | ID | 状态 | 影响 | 摘要 |
 |---|:---:|---|---|
-| KI-001 | BLOCKED | P7.5/full 8B performance | 同一物理 GPU 存在容器内不可见外部 workload |
-| KI-002 | PARTIAL | packed MLP claim | gate/up只有组件 correctness，缺 full-engine闭环 |
+| KI-001 | CLOSED | 历史 GPU 环境事件 | 设备恢复至稳定 `1–4 MiB / 0–2%` baseline，完整动态门禁已完成 |
+| KI-002 | CLOSED | packed MLP claim | HF/E2E/online/TPOT/Systems/full regression闭环；只声明小幅 decode TPOT收益 |
 | KI-003 | BLOCKED | TP2 | 当前仅一张可见 RTX 5090 |
 | KI-004 | BLOCKED | GPU utilization claim | NCU metrics返回 `Already under profiling` |
 | KI-005 | FAIL/REJECTED | FP8默认压缩 | FP8 KV最终质量门禁未通过 |
@@ -20,7 +20,7 @@
 | KI-010 | OPEN | E2E归因 | vision prefill/TTFT存在双峰 |
 | KI-011 | PROCESS | raw evidence | `data/` gitignored，需要单独保存正式实验产物 |
 
-## KI-001：隐藏外部 GPU workload
+## KI-001：隐藏外部 GPU workload（CLOSED）
 
 ### 现象
 
@@ -50,12 +50,14 @@ utilization.gpu=22–33%
 完整 Qwen3-VL-8B 当前 formal配置的 torch allocator peak约 `17.4–17.5 GiB`，剩余
 `14.7 GiB` 无法构建 engine。外部利用率也会污染 microbenchmark和 TPOT。
 
-### 当前处理
+### 关闭证据
 
-- 允许 CPU/低显存 correctness。
-- `bench_packed_mlp.py` 在启动 baseline memory `>1024 MiB` 或 utilization `>5%`
-  时将 timing标为 `formal_eligible=false`。
-- 不降低模型或 benchmark 配置来冒充同一 formal workload。
+- 2026-07-17恢复后连续采样为 `1 MiB used / 32149 MiB free / 0% utilization`，
+  formal运行之间为 `1–4 MiB / 0–2%`；
+- clean `396702d` microbenchmark通过 `<=1024 MiB / <=5%`启动门禁；
+- clean `8293851/021d4e2`完成完整8B HF、offline、online、Nsight、fresh demo和
+  full regression，运行后均回到 `1 MiB` baseline；
+- 当前主线不存在不可见显存占用。若未来再次出现，仍按下述恢复门禁重新打开本条目。
 
 ### 恢复门禁
 
@@ -72,26 +74,25 @@ nvidia-smi --query-gpu=uuid,memory.used,memory.free,utilization.gpu,power.draw \
 至少多次采样稳定通过、无外部 utilization，再启动 full 8B。若再次复现，需要宿主机/
 hypervisor管理员按 GPU UUID定位进程；容器内没有权限清理不可见 owner。
 
-## KI-002：P7.5 packed gate/up 尚未形成端到端结论
+## KI-002：P7.5 packed gate/up claim（CLOSED）
 
-已完成：
+关闭证据：
 
 - 共享 packed storage与旧 state-dict key兼容；
 - `Module.to/_apply` 后 view rebind；
 - rows `1/2/4/8/210/408/988` 的 BF16完整 MLP output bitwise exact；
-- focused regression `32 passed in 62.19s`。
+- formal micro的七个 rows均 bitwise exact；
+- single/multi-image/video 32-token HF model-precision logits max/mean diff与PPL diff均为`0`；
+- text、single/multi-image、video、mixed及7-image COCO共8个 clean offline cell均
+  token exact，packed decode TPOT改善`0.483%–0.762%`；
+- single-image与mixed-rate10 online A/B逐请求token exact，双方SLO goodput fraction均`1.0`；
+- node-level Systems实测 linear `253 -> 217`、总 kernels `2,000 -> 1,964`，
+  kernel busy `12.815 -> 12.721 ms`；
+- clean `021d4e2` full regression为`281 passed, 6 skipped`，0 failure/error。
 
-未完成：
-
-- clean paired microbenchmark；
-- full 8B HF logits/PPL；
-- text/image/multi-image/video/mixed generation；
-- offline/online regression；
-- full-engine TPOT；
-- Systems trace确认 linear count/time。
-
-预计 `253 → 217` linear calls只是源码推导，不是实测。只有上述门禁全部完成且 E2E
-稳定有收益，才能保留优化 claim；否则回退 `8767b7a` 的行为变化。
+结论是保留 packed默认，但 claim仅限同一 RTX 5090/Qwen3-VL-8B/记录 workload的
+unprofiled decode TPOT小幅改善。vision prefill仍双峰，online没有process-level repeats，
+因此不声称稳定E2E latency或online goodput加速。
 
 ## KI-003：TP2 动态验证不可用
 

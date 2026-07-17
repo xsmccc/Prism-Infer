@@ -18,7 +18,7 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 | KV trace 与视觉 token 分析 | 已验证 | trace 默认关闭，JSONL 可离线分析 |
 | content-aware visual KV physical compaction | 已验证 | BF16、keep=0.5 的 7-image lexical preflight 通过 |
 | FP8 KV | 已实现、质量未通过 | 不能作为默认质量合格策略 |
-| packed MLP gate/up | 组件验证通过 | 完整 8B 与性能门禁因外部 GPU 占用暂缓 |
+| packed MLP gate/up | 已验证、默认启用 | RTX 5090 TP1；8 个 clean offline cell 的 decode TPOT 改善 `0.483%–0.762%`，不声称稳定 E2E 加速 |
 | TP2 | 静态与 IPC preflight 完成 | 动态 correctness/performance 尚无两卡证据 |
 
 权威进度见 [ROADMAP](docs/ROADMAP.md)，允许和禁止使用的结论见
@@ -44,6 +44,10 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
   vLLM 的 `1.34x–1.40x`，即 Prism **尚未反超** vLLM。
 - P7.3 的 9-cell engine-level online matrix 中，已完成请求均满足各 cell 预先声明的
   SLO；该结果没有 HTTP/gRPC 开销，也没有同条件 vLLM online goodput 对比。
+- packed gate/up 将 single-image Graph replay 的 linear kernels 从 `253` 降到 `217`、
+  总 kernels 从 `2,000` 降到 `1,964`；text、单/多图、视频、mixed 与 7-image COCO
+  共 8 个 clean cell 均 token exact，unprofiled decode TPOT 改善 `0.483%–0.762%`。
+  vision prefill仍有双峰，因此不把该结果扩写成稳定 E2E latency speedup。
 
 完整口径、环境和 raw evidence 路径见 [PERFORMANCE_REPORT](docs/PERFORMANCE_REPORT.md)。
 
@@ -290,7 +294,7 @@ python -m pytest -q tests -s
 - [复现实验](docs/REPRODUCIBILITY.md)：从安装 smoke 到正式 GPU matrix 的命令与样例。
 - [Known Issues](docs/KNOWN_ISSUES.md)：当前 blocker、限制、恢复条件和待补命令。
 - [投递与面试材料](docs/APPLICATION_MATERIALS.md)：可核查项目描述、简历 bullet 与问答。
-- [P8 Gate Review](docs/P8_DELIVERY.md)：当前静态PASS、动态blocker与恢复交接。
+- [P8 Gate Review](docs/P8_DELIVERY.md)：安装、fresh 8B demo、完整回归与动态性能验收。
 - [路线图](docs/ROADMAP.md)：阶段状态与下一执行顺序。
 - [验证合同](docs/VERIFICATION.md)：correctness、quality、performance 门禁。
 - [性能报告](docs/PERFORMANCE_REPORT.md)：benchmark contract、结果和 raw evidence。
@@ -303,6 +307,7 @@ python -m pytest -q tests -s
 - 不声称 visual compaction 让整张 GPU 或整个模型显存减半。
 - 不声称 FP8 KV 已通过质量门禁。
 - 不把 offline output tok/s 当作 online serving goodput。
+- 不把 packed MLP 的小幅 decode TPOT 收益写成 online goodput或稳定 E2E 加速。
 - 不声称已经验证 TP2、HTTP/gRPC、megakernel、PD 分离或投机解码。
 
 ## Acknowledgements

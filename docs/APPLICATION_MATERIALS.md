@@ -25,7 +25,7 @@ correctness and systems-profiling gates.
 
 - 自实现 Qwen3-VL-8B text/vision/M-RoPE/DeepStack 与推理 engine 主路径，覆盖
   text、单图、多图、视频和 mixed batch；建立模块、full logits/PPL、greedy、
-  CUDA Graph和长输出分层门禁，最近 clean full gate为 `241 passed / 6 skipped`。
+  CUDA Graph和长输出分层门禁，最近 clean full gate为 `281 passed / 6 skipped`。
 - 设计 content-aware visual KV physical compaction：prefill末层 attention top-k、
   page内重排/尾页回收、logical M-RoPE与physical KV位置分离；7-image/35-caption
   preflight将 physical tokens/active bytes降至 `0.535x/0.538x`，token-F1与
@@ -45,6 +45,9 @@ correctness and systems-profiling gates.
 - 建立与 vLLM的 clean comparability gates；优化后 quality-qualified Prism compact
   TPOT仍为 vLLM的 `1.34x–1.40x`，如实保留劣势并把下一热点定位到 Graph内
   linear/GEMV，而非宣称“全面反超”。
+- 实现HF-compatible gate/up packed projection；node trace确认每步linear
+  `253→217`、总kernels `2,000→1,964`，8个clean多模态/COCO cell token exact且
+  decode TPOT改善`0.483%–0.762%`，明确不扩写为E2E或online加速。
 
 ### 2.3 Engine / Serving 版本
 
@@ -127,8 +130,8 @@ page的 content-aware physical compaction；固定小型质量门禁下，active
 
 ### 4:30–5:00：下一步
 
-- clean GPU完成 packed gate/up full-engine evidence；
 - 两卡TP2；
+- 支持hardware counters的平台补真实SM/memory-pipeline指标；
 - 扩大标准质量集；
 - 建立真实网络 server后做 external online SLO。
 
@@ -183,11 +186,13 @@ memory；它们不能互换。
 `1/2/4/8`。
 
 **Result**：batch1 exact，但 batch2/4/8 K/V max diff为`1.0`，立即标记
-`rejected_by_strict_correctness`且不计时。gate/up候选则通过完整MLP bitwise gate，但
-在full-engine证据完成前不宣称加速。
+`rejected_by_strict_correctness`且不计时。gate/up候选通过完整MLP、HF logits/PPL、
+offline/online与full regression；Systems确认linear `253→217`，8个clean cell的
+decode TPOT改善`0.483%–0.762%`。
 
 **Reflection**：低精度下“数学等价”不保证数值合同；correctness-first可以减少无意义
-benchmark和回归风险。
+benchmark和回归风险。不到1%、在记录cell中方向一致的decode收益也必须与不稳定的
+vision-prefill E2E分开表达。
 
 ## 7. 高频面试问题
 
@@ -243,9 +248,8 @@ kernel correctness和storage reduction不等于生成质量。FP8长输出发生
 
 ### 当前最大的技术债是什么？
 
-packed gate/up还缺clean full-engine闭环；TP2没有两卡动态证据；硬件counter不可用；
-质量集较小；online只有engine harness没有网络server。每项都有明确恢复命令和禁止
-claim。
+TP2没有两卡动态证据；硬件counter不可用；质量集较小；online只有engine harness
+没有网络server。每项都有明确恢复命令和禁止claim。
 
 ## 8. 作品集页面建议
 
@@ -272,6 +276,8 @@ E2E → external”的完整证据链。
 - “实现视觉 KV physical compaction和page回收。”
 - “在固定7-image lexical preflight中，physical KV约减半且指标drop小于0.004。”
 - “通过trace移除per-token完整LM-head FP32转换，TPOT提升1.216x–1.280x。”
+- “packed gate/up在8个clean cell中减少36个linear，并小幅改善decode TPOT
+  `0.483%–0.762%`。”
 - “优化后仍慢于vLLM 1.34x–1.40x，并继续定位Graph内热点。”
 
 ### 必须避免

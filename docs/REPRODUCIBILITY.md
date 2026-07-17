@@ -113,7 +113,7 @@ model path: /path/to/Qwen3-VL-8B-Instruct/snapshot
 ```
 
 `--min-free-gib 18` 是基于当前 full-engine allocator peak `17.4–17.5 GiB` 的启动
-门禁，不是通用硬件需求估算。2026-07-17 外部隐藏负载复现时，脚本应在加载权重前
+门禁，不是通用硬件需求估算。2026-07-17 曾出现的外部隐藏负载会让脚本在加载权重前
 失败，例如：
 
 ```text
@@ -121,7 +121,8 @@ status: FAIL
 ERROR: GPU 0 has 14.696 GiB free; 18.000 GiB required
 ```
 
-不要降低门槛绕过 OOM，也不要把有外部 utilization 的 timing 记为 formal evidence。
+该事件随后恢复并由完整动态门禁关闭；不要因此删除fail-closed检查。不要降低门槛
+绕过OOM，也不要把有外部utilization的timing记为formal evidence。
 
 ## 5. 最小 8B VL demo
 
@@ -176,9 +177,9 @@ python -m pytest -q tests -s \
   --junitxml=data/repro/full_regression.xml
 ```
 
-最近一个 P7.4 clean formal JUnit 是 commit `cc070b3` 的
-`241 passed, 6 skipped in 264.664s`。当前主线新增 packed MLP 和环境检查后，测试
-数量应变化；复跑必须报告新 JUnit，不能沿用旧计数冒充当前结果。
+当前 clean formal JUnit 是 commit `021d4e2` 的
+`281 passed, 6 skipped in 297.622s`；JUnit字段为`287 tests / 0 failures / 0 errors /
+6 skipped`。后续改动必须重新报告新JUnit，不能沿用该计数冒充当前结果。
 
 ## 7. KV trace 最小实验
 
@@ -318,15 +319,16 @@ python benchmarks/bench_online.py \
 request terminal state、peak active/KV blocks 和 preemption。它是进程内 engine
 harness，不含网络协议、序列化或多进程 server 开销。
 
-## 10. Packed MLP P7.5 恢复命令
+## 10. Packed MLP P7.5 完整复现
 
-低显存 correctness：
+组件correctness与formal micro：
 
 ```bash
 python benchmarks/bench_packed_mlp.py \
-  --correctness-only \
   --batch-sizes 1,2,4,8,210,408,988 \
-  --output data/p7_optimization/p75_packed_mlp_shape_correctness.json
+  --warmup 20 --repeat 100 \
+  --require-formal-environment \
+  --output data/p7_optimization/p75_packed_mlp_micro.json
 
 python -m pytest -q \
   tests/test_p7_packed_mlp.py \
@@ -337,10 +339,34 @@ python -m pytest -q \
   tests/test_model_runner_vl_prefill.py
 ```
 
-正式性能恢复前先执行第 4 节 preflight；然后按 `bench_packed_mlp.py --help` 使用
-同进程 randomized A/B 顺序、足够 warmup/repeat，并补 full 8B HF/E2E/online、TPOT
-和 Systems trace。当前隐藏 `17,102–17,282 MiB` 外部占用时只允许 correctness，
-`formal_eligible=false` 的记录不得进入性能报告 headline。
+full-engine单变量A/B只改变projection mode：
+
+```bash
+for projection in legacy packed; do
+  python benchmarks/bench_system.py \
+    --model "$PRISM_MODEL_PATH" \
+    --manifest benchmarks/workloads/p6_internal_smoke.json \
+    --case single_image_448 \
+    --modes off_graph \
+    --mlp-projection-mode "$projection" \
+    --max-tokens 32 --warmup 2 --repeat 5 \
+    --max-model-len 1280 --max-num-batched-tokens 2048 \
+    --max-num-seqs 1 --num-kvcache-blocks 16 \
+    --disable-prefix-caching \
+    --output "data/p7_optimization/p75_single_${projection}.jsonl"
+done
+```
+
+HF gate运行`tests/test_vl_logits_distribution.py`；online runner同样接受
+`--mlp-projection-mode legacy|packed`并在schema-v2记录。Systems trace使用第8节
+CUDA Profiler API做两次node capture，再由`benchmarks/analyze_nsys.py`读取SQLite。
+
+本环境期望边界：七个micro cases bitwise exact；8个offline cells token exact且
+packed/legacy TPOT为`0.9924x–0.9952x`；Systems linear `253 -> 217`、总kernels
+`2,000 -> 1,964`；HF model-precision logits/PPL diff为`0`。机器可读汇总见
+`data/p7_optimization/p75_summary_021d4e2.json`。这些数字不保证跨GPU复刻，也不形成
+稳定E2E或online speedup claim。若baseline污染，`formal_eligible=false`记录仍不得进入
+headline。
 
 ## 11. 证据保存与验收
 

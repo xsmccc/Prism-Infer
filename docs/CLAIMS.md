@@ -2,7 +2,7 @@
 
 > P6 冻结基线: `p6.12-content-aware-kv` (`c970c61`)
 > 当前 P7.4-B 验证点: `72f85ba`
-> 当前 P7.5/P8 实现点: packed gate/up `8767b7a`；安装诊断 `d547385`
+> 当前 P7.5/P8 验证点: projection mode `8293851`；online/trace/final gate `021d4e2`
 > 更新日期: 2026-07-17
 
 本表区分“已实现”“已验证”和“性能占优”。README、简历和面试中的数字必须能
@@ -33,6 +33,10 @@
 | P7.3 后全量回归通过 | clean `e7796e9`，单卡环境 | JUnit `262 passed, 6 skipped in 245.36s`，0 failure/error |
 | P7.4-B 已完成 Graph replay分类与 fixed-bucket correctness | clean `0fdd4a6` trace + clean `00b1012` matrix | replay `2,000` kernels/step、kernel busy median `12.921 ms`；linear/GEMV占 `70.55%`；batch1-8全部命中 `[1,2,4,8]` 预期 bucket且输出 exact |
 | Prism editable package可在隔离venv构建并导入 | clean `568f7bb/d547385`，复用宿主CUDA/PyTorch stack | wheel build、`from prism_infer import LLM` PASS；6-file CPU/focused smoke `40 passed in 5.11s` |
+| packed gate/up减少Graph内projection并小幅改善decode TPOT | Qwen3-VL-8B、RTX 5090 TP1、clean `8293851/021d4e2`、8个offline cells | Systems linear `253 -> 217`、总kernels `2,000 -> 1,964`；所有cell token exact，packed TPOT改善`0.483%–0.762%` |
+| packed gate/up通过完整数值与online回归 | single/multi-image/video HF；text/image/video/mixed/7-image E2E；2个online A/B | HF model-precision logits/PPL diff `0`；offline/online token exact；online双方goodput fraction `1.0` |
+| P7.5后当前主线完整回归通过 | clean `021d4e2`，单卡环境 | JUnit `287 tests / 0 failures / 0 errors / 6 skipped`，即`281 passed, 6 skipped in 297.622s` |
+| fresh editable环境跑通完整8B最小demo | clean `021d4e2`，同一宿主CUDA/PyTorch stack | 新venv安装声明依赖与wheel；`example.py`输出8个token和decoded text，正常释放GPU |
 
 ## 必须带限制的结论
 
@@ -49,8 +53,9 @@
 | text-only prefix reuse 已验证 | 只复用并发请求仍持有的 full block；尚无独立 persistent prefix store，VL token-id prefix hash因不包含像素语义而禁用 |
 | Graph replay CPU range只有 `1.899 ms` | 这是异步提交窗口；CPU返回后 GPU tail为 `13.089 ms`，不能把 CPU range当作完整 Graph时长 |
 | fixed-bucket matrix列出 batch1-8 TPOT | 每个 cell是一次独立 process-level run；只证明 bucket/padding coverage与输出隔离，不证明 padding加速/减速，也不是 online goodput |
-| packed gate/up已通过 BF16 component correctness | 仅覆盖 Qwen MLP batch/rows `1/2/4/8/210/408/988` bitwise exact与 focused回归；完整 HF logits、E2E、online和性能仍待稳定独占 GPU |
-| P8 fresh-environment安装已通过 | venv复用了宿主CUDA/PyTorch stack；只证明build/import/CPU smoke，不证明新机器的CUDA ABI、完整8B或性能 |
+| packed gate/up TPOT改善`0.483%–0.762%` | 只覆盖记录的8个offline cells、RTX 5090 TP1与Qwen3-VL-8B；不是稳定E2E latency或online goodput speedup |
+| packed gate/up的online A/B均满足SLO | 每个cell只有一次process-level run；用于regression/SLO，不计算可信speedup区间 |
+| P8 fresh-environment完整8B demo已通过 | venv复用了同一宿主CUDA/PyTorch/driver stack；不证明另一台机器的CUDA ABI或性能可复刻 |
 
 ## 当前禁止的结论
 
@@ -65,10 +70,10 @@
 - “已实现 megakernel/PD 分离/投机解码”。
 - “GPU span减去 busy就是 occupancy/可消除 idle”或“sampler的 CPU range可与 Graph
   replay直接相加”；node tracing有 instrumentation，sampler CPU时间暴露前序 stream同步。
-- “packed gate/up已提升 full-engine TPOT/online goodput”；当前 GPU有不可见外部负载，
-  只完成组件 correctness，正式 micro/E2E/trace尚未运行。
-- “README已在全新机器完成完整8B验收”；当前只完成隔离package/API/CPU smoke，模型
-  权重加载仍受同一GPU外部占用阻塞。
+- “packed gate/up显著提升端到端性能”或“提升online goodput”；实测只支持小幅
+  unprofiled decode TPOT改善，E2E受vision prefill双峰影响，online无process repeats。
+- “README已在另一台全新机器完成完整8B验收”；当前fresh venv仍复用同一宿主
+  CUDA/PyTorch/driver stack。
 
 ## P7.1 历史基线与 P7.4 当前结论
 
