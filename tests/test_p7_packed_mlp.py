@@ -144,7 +144,7 @@ def test_qwen_shape_bf16_cuda_packed_gate_up_is_bitwise_exact() -> None:
     ).cuda().eval()
     try:
         with torch.inference_mode():
-            for batch in (1, 2, 4, 8):
+            for batch in (1, 2, 4, 8, 210, 408, 988):
                 x = torch.randn(
                     batch,
                     4096,
