@@ -11,6 +11,13 @@ from prism_infer.analysis.kv_trace import is_trace_enabled, record_attention_lay
 from prism_infer.engine.compression import (
     ensure_supported_compression_metadata,
 )
+from prism_infer.engine.kv_quantization import (
+    FP8_E4M3FN_MAX,
+    FP8_E4M3FN_MIN,
+    KV_SCALE_DTYPE,
+    PER_TOKEN_HEAD_SCALE_FLOOR,
+    scale_cache_shape,
+)
 from prism_infer.utils.context import get_context
 
 # flash_attn 和 triton 是可选依赖: 有 GPU 时手动安装
@@ -75,12 +82,111 @@ if HAS_TRITON:
         tl.store(v_cache_ptr + cache_offsets, value)
 
 
+    @triton.jit
+    def _store_scaled_kvcache_triton(
+        key_ptr,
+        value_ptr,
+        k_cache_ptr,
+        v_cache_ptr,
+        k_scale_cache_ptr,
+        v_scale_cache_ptr,
+        slot_mapping_ptr,
+        key_stride_token: tl.constexpr,
+        key_stride_head: tl.constexpr,
+        key_stride_dim: tl.constexpr,
+        value_stride_token: tl.constexpr,
+        value_stride_head: tl.constexpr,
+        value_stride_dim: tl.constexpr,
+        k_cache_stride_slot: tl.constexpr,
+        k_cache_stride_head: tl.constexpr,
+        k_cache_stride_dim: tl.constexpr,
+        v_cache_stride_slot: tl.constexpr,
+        v_cache_stride_head: tl.constexpr,
+        v_cache_stride_dim: tl.constexpr,
+        k_scale_stride_slot: tl.constexpr,
+        k_scale_stride_head: tl.constexpr,
+        v_scale_stride_slot: tl.constexpr,
+        v_scale_stride_head: tl.constexpr,
+        HEAD_DIM: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+        QUANT_MIN: tl.constexpr,
+        QUANT_MAX: tl.constexpr,
+        SCALE_FLOOR: tl.constexpr,
+    ):
+        token = tl.program_id(0)
+        head = tl.program_id(1)
+        slot = tl.load(slot_mapping_ptr + token)
+        if slot < 0:
+            return
+
+        offsets = tl.arange(0, BLOCK_D)
+        mask = offsets < HEAD_DIM
+        key = tl.load(
+            key_ptr
+            + token * key_stride_token
+            + head * key_stride_head
+            + offsets * key_stride_dim,
+            mask=mask,
+            other=0.0,
+        ).to(tl.float32)
+        value = tl.load(
+            value_ptr
+            + token * value_stride_token
+            + head * value_stride_head
+            + offsets * value_stride_dim,
+            mask=mask,
+            other=0.0,
+        ).to(tl.float32)
+
+        k_scale = tl.maximum(
+            tl.max(tl.abs(key), axis=0) / QUANT_MAX,
+            SCALE_FLOOR,
+        )
+        v_scale = tl.maximum(
+            tl.max(tl.abs(value), axis=0) / QUANT_MAX,
+            SCALE_FLOOR,
+        )
+        quantized_key = tl.clamp(key / k_scale, QUANT_MIN, QUANT_MAX)
+        quantized_value = tl.clamp(value / v_scale, QUANT_MIN, QUANT_MAX)
+
+        tl.store(
+            k_cache_ptr
+            + slot * k_cache_stride_slot
+            + head * k_cache_stride_head
+            + offsets * k_cache_stride_dim,
+            quantized_key,
+            mask=mask,
+        )
+        tl.store(
+            v_cache_ptr
+            + slot * v_cache_stride_slot
+            + head * v_cache_stride_head
+            + offsets * v_cache_stride_dim,
+            quantized_value,
+            mask=mask,
+        )
+        tl.store(
+            k_scale_cache_ptr
+            + slot * k_scale_stride_slot
+            + head * k_scale_stride_head,
+            k_scale,
+        )
+        tl.store(
+            v_scale_cache_ptr
+            + slot * v_scale_stride_slot
+            + head * v_scale_stride_head,
+            v_scale,
+        )
+
+
 def _store_kvcache_eager(
     key: torch.Tensor,
     value: torch.Tensor,
     k_cache: torch.Tensor,
     v_cache: torch.Tensor,
     slot_mapping: torch.Tensor,
+    k_scale_cache: torch.Tensor | None = None,
+    v_scale_cache: torch.Tensor | None = None,
 ) -> None:
     """PyTorch fallback: 按 flat slot 写入 canonical paged KV cache。
 
@@ -99,20 +205,50 @@ def _store_kvcache_eager(
             f"[num_blocks, block_size, heads, dim], got {list(k_cache.shape)}"
         )
 
+    scaled = k_scale_cache is not None
+    flat_k_scale = (
+        None
+        if k_scale_cache is None
+        else k_scale_cache.reshape(-1, k_scale_cache.shape[-1])
+    )
+    flat_v_scale = (
+        None
+        if v_scale_cache is None
+        else v_scale_cache.reshape(-1, v_scale_cache.shape[-1])
+    )
+    flat_k_cache = k_cache.reshape(-1, k_cache.shape[-2], k_cache.shape[-1])
+    flat_v_cache = v_cache.reshape(-1, v_cache.shape[-2], v_cache.shape[-1])
+
     for i in range(key.shape[0]):
         slot = int(slot_mapping[i].item())
-        if slot == -1:
+        if slot < 0:
             continue
-        if k_cache.ndim == 4:
-            block_size = k_cache.shape[1]
-            block_id = slot // block_size
-            block_offset = slot % block_size
-            k_cache[block_id, block_offset] = key[i].to(k_cache.dtype)
-            v_cache[block_id, block_offset] = value[i].to(v_cache.dtype)
+        if scaled:
+            key_float = key[i].float()
+            value_float = value[i].float()
+            k_scale = torch.clamp(
+                key_float.abs().amax(dim=-1) / FP8_E4M3FN_MAX,
+                min=PER_TOKEN_HEAD_SCALE_FLOOR,
+            )
+            v_scale = torch.clamp(
+                value_float.abs().amax(dim=-1) / FP8_E4M3FN_MAX,
+                min=PER_TOKEN_HEAD_SCALE_FLOOR,
+            )
+            flat_k_cache[slot] = torch.clamp(
+                key_float / k_scale.unsqueeze(-1),
+                min=FP8_E4M3FN_MIN,
+                max=FP8_E4M3FN_MAX,
+            ).to(k_cache.dtype)
+            flat_v_cache[slot] = torch.clamp(
+                value_float / v_scale.unsqueeze(-1),
+                min=FP8_E4M3FN_MIN,
+                max=FP8_E4M3FN_MAX,
+            ).to(v_cache.dtype)
+            flat_k_scale[slot] = k_scale
+            flat_v_scale[slot] = v_scale
         else:
-            # Legacy flat-cache fallback kept for small unit tests.
-            k_cache[slot] = key[i].to(k_cache.dtype)
-            v_cache[slot] = value[i].to(v_cache.dtype)
+            flat_k_cache[slot] = key[i].to(k_cache.dtype)
+            flat_v_cache[slot] = value[i].to(v_cache.dtype)
 
 
 def store_kvcache(
@@ -121,8 +257,47 @@ def store_kvcache(
     k_cache: torch.Tensor,
     v_cache: torch.Tensor,
     slot_mapping: torch.Tensor,
+    k_scale_cache: torch.Tensor | None = None,
+    v_scale_cache: torch.Tensor | None = None,
 ) -> None:
     """将当前 K/V 写入 KV Cache (GPU→Triton, CPU→PyTorch fallback)。"""
+    if key.ndim != 3 or value.ndim != 3 or key.shape != value.shape:
+        raise ValueError(
+            "key/value must have the same [tokens, KV heads, head dim] shape, "
+            f"got {list(key.shape)} and {list(value.shape)}"
+        )
+    if k_cache.shape != v_cache.shape or k_cache.dtype != v_cache.dtype:
+        raise ValueError("K/V payload caches must have matching shape and dtype")
+    if k_cache.ndim not in (3, 4):
+        raise ValueError(
+            "K/V payload caches must be [slots, heads, dim] or "
+            "[blocks, page, heads, dim]"
+        )
+    if tuple(k_cache.shape[-2:]) != tuple(key.shape[-2:]):
+        raise ValueError(
+            "input/cache KV head shape mismatch: "
+            f"input={list(key.shape[-2:])}, cache={list(k_cache.shape[-2:])}"
+        )
+    if slot_mapping.ndim != 1 or slot_mapping.numel() != key.shape[0]:
+        raise ValueError("slot_mapping must contain one flat slot per input token")
+    if (k_scale_cache is None) != (v_scale_cache is None):
+        raise ValueError("K/V scale caches must be provided together")
+    scaled = k_scale_cache is not None
+    if scaled:
+        if not _is_fp8_cache_tensor(k_cache):
+            raise ValueError("token-head scales require FP8 K/V payload caches")
+        expected_scale_shape = scale_cache_shape(k_cache.shape)
+        if (
+            k_scale_cache.shape != v_scale_cache.shape
+            or tuple(k_scale_cache.shape) != expected_scale_shape
+        ):
+            raise ValueError(
+                "K/V scale cache shape must equal payload shape without head_dim: "
+                f"expected={list(expected_scale_shape)}"
+            )
+        if k_scale_cache.dtype != KV_SCALE_DTYPE or v_scale_cache.dtype != KV_SCALE_DTYPE:
+            raise ValueError("K/V scale caches must use torch.float32")
+
     N, num_heads, head_dim = key.shape
     D = num_heads * head_dim
 
@@ -132,10 +307,18 @@ def store_kvcache(
         or not k_cache.is_cuda
         or not v_cache.is_cuda
         or not slot_mapping.is_cuda
+        or (scaled and (not k_scale_cache.is_cuda or not v_scale_cache.is_cuda))
     ):
         raise RuntimeError("Triton KV store requires all tensors on CUDA")
     if use_triton and len(
-        {key.device, value.device, k_cache.device, v_cache.device, slot_mapping.device}
+        {
+            key.device,
+            value.device,
+            k_cache.device,
+            v_cache.device,
+            slot_mapping.device,
+            *(tensor.device for tensor in (k_scale_cache, v_scale_cache) if tensor is not None),
+        }
     ) != 1:
         raise RuntimeError("Triton KV store requires all tensors on the same device")
     if use_triton and (
@@ -147,8 +330,14 @@ def store_kvcache(
         raise RuntimeError("Triton KV store requires contiguous head/dim inputs")
     if use_triton and (not k_cache.is_contiguous() or not v_cache.is_contiguous()):
         raise RuntimeError("Triton KV store requires contiguous KV caches")
+    if use_triton and scaled and (
+        not k_scale_cache.is_contiguous() or not v_scale_cache.is_contiguous()
+    ):
+        raise RuntimeError("Triton scaled KV store requires contiguous scale caches")
 
-    if use_triton and _is_fp8_cache_tensor(k_cache):
+    if use_triton and scaled:
+        region_name = "attention.kv_store.triton_scaled_fp8"
+    elif use_triton and _is_fp8_cache_tensor(k_cache):
         region_name = "attention.kv_store.triton_fp8"
     elif use_triton:
         region_name = "attention.kv_store.triton"
@@ -158,13 +347,59 @@ def store_kvcache(
         region_name,
         metadata={"cache_dtype": str(k_cache.dtype), "tokens": N},
     ):
-        if use_triton:
+        if use_triton and scaled:
+            block_d = triton.next_power_of_2(head_dim)
+            num_warps = min(16, max(1, block_d // 32))
+            flat_k_cache = k_cache.reshape(-1, num_heads, head_dim)
+            flat_v_cache = v_cache.reshape(-1, num_heads, head_dim)
+            flat_k_scale = k_scale_cache.reshape(-1, num_heads)
+            flat_v_scale = v_scale_cache.reshape(-1, num_heads)
+            _store_scaled_kvcache_triton[(N, num_heads)](
+                key,
+                value,
+                flat_k_cache,
+                flat_v_cache,
+                flat_k_scale,
+                flat_v_scale,
+                slot_mapping,
+                key.stride(0),
+                key.stride(1),
+                key.stride(2),
+                value.stride(0),
+                value.stride(1),
+                value.stride(2),
+                flat_k_cache.stride(0),
+                flat_k_cache.stride(1),
+                flat_k_cache.stride(2),
+                flat_v_cache.stride(0),
+                flat_v_cache.stride(1),
+                flat_v_cache.stride(2),
+                flat_k_scale.stride(0),
+                flat_k_scale.stride(1),
+                flat_v_scale.stride(0),
+                flat_v_scale.stride(1),
+                HEAD_DIM=head_dim,
+                BLOCK_D=block_d,
+                QUANT_MIN=FP8_E4M3FN_MIN,
+                QUANT_MAX=FP8_E4M3FN_MAX,
+                SCALE_FLOOR=PER_TOKEN_HEAD_SCALE_FLOOR,
+                num_warps=num_warps,
+            )
+        elif use_triton:
             # tl.store 根据 destination pointer dtype 执行 BF16/FP32 -> FP8 转换。
             _store_kvcache_triton[(N,)](
                 key, key.stride(0), value, value.stride(0),
                 k_cache, v_cache, slot_mapping, D)
         else:
-            _store_kvcache_eager(key, value, k_cache, v_cache, slot_mapping)
+            _store_kvcache_eager(
+                key,
+                value,
+                k_cache,
+                v_cache,
+                slot_mapping,
+                k_scale_cache,
+                v_scale_cache,
+            )
 
 
 # ============================================================
@@ -179,6 +414,12 @@ class Attention(nn.Module):
         self.scale = scale
         self.num_kv_heads = num_kv_heads
         self.k_cache = self.v_cache = torch.tensor([])
+        # Dynamically scaled FP8 keeps one independent FP32 scale for each
+        # (physical token, KV head), separately for K and V.  ModelRunner binds
+        # these views once after cache allocation so CUDA Graph captures stable
+        # tensor addresses.
+        self.k_scale_cache: torch.Tensor | None = None
+        self.v_scale_cache: torch.Tensor | None = None
         self.layer_idx: int | None = None
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
@@ -189,10 +430,41 @@ class Attention(nn.Module):
         compression_metadata = context.compression_metadata
         ensure_supported_compression_metadata(compression_metadata)
         k_cache, v_cache = self.k_cache, self.v_cache
+        k_scale_cache, v_scale_cache = self.k_scale_cache, self.v_scale_cache
+
+        if (k_scale_cache is None) != (v_scale_cache is None):
+            raise RuntimeError("attention K/V scale caches must be bound together")
+        scaled_cache_bound = k_scale_cache is not None
+        payload_cache_bound = bool(k_cache.numel() or v_cache.numel())
+        if bool(k_cache.numel()) != bool(v_cache.numel()):
+            raise RuntimeError("attention K/V payload caches must be bound together")
+        if scaled_cache_bound:
+            if not payload_cache_bound:
+                raise RuntimeError("scale caches cannot be bound without K/V payload caches")
+            if not k_scale_cache.numel() or not v_scale_cache.numel():
+                raise RuntimeError("bound K/V scale caches must not be empty")
+        if (
+            payload_cache_bound
+            and compression_metadata is not None
+            and compression_metadata.scaled_fp8_kv_active != scaled_cache_bound
+        ):
+            raise RuntimeError(
+                "compression metadata/scale cache mismatch: "
+                f"mode={compression_metadata.mode!r}, "
+                f"scale_cache_bound={scaled_cache_bound}"
+            )
 
         # 写入 KV Cache
-        if k_cache.numel() and v_cache.numel():
-            store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
+        if payload_cache_bound:
+            store_kvcache(
+                k,
+                v,
+                k_cache,
+                v_cache,
+                context.slot_mapping,
+                k_scale_cache,
+                v_scale_cache,
+            )
 
         if context.is_prefill:
             if context.block_tables is not None:
@@ -201,6 +473,8 @@ class Attention(nn.Module):
                     k_cache,
                     v_cache,
                     context,
+                    k_scale_cache,
+                    v_scale_cache,
                 )
             elif HAS_FLASH_ATTN and q.is_cuda:
                 with profile_region("attention.prefill.flash_attn_varlen"):
@@ -227,6 +501,8 @@ class Attention(nn.Module):
                     k_cache,
                     v_cache,
                     context,
+                    k_scale_cache,
+                    v_scale_cache,
                 )
             elif (
                 compression_metadata is not None
@@ -243,6 +519,8 @@ class Attention(nn.Module):
                             context.block_tables,
                             context.context_lens,
                             self.scale,
+                            k_scale_cache=k_scale_cache,
+                            v_scale_cache=v_scale_cache,
                         )
                 else:
                     # CPU/no-Triton path is the explicit correctness reference.
@@ -252,6 +530,8 @@ class Attention(nn.Module):
                         v_cache,
                         context,
                         profile_prefix="attention.decode.fp8_reference",
+                        k_scale_cache=k_scale_cache,
+                        v_scale_cache=v_scale_cache,
                     )
             elif HAS_FLASH_ATTN and q.is_cuda and context.block_tables is None:
                 with profile_region("attention.decode.flash_attn_kvcache"):
@@ -269,6 +549,8 @@ class Attention(nn.Module):
                             context.block_tables,
                             context.context_lens,
                             self.scale,
+                            k_scale_cache=k_scale_cache,
+                            v_scale_cache=v_scale_cache,
                         )
                 else:
                     o = self._forward_decode_eager(
@@ -277,6 +559,8 @@ class Attention(nn.Module):
                         v_cache,
                         context,
                         profile_prefix="attention.decode.bf16_eager",
+                        k_scale_cache=k_scale_cache,
+                        v_scale_cache=v_scale_cache,
                     )
             else:
                 with profile_region("attention.decode.sdpa"):
@@ -315,6 +599,8 @@ class Attention(nn.Module):
         k_cache: torch.Tensor,
         v_cache: torch.Tensor,
         context,
+        k_scale_cache: torch.Tensor | None = None,
+        v_scale_cache: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Correctness path for chunked/prefix-hit paged prefill.
 
@@ -357,8 +643,25 @@ class Attention(nn.Module):
                     context.block_tables[seq_index],
                     context_len,
                 )
-                keys = self._dequantize_cache_for_attention(keys, q.dtype)
-                values = self._dequantize_cache_for_attention(values, q.dtype)
+                if k_scale_cache is None:
+                    k_scales = v_scales = None
+                else:
+                    k_scales, v_scales = self._gather_paged_kv_for_sequence(
+                        k_scale_cache,
+                        v_scale_cache,
+                        context.block_tables[seq_index],
+                        context_len,
+                    )
+                keys = self._dequantize_cache_for_attention(
+                    keys,
+                    q.dtype,
+                    k_scales,
+                )
+                values = self._dequantize_cache_for_attention(
+                    values,
+                    q.dtype,
+                    v_scales,
+                )
                 keys, values = self._expand_gqa_kv(keys, values)
 
             queries = q[query_start:query_end].transpose(0, 1).unsqueeze(0)
@@ -395,9 +698,9 @@ class Attention(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Collect one sequence's contiguous logical history from paged KV.
 
-        k_cache/v_cache: [num_blocks, block_size, num_kv_heads, head_dim]
+        k_cache/v_cache: [num_blocks, block_size, ...]
         block_ids: [num_blocks_for_sequence]
-        返回: keys/values [context_len, num_kv_heads, head_dim]
+        返回: keys/values [context_len, ...]
         """
 
         pieces_k = []
@@ -439,12 +742,26 @@ class Attention(nn.Module):
     def _dequantize_cache_for_attention(
         tensor: torch.Tensor,
         target_dtype: torch.dtype,
+        scales: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """把低精度 KV cache 转成 attention 可计算 dtype。"""
+        """把低精度 KV payload 与可选 token-head scale 转成计算 dtype。"""
 
-        if _is_fp8_cache_tensor(tensor):
-            return tensor.to(target_dtype)
-        return tensor
+        if scales is not None:
+            if not _is_fp8_cache_tensor(tensor):
+                raise ValueError("token-head scales require an FP8 payload tensor")
+            if tuple(scales.shape) != tuple(tensor.shape[:-1]):
+                raise ValueError(
+                    "scale shape must equal payload shape without head_dim: "
+                    f"payload={list(tensor.shape)}, scales={list(scales.shape)}"
+                )
+            if scales.dtype != KV_SCALE_DTYPE:
+                raise ValueError(
+                    f"token-head scales must use {KV_SCALE_DTYPE}, got {scales.dtype}"
+                )
+        result = tensor.to(target_dtype) if _is_fp8_cache_tensor(tensor) else tensor
+        if scales is not None:
+            result = result * scales.to(target_dtype).unsqueeze(-1)
+        return result
 
     def _gather_paged_kv_slots_for_sequence(
         self,
@@ -473,9 +790,11 @@ class Attention(nn.Module):
                 f"slots={retained_slots.device}, cache={k_cache.device}"
             )
 
-        # flat cache: [num_blocks * block_size, num_kv_heads, head_dim]
-        flat_k = k_cache.reshape(-1, k_cache.shape[-2], k_cache.shape[-1])
-        flat_v = v_cache.reshape(-1, v_cache.shape[-2], v_cache.shape[-1])
+        # Flatten only the physical block/page dimensions.  Payload caches
+        # become [slots, kv_heads, head_dim], while scale caches become
+        # [slots, kv_heads].
+        flat_k = k_cache.reshape(-1, *k_cache.shape[2:])
+        flat_v = v_cache.reshape(-1, *v_cache.shape[2:])
         return (
             flat_k.index_select(0, retained_slots),
             flat_v.index_select(0, retained_slots),
@@ -489,6 +808,8 @@ class Attention(nn.Module):
         context,
         *,
         profile_prefix: str,
+        k_scale_cache: torch.Tensor | None = None,
+        v_scale_cache: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Decode fallback: 从 paged KV cache 收集历史 token 后做单步 SDPA。
 
@@ -522,9 +843,18 @@ class Attention(nn.Module):
                     block_ids,
                     context_len,
                 )
+                if k_scale_cache is None:
+                    k_scales = v_scales = None
+                else:
+                    k_scales, v_scales = self._gather_paged_kv_for_sequence(
+                        k_scale_cache,
+                        v_scale_cache,
+                        block_ids,
+                        context_len,
+                    )
             with profile_region(f"{profile_prefix}.dequant"):
-                keys = self._dequantize_cache_for_attention(keys, q.dtype)
-                values = self._dequantize_cache_for_attention(values, q.dtype)
+                keys = self._dequantize_cache_for_attention(keys, q.dtype, k_scales)
+                values = self._dequantize_cache_for_attention(values, q.dtype, v_scales)
             with profile_region(f"{profile_prefix}.expand_gqa"):
                 keys, values = self._expand_gqa_kv(keys, values)
 
@@ -550,6 +880,8 @@ class Attention(nn.Module):
         k_cache: torch.Tensor,
         v_cache: torch.Tensor,
         context,
+        k_scale_cache: torch.Tensor | None = None,
+        v_scale_cache: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Decode with logical visual-token pruning over a compact KV view.
 
@@ -585,9 +917,17 @@ class Attention(nn.Module):
                     v_cache,
                     retained_slots,
                 )
+                if k_scale_cache is None:
+                    k_scales = v_scales = None
+                else:
+                    k_scales, v_scales = self._gather_paged_kv_slots_for_sequence(
+                        k_scale_cache,
+                        v_scale_cache,
+                        retained_slots,
+                    )
             with profile_region("attention.decode.visual_prune.dequant"):
-                keys = self._dequantize_cache_for_attention(keys, q.dtype)
-                values = self._dequantize_cache_for_attention(values, q.dtype)
+                keys = self._dequantize_cache_for_attention(keys, q.dtype, k_scales)
+                values = self._dequantize_cache_for_attention(values, q.dtype, v_scales)
             with profile_region("attention.decode.visual_prune.expand_gqa"):
                 keys, values = self._expand_gqa_kv(keys, values)
 

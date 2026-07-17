@@ -8,6 +8,7 @@ from prism_infer.analysis.performance_profile import profile_region
 from prism_infer.engine.compression import (
     COMPRESSION_VISUAL_COMPACT,
     COMPRESSION_VISUAL_COMPACT_FP8,
+    COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
 )
 from prism_infer.engine.contracts import (
     BatchPlan,
@@ -68,6 +69,7 @@ class ModelExecutor:
             in (
                 COMPRESSION_VISUAL_COMPACT,
                 COMPRESSION_VISUAL_COMPACT_FP8,
+                COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
             )
         ):
             with profile_region("engine.kv.visual_compact"):

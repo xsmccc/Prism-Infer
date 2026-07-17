@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 
 try:
@@ -102,13 +104,15 @@ def compact_kv_slots(
 ) -> None:
     """把 paged cache retained slots 安全移动到 destination slots。
 
-    cache: [kv, layers, slots, kv_heads, head_dim]
+    cache: payload [kv, layers, slots, kv_heads, head_dim] or token-head
+        scales [kv, layers, slots, kv_heads]
     source_slots/destination_slots: [retained_tokens]
     """
 
-    if cache.ndim != 5:
+    if cache.ndim not in (4, 5):
         raise ValueError(
-            "cache must be [kv, layers, slots, kv_heads, head_dim], "
+            "cache must be [kv, layers, slots, kv_heads] or "
+            "[kv, layers, slots, kv_heads, head_dim], "
             f"got {list(cache.shape)}"
         )
     if source_slots.ndim != 1 or destination_slots.ndim != 1:
@@ -132,7 +136,7 @@ def compact_kv_slots(
             raise RuntimeError("CUDA FP8 KV compaction requires contiguous cache")
         rows = cache.shape[0] * cache.shape[1]
         slots = cache.shape[2]
-        vector_size = cache.shape[3] * cache.shape[4]
+        vector_size = math.prod(cache.shape[3:])
         flat_cache = cache.view(rows, slots, vector_size)
         temporary = torch.empty(
             rows,

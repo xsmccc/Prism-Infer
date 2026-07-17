@@ -19,7 +19,9 @@ from transformers import AutoConfig
 from prism_infer.engine.compression import (
     COMPRESSION_FP8_KV,
     COMPRESSION_OFF,
+    COMPRESSION_SCALED_FP8_KV,
     COMPRESSION_VISUAL_COMPACT_FP8,
+    COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
     compression_mode_supports_cuda_graph,
     normalize_compression_mode,
 )
@@ -61,6 +63,7 @@ class KVScaleMode(str, Enum):
     AUTO = "auto"
     NONE = "none"
     UNIT = "unit"
+    PER_TOKEN_HEAD = "per_token_head"
 
 
 def _positive_int(value: object, *, name: str) -> int:
@@ -315,14 +318,23 @@ class QuantizationConfig:
             raise ValueError(
                 "weight/activation quantization has no connected backend in P9-B"
             )
-        fp8_active = compression_mode in (
+        unit_scale_fp8_active = compression_mode in (
             COMPRESSION_FP8_KV,
             COMPRESSION_VISUAL_COMPACT_FP8,
         )
+        token_head_scale_active = compression_mode in (
+            COMPRESSION_SCALED_FP8_KV,
+            COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
+        )
+        fp8_active = unit_scale_fp8_active or token_head_scale_active
         expected_format = (
             KVCacheFormat.FP8_E4M3FN if fp8_active else KVCacheFormat.MODEL
         )
-        expected_scale = KVScaleMode.UNIT if fp8_active else KVScaleMode.NONE
+        expected_scale = (
+            KVScaleMode.PER_TOKEN_HEAD
+            if token_head_scale_active
+            else (KVScaleMode.UNIT if unit_scale_fp8_active else KVScaleMode.NONE)
+        )
         if requested_format not in (KVCacheFormat.AUTO, expected_format):
             raise ValueError(
                 "kv_cache_format conflicts with compression_mode: "

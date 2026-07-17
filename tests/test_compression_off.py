@@ -8,8 +8,10 @@ import torch
 
 from prism_infer.engine.compression import (
     COMPRESSION_FP8_KV,
+    COMPRESSION_SCALED_FP8_KV,
     COMPRESSION_VISUAL_COMPACT,
     COMPRESSION_VISUAL_COMPACT_FP8,
+    COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
     COMPRESSION_VISUAL_PRUNE,
     CompressionMetadata,
     build_compression_metadata,
@@ -33,6 +35,11 @@ def test_compression_mode_validation():
     assert normalize_compression_mode("visual_compact") == COMPRESSION_VISUAL_COMPACT
     assert normalize_compression_mode("fp8_kv") == COMPRESSION_FP8_KV
     assert normalize_compression_mode("visual_compact_fp8") == "visual_compact_fp8"
+    assert normalize_compression_mode("scaled_fp8_kv") == COMPRESSION_SCALED_FP8_KV
+    assert (
+        normalize_compression_mode("visual_compact_scaled_fp8")
+        == COMPRESSION_VISUAL_COMPACT_SCALED_FP8
+    )
     with pytest.raises(ValueError, match="supported compression_mode"):
         normalize_compression_mode("int4_kv")
     print("compression mode off validation: PASS")
@@ -45,6 +52,8 @@ def test_compression_mode_validation():
         (COMPRESSION_FP8_KV, True),
         (COMPRESSION_VISUAL_COMPACT, True),
         (COMPRESSION_VISUAL_COMPACT_FP8, True),
+        (COMPRESSION_SCALED_FP8_KV, True),
+        (COMPRESSION_VISUAL_COMPACT_SCALED_FP8, True),
         (COMPRESSION_VISUAL_PRUNE, False),
     ],
 )

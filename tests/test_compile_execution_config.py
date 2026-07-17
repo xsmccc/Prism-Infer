@@ -91,7 +91,13 @@ def test_p611_config_rejects_logical_prune_cuda_graph(
 
 @pytest.mark.parametrize(
     "compression_mode",
-    ("fp8_kv", "visual_compact", "visual_compact_fp8"),
+    (
+        "fp8_kv",
+        "scaled_fp8_kv",
+        "visual_compact",
+        "visual_compact_fp8",
+        "visual_compact_scaled_fp8",
+    ),
 )
 def test_p611_config_allows_physical_compression_cuda_graph(
     compression_mode: str,

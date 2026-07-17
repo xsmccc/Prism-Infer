@@ -28,10 +28,10 @@ from prism_infer.config import (
     MAX_CUDA_GRAPH_BATCH_SIZE,
 )
 from prism_infer.engine.compression import (
-    COMPRESSION_FP8_KV,
-    COMPRESSION_VISUAL_COMPACT_FP8,
     build_compression_metadata,
     compression_supports_cuda_graph,
+    compression_mode_uses_fp8_payload,
+    compression_mode_uses_token_head_scales,
     build_visual_pruning_config,
 )
 from prism_infer.engine.sequence import Sequence
@@ -43,6 +43,11 @@ from prism_infer.engine.contracts import (
     ExecutionResult,
 )
 from prism_infer.engine.kv_layout import KVCompactionPlan
+from prism_infer.engine.kv_quantization import (
+    KV_COMPONENT_COUNT,
+    KV_SCALE_DTYPE,
+    kv_block_storage_bytes,
+)
 from prism_infer.engine.visual_pruning import (
     build_retained_slot_mapping,
     build_runtime_visual_token_scorer,
@@ -146,6 +151,7 @@ class ModelRunnerExecutionBackend:
                     for size in self.runner.graph_bs
                     if size >= plan.batch_size
                 )
+            kv_scale_cache = getattr(self.runner, "kv_scale_cache", None)
             return DeviceBatch(
                 phase=plan.phase,
                 sequence_ids=plan.sequence_ids,
@@ -154,6 +160,14 @@ class ModelRunnerExecutionBackend:
                 attention_context=attention_context,
                 temperatures=temperatures,
                 execution_bucket=execution_bucket,
+                kv_scale_views=(
+                    ()
+                    if kv_scale_cache is None
+                    else (
+                        kv_scale_cache[0],
+                        kv_scale_cache[1],
+                    )
+                ),
             )
         finally:
             # The only state crossing prepare -> execute is the immutable
@@ -245,6 +259,11 @@ class ModelRunner:
         self.control_channel = control_channel       # rank0 为发送端列表, worker 为接收端
         self.model_dtype = _resolve_model_dtype(hf_config)
         self.kv_cache_dtype = self._resolve_kv_cache_dtype(config)
+        self.uses_token_head_scales = compression_mode_uses_token_head_scales(
+            config.compression_mode
+        )
+        self.kv_scale_cache: torch.Tensor | None = None
+        self.cpu_kv_scale_cache: torch.Tensor | None = None
         self.cudagraph_capture_ms = 0.0
         self.decode_compile_first_call_ms = 0.0
         self.decode_compile_first_call_pending = False
@@ -463,21 +482,15 @@ class ModelRunner:
         )
 
     @staticmethod
-    def _dtype_itemsize(dtype: torch.dtype) -> int:
-        """返回 dtype 的元素字节数。"""
-
-        return torch.empty((), dtype=dtype).element_size()
-
-    @staticmethod
     def _resolve_kv_cache_dtype(config: Config) -> torch.dtype:
         """根据 compression mode 选择物理 KV cache dtype。"""
 
-        if config.compression_mode in (
-            COMPRESSION_FP8_KV,
-            COMPRESSION_VISUAL_COMPACT_FP8,
-        ):
+        if compression_mode_uses_fp8_payload(config.compression_mode):
             if not hasattr(torch, "float8_e4m3fn"):
-                raise RuntimeError("compression_mode='fp8_kv' requires torch.float8_e4m3fn")
+                raise RuntimeError(
+                    f"compression_mode={config.compression_mode!r} requires "
+                    "torch.float8_e4m3fn"
+                )
             return torch.float8_e4m3fn
         return _resolve_model_dtype(config.hf_config)
 
@@ -581,13 +594,18 @@ class ModelRunner:
                            text_config.hidden_size // text_config.num_attention_heads)
         # 每个 head 的维度, 如 128
 
-        kv_element_size = self._dtype_itemsize(self.kv_cache_dtype)
-        block_bytes = (2 *                              # K 和 V 两份
-                       text_config.num_hidden_layers *   # 每层都有 KV Cache
-                       self.block_size *                 # 每个 block 的 token 数
-                       num_kv_heads *                    # KV head 个数
-                       head_dim *                        # 每个 head 的维度
-                       kv_element_size)                  # 每个 KV cache 元素的字节数
+        storage_bytes = kv_block_storage_bytes(
+            num_layers=text_config.num_hidden_layers,
+            page_size=self.block_size,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            payload_dtype=self.kv_cache_dtype,
+            token_head_scales=self.uses_token_head_scales,
+        )
+        self.kv_payload_block_bytes = storage_bytes.payload
+        self.kv_scale_block_bytes = storage_bytes.scales
+        self.kv_block_bytes = storage_bytes.total
+        block_bytes = self.kv_block_bytes
         # C++ 类比: sizeof(Block_KV) = 2 * layers * block_size * heads * dim * sizeof(half)
 
         # ── 计算能分配多少个 block ──
@@ -602,7 +620,9 @@ class ModelRunner:
                 raise RuntimeError(
                     "requested num_kvcache_blocks exceeds available memory: "
                     f"requested={requested_blocks}, max={max_num_kvcache_blocks}, "
-                    f"kv_cache_dtype={self.kv_cache_dtype}"
+                    f"kv_cache_dtype={self.kv_cache_dtype}, "
+                    f"payload_block_bytes={self.kv_payload_block_bytes}, "
+                    f"scale_block_bytes={self.kv_scale_block_bytes}"
                 )
             num_kvcache_blocks = requested_blocks
         else:
@@ -616,7 +636,7 @@ class ModelRunner:
 
         # ── 一次性分配整个 KV Cache 张量 ──
         self.kv_cache = torch.empty(
-            2,                                           # 0=K_cache, 1=V_cache
+            KV_COMPONENT_COUNT,                          # 0=K_cache, 1=V_cache
             text_config.num_hidden_layers,               # 每层一份
             self.num_kvcache_blocks,                     # block 个数
             self.block_size,                             # 每 block token 数
@@ -624,6 +644,17 @@ class ModelRunner:
             head_dim,                                    # head 维度
             dtype=self.kv_cache_dtype,
         )
+        if self.uses_token_head_scales:
+            self.kv_scale_cache = torch.empty(
+                KV_COMPONENT_COUNT,
+                text_config.num_hidden_layers,
+                self.num_kvcache_blocks,
+                self.block_size,
+                num_kv_heads,
+                dtype=KV_SCALE_DTYPE,
+            )
+        else:
+            self.kv_scale_cache = None
         # shape 示例: [2, 28, 500, 16, 8, 128]
         # 2 = K/V, 28层, 500个block, 每block 16 token, 8个KV head, 128维
         # 整个 KV Cache 在一个连续张量里! block_id 就是第 2 维的索引
@@ -636,6 +667,16 @@ class ModelRunner:
                 module.layer_idx = layer_id
                 module.k_cache = self.kv_cache[0, layer_id]  # shape: [num_blocks, block_size, heads, dim]
                 module.v_cache = self.kv_cache[1, layer_id]
+                module.k_scale_cache = (
+                    None
+                    if self.kv_scale_cache is None
+                    else self.kv_scale_cache[0, layer_id]
+                )
+                module.v_scale_cache = (
+                    None
+                    if self.kv_scale_cache is None
+                    else self.kv_scale_cache[1, layer_id]
+                )
                 layer_id += 1
         assert layer_id == text_config.num_hidden_layers, (
             f"KV cache layer count mismatch: assigned={layer_id}, "
@@ -651,7 +692,7 @@ class ModelRunner:
         )
         if self.num_cpu_blocks > 0:
             self.cpu_kv_cache = torch.empty(
-                2,
+                KV_COMPONENT_COUNT,
                 text_config.num_hidden_layers,
                 self.num_cpu_blocks,
                 self.block_size,
@@ -661,8 +702,22 @@ class ModelRunner:
                 device="cpu",
                 pin_memory=True  # pinned memory: 加速 GPU↔CPU 传输
             )
+            if self.uses_token_head_scales:
+                self.cpu_kv_scale_cache = torch.empty(
+                    KV_COMPONENT_COUNT,
+                    text_config.num_hidden_layers,
+                    self.num_cpu_blocks,
+                    self.block_size,
+                    num_kv_heads,
+                    dtype=KV_SCALE_DTYPE,
+                    device="cpu",
+                    pin_memory=True,
+                )
+            else:
+                self.cpu_kv_scale_cache = None
         else:
             self.cpu_kv_cache = None
+            self.cpu_kv_scale_cache = None
 
     # ═══════════════════════════════════════════════════════════
     # 准备阶段: 把 Sequence 列表转成 GPU tensor
@@ -674,12 +729,33 @@ class ModelRunner:
     #
     # C++ 类比: memcpy(new_page, old_page, PAGE_SIZE)
     # CUDA 类比: cudaMemcpyDeviceToDevice
+    def _bound_gpu_scale_cache(self) -> torch.Tensor | None:
+        """Return the optional scale cache after checking runner ownership."""
+
+        scale_cache = getattr(self, "kv_scale_cache", None)
+        expected = getattr(
+            self,
+            "uses_token_head_scales",
+            scale_cache is not None,
+        )
+        if expected != (scale_cache is not None):
+            raise RuntimeError(
+                "runner scaled-KV configuration/cache ownership mismatch: "
+                f"expected={expected}, cache_bound={scale_cache is not None}"
+            )
+        return scale_cache
+
     def copy_kv_blocks(self, cow_pairs: list[tuple[int, int]]):
         """复制 KV Cache blocks: 把 src block 的数据复制到 dst block"""
+        scale_cache = self._bound_gpu_scale_cache()
         for src_block_id, dst_block_id in cow_pairs:
             # kv_cache shape: [2, num_layers, num_blocks, block_size, num_kv_heads, head_dim]
             # 复制所有层的 K 和 V
             self.kv_cache[:, :, dst_block_id].copy_(self.kv_cache[:, :, src_block_id])
+            if scale_cache is not None:
+                scale_cache[:, :, dst_block_id].copy_(
+                    scale_cache[:, :, src_block_id]
+                )
 
     def compact_kv_cache(self, plans: list[KVCompactionPlan]) -> None:
         """按已验证 plan 把 retained prompt KV 移到页表前部。
@@ -691,6 +767,7 @@ class ModelRunner:
 
         if not plans:
             return
+        scale_cache = self._bound_gpu_scale_cache()
         seen_sequence_ids: set[int] = set()
         flat_cache = self.kv_cache.reshape(
             self.kv_cache.shape[0],
@@ -699,6 +776,19 @@ class ModelRunner:
             self.kv_cache.shape[-2],
             self.kv_cache.shape[-1],
         )
+        flat_scale_cache = (
+            None
+            if scale_cache is None
+            else scale_cache.reshape(
+                scale_cache.shape[0],
+                scale_cache.shape[1],
+                -1,
+                scale_cache.shape[-1],
+            )
+        )
+        # Validate the complete plan set before mutating either payload or
+        # scales.  A late duplicate/dtype error must not leave a half-committed
+        # physical layout.
         for plan in plans:
             plan.validate(block_size=self.block_size)
             if plan.kv_dtype != str(self.kv_cache.dtype):
@@ -711,6 +801,7 @@ class ModelRunner:
                     f"duplicate compaction plan for seq_id={plan.seq_id}"
                 )
             seen_sequence_ids.add(plan.seq_id)
+        for plan in plans:
             source_slots = torch.tensor(
                 plan.source_slots,
                 dtype=torch.long,
@@ -722,6 +813,12 @@ class ModelRunner:
                 device=self.kv_cache.device,
             )
             compact_kv_slots(flat_cache, source_slots, destination_slots)
+            if flat_scale_cache is not None:
+                compact_kv_slots(
+                    flat_scale_cache,
+                    source_slots,
+                    destination_slots,
+                )
         if self.world_size > 1:
             self._tp_barrier()
 
@@ -734,17 +831,35 @@ class ModelRunner:
         direction='out': GPU→CPU (swap_map = [(gpu_id, cpu_id), ...])
         direction='in':  CPU→GPU (swap_map = [(cpu_id, gpu_id), ...])
         """
-        if self.cpu_kv_cache is None or not swap_map:
+        if not swap_map:
             return
+        if direction not in ("out", "in"):
+            raise ValueError(f"swap direction must be 'out' or 'in', got {direction!r}")
+        if self.cpu_kv_cache is None:
+            raise RuntimeError("KV swap requested without an allocated CPU payload cache")
+        scale_cache = self._bound_gpu_scale_cache()
+        cpu_scale_cache = getattr(self, "cpu_kv_scale_cache", None)
+        if (scale_cache is None) != (cpu_scale_cache is None):
+            raise RuntimeError(
+                "GPU/CPU scale caches must either both exist or both be absent"
+            )
         for src_id, dst_id in swap_map:
             if direction == "out":
                 # GPU → CPU (异步, non_blocking=True)
                 self.cpu_kv_cache[:, :, dst_id].copy_(
                     self.kv_cache[:, :, src_id], non_blocking=True)
+                if scale_cache is not None:
+                    cpu_scale_cache[:, :, dst_id].copy_(
+                        scale_cache[:, :, src_id], non_blocking=True
+                    )
             else:
                 # CPU → GPU (异步)
                 self.kv_cache[:, :, dst_id].copy_(
                     self.cpu_kv_cache[:, :, src_id], non_blocking=True)
+                if scale_cache is not None:
+                    scale_cache[:, :, dst_id].copy_(
+                        cpu_scale_cache[:, :, src_id], non_blocking=True
+                    )
         # 确保搬运完成后再继续 (类似 cudaStreamSynchronize)
         torch.cuda.synchronize()
 

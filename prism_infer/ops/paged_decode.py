@@ -34,6 +34,8 @@ if HAS_TRITON:
         q_ptr,
         k_cache_ptr,
         v_cache_ptr,
+        k_scale_cache_ptr,
+        v_scale_cache_ptr,
         block_tables_ptr,
         context_lens_ptr,
         out_ptr,
@@ -48,6 +50,12 @@ if HAS_TRITON:
         v_stride_token: tl.constexpr,
         v_stride_head: tl.constexpr,
         v_stride_d: tl.constexpr,
+        k_scale_stride_block: tl.constexpr,
+        k_scale_stride_token: tl.constexpr,
+        k_scale_stride_head: tl.constexpr,
+        v_scale_stride_block: tl.constexpr,
+        v_scale_stride_token: tl.constexpr,
+        v_scale_stride_head: tl.constexpr,
         block_tables_stride_b: tl.constexpr,
         block_tables_stride_n: tl.constexpr,
         out_stride_b: tl.constexpr,
@@ -60,6 +68,7 @@ if HAS_TRITON:
         PAGE_BLOCK_SIZE: tl.constexpr,
         KV_GROUPS: tl.constexpr,
         MAX_CONTEXT_LEN: tl.constexpr,
+        SCALED_KV: tl.constexpr,
     ):
         seq_idx = tl.program_id(0)
         q_head = tl.program_id(1)
@@ -103,6 +112,16 @@ if HAS_TRITON:
                 mask=valid[:, None] & d_mask[None, :],
                 other=0.0,
             ).to(tl.float32)
+            if SCALED_KV:
+                k_scale = tl.load(
+                    k_scale_cache_ptr
+                    + block_id * k_scale_stride_block
+                    + page_offset * k_scale_stride_token
+                    + kv_head * k_scale_stride_head,
+                    mask=valid,
+                    other=1.0,
+                ).to(tl.float32)
+                k *= k_scale[:, None]
             scores = tl.sum(k * q[None, :], axis=1) * scale
             scores = tl.where(valid, scores, -float("inf"))
 
@@ -122,6 +141,16 @@ if HAS_TRITON:
                 mask=valid[:, None] & d_mask[None, :],
                 other=0.0,
             ).to(tl.float32)
+            if SCALED_KV:
+                v_scale = tl.load(
+                    v_scale_cache_ptr
+                    + block_id * v_scale_stride_block
+                    + page_offset * v_scale_stride_token
+                    + kv_head * v_scale_stride_head,
+                    mask=valid,
+                    other=1.0,
+                ).to(tl.float32)
+                v *= v_scale[:, None]
             acc = acc * alpha + tl.sum(v * p[:, None], axis=0)
             l_i = l_i * alpha + tl.sum(p, axis=0)
             m_i = m_new
@@ -148,6 +177,8 @@ def paged_decode_attention(
     context_lens: torch.Tensor,
     scale: float,
     *,
+    k_scale_cache: torch.Tensor | None = None,
+    v_scale_cache: torch.Tensor | None = None,
     block_n: int = 32,
 ) -> torch.Tensor:
     """执行自实现 Triton paged decode attention。
@@ -159,7 +190,17 @@ def paged_decode_attention(
         raise RuntimeError("Triton is required for paged_decode_attention")
     if not q.is_cuda:
         raise RuntimeError("paged_decode_attention requires CUDA tensors")
-    tensors = (q, k_cache, v_cache, block_tables, context_lens)
+    if (k_scale_cache is None) != (v_scale_cache is None):
+        raise ValueError("K/V scale caches must be provided together")
+    scaled_kv = k_scale_cache is not None
+    tensors = (
+        q,
+        k_cache,
+        v_cache,
+        block_tables,
+        context_lens,
+        *(tensor for tensor in (k_scale_cache, v_scale_cache) if tensor is not None),
+    )
     if not all(tensor.is_cuda for tensor in tensors):
         raise RuntimeError("paged_decode_attention requires all tensors on CUDA")
     if len({tensor.device for tensor in tensors}) != 1:
@@ -185,6 +226,21 @@ def paged_decode_attention(
         supported_cache_dtypes.add(torch.float8_e4m3fn)
     if k_cache.dtype not in supported_cache_dtypes:
         raise ValueError(f"unsupported paged decode cache dtype: {k_cache.dtype}")
+    if scaled_kv:
+        fp8_dtype = getattr(torch, "float8_e4m3fn", None)
+        if fp8_dtype is None or k_cache.dtype != fp8_dtype:
+            raise ValueError("token-head scales require FP8 E4M3FN K/V payload caches")
+        expected_scale_shape = tuple(k_cache.shape[:-1])
+        if (
+            k_scale_cache.shape != v_scale_cache.shape
+            or tuple(k_scale_cache.shape) != expected_scale_shape
+        ):
+            raise ValueError(
+                "K/V scale cache shape must equal payload shape without head_dim: "
+                f"expected={list(expected_scale_shape)}"
+            )
+        if k_scale_cache.dtype != torch.float32 or v_scale_cache.dtype != torch.float32:
+            raise ValueError("K/V scale caches must use torch.float32")
     if block_tables.ndim != 2:
         raise ValueError(f"block_tables must be [batch, max_blocks], got {list(block_tables.shape)}")
     if context_lens.ndim != 1:
@@ -223,6 +279,8 @@ def paged_decode_attention(
         q,
         k_cache,
         v_cache,
+        k_scale_cache if scaled_kv else k_cache,
+        v_scale_cache if scaled_kv else v_cache,
         block_tables,
         context_lens,
         output,
@@ -237,6 +295,12 @@ def paged_decode_attention(
         v_cache.stride(1),
         v_cache.stride(2),
         v_cache.stride(3),
+        k_scale_cache.stride(0) if scaled_kv else 0,
+        k_scale_cache.stride(1) if scaled_kv else 0,
+        k_scale_cache.stride(2) if scaled_kv else 0,
+        v_scale_cache.stride(0) if scaled_kv else 0,
+        v_scale_cache.stride(1) if scaled_kv else 0,
+        v_scale_cache.stride(2) if scaled_kv else 0,
         block_tables.stride(0),
         block_tables.stride(1),
         output.stride(0),
@@ -249,6 +313,7 @@ def paged_decode_attention(
         PAGE_BLOCK_SIZE=page_block_size,
         KV_GROUPS=kv_groups,
         MAX_CONTEXT_LEN=max_context_len,
+        SCALED_KV=scaled_kv,
         num_warps=4,
     )
     return output

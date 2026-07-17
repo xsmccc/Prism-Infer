@@ -23,12 +23,16 @@ COMPRESSION_VISUAL_PRUNE = "visual_prune"
 COMPRESSION_VISUAL_COMPACT = "visual_compact"
 COMPRESSION_FP8_KV = "fp8_kv"
 COMPRESSION_VISUAL_COMPACT_FP8 = "visual_compact_fp8"
+COMPRESSION_SCALED_FP8_KV = "scaled_fp8_kv"
+COMPRESSION_VISUAL_COMPACT_SCALED_FP8 = "visual_compact_scaled_fp8"
 SUPPORTED_COMPRESSION_MODES = {
     COMPRESSION_OFF,
     COMPRESSION_VISUAL_PRUNE,
     COMPRESSION_VISUAL_COMPACT,
     COMPRESSION_FP8_KV,
     COMPRESSION_VISUAL_COMPACT_FP8,
+    COMPRESSION_SCALED_FP8_KV,
+    COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
 }
 CUDA_GRAPH_SAFE_COMPRESSION_MODES = frozenset(
     {
@@ -36,6 +40,8 @@ CUDA_GRAPH_SAFE_COMPRESSION_MODES = frozenset(
         COMPRESSION_FP8_KV,
         COMPRESSION_VISUAL_COMPACT,
         COMPRESSION_VISUAL_COMPACT_FP8,
+        COMPRESSION_SCALED_FP8_KV,
+        COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
     }
 )
 
@@ -80,6 +86,14 @@ class CompressionMetadata:
 
     @property
     def fp8_kv_active(self) -> bool:
+        return compression_mode_uses_fp8_payload(self.mode)
+
+    @property
+    def scaled_fp8_kv_active(self) -> bool:
+        return compression_mode_uses_token_head_scales(self.mode)
+
+    @property
+    def unit_scale_fp8_kv_active(self) -> bool:
         return self.mode in (COMPRESSION_FP8_KV, COMPRESSION_VISUAL_COMPACT_FP8)
 
     @property
@@ -87,7 +101,28 @@ class CompressionMetadata:
         return self.mode in (
             COMPRESSION_VISUAL_COMPACT,
             COMPRESSION_VISUAL_COMPACT_FP8,
+            COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
         )
+
+
+def compression_mode_uses_fp8_payload(mode: str) -> bool:
+    """Return whether a mode stores K/V payload elements as E4M3FN."""
+
+    return mode in (
+        COMPRESSION_FP8_KV,
+        COMPRESSION_VISUAL_COMPACT_FP8,
+        COMPRESSION_SCALED_FP8_KV,
+        COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
+    )
+
+
+def compression_mode_uses_token_head_scales(mode: str) -> bool:
+    """Return whether a mode owns independent K/V token-head scale caches."""
+
+    return mode in (
+        COMPRESSION_SCALED_FP8_KV,
+        COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
+    )
 
 
 def normalize_compression_mode(mode: str | None) -> str:
@@ -95,10 +130,9 @@ def normalize_compression_mode(mode: str | None) -> str:
 
     normalized = (mode or COMPRESSION_OFF).strip().lower()
     if normalized not in SUPPORTED_COMPRESSION_MODES:
+        supported = ", ".join(repr(value) for value in sorted(SUPPORTED_COMPRESSION_MODES))
         raise ValueError(
-            "supported compression_mode values are 'off', 'visual_prune', "
-            "'visual_compact', 'fp8_kv', and 'visual_compact_fp8'; "
-            f"got {mode!r}"
+            f"supported compression_mode values are {supported}; got {mode!r}"
         )
     return normalized
 
@@ -167,6 +201,7 @@ def _build_visual_pruning_records_by_batch(
         COMPRESSION_VISUAL_PRUNE,
         COMPRESSION_VISUAL_COMPACT,
         COMPRESSION_VISUAL_COMPACT_FP8,
+        COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
     )
     if not shadow_enabled and not active:
         return ()
@@ -221,6 +256,7 @@ def build_compression_metadata(
         COMPRESSION_VISUAL_PRUNE,
         COMPRESSION_VISUAL_COMPACT,
         COMPRESSION_VISUAL_COMPACT_FP8,
+        COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
     )
     visual_pruning_config = (
         asdict(build_visual_pruning_config(config)) if pruning_metadata_enabled else None
@@ -280,6 +316,7 @@ def ensure_supported_compression_metadata(
     if metadata.mode in (
         COMPRESSION_VISUAL_COMPACT,
         COMPRESSION_VISUAL_COMPACT_FP8,
+        COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
     ):
         if (
             not metadata.is_prefill
@@ -290,7 +327,7 @@ def ensure_supported_compression_metadata(
                 "visual_compact decode requires batch-aligned pruning records"
             )
         return
-    if metadata.mode == COMPRESSION_FP8_KV:
+    if metadata.mode in (COMPRESSION_FP8_KV, COMPRESSION_SCALED_FP8_KV):
         return
     raise NotImplementedError(f"compression_mode={metadata.mode!r} is not implemented")
 
