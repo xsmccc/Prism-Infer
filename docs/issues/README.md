@@ -38,6 +38,7 @@
 - [P7-005：offline TTFT/vision prefill 双峰](P7-005-TTFT_VISION_BIMODALITY.md)
 - [P7-006：逐 decode 的 FP32 lm-head 整权重转换](P7-006-LOGITS-FP32-WEIGHT-CAST.md)
 - [P7-007：Chunked prefill 只有调度外壳且 cache 状态重载](P7-007-CHUNKED-PREFILL-STATE.md)
+- [P7-008：CUDA Graph timeline 的 CPU/GPU 重复计时风险](P7-008-CUDAGRAPH-TIMELINE-ACCOUNTING.md)
 
 ## 新 issue 模板
 

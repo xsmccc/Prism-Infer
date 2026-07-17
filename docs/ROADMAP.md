@@ -643,10 +643,12 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
   - [x] Q<K paged chunk/prefix prefill、精确 slot mapping、视觉 atomic payload region和 text-only concurrent prefix reuse。
   - [x] schema-validated request queue/TTFT/TPOT/latency、p50/p90/p99、throughput/goodput、KV occupancy/preemption记录。
   - [x] clean `e7796e9` 9-cell online matrix全部完成且 per-cell SLO goodput fraction `1.0`；完整回归 `262 passed, 6 skipped`。
-- [ ] P7.4 CUDA Graph replay coverage、bucket/padding、Graph 外固定成本与 CPU/GPU overlap：
+- [x] P7.4 CUDA Graph replay coverage、bucket/padding、Graph 外固定成本与 CPU/GPU overlap：
   - [x] P7.4-A node-level trace 定位并移除每 decode 的 FP32 lm-head 整权重转换；logits CUDA `4.068 -> 0.762 ms`。
   - [x] clean 五 workload 单变量矩阵、HF/COCO quality、更新 external baseline 和完整回归闭环。
-  - [ ] 继续分解约 `12.93 ms` Graph replay、bucket/padding coverage 与 CPU/GPU overlap。
+  - [x] P7.4-B clean 31-step trace将 replay分为八类：`2,000` kernels/step、kernel busy `12.921 ms`，linear/GEMV占 `70.55%`；Graph 外 kernel busy差约 `0.769 ms`。
+  - [x] 固定 `max_num_seqs=8` 的 batch1-8 matrix验证 `[1,2,4,8]` bucket/padding、repeat稳定和 padding row输出隔离；该 matrix不用于 padding性能 claim。
+  - [x] CPU/GPU timeline确认 replay CPU range只是异步提交窗口；sampler CPU时间暴露 stream同步，不能与 replay重复相加。
 - [ ] P7.5 profiling 触发的 Inductor custom-op/partition 或 ThunderKittens Blackwell kernel。
 - [ ] P7.6 两卡可用时补 TP2 correctness/communication/performance，不阻塞单卡主线。
 
@@ -659,13 +661,16 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
 
 ### 当前状态
 
-- P7.0/P7.1、P7.2、P7.3 与 P7.4-A 已完成；协议和命令见
+- P7.0/P7.1、P7.2、P7.3 与 P7.4 已完成；协议和命令见
   `docs/P7_OFFLINE_COMPARISON_DESIGN.md`，性能结果见 `docs/PERFORMANCE_REPORT.md`
-  6.2-6.9。
+  6.2-6.11。
 - P7.1 matched eager 下 Prism TPOT约为 vLLM 的 `1.91x-1.97x`；P7.4-A 后双方 best-stable Graph 下，quality-qualified compact Prism 与 vLLM 的差距从 `1.65x-1.78x` 缩小到 `1.34x-1.40x`，仍未反超。
 - Prism compact 相对自身 off Graph 的 TPOT改善约 `1.5%-3.0%`，主要优势仍是跨 page boundary 后的 active KV bytes/capacity。
 - node-level trace 将旧 logits `4.068 ms` 定位为整张 lm-head BF16→FP32 转换与 FP32 GEMV；model-precision 默认将其降到 `0.762 ms`，同时 peak allocated 减少约 `2.18-2.26 GiB`。
-- 优化后 single-image Graph replay仍约 `12.93 ms`，下一 trace/kernels 工作只聚焦该 region，不再优化已退出 critical path 的 logits。
+- P7.4-B 将优化后 single-image Graph replay分解为 `12.921 ms` kernel busy和
+  `2,000` kernels/step；linear/GEMV占 `70.55%`，attention占 `13.17%`，小型
+  elementwise/copy/reduction合计约 `15.15%`。P7.5只从这些证据选择候选，不再优化
+  已退出 critical path 的 logits。
 - offline TTFT/vision prefill 存在双峰，当前不把 E2E中位数差异归因为压缩；见 `docs/issues/P7-005-TTFT_VISION_BIMODALITY.md`。
 - P7.4 focused regression、HF logits/PPL、7-image task gate均 PASS；clean完整回归 JUnit 为 `241 passed, 6 skipped in 264.664s`，无 failure/error。
 
@@ -698,7 +703,9 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
    已完成，`249 passed, 6 skipped`。
 3. ~~P7.3 建立 online arrival/queueing、continuous batching 和 SLO goodput。~~
    clean `e7796e9` 已完成 9-cell matrix；下一步不再用 offline throughput替代 online指标。
-4. P7.4-A logits 闭环已完成；后续 P7.4/P7.5 只依据优化后约 `12.93 ms` Graph replay 的 Systems/NCU 证据推进 Inductor 或 TK kernel。
+4. ~~完成 P7.4 Graph replay、CPU/GPU timeline和 fixed-bucket coverage。~~ clean
+   trace与8-cell matrix已闭环；P7.5按 `70.55%` linear/GEMV和约 `15.15%` 小 kernel
+   证据评估 Inductor/custom kernel，硬件 counter缺失时不虚构结论。
 5. 两卡平台补 P6.8/P7.6；开放 hardware counter 平台补 P6.2-B，不阻塞单卡主线。
 6. P8 重写 README、固定最小复现命令并整理投递材料。
 

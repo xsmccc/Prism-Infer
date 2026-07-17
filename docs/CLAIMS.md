@@ -1,8 +1,8 @@
 # Prism-Infer Claim Ledger
 
 > P6 冻结基线: `p6.12-content-aware-kv` (`c970c61`)
-> 当前 P7.3 验证点: `e7796e9`
-> 更新日期: 2026-07-16
+> 当前 P7.4-B 验证点: `72f85ba`
+> 更新日期: 2026-07-17
 
 本表区分“已实现”“已验证”和“性能占优”。README、简历和面试中的数字必须能
 追溯到本表及对应 raw evidence。
@@ -30,6 +30,7 @@
 | chunked paged prefill 已有 correctness 路径 | text 与 image+text 长输入 | 301-token text 为 `128/128/45`，646-token image+text 为 `512/134`；chunked/unchunked 输出 exact |
 | P7.3 online matrix 的已完成请求全部满足各 cell 声明的 SLO | clean `e7796e9`，9 cells | 9/9 cell goodput fraction `1.0`；text-short 20 req/s peak active `5`，mixed 10 req/s peak active `4-5` |
 | P7.3 后全量回归通过 | clean `e7796e9`，单卡环境 | JUnit `262 passed, 6 skipped in 245.36s`，0 failure/error |
+| P7.4-B 已完成 Graph replay分类与 fixed-bucket correctness | clean `0fdd4a6` trace + clean `00b1012` matrix | replay `2,000` kernels/step、kernel busy median `12.921 ms`；linear/GEMV占 `70.55%`；batch1-8全部命中 `[1,2,4,8]` 预期 bucket且输出 exact |
 
 ## 必须带限制的结论
 
@@ -44,6 +45,8 @@
 | P7.3 的 9-cell goodput fraction 为 `1.0` | 每个 cell 是一次多请求正式运行，SLO 按 workload 预先声明；不是跨进程统计置信区间，也不是网络 server 结果 |
 | online off/compact 数字可并列报告 | 当前只能称为 observation；未做 process-level repeats，不能据此声称 compact online speedup |
 | text-only prefix reuse 已验证 | 只复用并发请求仍持有的 full block；尚无独立 persistent prefix store，VL token-id prefix hash因不包含像素语义而禁用 |
+| Graph replay CPU range只有 `1.899 ms` | 这是异步提交窗口；CPU返回后 GPU tail为 `13.089 ms`，不能把 CPU range当作完整 Graph时长 |
+| fixed-bucket matrix列出 batch1-8 TPOT | 每个 cell是一次独立 process-level run；只证明 bucket/padding coverage与输出隔离，不证明 padding加速/减速，也不是 online goodput |
 
 ## 当前禁止的结论
 
@@ -56,6 +59,8 @@
 - “P7.3 正式矩阵证明了 swap/recompute 性能”；正式 9-cell matrix 未触发 preemption。
 - “TP2 已验证”或“多卡可扩展”；当前机器只有一张可见 RTX 5090。
 - “已实现 megakernel/PD 分离/投机解码”。
+- “GPU span减去 busy就是 occupancy/可消除 idle”或“sampler的 CPU range可与 Graph
+  replay直接相加”；node tracing有 instrumentation，sampler CPU时间暴露前序 stream同步。
 
 ## P7.1 历史基线与 P7.4 当前结论
 

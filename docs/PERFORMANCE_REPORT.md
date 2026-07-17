@@ -1002,3 +1002,78 @@ data/p7_online/p73_*_formal_e7796e9.json
 data/p7_online/p73_online_matrix_summary_e7796e9.{json,md}
 data/p7_online/p73_full_regression_e7796e9.xml
 ```
+
+### 6.11 P7.4-B CUDA Graph Replay Anatomy 与 Bucket Coverage
+
+P7.4-B 在 model-precision logits 已闭环后重新采集 single-image/output32 的
+node-level Systems trace。capture 使用 clean `0fdd4a6`、CUDA Profiler API range
+和 `--cuda-graph-trace=node`，只分析 31 个 measured decode replay；schema-v2
+analyzer 同时计算 kernel busy union、GPU activity span、CPU/GPU busy overlap、CPU
+range 返回后的 GPU tail，以及每个 NVTX range 的直接 GPU activity。
+
+Graph replay 的每步中位数分解如下：
+
+| Kernel category | Kernels/step | Kernel busy/step | Replay fraction |
+|---|---:|---:|---:|
+| linear/GEMV | `253` | `9.123 ms` | `70.55%` |
+| paged decode attention | `36` | `1.693 ms` | `13.17%` |
+| elementwise | `1,157` | `1.165 ms` | `9.02%` |
+| copy/cast | `295` | `0.560 ms` | `4.33%` |
+| reduction | `145` | `0.233 ms` | `1.80%` |
+| layout/index + KV store + trigonometric | `114` | `0.147 ms` | `1.14%` |
+
+八类合计 `2,000 kernels/step`，分类 fraction 精确闭合。replay kernel busy
+median/p90 为 `12.921/12.933 ms`，GPU busy union median 为 `12.922 ms`；整个
+engine decode 的 kernel busy median 为 `13.690 ms`，因此 Graph 外直接 kernel
+busy差为约 `0.769 ms`。这与优化后 logits `0.762 ms`一致，说明 logits 已退出首要
+优化目标，下一候选首先是占 replay `70.55%` 的 linear/GEMV 路径。
+
+#### 6.11.1 CPU/GPU timeline 解释
+
+`graph.replay()` CPU range median 为 `1.899 ms`，与 GPU busy overlap只有
+`0.030 ms`（`1.62%`）；CPU range返回后 GPU仍执行 median `13.089 ms`。这是异步
+提交的预期行为，不代表 Graph只执行了约 1.9 ms。GPU activity span median
+`14.957 ms` 比 busy union多 `2.035 ms`，但 node tracing本身带有 instrumentation，
+这段差值不能当作 occupancy或可消除 idle 百分比。
+
+Graph 外各 range 的直接 activity进一步排除了重复计时：prepare inputs、prepare
+sample inputs和 Graph input copy的直接 GPU busy分别只有约 `0.002/0.000/0.006 ms`；
+logits为 `0.762 ms`。sampler CPU range虽然为 `13.790 ms`，其直接 GPU busy只有
+`0.007 ms`、semantic CUDA-event elapsed为 `0.187 ms`。该 CPU时间暴露的是同一
+stream上等待前序 Graph/logits完成的同步，不是可与 replay相加的独立 sampler成本。
+完整解释见 `docs/issues/P7-008-CUDAGRAPH-TIMELINE-ACCOUNTING.md`。
+
+#### 6.11.2 固定 capture ceiling 的 bucket/padding coverage
+
+commit `00b1012` 将实际 offline batch与 `max_num_seqs` capture ceiling解耦。固定
+`max_num_seqs=8`、captured buckets `[1,2,4,8]`，batch `1..8` 的 clean matrix为：
+
+| Actual batch | Selected bucket | Padding rows |
+|---:|---:|---:|
+| 1 | 1 | 0 |
+| 2 | 2 | 0 |
+| 3 | 4 | 1 |
+| 4 | 4 | 0 |
+| 5 | 8 | 3 |
+| 6 | 8 | 2 |
+| 7 | 8 | 1 |
+| 8 | 8 | 0 |
+
+8/8 cells在 `warmup=2/repeat=5` 中重复稳定；复制的 single-image request在所有
+batch和 padding row之间生成完全相同的 token ids，证明 bucket选择、padding隔离和
+batch 1-8 coverage正确。每个 cell仍是一次独立进程级 run，因此 cell间 TPOT不能
+用来声称 padding带来加速或减速；这也不是 online serving goodput实验。
+
+可审计 summary由 clean `72f85ba` 的 `scripts/summarize_p7_graph.py` 重算，输入合同
+会拒绝 category缺失、dirty/mixed commit、bucket映射错误、repeat不稳定或 padding
+输出污染。focused regression为 `43 passed in 3.90s`。
+
+Raw evidence：
+
+```text
+data/p7_graph/p74b_single_image_graph_0fdd4a6.{nsys-rep,sqlite}
+data/p7_graph/p74b_single_image_graph_analysis_0fdd4a6.json
+data/p7_graph/p74b_single_image_graph_semantic_0fdd4a6.jsonl
+data/p7_graph/p74b_padding_fixed8_matrix_00b1012.jsonl
+data/p7_graph/p74b_summary_72f85ba.{json,md}
+```

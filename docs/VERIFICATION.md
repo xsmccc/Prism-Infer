@@ -3133,6 +3133,54 @@ JUnit：`tests=247`、`failures=0`、`errors=0`、`skipped=6`、
 `time=264.664s`，即 `241 passed, 6 skipped`。详细 root cause、第一次 regression
 失败及被拒绝方案见 `docs/issues/P7-006-LOGITS-FP32-WEIGHT-CAST.md`。
 
+### P7.4-B CUDA Graph Replay、CPU/GPU Timeline 与 Padding
+
+正式 trace summary重算：
+
+```bash
+.venv-local/bin/python scripts/summarize_p7_graph.py \
+  --trace-analysis \
+    data/p7_graph/p74b_single_image_graph_analysis_0fdd4a6.json \
+  --semantic-profile \
+    data/p7_graph/p74b_single_image_graph_semantic_0fdd4a6.jsonl \
+  --padding-records \
+    data/p7_graph/p74b_padding_fixed8_matrix_00b1012.jsonl \
+  --json-output data/p7_graph/p74b_summary_72f85ba.json \
+  --markdown-output data/p7_graph/p74b_summary_72f85ba.md
+```
+
+输入证据分别来自 clean `0fdd4a6` trace与 clean `00b1012` fixed-ceiling matrix；
+summary工具来自 clean `72f85ba`。合同验证：
+
+- trace为 schema-v2 `nsys_profile_summary`，包含 replay与五个 Graph 外 target
+  ranges；八类 kernel partition fraction之和为 1。
+- 31 个 replay的 kernel busy median/p90为 `12.920926/12.932637 ms`，每步
+  `2,000` kernels；linear/GEMV为 `9.122773 ms`、`70.551%`。
+- replay CPU range median为 `1.899233 ms`，CPU/GPU busy overlap median为
+  `0.030400 ms`（`1.618%`），CPU返回后的 GPU tail为 `13.088793 ms`。
+- engine decode与 replay的 kernel busy中位数差为 `0.768933 ms`；优化后 logits
+  direct GPU busy为 `0.761571 ms`。sampler `13.790 ms` CPU range只暴露 stream
+  synchronization，其 direct GPU busy为 `0.007 ms`，禁止重复相加。
+- fixed `max_num_seqs=8` 的 8-cell matrix精确覆盖
+  `1->1, 2->2, 3->4, 4->4, 5..8->8`；padding为 `0,0,1,0,3,2,1,0`。
+  每个 cell repeat-stable，所有 replicated request token rows exact且互不污染。
+
+focused回归：
+
+```bash
+.venv-local/bin/python -m pytest -q \
+  tests/test_p7_graph_summary.py \
+  tests/test_nsys_analysis.py \
+  tests/test_benchmark_schema.py
+# 43 passed in 3.90s
+```
+
+`tests/test_p7_graph_summary.py` 会显式拒绝 kernel category partition缺失、bucket/
+padding映射错误与 padding row输出污染。`git diff --check` PASS。bucket matrix的每个
+cell是单独 process-level run，故本门禁只证明 capture coverage/correctness，不形成
+padding性能或 online goodput claim。timeline解释见
+`docs/issues/P7-008-CUDAGRAPH-TIMELINE-ACCOUNTING.md`。
+
 交付前必须检查:
 
 ```bash
