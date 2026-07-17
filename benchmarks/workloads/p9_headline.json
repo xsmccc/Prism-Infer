@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "name": "p9_headline",
+  "p9_protocol": {
+    "schema_version": 1,
+    "frozen_at_utc": "2026-07-17T00:00:00+00:00",
+    "model": {
+      "name": "Qwen3-VL-8B-Instruct",
+      "revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+      "weight_dtype": "bfloat16",
+      "tensor_parallel_size": 1
+    },
+    "sampling": {
+      "temperature": 0.0,
+      "ignore_eos": true,
+      "seed": 20260717
+    },
+    "memory_contract": {
+      "gpu_class": "NVIDIA GeForce RTX 5090 32 GiB",
+      "observed_total_memory_bytes": 33711521792,
+      "kv_pool_bytes": 4294967296,
+      "include_scale_and_metadata_bytes": true,
+      "prefix_cache": false,
+      "multimodal_processor_cache": false
+    },
+    "headline": {
+      "H1": {
+        "case_id": "h1_eight_image_448",
+        "max_tokens": 128,
+        "max_model_len": 4096,
+        "offline_batch_sizes": [1, 4],
+        "fresh_process_repeats": 5,
+        "required_cross_framework_prompt_token_identity": true
+      },
+      "H2": {
+        "case_id": "h2_video_16x448",
+        "max_tokens": 128,
+        "max_model_len": 4096,
+        "fresh_process_repeats": 5,
+        "required_cross_framework_prompt_token_identity": true,
+        "comparison_policy": "conditional_skip_if_prompt_tokens_differ"
+      },
+      "H3": {
+        "primary_classes": [
+          {"case_id": "guardrail_text_short", "weight": 0.4},
+          {"case_id": "guardrail_single_image_448", "weight": 0.3},
+          {"case_id": "h1_eight_image_448", "weight": 0.3}
+        ],
+        "conditional_video_classes": [
+          {"case_id": "guardrail_text_short", "weight": 0.4},
+          {"case_id": "guardrail_single_image_448", "weight": 0.3},
+          {"case_id": "h1_eight_image_448", "weight": 0.2},
+          {"case_id": "h2_video_16x448", "weight": 0.1}
+        ],
+        "class_schedule": "weighted_round_robin_period_10",
+        "arrival_process": "poisson",
+        "request_rates_per_second": [1.0, 2.0, 4.0],
+        "completed_requests_per_run": 600,
+        "arrival_seeds": [20260717, 20260718, 20260719],
+        "max_tokens": 64,
+        "max_model_len": 4096,
+        "ttft_slo_formula": "5 * vllm_best_stable_low_load_p50_by_class",
+        "tpot_slo_formula": "2 * vllm_best_stable_low_load_p50_by_class",
+        "goodput_unit": "output_tokens_per_second_meeting_both_slos"
+      }
+    },
+    "measurement": {
+      "offline_warmup": 2,
+      "offline_repeat": 5,
+      "online_warmup_requests": 10,
+      "comparison_profiles": ["diagnostic_matched", "best_stable"],
+      "headline_profile": "best_stable",
+      "minimum_practical_improvement_fraction": 0.05,
+      "confidence_interval": "process_level_bootstrap_95_percent",
+      "run_order": "ABBA_BAAB",
+      "outlier_policy": "do_not_drop; invalidate_whole_run_only_on_preflight_failure"
+    }
+  },
+  "cases": [
+    {
+      "id": "h1_eight_image_448",
+      "requests": [
+        {
+          "type": "images",
+          "prompt": "Compare all eight images carefully. Describe the important details in each image, then identify similarities, differences, and any cross-image pattern.",
+          "images": [
+            {"width": 448, "height": 448, "color": [220, 50, 50]},
+            {"width": 448, "height": 448, "color": [50, 180, 80]},
+            {"width": 448, "height": 448, "color": [60, 100, 220]},
+            {"width": 448, "height": 448, "color": [220, 180, 40]},
+            {"width": 448, "height": 448, "color": [170, 70, 200]},
+            {"width": 448, "height": 448, "color": [40, 190, 190]},
+            {"width": 448, "height": 448, "color": [230, 120, 40]},
+            {"width": 448, "height": 448, "color": [120, 120, 120]}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "h2_video_16x448",
+      "requests": [
+        {
+          "type": "video",
+          "prompt": "Describe how this sixteen-frame sequence changes over time, including the initial state, intermediate transitions, final state, and any uncertainty.",
+          "frames": [
+            {"width": 448, "height": 448, "color": [32, 96, 160]},
+            {"width": 448, "height": 448, "color": [40, 100, 156]},
+            {"width": 448, "height": 448, "color": [48, 104, 152]},
+            {"width": 448, "height": 448, "color": [56, 108, 148]},
+            {"width": 448, "height": 448, "color": [64, 112, 144]},
+            {"width": 448, "height": 448, "color": [72, 116, 140]},
+            {"width": 448, "height": 448, "color": [80, 120, 136]},
+            {"width": 448, "height": 448, "color": [88, 124, 132]},
+            {"width": 448, "height": 448, "color": [96, 128, 128]},
+            {"width": 448, "height": 448, "color": [104, 132, 124]},
+            {"width": 448, "height": 448, "color": [112, 136, 120]},
+            {"width": 448, "height": 448, "color": [120, 140, 116]},
+            {"width": 448, "height": 448, "color": [128, 144, 112]},
+            {"width": 448, "height": 448, "color": [136, 148, 108]},
+            {"width": 448, "height": 448, "color": [144, 152, 104]},
+            {"width": 448, "height": 448, "color": [152, 156, 100]}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "guardrail_text_short",
+      "requests": [
+        {
+          "type": "text",
+          "prompt": "Explain the purpose of a KV cache in one concise sentence."
+        }
+      ]
+    },
+    {
+      "id": "guardrail_single_image_448",
+      "requests": [
+        {
+          "type": "image",
+          "prompt": "Describe this image concisely.",
+          "image": {"width": 448, "height": 448, "color": [100, 150, 200]}
+        }
+      ]
+    },
+    {
+      "id": "guardrail_two_image_448",
+      "requests": [
+        {
+          "type": "images",
+          "prompt": "Compare these two images concisely.",
+          "images": [
+            {"width": 448, "height": 448, "color": [100, 150, 200]},
+            {"width": 448, "height": 448, "color": [200, 120, 80]}
+          ]
+        }
+      ]
+    }
+  ]
+}

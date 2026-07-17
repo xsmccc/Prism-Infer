@@ -2,7 +2,7 @@
 
 > 修订日期: 2026-07-17
 > 目标模型: Qwen3-VL-8B-Instruct
-> 项目目标: 自实现 Qwen3-VL 多模态推理引擎，并在可靠 FP baseline 上完成视觉 token KV Cache 分析与压缩研究。
+> 项目目标: 面向 Qwen3-VL 的跨层多模态推理 Runtime；把视觉 KV 保留、物理 Paged-KV 压缩、scaled FP8、Compiler/CUDA Graph、调度与优化 Kernel 接成可验证系统。
 
 ## 项目总目标
 
@@ -29,9 +29,11 @@ Prism-Infer 的交付目标不是单个 demo，而是一套可验证、可复现
 | KV Cache 分析 | P4 已完成当前门禁 | 已实现 repo 内 KV trace schema/session、attention/KV 采集、entropy 指标、离线 summary 和三类样例报告；trace on/off greedy tokens 已验证一致。 |
 | KV Engine Hardening | P4.5 已完成当前门禁 | 已统一 canonical 4D paged KV layout 写入语义，修复 CPU fallback、prefix hash 释放清理、swap CPU/GPU 页表混用，补齐 Sequence/Config block size contract，并把 prefix-cache prefill 提前显式拒绝。 |
 | KV Cache 压缩 | P5 当前门禁已完成 | 已保留 `compression_mode="off"` baseline，新增 `visual_prune` logical decode retention，并完成 `fp8_kv` physical KV storage baseline；固定 16 blocks 下 FP8 KV cache bytes 为 BF16 的 `0.5x`，质量矩阵 32/32 token exact match；FP8 当前 latency 更慢，吞吐优化进入 P6。 |
-| 系统性能优化 | P6.12-C BF16 content-aware 主线已完成并冻结 | 默认 last-layer attention scorer 在 7 张固定 COCO 图片、35 条 caption reference 上通过当前 lexical task gate：token-F1/ROUGE-L drop 为 `0.003288/0.003710`；7-image aggregate physical token/active-byte ratio 为 `0.535x/0.538x`。COCO batch4稳定性能 cell为 `0.536x/0.571x`。freeze tag 为 `p6.12-content-aware-kv`。这不是标准 COCO accuracy，FP8 quality、两卡动态 TP 和 RTX hardware counter 仍未完成。 |
+| 系统性能优化 | P6.12-C BF16 content-aware 主线已完成并冻结 | 默认 last-layer attention scorer 在 7 张固定 COCO 图片、35 条 caption reference 上通过当前 lexical task gate：token-F1/ROUGE-L drop 为 `0.003288/0.003710`；7-image aggregate physical token/active-byte ratio 为 `0.535x/0.538x`。COCO batch4稳定性能 cell为 `0.536x/0.571x`。freeze tag 为 `p6.12-content-aware-kv`。这不是标准 COCO accuracy；FP8 quality和TP仍未完成，RTX counter缺口已在P9关闭。 |
 | 单机性能与外部对标 | P7.0-P7.5 已完成 | online engine、external protocol、logits优化、Graph replay分析与 packed gate/up 均闭环；8 个 clean offline cell 的 packed decode TPOT 改善 `0.483%–0.762%`，不声称稳定 E2E 加速。 |
 | 项目交付 | P8 PASS | README、技术报告、复现手册、Known Issues、投递材料、fresh editable install、完整8B demo与当前主线 full regression 均已验收。 |
+| 秋招旗舰化 | P9-A 进行中 | 架构/性能 RFC 已冻结项目定位、双 headline gate、目标架构、量化与 kernel 路线；正式 page-size matrix、workload manifest 和证据同步仍在进行。 |
+| 当前硬件 | 单卡主线可用；TP 条件阻断 | 8 张 RTX 5090 均可见且空闲，GPU0–3/4–7 分属两个 NUMA、无 NVLink；Prism Torch 2.6/NCCL 2.25.1 在 SM120 collective 失败，隔离 Torch 2.11/NCCL 2.28.9 同卡 all-reduce PASS。 |
 
 ## 阶段门禁总览
 
@@ -47,6 +49,7 @@ Prism-Infer 的交付目标不是单个 demo，而是一套可验证、可复现
 | P6 | 系统优化与视觉 KV 物理压缩 | 统一 benchmark、profiling、CUDA Graph/compile、physical compaction、压缩 Paged Attention、两卡与外部对比 | correctness 不回归，质量/显存/性能/容量可复现，外部对比条件公平 |
 | P7 | 单机性能与外部对标 | clean baseline、vLLM公平对比、online调度、Graph/compile/kernel profiling闭环 | 同条件差距可解释，online SLO和目标优化可复现 |
 | P8 | 项目交付 | README、技术报告、复现实验和投递材料 | 外部用户能按文档复现核心结果 |
+| P9 | 秋招旗舰化 | 架构硬化、scaled FP8、细页 KV、full-step Graph、优化 kernel、多模态 SLO | KV 质量–物理显存 Pareto 优于 vLLM 强基线，且一个预注册长视觉场景的 TPOT/SLO 指标胜出 |
 
 每个阶段必须遵循:
 
@@ -717,23 +720,70 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
   regression为 `281 passed, 6 skipped`；P7.5动态门禁已闭环。宿主 DALI/`six`
   pip-check warning、TP2、NCU counter和网络server仍按 Known Issues限定，但不阻塞P8。
 
+## P9: 秋招旗舰化
+
+### 目标
+
+把 P8 的可交付研究工程推进为 Qwen3-VL 跨层多模态推理 Runtime：先消除配置、
+全局状态和 backend 边界债务，再完成 scaled FP8、细粒度 Paged KV、full-step
+CUDA Graph、counter-driven kernel、多模态调度和薄 serving 闭环。完整决策见
+`docs/P9_ARCHITECTURE_PERFORMANCE_RFC.md`。
+
+### 最终硬门槛
+
+- 至少一个标准质量合格的 Prism 配置点，在计算 scale/metadata 后的真实
+  quality–physical-KV-bytes Pareto 上支配 vLLM 强 baseline。
+- 至少一个预注册长视觉 workload 的 decode TPOT、SLO goodput 或 p95/p99 TTFT
+  相对 vLLM/SGLang best-stable 改善至少 `5%`，且 process-level 95% CI 不跨零收益。
+- compression-off correctness、短文本/普通单图 guardrail 和完整回归继续通过。
+- 不要求所有 workload 全面胜出，不用单次 run 或逻辑 token ratio 形成 claim。
+
+### P9-A：架构、协议与正式基线
+
+- [x] 冻结项目定位、非目标、目标架构、双 headline gate 和 2026-08-06 工程截止线。
+- [x] 冻结 scaled FP8、W/A shootout、full-step Graph、split-GQA/context kernel、
+  thin server 和 TP 条件分支决策。
+- [x] NCU 2025.1 权限恢复；page16/256 的真实 counter 与小 grid root cause 已确认。
+- [x] 8-GPU topology 与 Prism/vLLM 两套 NCCL stack 已完成隔离诊断。
+- [x] 冻结 H1/H2/H3、标准质量集与 canonical hash/revision manifest；媒体物化 hash
+  在首次标准质量运行前生成。
+- [ ] 完成结构化 paged-decode benchmark 的 focused test 与 clean formal matrix。
+- [ ] 保存 page16/256 NCU raw report，并同步 Known Issues/Verification。
+
+### P9-B–P9-F 执行顺序
+
+- [ ] P9-B 架构硬化：typed domain config、未知参数拒绝、删除 `Sequence` 全局 page
+  state、immutable `DeviceBatch` 和显式 execution backend contract。
+- [ ] P9-C KV/量化：per-token-per-KV-head scaled FP8、scale 全生命周期、细页
+  allocator 和标准质量 gate；W/A 只做三模式 shootout。
+- [ ] P9-D Compiler/Graph/Kernel：greedy full-step Graph、compile+Graph 候选、
+  split-GQA/context paged attention 和 NCU/NSYS 闭环。
+- [ ] P9-E 调度/服务/外部对比：multimodal cost model、thin OpenAI-compatible
+  streaming server、H3 goodput 和 external best-stable matrix。
+- [ ] P9-F 2026-08-06 前完成 clean release candidate、技术报告、简历故事和复现包；
+  之后保留 7–10 天学习与复习，不再扩大主线 scope。
+
+### 当前状态
+
+- P9 RFC 已创建；保留 `BatchPlan`、`ModelExecutor`、`SchedulerPolicy`，不做无意义重写。
+- 当前 unit-scale FP8 quality FAIL 的根因已明确；5090 支持 FP8，下一实现必须携带
+  独立 K/V scale，不能继续把直接 cast 当成公平 FP8 baseline。
+- 新 NCU 显示 batch8/context4096 的 achieved occupancy 约 `12.5%`、waves/SM
+  `0.17–0.19`；page16 duration `445.60 us`，page256 `550.46 us`。简单把四个 GQA
+  query heads 合并会进一步缩小 grid，必须与 context split/稳定 softmax merge 组合。
+- P9 单卡主线不等待 TP2。任何 Torch/CUDA/NCCL 升级必须先单独决策，不能污染 P8
+  已验证环境。
+
 ## 下一步执行顺序
 
 当前应优先执行:
 
-1. ~~完成 P7.1 clean `diagnostic_matched/best_stable` formal matrix，先固定真实 external gap。~~ 已完成。
-2. ~~P7.2 在完整回归保护下重构 engine/scheduler contract。~~ clean `8b27edc`
-   已完成，`249 passed, 6 skipped`。
-3. ~~P7.3 建立 online arrival/queueing、continuous batching 和 SLO goodput。~~
-   clean `e7796e9` 已完成 9-cell matrix；下一步不再用 offline throughput替代 online指标。
-4. ~~完成 P7.4 Graph replay、CPU/GPU timeline和 fixed-bucket coverage。~~ clean
-   trace与8-cell matrix已闭环，并形成 `70.55%` linear/GEMV与约 `15.15%` 小 kernel
-   的候选证据；P7.5先闭环 gate/up projection，其余候选仍须由counter与独立门禁驱动。
-5. ~~完成P7.5 clean paired micro、full HF/E2E/online、TPOT与Systems trace。~~ packed
-   默认保留；只声明 `0.483%–0.762%` decode TPOT改善，不声明稳定E2E/online加速。
-6. ~~完成P8 fresh环境8B demo、当前主线full regression和最终requirement audit。~~
-   clean JUnit、demo输出与P8 Gate Review均已落盘。
-7. 两卡平台补P6.8/P7.6；开放hardware counter平台补P6.2-B，不阻塞单卡文档交付。
-8. ~~P8重写README、技术报告、复现手册、Known Issues和投递材料。~~ 静态与动态出口均完成。
+1. 完成 P9-A workload/quality manifest、结构化 page matrix 和 NCU raw evidence。
+2. 先提交 P9-B config/global-state/backend contract，再启动任何量化或 kernel diff。
+3. scaled FP8 依次通过 component、model-precision logits/PPL、标准质量和 E2E；
+   未通过前不做 page-head scale 性能变体。
+4. 用 clean NCU/NSYS 选择 full-step Graph 与 split-GQA/context kernel，不为学习 DSL
+   强行替换没有瓶颈证据的 Triton 路径。
+5. 最后接 thin server 与 H3 external SLO，2026-08-06 冻结工程，转入复习。
 
 P3/P4/P4.5/P5 已建立多模态 FP baseline、KV trace、KV 语义硬化、logical pruning 和 FP8 storage baseline。P6 只允许在统一 benchmark 和固定外部版本下形成性能 claim；没有真实 megakernel实现或 launch-bound 证据时，不开展 megakernel 对比。

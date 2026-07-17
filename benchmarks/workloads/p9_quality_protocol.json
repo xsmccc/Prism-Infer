@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "name": "p9_quality_protocol",
+  "frozen_at_utc": "2026-07-17T00:00:00+00:00",
+  "model": {
+    "name": "Qwen3-VL-8B-Instruct",
+    "revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "processor_revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "sampling": {
+      "temperature": 0.0,
+      "ignore_eos": false
+    }
+  },
+  "non_inferiority": {
+    "bounded_accuracy_margin_percentage_points": 1.0,
+    "normalized_generation_metric_margin": 0.01,
+    "confidence_interval": "paired_bootstrap_95_percent",
+    "bootstrap_seed": 20260717,
+    "bootstrap_resamples": 10000,
+    "eligibility": "confidence_interval_lower_bound_within_margin"
+  },
+  "selection": {
+    "algorithm": "sort_by_sha256(dataset_id + revision + sample_id + seed)",
+    "seed": 20260717,
+    "selection_occurs_before_any_compression_candidate_result": true,
+    "materialization_requires_media_sha256": true
+  },
+  "datasets": [
+    {
+      "id": "docvqa_validation",
+      "category": "single_image_document_ocr",
+      "source": "https://huggingface.co/datasets/lmms-lab/DocVQA",
+      "repository": "lmms-lab/DocVQA",
+      "revision": "539088ef8a8ada01ac8e2e6d4e372586748a265e",
+      "config": "DocVQA",
+      "split": "validation",
+      "sample_id_field": "questionId",
+      "development_samples": 200,
+      "final_samples": 500,
+      "metric": "official_ANLS",
+      "license": "apache-2.0",
+      "materialization_status": "pending"
+    },
+    {
+      "id": "muirbench_test",
+      "category": "multi_image_reasoning",
+      "source": "https://huggingface.co/datasets/MUIRBENCH/MUIRBENCH",
+      "repository": "MUIRBENCH/MUIRBENCH",
+      "revision": "4c393cffc985c77d28de3b9045e2e5186920df80",
+      "config": "default",
+      "split": "test",
+      "sample_id_field": "idx",
+      "development_samples": 200,
+      "final_samples": 500,
+      "metric": "official_multiple_choice_accuracy",
+      "license": "cc-by-4.0",
+      "materialization_status": "pending"
+    },
+    {
+      "id": "mvbench_test",
+      "category": "video_temporal_reasoning",
+      "source": "https://huggingface.co/datasets/OpenGVLab/MVBench",
+      "repository": "OpenGVLab/MVBench",
+      "revision": "230a2d4fac8900333c61754641c7a13e069ac9c6",
+      "config": "all_official_tasks",
+      "split": "test",
+      "sample_id_field": "task + video + question_index",
+      "development_samples": 100,
+      "final_samples": 200,
+      "metric": "official_multiple_choice_accuracy",
+      "license": "MIT metadata; source-video licenses apply",
+      "materialization_status": "conditional_manual_media",
+      "comparison_policy": "exclude_if_media_or_prompt_token_identity_is_not_reproducible"
+    }
+  ],
+  "existing_preflight_only": {
+    "manifest": "p6_real_samples",
+    "samples": 7,
+    "metrics": ["token_f1", "rouge_l"],
+    "headline_eligible": false
+  },
+  "artifact_contract": {
+    "selected_sample_ids_sha256": "required_after_materialization",
+    "media_sha256_per_sample": "required_after_materialization",
+    "evaluator_commit": "required_before_first_formal_run",
+    "raw_predictions": "required",
+    "per_sample_scores": "required",
+    "aggregate_only_is_invalid": true
+  }
+}

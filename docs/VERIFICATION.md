@@ -3404,8 +3404,9 @@ ABI验收。当前主线full JUnit见P7.5，`281 passed, 6 skipped`。
 - [x] fresh环境完整8B demo与当前主线full regression PASS。
 - [x] P7.5 full-engine/performance动态门禁PASS，claim边界已同步。
 
-因此P8静态与动态出口均PASS。这里的“fresh”限定为同一宿主新venv；TP2、NCU
-hardware counter、标准大规模质量集和网络server仍是明确的后续项，不回写为P8失败。
+因此P8静态与动态出口均PASS。这里的“fresh”限定为同一宿主新venv；在P8关闭时，
+TP2、NCU hardware counter、标准大规模质量集和网络server仍是明确后续项，不回写为
+P8失败。P9开始后NCU权限已恢复并关闭KI-004；TP2则更新为software-stack blocker。
 
 交付前必须检查：
 
@@ -3415,6 +3416,184 @@ git status --short
 ```
 
 并确认剩余条件项仍在`docs/KNOWN_ISSUES.md`和`docs/CLAIMS.md`中显式受限。
+
+## P9: 秋招旗舰化验证
+
+### P9-A.1 RFC 与成功标准
+
+设计来源：`docs/P9_ARCHITECTURE_PERFORMANCE_RFC.md`。进入任何结构性 runtime
+改动前必须确认：
+
+- 项目定位为 Qwen3-VL 跨层多模态 Runtime，不把 last-query selector 声称为算法创新；
+- 最终同时要求 quality–physical-memory Pareto 与一个预注册 long-visual runtime/SLO
+  胜出；
+- external headline 使用 best-stable，diagnostic matched 只做归因；
+- unit-scale FP8 是 rejected baseline，scaled FP8 重新独立过门禁；
+- 工程主线在 2026-08-06 冻结，保留 7–10 天学习与复习。
+
+P9-A RFC review：PASS。workload/quality manifest 和正式性能证据仍按后续小节单独判定，
+不能因为文档完成而自动 PASS。
+
+### P9-A.2 Workload 与标准质量协议
+
+机器可读 contract：
+
+```text
+benchmarks/workloads/p9_headline.json
+canonical SHA256: 42d1387320b1b30c3b0afa0bf3113f0dd905a38b38bc583cfe6c6eb3ef4f8656
+
+benchmarks/workloads/p9_quality_protocol.json
+canonical SHA256: 85adb4b246ab3fc55bc70e02ad75d97c5aa903e89387e499fc3aea1ac2edb25d
+```
+
+runtime manifest 固定：
+
+- H1：8-image 448px、output128、offline batch1/4、5 fresh-process repeats；
+- H2：16-frame 448px、output128，跨框架 prompt token 不同则条件跳过；
+- H3：主 trace 为 text/single-image/H1 的 `40%/30%/30%`，600 requests，Poisson
+  rate `1/2/4 req/s`，三个固定 seed；video-compatible trace 单独为
+  `40%/30%/20%/10%`；
+- 物理 KV budget `4,294,967,296 bytes`，payload、scale 与 metadata 都计入；
+- SLO 由 vLLM best-stable low-load class p50 按固定 `5x TTFT / 2x TPOT` 公式冻结。
+
+quality protocol 固定 DocVQA/MuirBench/MVBench 的 repository revision、确定性 SHA256
+选样算法、`1.0 percentage point / 0.01 normalized metric` non-inferiority margin 与
+paired bootstrap 95% CI。MVBench 需要手工媒体且有 source-video license 条件，媒体或
+prompt 语义不可复现时显式排除，不换题。现有 7-image COCO 只作 preflight。
+
+验证：
+
+```bash
+PYTHONPATH=/data/Prism-Infer python -m pytest -q \
+  tests/test_p9_protocol.py tests/test_bench_paged_decode.py
+# 15 passed in 0.11s
+```
+
+判定：协议与 source revision PASS。公开数据媒体尚未物化；selected-ID/media SHA256
+是 P9-C 首次标准质量运行前置门禁，不影响 P9-A 的协议冻结。
+
+### P9-A.3 GPU topology 与 TP stack 隔离
+
+硬件与软件身份命令：
+
+```bash
+nvidia-smi --query-gpu=index,uuid,name,memory.used,memory.free,utilization.gpu,pci.bus_id \
+  --format=csv,noheader,nounits
+nvidia-smi topo -m
+
+python -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.nccl.version(), torch.cuda.device_count())'
+/data/vllm-omni/.venv/bin/python -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.nccl.version(), torch.cuda.device_count())'
+```
+
+结果：
+
+```text
+visible GPUs: 8 x NVIDIA GeForce RTX 5090
+idle snapshot: 1 MiB used / 32149 MiB free / 0% utilization per GPU
+topology: GPU0-3 NUMA0, GPU4-7 NUMA1, no NVLink
+Prism stack: torch 2.6.0a0+ecf3bae40a.nv25.01 / CUDA 12.8 / NCCL 2.25.1
+vLLM stack: torch 2.11.0+cu130 / CUDA 13.0 / NCCL 2.28.9
+```
+
+`tests/test_llm_vl_tp2.py` 与独立 Prism-stack all-reduce 都在首次 NCCL collective
+得到 `cudaErrorInvalidValue`。提前 set device、传 `device_id`、禁用 P2P/SHM 均不改变
+结果；NCCL 日志给出 requested/max function shared memory `82,240/79,856 B`。同一
+GPU0–1 在隔离 vLLM stack 的 all-reduce 输出 `3.0`，PASS。
+
+判定：8 卡硬件可用，但 Prism TP2 动态门禁仍 BLOCKED；root cause scope 收敛到当前
+Torch/CUDA/NCCL Blackwell stack。P9 单卡主线继续，未经单独批准不升级主环境。
+
+### P9-A.4 NCU hardware counter
+
+权限恢复验证：
+
+```bash
+ncu --version
+# Nsight Compute 2025.1.0.0
+```
+
+BF16/Qwen GQA、batch8/context4096、page16/256 代表性 counter：
+
+| Page | Duration | DRAM throughput | Compute throughput | Achieved occupancy | Waves/SM |
+|---:|---:|---:|---:|---:|---:|
+| 16 | 445.60 us | 17.67% | 14.26% | 12.55% | 0.19 |
+| 256 | 550.46 us | 14.31% | 11.70% | 12.47% | 0.17 |
+
+correctness 均 PASS，max diff `4.882812e-4`、mean diff约 `3.0e-5`。NCU 对两个 case
+都指出 grid 太小；当前 launch grid 是 `(batch, query_head)=256`。判定：KI-004
+CLOSED；counter 只解释该 kernel/case，不外推为 full-engine GPU utilization。
+
+正式复现要求保存 `.ncu-rep`、CSV/page summary、命令 stdout/stderr 和文件 SHA256。
+raw artifact 未落盘前，P9-A 的 profiler artifact 子门禁仍为 PENDING。
+
+### P9-A.5 结构化 Paged Attention benchmark
+
+`benchmarks/bench_paged_decode.py` 的 P9 contract：
+
+- `--seed` 固定 logical Q/K/V；相同 batch/context/dtype 在不同 page 下使用同一输入；
+- `--page-sizes` 支持多 page matrix，旧 `--block-size` 保留为单值 alias；
+- 每个 case 同时检查 max/mean absolute difference；
+- JSON/JSONL 记录全部 latency samples、median/p90/p99/min/max/token/s；
+- 记录 Q/K/V/page-table shape、logical/physical KV bytes、allocator before/after/peak；
+- 记录 full commit、dirty state、GPU UUID、Torch/CUDA/Triton、driver/NVML preflight；
+- 默认不覆盖已有 artifact。
+
+CPU/focused helper tests：
+
+```bash
+PYTHONPATH=/data/Prism-Infer python -m pytest -q tests/test_bench_paged_decode.py
+# 10 passed in 0.09s
+```
+
+dirty smoke（只验证 harness，不形成性能 claim）：
+
+```bash
+PYTHONPATH=/data/Prism-Infer python benchmarks/bench_paged_decode.py \
+  --page-sizes 16,256 \
+  --batch-sizes 1 \
+  --context-lens 256 \
+  --cache-dtypes bf16 \
+  --warmup 1 --repeat 2 \
+  --max-start-memory-used-mib 1024 \
+  --max-start-gpu-utilization 5 \
+  --output data/p9_baseline/paged_decode_smoke_dirty.jsonl \
+  --overwrite
+```
+
+结果为 `2/2` correctness PASS；两种 page 的 max/mean diff 都是
+`1.953125e-3/1.085676e-4`，证明 page-independent seed/packing 生效。repeat=2 且
+`git_dirty=true`，latency 只用于 smoke。
+
+clean formal 命令：
+
+```bash
+PYTHONPATH=/data/Prism-Infer python benchmarks/bench_paged_decode.py \
+  --page-sizes 16,32,64,128,256 \
+  --batch-sizes 1,8 \
+  --context-lens 4096,8192 \
+  --cache-dtypes bf16 \
+  --warmup 10 --repeat 100 \
+  --seed 20260717 \
+  --max-start-memory-used-mib 1024 \
+  --max-start-gpu-utilization 5 \
+  --output data/p9_baseline/paged_decode_page_matrix_<commit>.jsonl
+```
+
+PASS 标准：20/20 correctness、clean commit、GPU gate PASS、结构化记录可逐行解析；
+正式 latency、best page 和 P9-B kernel baseline 必须等该命令实跑后再填写。
+
+### P9-A.6 Gate Review（当前）
+
+- [x] 架构、量化、Graph/compiler、kernel、scheduler/server 与 TP 决策冻结。
+- [x] 8-GPU topology、Prism-stack blocker 和隔离-stack control 已定位。
+- [x] NCU counter 权限恢复，代表性 page16/256 指标已采集。
+- [x] structured benchmark helper tests 与 dirty smoke PASS。
+- [x] H1/H2/H3 与 DocVQA/MuirBench/MVBench manifest/hash/revision 冻结。
+- [ ] clean 20-cell page matrix。
+- [ ] NCU raw artifacts 与 SHA256。
+- [ ] P9-A 最终 focused regression、文档链接和 clean worktree。
+
+当前判定：P9-A IN PROGRESS，尚未进入 P9-B。
 
 ## 每次任务交付模板
 
