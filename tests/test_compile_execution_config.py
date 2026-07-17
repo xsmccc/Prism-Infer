@@ -142,6 +142,34 @@ def test_p74_logits_precision_is_explicit_and_validated(
         )
 
 
+def test_p75_mlp_projection_mode_is_explicit_and_validated(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_auto_config(monkeypatch)
+    default = Config(
+        str(tmp_path),
+        max_model_len=1024,
+        max_num_batched_tokens=1024,
+    )
+    legacy = Config(
+        str(tmp_path),
+        max_model_len=1024,
+        max_num_batched_tokens=1024,
+        mlp_projection_mode="legacy",
+    )
+    assert default.mlp_projection_mode == "packed"
+    assert legacy.mlp_projection_mode == "legacy"
+
+    with pytest.raises(ValueError, match="mlp_projection_mode"):
+        Config(
+            str(tmp_path),
+            max_model_len=1024,
+            max_num_batched_tokens=1024,
+            mlp_projection_mode="auto",
+        )
+
+
 def test_attention_compile_dispatch_is_decode_only() -> None:
     attention = Qwen3VLTextAttention(
         hidden_size=8,

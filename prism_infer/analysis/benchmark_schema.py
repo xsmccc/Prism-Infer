@@ -17,8 +17,8 @@ from typing import Any
 from prism_infer.analysis.reference_quality import normalize_reference_text
 
 
-BENCHMARK_SCHEMA_VERSION = 5
-SUPPORTED_BENCHMARK_SCHEMA_VERSIONS = (1, 2, 3, 4, 5)
+BENCHMARK_SCHEMA_VERSION = 6
+SUPPORTED_BENCHMARK_SCHEMA_VERSIONS = (1, 2, 3, 4, 5, 6)
 WORKLOAD_SCHEMA_VERSION = 1
 STAT_KEYS = ("count", "median", "p90", "p99", "min", "max")
 
@@ -407,6 +407,16 @@ def validate_benchmark_record(record: Mapping[str, Any]) -> None:
     _require_number(model, "gpu_memory_utilization", "record.model")
     if "prefix_caching_enabled" in model:
         _require_bool(model, "prefix_caching_enabled", "record.model")
+    if schema_version >= 6:
+        projection_mode = _require_string(
+            model,
+            "mlp_projection_mode",
+            "record.model",
+        )
+        if projection_mode not in ("legacy", "packed"):
+            raise ValueError(
+                "record.model.mlp_projection_mode must be 'legacy' or 'packed'"
+            )
 
     mode = _require_mapping(record, "mode", "record")
     for key in (

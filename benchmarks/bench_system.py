@@ -510,7 +510,7 @@ def _run_iteration(
         )
 
     ordered_outputs = [outputs[seq_id] for seq_id in seq_ids]
-    # 解码不计入 engine/E2E timing，只为 schema-v5 reference task 评估留证。
+    # 解码不计入 engine/E2E timing，只为 schema-v5+ reference task 评估留证。
     decoded_texts = [
         llm.tokenizer.decode(
             token_ids,
@@ -581,6 +581,7 @@ def _build_llm(
             args.visual_pruning_attention_last_n_layers
         ),
         logits_precision=args.logits_precision,
+        mlp_projection_mode=args.mlp_projection_mode,
     )
 
 
@@ -680,6 +681,7 @@ def _build_record(
             "prefix_caching_enabled": config.enable_prefix_caching,
             "chunked_prefill_enabled": config.enable_chunked_prefill,
             "logits_precision": config.logits_precision,
+            "mlp_projection_mode": config.mlp_projection_mode,
         },
         "mode": {
             "name": mode.name,
@@ -897,6 +899,7 @@ def _bench_mode(
                     "execution": mode.execution,
                     "attention": mode.attention,
                     "compression": mode.compression,
+                    "mlp_projection_mode": args.mlp_projection_mode,
                     "case_id": case["id"],
                     "profile_repeat": args.profile_repeat,
                     "warmup_before_profile": args.warmup,
@@ -1141,6 +1144,12 @@ def main() -> None:
         choices=("fp32", "model"),
         default="model",
         help="lm_head projection precision; model uses the loaded model dtype",
+    )
+    parser.add_argument(
+        "--mlp-projection-mode",
+        choices=("legacy", "packed"),
+        default="packed",
+        help="execute gate/up as two legacy projections or one packed projection",
     )
     parser.add_argument("--output")
     parser.add_argument(

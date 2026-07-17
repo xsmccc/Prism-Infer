@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 import pytest
 
-from prism_infer.models.qwen3_vl import Qwen3VLTextMLP
+from prism_infer.models.qwen3_vl import Qwen3VLTextMLP, Qwen3VLTextModel
 from benchmarks.bench_packed_mlp import (
     _formal_environment_issues,
     _summarize,
@@ -92,6 +92,69 @@ def test_packed_gate_up_executes_one_projection() -> None:
             hook.remove()
     assert list(output.shape) == [2, 16]
     assert calls == {"packed": 1, "gate": 0, "up": 0}
+
+
+def test_legacy_mode_executes_two_projections_with_identical_weights() -> None:
+    packed = Qwen3VLTextMLP(
+        16,
+        24,
+        torch.float32,
+        projection_mode="packed",
+    ).eval()
+    legacy = Qwen3VLTextMLP(
+        16,
+        24,
+        torch.float32,
+        projection_mode="legacy",
+    ).eval()
+    legacy.load_state_dict(packed.state_dict(), strict=True)
+    calls = {"packed": 0, "gate": 0, "up": 0}
+    hooks = [
+        legacy.gate_up_proj.register_forward_hook(
+            lambda *_: calls.__setitem__("packed", calls["packed"] + 1)
+        ),
+        legacy.gate_proj.register_forward_hook(
+            lambda *_: calls.__setitem__("gate", calls["gate"] + 1)
+        ),
+        legacy.up_proj.register_forward_hook(
+            lambda *_: calls.__setitem__("up", calls["up"] + 1)
+        ),
+    ]
+    x = torch.randn(2, 16)
+    try:
+        with torch.inference_mode():
+            packed_output = packed(x)
+            legacy_output = legacy(x)
+    finally:
+        for hook in hooks:
+            hook.remove()
+    torch.testing.assert_close(packed_output, legacy_output, rtol=1e-5, atol=1e-7)
+    assert calls == {"packed": 0, "gate": 1, "up": 1}
+
+
+def test_mlp_projection_mode_rejects_unknown_value() -> None:
+    with pytest.raises(ValueError, match="projection_mode"):
+        Qwen3VLTextMLP(16, 24, torch.float32, projection_mode="auto")
+
+
+def test_projection_mode_propagates_to_every_decoder_layer() -> None:
+    model = Qwen3VLTextModel(
+        vocab_size=32,
+        hidden_size=8,
+        num_heads=2,
+        num_kv_heads=1,
+        num_layers=3,
+        intermediate_size=16,
+        dtype=torch.float32,
+        head_dim=4,
+        mrope_section=[1, 1, 0],
+        mlp_projection_mode="legacy",
+    )
+    assert [layer.mlp.projection_mode for layer in model.layers] == [
+        "legacy",
+        "legacy",
+        "legacy",
+    ]
 
 
 def test_packed_mlp_benchmark_formal_environment_gate() -> None:

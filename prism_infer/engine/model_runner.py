@@ -126,7 +126,10 @@ class ModelRunner:
         torch.set_default_dtype(self.model_dtype)       # 设为模型精度 (如 bfloat16)
         torch.set_default_device("cuda")              # 后续 torch.empty() 等默认在 GPU 上
         if self._is_vl_config(hf_config) or Qwen3ForCausalLM is None:
-            self.model = Qwen3VLForCausalLM(hf_config)  # Qwen3-VL 模型结构
+            self.model = Qwen3VLForCausalLM(
+                hf_config,
+                mlp_projection_mode=config.mlp_projection_mode,
+            )  # Qwen3-VL 模型结构
             self.model.logits_precision = config.logits_precision
             self.is_vl_model = True
         else:

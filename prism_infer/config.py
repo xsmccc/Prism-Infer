@@ -37,6 +37,7 @@ class Config:
     visual_pruning_strategy: str = "uniform"     # "uniform" | "score" | "attention"
     visual_pruning_attention_last_n_layers: int = 1  # P6.12-C 质量门禁通过的最后一层默认值
     logits_precision: str = "model"                # "model" 默认；"fp32" 仅复现旧路径
+    mlp_projection_mode: str = "packed"            # "legacy" 两次投影 | "packed" 单次 gate/up 投影
     decode_compile_region: str = "none"          # "none" | "attention"; 仅作用于 decode
     decode_compile_mode: str = "default"         # Inductor mode: "default" | "reduce-overhead"
     decode_compile_emulate_precision_casts: bool = True  # 保持 BF16 eager 中间 cast 语义
@@ -72,6 +73,11 @@ class Config:
             raise ValueError(
                 "logits_precision must be 'fp32' or 'model', "
                 f"got {self.logits_precision!r}"
+            )
+        if self.mlp_projection_mode not in ("legacy", "packed"):
+            raise ValueError(
+                "mlp_projection_mode must be 'legacy' or 'packed', "
+                f"got {self.mlp_projection_mode!r}"
             )
         if self.scheduler_policy != "fcfs":
             raise ValueError(

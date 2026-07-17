@@ -66,6 +66,7 @@ def _complete_record() -> dict[str, object]:
             "num_kvcache_blocks": 16,
             "gpu_memory_utilization": 0.9,
             "prefix_caching_enabled": False,
+            "mlp_projection_mode": "packed",
         },
         "mode": {
             "name": "off_eager",
@@ -186,6 +187,14 @@ def _complete_record() -> dict[str, object]:
             ],
         },
     }
+
+
+def test_schema_v5_remains_compatible_without_projection_mode() -> None:
+    record = _complete_record()
+    record["schema_version"] = 5
+    del record["model"]["mlp_projection_mode"]
+
+    validate_benchmark_record(record)
 
 
 def test_summarize_values_reports_required_percentiles() -> None:

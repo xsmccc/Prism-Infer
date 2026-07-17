@@ -297,8 +297,15 @@ class Qwen3VLTextMLP(nn.Module):
     """LLM MLP: Gate-Up-Down (SwiGLU)."""
 
     def __init__(self, hidden_size: int = 4096, intermediate_size: int = 12288,
-                 dtype: torch.dtype = torch.bfloat16):
+                 dtype: torch.dtype = torch.bfloat16,
+                 projection_mode: str = "packed"):
         super().__init__()
+        if projection_mode not in ("legacy", "packed"):
+            raise ValueError(
+                "projection_mode must be 'legacy' or 'packed', "
+                f"got {projection_mode!r}"
+            )
+        self.projection_mode = projection_mode
         self.gate_up_proj = _PackedLinear(
             hidden_size,
             2 * intermediate_size,
@@ -317,7 +324,11 @@ class Qwen3VLTextMLP(nn.Module):
         self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False, dtype=dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        gate, up = self.gate_up_proj(x).chunk(2, dim=-1)
+        if self.projection_mode == "packed":
+            gate, up = self.gate_up_proj(x).chunk(2, dim=-1)
+        else:
+            gate = self.gate_proj(x)
+            up = self.up_proj(x)
         return self.down_proj(F.silu(gate) * up)
 
     def _apply(self, fn, recurse: bool = True):
@@ -335,13 +346,19 @@ class Qwen3VLTextDecoderLayer(nn.Module):
 
     def __init__(self, hidden_size: int = 4096, num_heads: int = 32,
                  num_kv_heads: int = 8, intermediate_size: int = 12288,
-                 dtype: torch.dtype = torch.bfloat16, head_dim: int = 128):
+                 dtype: torch.dtype = torch.bfloat16, head_dim: int = 128,
+                 mlp_projection_mode: str = "packed"):
         super().__init__()
         self.input_layernorm = Qwen3VLTextRMSNorm(hidden_size, dtype=dtype)
         self.self_attn = Qwen3VLTextAttention(
             hidden_size, num_heads, num_kv_heads, head_dim, dtype=dtype)
         self.post_attention_layernorm = Qwen3VLTextRMSNorm(hidden_size, dtype=dtype)
-        self.mlp = Qwen3VLTextMLP(hidden_size, intermediate_size, dtype=dtype)
+        self.mlp = Qwen3VLTextMLP(
+            hidden_size,
+            intermediate_size,
+            dtype=dtype,
+            projection_mode=mlp_projection_mode,
+        )
 
     def forward(self, hidden_states: torch.Tensor,
                 position_embeddings: tuple | None = None,
@@ -378,13 +395,21 @@ class Qwen3VLTextModel(nn.Module):
                  num_layers: int = 36, intermediate_size: int = 12288,
                  dtype: torch.dtype = torch.bfloat16,
                  head_dim: int = 128, rope_theta: float = 5000000.0,
-                 mrope_section: list[int] | None = None):
+                 mrope_section: list[int] | None = None,
+                 mlp_projection_mode: str = "packed"):
         super().__init__()
         dtype = _normalize_dtype(dtype)
         self.embed_tokens = nn.Embedding(vocab_size, hidden_size, dtype=dtype)
         self.layers = nn.ModuleList([
-            Qwen3VLTextDecoderLayer(hidden_size, num_heads, num_kv_heads,
-                                     intermediate_size, dtype, head_dim)
+            Qwen3VLTextDecoderLayer(
+                hidden_size,
+                num_heads,
+                num_kv_heads,
+                intermediate_size,
+                dtype,
+                head_dim,
+                mlp_projection_mode,
+            )
             for _ in range(num_layers)
         ])
         self.norm = Qwen3VLTextRMSNorm(hidden_size, dtype=dtype)
@@ -393,7 +418,13 @@ class Qwen3VLTextModel(nn.Module):
                                 mrope_section=mrope_section or [24, 20, 20])
 
     @classmethod
-    def from_config(cls, config, dtype: torch.dtype | None = None):
+    def from_config(
+        cls,
+        config,
+        dtype: torch.dtype | None = None,
+        *,
+        mlp_projection_mode: str = "packed",
+    ):
         text_config = _text_config(config)
         dtype = _normalize_dtype(dtype or _cfg_get(
             text_config, "torch_dtype", default=_cfg_get(config, "torch_dtype",
@@ -418,6 +449,7 @@ class Qwen3VLTextModel(nn.Module):
             head_dim=head_dim,
             rope_theta=_cfg_get(text_config, "rope_theta", default=5000000.0),
             mrope_section=_mrope_section(text_config),
+            mlp_projection_mode=mlp_projection_mode,
         )
 
     def forward(self, input_ids: torch.Tensor | None = None,
@@ -504,7 +536,13 @@ class Qwen3VLModel(nn.Module):
       4. LLM forward (每 layer 之后检查是否需要注入 deepstack)
     """
 
-    def __init__(self, config=None, dtype: torch.dtype | None = None):
+    def __init__(
+        self,
+        config=None,
+        dtype: torch.dtype | None = None,
+        *,
+        mlp_projection_mode: str = "packed",
+    ):
         super().__init__()
         text_config = _text_config(config)
         dtype = _normalize_dtype(dtype or _cfg_get(
@@ -514,8 +552,16 @@ class Qwen3VLModel(nn.Module):
         vision_config = _vision_config(config)
         self.visual = VisionEncoder(vision_config, dtype=dtype)
         self.language_model = (
-            Qwen3VLTextModel.from_config(config, dtype=dtype)
-            if config is not None else Qwen3VLTextModel(dtype=dtype)
+            Qwen3VLTextModel.from_config(
+                config,
+                dtype=dtype,
+                mlp_projection_mode=mlp_projection_mode,
+            )
+            if config is not None
+            else Qwen3VLTextModel(
+                dtype=dtype,
+                mlp_projection_mode=mlp_projection_mode,
+            )
         )
         # <|image_pad|> token ID (HF config.image_token_id)
         self.image_token_id = _cfg_get(config, "image_token_id",
@@ -664,7 +710,13 @@ class Qwen3VLModel(nn.Module):
 class Qwen3VLForCausalLM(nn.Module):
     """Qwen3-VL-8B 完整模型."""
 
-    def __init__(self, config=None, dtype: torch.dtype | None = None):
+    def __init__(
+        self,
+        config=None,
+        dtype: torch.dtype | None = None,
+        *,
+        mlp_projection_mode: str = "packed",
+    ):
         # Backward compatibility: Qwen3VLForCausalLM(torch.bfloat16)
         if isinstance(config, torch.dtype):
             dtype = config
@@ -679,7 +731,11 @@ class Qwen3VLForCausalLM(nn.Module):
         vocab_size = _cfg_get(text_config, "vocab_size",
                               default=_cfg_get(config, "vocab_size",
                                                default=151936))
-        self.model = Qwen3VLModel(config, dtype=dtype)
+        self.model = Qwen3VLModel(
+            config,
+            dtype=dtype,
+            mlp_projection_mode=mlp_projection_mode,
+        )
         self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False, dtype=dtype)
         # HF uses the loaded model dtype for lm_head.  Keep fp32 as an explicit
         # historical-reproduction mode; converting the full weight every decode
