@@ -3,6 +3,8 @@ Qwen3-VL-8B 完整模型定义 (Vision + LLM + DeepStack).
 
 参照 HF Qwen3VLForConditionalGeneration 结构。
 """
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -49,6 +51,77 @@ def _mrope_section(text_config):
     if rope_scaling is not None and hasattr(rope_scaling, "mrope_section"):
         return rope_scaling.mrope_section
     return _cfg_get(text_config, "mrope_section", default=[24, 20, 20])
+
+
+class _PackedLinear(nn.Module):
+    """只保存一次连续权重、但不改变外部 state-dict 合同的线性层。"""
+
+    def __init__(
+        self,
+        input_size: int,
+        output_size: int,
+        *,
+        dtype: torch.dtype,
+    ) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(
+            torch.empty(output_size, input_size, dtype=dtype)
+        )
+        nn.init.uniform_(
+            self.weight,
+            -1.0 / math.sqrt(input_size),
+            1.0 / math.sqrt(input_size),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.linear(x, self.weight)
+
+    def _save_to_state_dict(self, destination, prefix, keep_vars) -> None:
+        # gate_proj/up_proj 的 Parameter view 仍输出 HF-compatible keys；packed
+        # storage 是执行细节，不能再保存一份重复权重。
+        return None
+
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ) -> None:
+        # 旧 state dict 会在 sibling gate_proj/up_proj 中直接写入共享 storage。
+        return None
+
+
+class _LinearWeightView(nn.Module):
+    """把 packed weight 的一个连续 row slice 暴露为兼容的 Linear module。"""
+
+    def __init__(
+        self,
+        packed_weight: nn.Parameter,
+        start: int,
+        length: int,
+    ) -> None:
+        super().__init__()
+        self.start = start
+        self.length = length
+        self.weight = nn.Parameter(
+            packed_weight.narrow(0, start, length),
+            requires_grad=packed_weight.requires_grad,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.linear(x, self.weight)
+
+    def rebind(self, packed_weight: nn.Parameter) -> None:
+        """在 Module.to/_apply 后恢复共享 storage，避免转换产生副本。"""
+
+        self._parameters["weight"] = nn.Parameter(
+            packed_weight.narrow(0, self.start, self.length),
+            requires_grad=packed_weight.requires_grad,
+        )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -226,12 +299,32 @@ class Qwen3VLTextMLP(nn.Module):
     def __init__(self, hidden_size: int = 4096, intermediate_size: int = 12288,
                  dtype: torch.dtype = torch.bfloat16):
         super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False, dtype=dtype)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False, dtype=dtype)
+        self.gate_up_proj = _PackedLinear(
+            hidden_size,
+            2 * intermediate_size,
+            dtype=dtype,
+        )
+        self.gate_proj = _LinearWeightView(
+            self.gate_up_proj.weight,
+            0,
+            intermediate_size,
+        )
+        self.up_proj = _LinearWeightView(
+            self.gate_up_proj.weight,
+            intermediate_size,
+            intermediate_size,
+        )
         self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False, dtype=dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
+        gate, up = self.gate_up_proj(x).chunk(2, dim=-1)
+        return self.down_proj(F.silu(gate) * up)
+
+    def _apply(self, fn, recurse: bool = True):
+        super()._apply(fn, recurse=recurse)
+        self.gate_proj.rebind(self.gate_up_proj.weight)
+        self.up_proj.rebind(self.gate_up_proj.weight)
+        return self
 
 
 # ═══════════════════════════════════════════════════════════════
