@@ -3,6 +3,7 @@
 > P6 冻结基线: `p6.12-content-aware-kv` (`c970c61`)
 > 当前 P7.4-B 验证点: `72f85ba`
 > 当前 P7.5/P8 验证点: projection mode `8293851`；online/trace/final gate `021d4e2`
+> 当前 P9-A baseline 点: `29c0dbe`
 > 更新日期: 2026-07-17
 
 本表区分“已实现”“已验证”和“性能占优”。README、简历和面试中的数字必须能
@@ -37,6 +38,8 @@
 | packed gate/up通过完整数值与online回归 | single/multi-image/video HF；text/image/video/mixed/7-image E2E；2个online A/B | HF model-precision logits/PPL diff `0`；offline/online token exact；online双方goodput fraction `1.0` |
 | P7.5后当前主线完整回归通过 | clean `021d4e2`，单卡环境 | JUnit `287 tests / 0 failures / 0 errors / 6 skipped`，即`281 passed, 6 skipped in 297.622s` |
 | fresh editable环境跑通完整8B最小demo | clean `021d4e2`，同一宿主CUDA/PyTorch stack | 新venv安装声明依赖与wheel；`example.py`输出8个token和decoded text，正常释放GPU |
+| 细 page 在限定 paged-decode matrix 中降低 kernel latency | clean `29c0dbe`、RTX 5090、BF16、Qwen GQA、batch `1/8`、context `4096/8192` | page16/32 的最优 kernel median 相对 page256 低 `13.6%–20.1%`；20/20 correctness PASS，见 `PERFORMANCE_REPORT.md` 7.1 |
+| P9-A 架构/协议/正式基线门禁通过 | RFC、versioned manifest、clean Page Matrix、NCU raw evidence | focused regression `64 passed in 6.99s`；compile/link/artifact/diff/GPU release gate PASS |
 
 ## 必须带限制的结论
 
@@ -56,6 +59,8 @@
 | packed gate/up TPOT改善`0.483%–0.762%` | 只覆盖记录的8个offline cells、RTX 5090 TP1与Qwen3-VL-8B；不是稳定E2E latency或online goodput speedup |
 | packed gate/up的online A/B均满足SLO | 每个cell只有一次process-level run；用于regression/SLO，不计算可信speedup区间 |
 | P8 fresh-environment完整8B demo已通过 | venv复用了同一宿主CUDA/PyTorch/driver stack；不证明另一台机器的CUDA ABI或性能可复刻 |
+| page16/32 相对 page256 的 kernel median 低 `13.6%–20.1%` | 仅为 P9-A paged-decode microbenchmark；context 都能被 page 整除，未覆盖碎片，不是 full-engine TPOT/吞吐，也不是相对 vLLM/SGLang 的优势 |
+| NCU page16/page256 的 occupancy 约 `12.5%`、waves/SM `0.17–0.19` | 只解释 batch8/context4096 的单个 kernel launch；不能外推为 full-engine GPU utilization，不能仅凭低 counter 定性为纯 memory-bound/compute-bound |
 
 ## 当前禁止的结论
 
@@ -66,7 +71,9 @@
 - “offline batch tok/s 等价于 online serving throughput/goodput”。
 - “P7.3 已证明 HTTP/gRPC 服务性能”或“已证明相对 vLLM 的 online goodput 优势”。
 - “P7.3 正式矩阵证明了 swap/recompute 性能”；正式 9-cell matrix 未触发 preemption。
-- “TP2 已验证”或“多卡可扩展”；当前机器只有一张可见 RTX 5090。
+- “TP2 已验证”或“多卡可扩展”；当前 8 张 RTX 5090 均可见，但 Prism
+  Torch 2.6/CUDA 12.8/NCCL 2.25.1 的 SM120 collective 失败。隔离的新栈 control
+  PASS 只定位 software-stack blocker，不等于 Prism TP2 PASS。
 - “已实现 megakernel/PD 分离/投机解码”。
 - “GPU span减去 busy就是 occupancy/可消除 idle”或“sampler的 CPU range可与 Graph
   replay直接相加”；node tracing有 instrumentation，sampler CPU时间暴露前序 stream同步。

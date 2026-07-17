@@ -1,7 +1,7 @@
 # Prism-Infer 性能报告
 
-> 更新日期: 2026-07-15
-> 当前阶段: P6.12-B content-aware visual pruning quality research
+> 更新日期: 2026-07-17
+> 当前阶段: P9-A architecture/performance baseline
 > 报告性质: 包含 dirty validation 与 clean formal evidence；每节单独标注结论边界
 
 ## 1. 结论边界
@@ -422,7 +422,7 @@ P6 原阶段 Review full regression 为 `195 passed, 5 skipped in 245.50s`；var
 2. uniform pruning 的质量门禁失败，不能发布 accuracy drop `<1%` claim。
 3. Prism eager TPOT 约 32-33 ms，固定 external eager baseline 约 14-16 ms；当前端到端路径约慢 2 倍。
 4. CUDA Graph 已证明 Prism off decode 可加速 `1.68x-1.79x`，所以最近的高价值工程方向是 compressed layout 的 graph-safe metadata/control path，而不是继续优化已非主瓶颈的 compaction copy。
-5. TP2 目前仍不是已验证能力：fixed 1 MiB control shared memory 已替换为 variable-size Pipe，4,817,396-byte 视觉 payload 双 worker focused test PASS；但当前只有一张 GPU，TP1/TP2 greedy、logits、NCCL、每卡显存与性能均未实测。
+5. TP2 在 P6 review 时仍不是已验证能力：fixed 1 MiB control shared memory 已替换为 variable-size Pipe，4,817,396-byte 视觉 payload 双 worker focused test PASS，但当时未完成两卡动态门禁。P9 后续确认 8 卡均可见；当前阻断是 Prism Torch 2.6/CUDA 12.8/NCCL 2.25.1 的 SM120 collective，而非“只有一张 GPU”。
 
 因此 P6 的准确表述是“系统测量、关键优化和 variable-size TP control plane 闭环完成，并暴露出质量、framework overhead 与两卡动态验证三个下一阶段问题”，不是“吞吐超过 vLLM/SGLang”。clean commit 之前所有性能数字仍是内部 dirty-worktree evidence。
 
@@ -1196,3 +1196,70 @@ data/p7_optimization/p75_summary_021d4e2.{json,md}
 data/p8_delivery/example_fresh_021d4e2.stdout.txt
 data/p8_delivery/final_full_regression_021d4e2.xml
 ```
+
+## 7. P9-A Paged-KV Page Baseline 与 NCU 闭环
+
+### 7.1 Formal matrix contract
+
+clean commit `29c0dbedc6c945637f286dd6ac6916b12dcee5ae` 在 RTX 5090 UUID
+`GPU-989db6f6-3273-d1dd-b2b9-56cced4f30a4` 上固定 Qwen GQA shape
+`32 query heads / 8 KV heads / head_dim 128`、BF16、seed `20260717`，覆盖 page
+`16/32/64/128/256`、batch `1/8`、context `4096/8192`。每格 warmup/repeat
+为 `10/100`，每个 sample 前后执行 CUDA synchronize，启动 GPU gate 为
+`memory.used <= 1024 MiB`、`utilization <= 5%`。
+
+20/20 correctness PASS，每格 100 samples，全部 `git_dirty=false`。全矩阵最大
+max abs diff 为 `4.882812e-4`，最大 observed mean abs diff 为 `3.035463e-5`。
+
+| Batch | Context | P16 | P32 | P64 | P128 | P256 | Best vs P256 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 4096 | 0.2385 ms | 0.2364 ms | 0.2735 ms | 0.2729 ms | 0.2736 ms | 13.6% lower |
+| 1 | 8192 | 0.4491 ms | 0.4464 ms | 0.5205 ms | 0.5200 ms | 0.5208 ms | 14.3% lower |
+| 8 | 4096 | 0.3711 ms | 0.3695 ms | 0.4570 ms | 0.4571 ms | 0.4578 ms | 19.3% lower |
+| 8 | 8192 | 0.7023 ms | 0.7048 ms | 0.8792 ms | 0.8797 ms | 0.8793 ms | 20.1% lower |
+
+因此 page16/32 进入后续 allocator/kernel 候选。这个结论只覆盖 paged-decode
+kernel microbenchmark：当前 context 都能被 page 整除，没有测页尾碎片；SDPA
+reference 含 Python page gather，只用于 correctness。不能把表中改善写成 full-engine
+TPOT 或吞吐，也不能在 E2E gate 前直接修改默认 page size。
+
+Raw evidence：
+
+```text
+data/p9_baseline/paged_decode_page_matrix_29c0dbe.jsonl
+SHA256: 9460339fdf9bce7a4b8dfb6b4c8b93b0dc973f914b473d38e8516addb3b757b8
+```
+
+### 7.2 Clean NCU evidence
+
+同一 clean commit 对 batch8/context4096 的 page16/page256 各采集一次 NCU 2025.1
+full set；两次 launch 都是 grid `(8, 32, 1)`、block 128 threads：
+
+| Page | Duration | DRAM | Compute | Occupancy | Waves/SM | Registers/thread |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 449.95 us | 17.48% | 14.16% | 12.49% | 0.19 | 64 |
+| 256 | 543.26 us | 14.44% | 11.70% | 12.48% | 0.17 | 56 |
+
+NCU 对两格都报告 grid 太小、只有约 `0.2` full waves。低 DRAM/compute counter
+不能单独证明纯 memory-bound 或 compute-bound，更不能代表 full-engine utilization。
+下一 kernel 候选因此是 `GQA query-head grouping + context split-K/split-attention +
+stable softmax merge`；只合并四个 query heads 会把 grid 从 256 降到 64，不进入计时。
+
+早期权限恢复 diagnostic 的 `445.60/550.46 us` 已由以下 clean raw evidence 取代：
+
+```text
+data/p9_baseline/ncu_paged_decode_page16_b8_c4096_29c0dbe.{ncu-rep,csv,log}
+page16 report SHA256: 32101271e93747f087f6a836b991ea95a07e747ee68c5e48c761ef83b9bfed35
+page16 CSV SHA256: b336814d2c2b4969b6e7d42ca030b6c33d3588b13066dedf153a50a3d4e9205a
+data/p9_baseline/ncu_paged_decode_page256_b8_c4096_29c0dbe.{ncu-rep,csv,log}
+page256 report SHA256: 96b92cf9e878036f210ff339808c29f02a25358fcf38c4fe1c078db45d3fe478
+page256 CSV SHA256: fd6b45825ecb86cfe390507c485a81a18d67e6205f89ab5927efdf07c53a874c
+```
+
+### 7.3 P9-A gate
+
+benchmark schema、Paged Attention、Qwen attention、P9 protocol 与 benchmark helper
+组合回归为 `64 passed in 6.99s`；`compileall prism_infer tests benchmarks scripts`、
+57 个本地 Markdown 链接、artifact/hash 复核和 `git diff --check` 均 PASS。结束时
+8 卡均回到 `1 MiB / 0%`。P9-A 判定 PASS；下一阶段先做架构硬化，不把 scaled FP8
+或 split-GQA kernel 混入同一迁移 diff。

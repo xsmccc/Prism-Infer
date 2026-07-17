@@ -154,10 +154,10 @@ NCU 2025.1 已能在 RTX 5090 采集真实 counters；旧 blocker 关闭。
 
 BF16 Paged Attention、Qwen GQA、batch8/context4096 的代表性结果：
 
-| Page | Duration | DRAM throughput | Compute throughput | Achieved occupancy | Waves/SM |
-|---:|---:|---:|---:|---:|---:|
-| 16 | 445.60 us | 17.67% | 14.26% | 12.55% | 0.19 |
-| 256 | 550.46 us | 14.31% | 11.70% | 12.47% | 0.17 |
+| Page | Duration | DRAM throughput | Compute throughput | Achieved occupancy | Waves/SM | Registers/thread |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 449.95 us | 17.48% | 14.16% | 12.49% | 0.19 | 64 |
+| 256 | 543.26 us | 14.44% | 11.70% | 12.48% | 0.17 | 56 |
 
 两者 correctness 均 PASS，max diff `4.882812e-4`、mean diff约 `3.0e-5`。NCU
 明确提示 launch grid 太小；当前 grid 为 `(batch, query_head)=256`。这些数字支持
@@ -170,6 +170,8 @@ BF16 Paged Attention、Qwen GQA、batch8/context4096 的代表性结果：
 P9 候选是 GQA query-head grouping 与 context split/稳定 softmax merge 的组合；只做
 GQA 合并会把 grid 降到 64，不能进入计时。正式 raw report、page matrix 与命令记录在
 `VERIFICATION.md` P9-A；以后新的 kernel claim 仍需独立 NCU/NSYS 闭环。
+上述 clean raw 数字取代权限恢复后的早期 diagnostic `445.60/550.46 us`，后者不再
+作为正式 counter evidence。
 
 ## KI-005：unit-scale FP8 KV quality FAIL
 

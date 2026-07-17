@@ -3512,19 +3512,51 @@ ncu --version
 # Nsight Compute 2025.1.0.0
 ```
 
-BF16/Qwen GQA、batch8/context4096、page16/256 代表性 counter：
+BF16/Qwen GQA、batch8/context4096、page16/256 clean full-set counter：
 
-| Page | Duration | DRAM throughput | Compute throughput | Achieved occupancy | Waves/SM |
-|---:|---:|---:|---:|---:|---:|
-| 16 | 445.60 us | 17.67% | 14.26% | 12.55% | 0.19 |
-| 256 | 550.46 us | 14.31% | 11.70% | 12.47% | 0.17 |
+| Page | Duration | DRAM throughput | Compute throughput | Achieved occupancy | Waves/SM | Registers/thread |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 449.95 us | 17.48% | 14.16% | 12.49% | 0.19 | 64 |
+| 256 | 543.26 us | 14.44% | 11.70% | 12.48% | 0.17 | 56 |
 
 correctness 均 PASS，max diff `4.882812e-4`、mean diff约 `3.0e-5`。NCU 对两个 case
 都指出 grid 太小；当前 launch grid 是 `(batch, query_head)=256`。判定：KI-004
 CLOSED；counter 只解释该 kernel/case，不外推为 full-engine GPU utilization。
+两格 block 都是 128 threads，NCU 规则给出约 `0.2` full waves；不能把低 DRAM/
+compute counter 简化为纯 memory-bound/compute-bound。早期权限恢复 diagnostic 的
+`445.60/550.46 us` 没有配套 clean raw，已被本节数字取代，不得混用。
 
-正式复现要求保存 `.ncu-rep`、CSV/page summary、命令 stdout/stderr 和文件 SHA256。
-raw artifact 未落盘前，P9-A 的 profiler artifact 子门禁仍为 PENDING。
+report 内嵌的 profiler command 等价于（`PAGE=16` 和 `PAGE=256` 各执行一次）：
+
+```bash
+PAGE=16
+STEM="data/p9_baseline/ncu_paged_decode_page${PAGE}_b8_c4096_29c0dbe"
+ncu --target-processes all --set full \
+  --kernel-name-base demangled \
+  --kernel-name 'regex:.*paged_decode_attention_kernel.*' \
+  --launch-count 1 \
+  --export "$STEM" --force-overwrite --log-file "${STEM}.log" \
+  .venv-local/bin/python benchmarks/bench_paged_decode.py \
+  --page-sizes "$PAGE" --batch-sizes 8 --context-lens 4096 \
+  --cache-dtypes bf16 --warmup 1 --repeat 1 --seed 20260717
+
+ncu --import "${STEM}.ncu-rep" --csv --page raw > "${STEM}.csv"
+```
+
+正式 artifacts 与 SHA256：
+
+```text
+data/p9_baseline/ncu_paged_decode_page16_b8_c4096_29c0dbe.ncu-rep
+32101271e93747f087f6a836b991ea95a07e747ee68c5e48c761ef83b9bfed35
+data/p9_baseline/ncu_paged_decode_page16_b8_c4096_29c0dbe.csv
+b336814d2c2b4969b6e7d42ca030b6c33d3588b13066dedf153a50a3d4e9205a
+data/p9_baseline/ncu_paged_decode_page256_b8_c4096_29c0dbe.ncu-rep
+96b92cf9e878036f210ff339808c29f02a25358fcf38c4fe1c078db45d3fe478
+data/p9_baseline/ncu_paged_decode_page256_b8_c4096_29c0dbe.csv
+fd6b45825ecb86cfe390507c485a81a18d67e6205f89ab5927efdf07c53a874c
+```
+
+对应 `.log` 同目录保存 profiler stdout/stderr。判定：profiler raw-artifact 子门禁 PASS。
 
 ### P9-A.5 结构化 Paged Attention benchmark
 
@@ -3579,21 +3611,63 @@ PYTHONPATH=/data/Prism-Infer python benchmarks/bench_paged_decode.py \
   --output data/p9_baseline/paged_decode_page_matrix_<commit>.jsonl
 ```
 
-PASS 标准：20/20 correctness、clean commit、GPU gate PASS、结构化记录可逐行解析；
-正式 latency、best page 和 P9-B kernel baseline 必须等该命令实跑后再填写。
+正式结果来自 clean commit `29c0dbedc6c945637f286dd6ac6916b12dcee5ae`、RTX 5090
+UUID `GPU-989db6f6-3273-d1dd-b2b9-56cced4f30a4`。20/20 correctness PASS，每格
+100 samples，`git_dirty=false`，GPU preflight PASS。kernel median：
+
+| Batch | Context | P16 | P32 | P64 | P128 | P256 | Best vs P256 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 4096 | 0.2385 ms | 0.2364 ms | 0.2735 ms | 0.2729 ms | 0.2736 ms | 13.6% lower |
+| 1 | 8192 | 0.4491 ms | 0.4464 ms | 0.5205 ms | 0.5200 ms | 0.5208 ms | 14.3% lower |
+| 8 | 4096 | 0.3711 ms | 0.3695 ms | 0.4570 ms | 0.4571 ms | 0.4578 ms | 19.3% lower |
+| 8 | 8192 | 0.7023 ms | 0.7048 ms | 0.8792 ms | 0.8797 ms | 0.8793 ms | 20.1% lower |
+
+全矩阵最大 max diff 为 `4.882812e-4`，最大 observed mean diff 为
+`3.035463e-5`。raw evidence：
+
+```text
+data/p9_baseline/paged_decode_page_matrix_29c0dbe.jsonl
+SHA256: 9460339fdf9bce7a4b8dfb6b4c8b93b0dc973f914b473d38e8516addb3b757b8
+```
+
+判定：formal matrix PASS；page16/32 进入下一阶段候选。边界是本矩阵的 context
+都能被 page size 整除，尚未覆盖页尾碎片；SDPA reference 包含 Python page gather，
+只用于 correctness。上述 kernel microbenchmark 不能直接表述为 full-engine TPOT，
+也不足以立即修改默认 page size。
 
 ### P9-A.6 Gate Review（当前）
+
+最终 focused regression：
+
+```bash
+PYTHONPATH=/data/Prism-Infer .venv-local/bin/python -m pytest -q \
+  tests/test_benchmark_schema.py \
+  tests/test_paged_decode_kernel.py \
+  tests/test_qwen3_vl_attention_kv.py \
+  tests/test_p9_protocol.py \
+  tests/test_bench_paged_decode.py
+# 64 passed in 6.99s
+
+.venv-local/bin/python -m compileall -q prism_infer tests benchmarks scripts
+git diff --check
+```
+
+本地 Markdown 链接检查覆盖 README 与 `docs/**/*.md`，结果为
+`checked_local_links=57 / PASS`；Page Matrix 与四个 NCU report/CSV SHA256 重新计算
+全部匹配；结束快照为 8 卡各 `1 MiB / 0%`。本地证据提交后要求 `git status` clean。
 
 - [x] 架构、量化、Graph/compiler、kernel、scheduler/server 与 TP 决策冻结。
 - [x] 8-GPU topology、Prism-stack blocker 和隔离-stack control 已定位。
 - [x] NCU counter 权限恢复，代表性 page16/256 指标已采集。
 - [x] structured benchmark helper tests 与 dirty smoke PASS。
 - [x] H1/H2/H3 与 DocVQA/MuirBench/MVBench manifest/hash/revision 冻结。
-- [ ] clean 20-cell page matrix。
-- [ ] NCU raw artifacts 与 SHA256。
-- [ ] P9-A 最终 focused regression、文档链接和 clean worktree。
+- [x] clean 20-cell page matrix。
+- [x] NCU raw artifacts 与 SHA256。
+- [x] P9-A 最终 focused regression、文档链接和 clean worktree。
 
-当前判定：P9-A IN PROGRESS，尚未进入 P9-B。
+当前判定：P9-A PASS；允许进入 P9-B。P9-B 第一批 diff 仍只允许处理 typed config、
+`Sequence` 全局 page state 与 execution backend contract，不能混入 scaled FP8 或
+kernel 改动。
 
 ## 每次任务交付模板
 

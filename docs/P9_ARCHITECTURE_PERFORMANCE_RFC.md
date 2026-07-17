@@ -1,6 +1,6 @@
 # P9 架构与性能旗舰化 RFC
 
-> 状态：ACCEPTED FOR P9-A  
+> 状态：P9-A PASS；P9-B ENTRY APPROVED
 > 日期：2026-07-17  
 > 目标模型：Qwen3-VL-8B-Instruct  
 > 目标硬件：单张 NVIDIA GeForce RTX 5090 32 GiB；TP2 为条件分支  
@@ -414,14 +414,16 @@ backend。任何量化 artifact 都要单独记录 revision、校准集和标准
 
 RTX 5090、BF16、Qwen GQA、batch=8、context=4096 的真实 NCU counter：
 
-| Page | Duration | DRAM throughput | Compute throughput | Achieved occupancy | Waves/SM |
-|---:|---:|---:|---:|---:|---:|
-| 16 | 445.60 us | 17.67% | 14.26% | 12.55% | 0.19 |
-| 256 | 550.46 us | 14.31% | 11.70% | 12.47% | 0.17 |
+| Page | Duration | DRAM throughput | Compute throughput | Achieved occupancy | Waves/SM | Registers/thread |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 449.95 us | 17.48% | 14.16% | 12.49% | 0.19 | 64 |
+| 256 | 543.26 us | 14.44% | 11.70% | 12.48% | 0.17 | 56 |
 
 两者对 SDPA reference correctness 均 PASS，max diff `4.882812e-4`、mean diff 约
 `3.0e-5`。该 kernel 既没有接近 DRAM roof，也没有接近 compute roof；首要证据是
-grid 过小而非单纯“memory-bound”。
+grid 过小而非单纯“memory-bound”。表中数字来自 clean commit `29c0dbe` 保存的
+NCU full-set raw report；此前 diagnostic 的 `445.60/550.46 us` 已被正式 raw evidence
+取代，不能与本表混用。
 
 ### 9.2 候选设计
 
@@ -526,12 +528,12 @@ P9-A 只有满足以下条件才能 PASS：
 - [x] 目标架构、量化、Graph/compiler、kernel、scheduler/server 和 TP 决策冻结。
 - [x] H1/H2/H3 与标准质量集生成 versioned manifest，并保存 canonical content hash；
   数据集媒体物化 hash 属 P9-C 质量运行前置门禁。
-- [ ] `bench_paged_decode.py` 支持固定 seed、多 page matrix、JSON/JSONL 和完整环境记录。
-- [ ] page `16/32/64/128/256` × batch `1/8` × context `4096/8192` clean BF16
+- [x] `bench_paged_decode.py` 支持固定 seed、多 page matrix、JSON/JSONL 和完整环境记录。
+- [x] page `16/32/64/128/256` × batch `1/8` × context `4096/8192` clean BF16
   formal matrix 完成。
-- [ ] page 16/256 NCU raw report、counter summary 和复现命令落盘。
-- [ ] KI-003/KI-004、ROADMAP、VERIFICATION 与本 RFC 一致。
-- [ ] focused tests、`git diff --check` 和文档链接检查 PASS。
+- [x] page 16/256 NCU raw report、counter summary 和复现命令落盘。
+- [x] KI-003/KI-004、ROADMAP、VERIFICATION 与本 RFC 一致。
+- [x] focused tests、`git diff --check` 和文档链接检查 PASS。
 
 P9-B 的第一批改动只允许处理配置、全局 state 和 backend contract。scaled FP8 或
 kernel 改动不能与架构迁移混在同一 correctness diff 中。
