@@ -422,7 +422,7 @@ P6 原阶段 Review full regression 为 `195 passed, 5 skipped in 245.50s`；var
 2. uniform pruning 的质量门禁失败，不能发布 accuracy drop `<1%` claim。
 3. Prism eager TPOT 约 32-33 ms，固定 external eager baseline 约 14-16 ms；当前端到端路径约慢 2 倍。
 4. CUDA Graph 已证明 Prism off decode 可加速 `1.68x-1.79x`，所以最近的高价值工程方向是 compressed layout 的 graph-safe metadata/control path，而不是继续优化已非主瓶颈的 compaction copy。
-5. TP2 在 P6 review 时仍不是已验证能力：fixed 1 MiB control shared memory 已替换为 variable-size Pipe，4,817,396-byte 视觉 payload 双 worker focused test PASS，但当时未完成两卡动态门禁。P9 后续确认 8 卡均可见；当前阻断是 Prism Torch 2.6/CUDA 12.8/NCCL 2.25.1 的 SM120 collective，而非“只有一张 GPU”。
+5. TP2 仍不是已验证能力：fixed 1 MiB control shared memory 已替换为 variable-size Pipe，4,817,396-byte 视觉 payload 双 worker focused test PASS，但当前租约只分配 GPU0。P9-A 曾误把管理员开放 NCU/NSYS 后的宿主机可见性当作多卡分配；跨 GPU1 的尝试已作废，不能归因于 NCCL/SM120。
 
 因此 P6 的准确表述是“系统测量、关键优化和 variable-size TP control plane 闭环完成，并暴露出质量、framework overhead 与两卡动态验证三个下一阶段问题”，不是“吞吐超过 vLLM/SGLang”。clean commit 之前所有性能数字仍是内部 dirty-worktree evidence。
 
@@ -1261,5 +1261,5 @@ page256 CSV SHA256: fd6b45825ecb86cfe390507c485a81a18d67e6205f89ab5927efdf07c53a
 benchmark schema、Paged Attention、Qwen attention、P9 protocol 与 benchmark helper
 组合回归为 `64 passed in 6.99s`；`compileall prism_infer tests benchmarks scripts`、
 57 个本地 Markdown 链接、artifact/hash 复核和 `git diff --check` 均 PASS。结束时
-8 卡均回到 `1 MiB / 0%`。P9-A 判定 PASS；下一阶段先做架构硬化，不把 scaled FP8
+已分配 GPU0 回到 `1 MiB / 0%`；其他可见设备不纳入 release gate。P9-A 判定 PASS；下一阶段先做架构硬化，不把 scaled FP8
 或 split-GQA kernel 混入同一迁移 diff。

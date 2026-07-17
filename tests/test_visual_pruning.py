@@ -18,6 +18,8 @@ from prism_infer.engine.visual_pruning import (
 def _mixed_visual_sequence() -> Sequence:
     return Sequence(
         [1, 99, 99, 2, 98, 98, 3, 99],
+        block_size=256,
+        request_id=0,
         image_token_id=99,
         image_token_count=3,
         video_token_id=98,
@@ -116,7 +118,13 @@ def test_visual_pruning_rejects_unsupported_strategy_and_bad_metadata():
     with pytest.raises(ValueError, match="unsupported strategy"):
         VisualPruningConfig(strategy="importance")
 
-    bad_seq = Sequence([1, 99, 99, 2], image_token_id=99, image_token_count=3)
+    bad_seq = Sequence(
+        [1, 99, 99, 2],
+        block_size=256,
+        request_id=1,
+        image_token_id=99,
+        image_token_count=3,
+    )
     with pytest.raises(ValueError, match="image token count mismatch"):
         find_visual_token_spans(bad_seq)
     print("visual pruning metadata guards: PASS")

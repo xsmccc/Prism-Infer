@@ -78,7 +78,7 @@ def test_p611_config_rejects_logical_prune_cuda_graph(
     """logical retained-slot metadata 不能静默绕过用户请求的 CUDA Graph。"""
 
     _patch_auto_config(monkeypatch)
-    with pytest.raises(ValueError, match="requires enforce_eager=True"):
+    with pytest.raises(ValueError, match="requires execution backend 'eager'"):
         Config(
             str(tmp_path),
             max_model_len=1024,

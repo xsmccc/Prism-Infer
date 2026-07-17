@@ -15,6 +15,7 @@ def _runner(enable_chunked_prefill: bool = False) -> ModelRunner:
     runner.config = SimpleNamespace(
         enable_chunked_prefill=enable_chunked_prefill,
         max_chunk_size=2,
+        execution_backend="eager",
     )
     runner.rank = 0
     return runner
@@ -24,7 +25,7 @@ def test_model_runner_run_resets_context_when_forward_raises() -> None:
     """run_model 抛异常时必须 reset_context，避免下一轮 attention 读到脏状态。"""
 
     runner = _runner(enable_chunked_prefill=False)
-    seq = Sequence([1, 2, 3])
+    seq = Sequence([1, 2, 3], block_size=4, request_id=0)
 
     def prepare_prefill(self, seqs):
         set_context(True, slot_mapping=torch.tensor([7], dtype=torch.int32))
@@ -51,7 +52,7 @@ def test_model_runner_run_restores_chunked_sequence_when_prepare_raises() -> Non
     """chunked prefill 准备阶段异常时必须恢复 Sequence 临时状态。"""
 
     runner = _runner(enable_chunked_prefill=True)
-    seq = Sequence([1, 2, 3, 4, 5])
+    seq = Sequence([1, 2, 3, 4, 5], block_size=4, request_id=0)
     seq.block_table = [0]
     seq.num_computed_tokens = 0
     seq.num_cached_tokens = 0
@@ -81,10 +82,11 @@ def test_model_runner_chunk_progress_does_not_become_prefix_hit_state() -> None:
     """Chunk progress and shared prefix-cache hits are separate contracts."""
 
     runner = _runner(enable_chunked_prefill=True)
-    seq = Sequence([1, 2, 3])
+    seq = Sequence([1, 2, 3], block_size=4, request_id=0)
     seq.block_table = [0]
 
     def prepare_prefill(self, seqs):
+        set_context(True)
         return SimpleNamespace(
             input_ids=torch.tensor([1]),
             position_ids=torch.tensor([0]),

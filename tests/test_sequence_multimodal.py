@@ -32,6 +32,8 @@ def _single_image_sequence() -> Sequence:
     return Sequence.from_single_image_inputs(
         inputs,
         SamplingParams(max_tokens=4),
+        block_size=256,
+        request_id=0,
         position_ids=position_ids,
         rope_delta=rope_delta,
     )
@@ -40,7 +42,12 @@ def _single_image_sequence() -> Sequence:
 def test_text_sequence_behavior_unchanged():
     """纯文本 Sequence 的基础行为不应被 VL 字段破坏。"""
 
-    seq = Sequence([1, 2, 3], SamplingParams(max_tokens=2))
+    seq = Sequence(
+        [1, 2, 3],
+        SamplingParams(max_tokens=2),
+        block_size=256,
+        request_id=0,
+    )
     assert len(seq) == 3
     assert seq.prompt_token_ids == [1, 2, 3]
     assert seq.completion_token_ids == []
@@ -51,28 +58,41 @@ def test_text_sequence_behavior_unchanged():
     print("text sequence regression: PASS")
 
 
-def test_sequence_block_size_is_instance_snapshot():
-    """Sequence 构造后应保留自身 block_size，不受后续全局同步影响。"""
+def test_sequence_block_size_is_explicit_request_state():
+    """Two engines/page contracts cannot mutate each other's Sequence state."""
 
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
-        seq = Sequence([1, 2, 3, 4, 5], SamplingParams(max_tokens=2))
-        Sequence.set_block_size(8)
+    page4 = Sequence(
+        [1, 2, 3, 4, 5],
+        SamplingParams(max_tokens=2),
+        block_size=4,
+        request_id=4,
+    )
+    page8 = Sequence(
+        [1, 2, 3, 4, 5],
+        SamplingParams(max_tokens=2),
+        block_size=8,
+        request_id=8,
+    )
 
-        assert seq.block_size == 4
-        assert seq.num_blocks == 2
-        print(f"sequence instance block_size: {seq.block_size}")
-        print("sequence block size instance snapshot: PASS")
-    finally:
-        Sequence.set_block_size(old_block_size)
+    assert page4.block_size == 4
+    assert page4.num_blocks == 2
+    assert page8.block_size == 8
+    assert page8.num_blocks == 1
+    assert not hasattr(Sequence, "block_size")
+    assert not hasattr(Sequence, "set_block_size")
+    print("sequence explicit page contract isolation: PASS")
 
 
 def test_decode_sequence_roundtrip_preserves_sampling_params():
     """Decode 序列化必须保留请求级采样参数。"""
 
     params = SamplingParams(temperature=0.25, max_tokens=7, ignore_eos=True)
-    seq = Sequence([1, 2, 3], params)
+    seq = Sequence(
+        [1, 2, 3],
+        params,
+        block_size=256,
+        request_id=0,
+    )
     seq.block_table = [0]
     seq.append_token(42)
 

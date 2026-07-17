@@ -11,6 +11,42 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from time import perf_counter_ns
+from typing import Protocol, runtime_checkable
+
+
+def validate_request_id(value: object, *, name: str = "request_id") -> int:
+    """Return one exact non-negative integer request identity."""
+
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(
+            f"{name} must be a non-negative integer, got {value!r}"
+        )
+    return value
+
+
+@runtime_checkable
+class RequestIdAllocator(Protocol):
+    """Engine-owned request identity source."""
+
+    def allocate(self) -> int: ...
+
+
+@dataclass(slots=True)
+class MonotonicRequestIdAllocator:
+    """Deterministic process-local allocator; tests may inject a start value."""
+
+    next_request_id: int = 0
+
+    def __post_init__(self) -> None:
+        validate_request_id(
+            self.next_request_id,
+            name="next_request_id",
+        )
+
+    def allocate(self) -> int:
+        request_id = self.next_request_id
+        self.next_request_id += 1
+        return request_id
 
 
 class RequestState(Enum):
@@ -93,6 +129,14 @@ class RequestLifecycle:
     request_id: int
     state: RequestState = RequestState.WAITING
     transitions: list[RequestTransition] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        validate_request_id(self.request_id)
+        if not isinstance(self.state, RequestState):
+            raise TypeError(
+                "request lifecycle state must be RequestState, "
+                f"got {type(self.state).__name__}"
+            )
 
     def transition(
         self,

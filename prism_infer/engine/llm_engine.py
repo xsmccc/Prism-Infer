@@ -1,5 +1,6 @@
 import atexit                           # atexit.register: 注册进程退出时的清理函数(类似C++ std::atexit)
-from dataclasses import fields          # fields(Config): 获取dataclass的所有字段信息
+import gc
+import socket
 from time import perf_counter, perf_counter_ns
 from tqdm.auto import tqdm              # 进度条库, auto版本自动适配终端/Jupyter
 from transformers import AutoTokenizer  # HuggingFace分词器: 文本↔token_ids
@@ -10,7 +11,7 @@ from prism_infer.analysis.performance_profile import (
     get_performance_profile_session,
     profile_region,
 )
-from prism_infer.config import Config
+from prism_infer.config import Config, PrismConfig
 from prism_infer.sampling_params import SamplingParams
 from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.vl_inputs import (
@@ -23,7 +24,21 @@ from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.engine.contracts import MetricsSink, StepResult
 from prism_infer.engine.executor import ModelExecutor
 from prism_infer.engine.metrics import EngineMetrics
+from prism_infer.engine.request import (
+    MonotonicRequestIdAllocator,
+    RequestIdAllocator,
+    validate_request_id,
+)
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
+
+
+def select_distributed_init_method() -> str:
+    """Select an engine-local TCP rendezvous instead of a fixed magic port."""
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as rendezvous:
+        rendezvous.bind(("127.0.0.1", 0))
+        port = rendezvous.getsockname()[1]
+    return f"tcp://127.0.0.1:{port}"
 
 
 def validate_tensor_parallel_environment(config: Config, device_count: int) -> None:
@@ -61,38 +76,76 @@ class LLMEngine:
     用户通过LLM(继承自LLMEngine)使用, 所有核心逻辑都在这里
     """
 
-    def __init__(self, model, **kwargs):
-        metrics_sink = kwargs.pop("metrics_sink", None)
-        clock_ns = kwargs.pop("clock_ns", perf_counter_ns)
-        # --- 参数过滤: 只保留Config认识的参数, 忽略其他 ---
-        config_fields = {field.name for field in fields(Config)}  # Config的所有字段名集合
-        config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}  # 过滤
-        config = Config(model, **config_kwargs)  # 创建配置(触发__post_init__校验)
+    def __init__(
+        self,
+        model: str | PrismConfig,
+        *,
+        metrics_sink: MetricsSink | None = None,
+        clock_ns=perf_counter_ns,
+        request_id_allocator: RequestIdAllocator | None = None,
+        **config_options: object,
+    ):
+        config = Config(model, **config_options)
         validate_tensor_parallel_environment(config, torch.cuda.device_count())
+        self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
+        config = config.with_eos(self.tokenizer.eos_token_id)
+        if request_id_allocator is None:
+            request_id_allocator = MonotonicRequestIdAllocator()
+        if not isinstance(request_id_allocator, RequestIdAllocator):
+            raise TypeError(
+                "request_id_allocator must implement allocate() -> int"
+            )
+        self.request_id_allocator = request_id_allocator
 
         # --- 多进程TP初始化 ---
         self.ps = []                 # 子进程列表
         self.control_senders = []    # rank 0 -> worker 的变长控制消息通道
+        distributed_init_method = select_distributed_init_method()
         ctx = mp.get_context("spawn")  # spawn模式: 新建Python解释器(fork对CUDA不安全)
-        # 创建子进程: rank=1,2,...,N-1 分别在GPU1,2,...,N-1上运行
-        for i in range(1, config.tensor_parallel_size):
-            receiver, sender = ctx.Pipe(duplex=False)
-            process = ctx.Process(
-                target=ModelRunner,
-                args=(config, i, receiver),
+        try:
+            # 创建子进程: rank=1,2,...,N-1 分别在GPU1,2,...,N-1上运行
+            for i in range(1, config.tensor_parallel_size):
+                receiver, sender = ctx.Pipe(duplex=False)
+                process = ctx.Process(
+                    target=ModelRunner,
+                    args=(
+                        config,
+                        i,
+                        receiver,
+                        distributed_init_method,
+                    ),
+                )
+                process.start()
+                receiver.close()        # rank 0 不持有 worker 的接收端
+                self.ps.append(process)
+                self.control_senders.append(sender)
+            # 主进程自己也创建ModelRunner: rank=0, 在GPU0上运行
+            self.model_runner = ModelRunner(
+                config,
+                0,
+                self.control_senders,
+                distributed_init_method,
             )
-            process.start()
-            receiver.close()            # rank 0 不持有 worker 的接收端
-            self.ps.append(process)
-            self.control_senders.append(sender)
-        # 主进程自己也创建ModelRunner: rank=0, 在GPU0上运行
-        self.model_runner = ModelRunner(config, 0, self.control_senders)
+        except BaseException:
+            for sender in self.control_senders:
+                sender.close()
+            for process in self.ps:
+                if process.is_alive():
+                    process.terminate()
+                process.join()
+            if torch.distributed.is_initialized():
+                torch.distributed.destroy_process_group()
+            torch.cuda.empty_cache()
+            raise
+        config = config.with_cache_capacity(
+            num_kvcache_blocks=self.model_runner.num_kvcache_blocks,
+            num_cpu_blocks=self.model_runner.num_cpu_blocks,
+        )
+        self.model_runner.config = config
 
         # --- Tokenizer + Scheduler ---
-        self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)  # 分词器(只在主进程)
         self.vl_processor = load_vl_processor(config.model) if self.model_runner.is_vl_model else None
         self.config = config
-        config.eos = self.tokenizer.eos_token_id  # 从tokenizer获取EOS token id(Config创建时还不知道)
         self.clock_ns = clock_ns
         self.scheduler = Scheduler(config, clock_ns=clock_ns)  # 调度器
         self.executor = ModelExecutor(
@@ -105,22 +158,80 @@ class LLMEngine:
         )
         atexit.register(self.exit)  # 注册退出清理函数(类似RAII析构+atexit)
 
+    def _allocate_request_id(self) -> int:
+        """Allocate request identity from the engine-owned source."""
+
+        allocator = getattr(self, "request_id_allocator", None)
+        if allocator is None:
+            # Lightweight ``__new__`` construction used by focused tests still
+            # gets engine-owned deterministic identity rather than Sequence
+            # class state.
+            allocator = MonotonicRequestIdAllocator()
+            self.request_id_allocator = allocator
+        request_id = allocator.allocate()
+        try:
+            return validate_request_id(
+                request_id,
+                name="allocated request id",
+            )
+        except ValueError as exc:
+            raise RuntimeError(
+                "request id allocator returned an invalid value: "
+                f"{request_id!r}"
+            ) from exc
+
     def exit(self):
         """清理: 通知子进程退出, 释放GPU资源, 等待子进程结束"""
         if getattr(self, "_exited", False):
             return
         self._exited = True
+        # ``atexit`` keeps a strong reference to bound methods.  Explicit
+        # shutdown must unregister it so completed engines do not accumulate
+        # in a long-lived process.
+        atexit.unregister(self.exit)
+        failure: BaseException | None = None
         model_runner = getattr(self, "model_runner", None)
         if model_runner is not None:
-            model_runner.call("exit")  # 通过IPC通知所有子进程退出无限循环
-            # ModelExecutor intentionally owns a backend reference.  Drop that
-            # boundary before deleting the public compatibility attribute so
-            # model weights/KV cache are actually released between engines.
-            if hasattr(self, "executor"):
-                del self.executor
-            del self.model_runner      # 释放主进程的ModelRunner(含GPU资源)
+            try:
+                model_runner.call("exit")  # 通过IPC通知所有子进程退出无限循环
+            except BaseException as exc:
+                failure = exc
+            finally:
+                # A partial runner exit must not preserve the backend -> runner
+                # ownership edge or the model/KV tensors behind it.
+                backend = getattr(model_runner, "execution_backend", None)
+                if backend is not None:
+                    try:
+                        backend.release()
+                    except BaseException as exc:
+                        if failure is None:
+                            failure = exc
+                    if hasattr(model_runner, "execution_backend"):
+                        del model_runner.execution_backend
+                # ModelExecutor intentionally owns a runner reference.  Drop
+                # both public references before releasing the CUDA cache.
+                if hasattr(self, "executor"):
+                    del self.executor
+                del self.model_runner
+                backend = None
+                model_runner = None
+        for sender in getattr(self, "control_senders", []):
+            try:
+                sender.close()
+            except BaseException as exc:
+                if failure is None:
+                    failure = exc
         for p in getattr(self, "ps", []):
+            if failure is not None and p.is_alive():
+                p.terminate()
             p.join()                     # 等待所有子进程退出(类似C++ thread.join)
+        # Model modules and hooks may contain cycles outside the explicit
+        # runner/backend edge.  Collection is exit-only, never on the hot path.
+        gc.collect()
+        if torch.cuda.is_initialized():
+            torch.cuda.empty_cache()
+        if failure is not None:
+            raise failure
 
     def add_request(
         self,
@@ -134,7 +245,12 @@ class LLMEngine:
         if isinstance(prompt, str):
             with profile_region("preprocess.tokenizer", cuda=False):
                 prompt = self.tokenizer.encode(prompt)  # 文本→token_ids
-        seq = Sequence(prompt, sampling_params)      # 创建序列对象
+        seq = Sequence(
+            prompt,
+            sampling_params,
+            block_size=self.config.kvcache_block_size,
+            request_id=self._allocate_request_id(),
+        )
         return self._submit_sequence(
             seq,
             submitted_ns=submitted_ns,
@@ -210,6 +326,8 @@ class LLMEngine:
         seq = Sequence.from_image_inputs(
             inputs,
             sampling_params,
+            block_size=self.config.kvcache_block_size,
+            request_id=self._allocate_request_id(),
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
@@ -263,6 +381,8 @@ class LLMEngine:
         seq = Sequence.from_video_inputs(
             inputs,
             sampling_params,
+            block_size=self.config.kvcache_block_size,
+            request_id=self._allocate_request_id(),
             position_ids=position_ids,
             rope_delta=rope_delta,
         )

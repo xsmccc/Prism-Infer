@@ -1,9 +1,13 @@
 """P7.2 engine boundary and lifecycle contract tests."""
 
 from dataclasses import FrozenInstanceError
+from contextlib import contextmanager
+from collections.abc import Iterator
+from itertools import count
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from prism_infer.engine.contracts import (
     BatchPhase,
@@ -15,11 +19,38 @@ from prism_infer.engine.contracts import (
 from prism_infer.engine.executor import ModelExecutor
 from prism_infer.engine.llm_engine import LLMEngine
 from prism_infer.engine.metrics import EngineMetrics
+from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.engine.request import RequestState
 from prism_infer.engine.scheduler import Scheduler
 from prism_infer.engine.scheduler_policy import FCFSSchedulerPolicy
 from prism_infer.engine.sequence import Sequence
 from prism_infer.sampling_params import SamplingParams
+
+
+_REQUEST_IDS = count()
+
+
+def _sequence(
+    token_ids: list[int],
+    sampling_params: SamplingParams | None = None,
+    **kwargs: object,
+) -> Sequence:
+    return Sequence(
+        token_ids,
+        sampling_params,
+        block_size=4,
+        request_id=next(_REQUEST_IDS),
+        **kwargs,
+    )
+
+
+@contextmanager
+def _explicit_page_contract() -> Iterator[None]:
+    assert not hasattr(Sequence, "block_size")
+    assert not hasattr(Sequence, "set_block_size")
+    yield
+    assert not hasattr(Sequence, "block_size")
+    assert not hasattr(Sequence, "set_block_size")
 
 
 def _scheduler_config(**overrides):
@@ -30,6 +61,7 @@ def _scheduler_config(**overrides):
         "enable_chunked_prefill": False,
         "max_chunk_size": 4,
         "max_queue_size": None,
+        "max_consecutive_prefill_batches": 1,
         "eos": -1,
         "num_kvcache_blocks": 16,
         "kvcache_block_size": 4,
@@ -41,7 +73,7 @@ def _scheduler_config(**overrides):
 
 
 def test_request_fsm_records_valid_transitions_and_rejects_invalid() -> None:
-    seq = Sequence(
+    seq = _sequence(
         [1, 2],
         SamplingParams(temperature=0.0, max_tokens=2),
     )
@@ -58,13 +90,13 @@ def test_request_fsm_records_valid_transitions_and_rejects_invalid() -> None:
     with pytest.raises(RuntimeError, match="invalid request state transition"):
         seq.transition_to(RequestState.WAITING, reason="illegal resurrection")
 
-    invalid = Sequence([3])
+    invalid = _sequence([3])
     with pytest.raises(RuntimeError, match="WAITING->FINISHED"):
         invalid.transition_to(RequestState.FINISHED, reason="skip execution")
 
 
 def test_batch_plan_is_immutable_and_keeps_legacy_adapter() -> None:
-    seq = Sequence([1, 2])
+    seq = _sequence([1, 2])
     plan = BatchPlan(
         phase=BatchPhase.PREFILL,
         sequences=(seq,),
@@ -90,11 +122,11 @@ def test_fcfs_policy_admission_and_chunk_budget_are_pure() -> None:
         max_chunk_size=3,
         max_queue_size=1,
     )
-    valid = Sequence(
+    valid = _sequence(
         [1, 2, 3, 4],
         SamplingParams(max_tokens=2),
     )
-    too_long = Sequence(
+    too_long = _sequence(
         [1, 2, 3, 4, 5, 6, 7],
         SamplingParams(max_tokens=2),
     )
@@ -105,7 +137,7 @@ def test_fcfs_policy_admission_and_chunk_budget_are_pure() -> None:
     assert policy.prefill_token_count(valid, available_tokens=8) == 3
     assert policy.prefill_token_count(valid, available_tokens=2) == 2
 
-    visual = Sequence(
+    visual = _sequence(
         [1, 99, 99, 2, 99, 99, 3],
         SamplingParams(max_tokens=1),
         video_token_id=99,
@@ -128,11 +160,9 @@ def test_fcfs_policy_admission_and_chunk_budget_are_pure() -> None:
 
 
 def test_scheduler_emits_named_plan_and_advances_fsm() -> None:
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
+    with _explicit_page_contract():
         scheduler = Scheduler(_scheduler_config())
-        seq = Sequence(
+        seq = _sequence(
             [1, 2, 3],
             SamplingParams(temperature=0.0, max_tokens=2),
         )
@@ -153,14 +183,10 @@ def test_scheduler_emits_named_plan_and_advances_fsm() -> None:
         assert finished[0].request_id == seq.seq_id
         assert finished[0].finish_reason == "length"
         assert scheduler.is_finished()
-    finally:
-        Sequence.set_block_size(old_block_size)
 
 
 def test_scheduler_admission_rejection_and_swapped_cancel_are_terminal() -> None:
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
+    with _explicit_page_contract():
         scheduler = Scheduler(
             _scheduler_config(
                 max_model_len=4,
@@ -168,7 +194,7 @@ def test_scheduler_admission_rejection_and_swapped_cancel_are_terminal() -> None
                 num_cpu_blocks=2,
             )
         )
-        rejected = Sequence(
+        rejected = _sequence(
             [1, 2, 3, 4],
             SamplingParams(max_tokens=1),
         )
@@ -176,7 +202,7 @@ def test_scheduler_admission_rejection_and_swapped_cancel_are_terminal() -> None
         assert not decision.accepted
         assert rejected.status is RequestState.REJECTED
 
-        active = Sequence(
+        active = _sequence(
             [5, 6, 7, 8],
             SamplingParams(max_tokens=1),
         )
@@ -190,14 +216,10 @@ def test_scheduler_admission_rejection_and_swapped_cancel_are_terminal() -> None
         assert active.status is RequestState.CANCELLED
         assert len(scheduler.block_manager.cpu_free_block_ids) == 2
         assert not scheduler.cancel(active.seq_id)
-    finally:
-        Sequence.set_block_size(old_block_size)
 
 
 def test_online_prefix_hit_prefill_uses_remaining_token_budget() -> None:
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
+    with _explicit_page_contract():
         scheduler = Scheduler(
             _scheduler_config(
                 enable_prefix_caching=True,
@@ -208,12 +230,12 @@ def test_online_prefix_hit_prefill_uses_remaining_token_budget() -> None:
         sampling = SamplingParams(
             temperature=0.0, max_tokens=3, ignore_eos=True
         )
-        first = Sequence([1, 2, 3, 4, 5], sampling)
+        first = _sequence([1, 2, 3, 4, 5], sampling)
         scheduler.add(first)
         first_prefill = scheduler.schedule()
         scheduler.postprocess(first_prefill, [9])
 
-        second = Sequence([1, 2, 3, 4, 5], sampling)
+        second = _sequence([1, 2, 3, 4, 5], sampling)
         scheduler.add(second)
         # Fair interleave gives the existing decoder one turn before new prefill.
         decode = scheduler.schedule()
@@ -227,14 +249,10 @@ def test_online_prefix_hit_prefill_uses_remaining_token_budget() -> None:
         assert second.num_computed_tokens == 4
         assert second_prefill.scheduled_token_counts == (1,)
         assert second.block_table[0] == first.block_table[0]
-    finally:
-        Sequence.set_block_size(old_block_size)
 
 
 def test_scheduler_swap_preemption_round_trip_is_measured() -> None:
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
+    with _explicit_page_contract():
         scheduler = Scheduler(
             _scheduler_config(
                 num_kvcache_blocks=2,
@@ -245,8 +263,8 @@ def test_scheduler_swap_preemption_round_trip_is_measured() -> None:
         sampling = SamplingParams(
             temperature=0.0, max_tokens=2, ignore_eos=True
         )
-        first = Sequence([1, 2, 3, 4], sampling)
-        second = Sequence([5, 6, 7, 8], sampling)
+        first = _sequence([1, 2, 3, 4], sampling)
+        second = _sequence([5, 6, 7, 8], sampling)
         scheduler.add(first)
         scheduler.add(second)
         prefill = scheduler.schedule()
@@ -268,8 +286,6 @@ def test_scheduler_swap_preemption_round_trip_is_measured() -> None:
         assert metrics["completed_requests"] == 2
         assert metrics["peak_swapped"] == 1
         assert metrics["peak_cpu_kv_blocks"] == 1
-    finally:
-        Sequence.set_block_size(old_block_size)
 
 
 class _FakeRunner:
@@ -280,8 +296,8 @@ class _FakeRunner:
 
     def call(self, method_name: str, *args: object):
         self.calls.append((method_name, *args))
-        if method_name == "run":
-            return [7]
+        if method_name == "run_plan":
+            return ExecutionResult(token_ids=(7,))
         return None
 
 
@@ -299,8 +315,63 @@ def test_engine_exit_drops_executor_runner_reference() -> None:
     assert not hasattr(engine, "model_runner")
 
 
+def test_engine_exit_cleans_references_before_reraising_runner_failure() -> None:
+    engine = LLMEngine.__new__(LLMEngine)
+    released: list[bool] = []
+
+    class BackendStub:
+        def release(self) -> None:
+            released.append(True)
+
+    class FailingRunner:
+        def __init__(self) -> None:
+            self.execution_backend = BackendStub()
+
+        def call(self, method_name: str) -> None:
+            assert method_name == "exit"
+            raise RuntimeError("synthetic runner exit failure")
+
+    runner = FailingRunner()
+    engine.model_runner = runner
+    engine.executor = SimpleNamespace(runner=runner)
+    engine.ps = []
+    engine.control_senders = []
+
+    with pytest.raises(RuntimeError, match="synthetic runner exit failure"):
+        engine.exit()
+
+    assert released == [True]
+    assert not hasattr(runner, "execution_backend")
+    assert not hasattr(engine, "executor")
+    assert not hasattr(engine, "model_runner")
+
+
+def test_model_runner_exit_breaks_backend_ownership_cycle(
+    monkeypatch,
+) -> None:
+    runner = ModelRunner.__new__(ModelRunner)
+    runner.world_size = 1
+    released: list[bool] = []
+
+    class BackendStub:
+        def release(self) -> None:
+            released.append(True)
+
+    runner.execution_backend = BackendStub()
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
+    monkeypatch.setattr(
+        "prism_infer.engine.model_runner.dist.destroy_process_group",
+        lambda: None,
+    )
+
+    runner.exit()
+
+    assert released == [True]
+    assert not hasattr(runner, "execution_backend")
+
+
 def test_executor_applies_immutable_kv_plan_before_model_run() -> None:
-    seq = Sequence([1])
+    seq = _sequence([1])
     plan = BatchPlan(
         phase=BatchPhase.DECODE,
         sequences=(seq,),
@@ -325,13 +396,13 @@ def test_executor_applies_immutable_kv_plan_before_model_run() -> None:
         "copy_kv_blocks",
         "swap_blocks",
         "swap_blocks",
-        "run",
+        "run_plan",
     ]
-    assert runner.calls[-1][3] == [1]
+    assert runner.calls[-1][1] is plan
 
 
 def test_engine_metrics_observe_without_driving_scheduler() -> None:
-    seq = Sequence(
+    seq = _sequence(
         [1, 2],
         SamplingParams(temperature=0.0, max_tokens=1),
     )

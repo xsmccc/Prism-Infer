@@ -41,23 +41,16 @@ class Scheduler:
     ):
         self.max_num_seqs = config.max_num_seqs
         self.max_num_batched_tokens = config.max_num_batched_tokens
-        self.enable_chunked_prefill = getattr(
-            config, "enable_chunked_prefill", False
-        )
-        self.max_chunk_size = getattr(config, "max_chunk_size", 512)
-        self.max_model_len = getattr(
-            config, "max_model_len", self.max_num_batched_tokens
-        )
+        self.enable_chunked_prefill = config.enable_chunked_prefill
+        self.max_chunk_size = config.max_chunk_size
+        self.max_model_len = config.max_model_len
         self.eos = config.eos
         self.clock_ns = clock_ns
-        Sequence.set_block_size(config.kvcache_block_size)
         self.block_manager: KVCacheManager = kv_manager or BlockManager(
             config.num_kvcache_blocks,
             config.kvcache_block_size,
-            getattr(config, "num_cpu_blocks", 0),
-            enable_prefix_caching=getattr(
-                config, "enable_prefix_caching", True
-            ),
+            config.num_cpu_blocks,
+            enable_prefix_caching=config.enable_prefix_caching,
         )
         self.policy = policy or FCFSSchedulerPolicy(
             max_model_len=self.max_model_len,
@@ -65,9 +58,9 @@ class Scheduler:
             max_num_seqs=self.max_num_seqs,
             enable_chunked_prefill=self.enable_chunked_prefill,
             max_chunk_size=self.max_chunk_size,
-            max_queue_size=getattr(config, "max_queue_size", None),
-            max_consecutive_prefill_batches=getattr(
-                config, "max_consecutive_prefill_batches", 1
+            max_queue_size=config.max_queue_size,
+            max_consecutive_prefill_batches=(
+                config.max_consecutive_prefill_batches
             ),
         )
         self.waiting: deque[Sequence] = deque()

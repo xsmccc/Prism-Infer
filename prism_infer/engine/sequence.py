@@ -1,5 +1,4 @@
 from copy import copy              # copy模块: 浅拷贝(复制列表本身, 不复制元素)
-from itertools import count        # count(): 无限自增迭代器(0,1,2,3,...)
 
 import torch
 
@@ -9,32 +8,20 @@ from prism_infer.engine.request import (
     RequestLifecycle,
     RequestState,
     SequenceStatus,
+    validate_request_id,
 )
 from prism_infer.sampling_params import SamplingParams
 
 
 class Sequence:
-    block_size = 256    # 类变量: KV Cache块大小(所有实例共享)
-    counter = count()   # 类变量: 全局自增ID计数器(类似C++ static atomic<int>)
-
-    @classmethod
-    def set_block_size(cls, block_size: int) -> None:
-        """同步全局 Sequence block size。
-
-        当前 Sequence 仍用类变量保存 block size；engine 初始化时必须把
-        Config.kvcache_block_size 写入这里，避免 Sequence.num_blocks 与
-        BlockManager/ModelRunner 的物理 KV block size 不一致。
-        """
-
-        if block_size <= 0:
-            raise ValueError(f"block_size must be positive, got {block_size}")
-        cls.block_size = int(block_size)
 
     def __init__(
         self,
         token_ids: list[int],
         sampling_params: SamplingParams | None = None,
         *,
+        block_size: int,
+        request_id: int,
         pixel_values: torch.Tensor | None = None,
         image_grid_thw: torch.Tensor | None = None,
         pixel_values_videos: torch.Tensor | None = None,
@@ -50,13 +37,18 @@ class Sequence:
             raise ValueError("token_ids must not be empty")
         if sampling_params is None:
             sampling_params = SamplingParams()
+        if isinstance(block_size, bool) or not isinstance(block_size, int) or block_size <= 0:
+            raise ValueError(
+                f"block_size must be a positive integer, got {block_size!r}"
+            )
+        validate_request_id(request_id)
         if (pixel_values is None) != (image_grid_thw is None):
             raise ValueError("pixel_values and image_grid_thw must be provided together")
         if (pixel_values_videos is None) != (video_grid_thw is None):
             raise ValueError("pixel_values_videos and video_grid_thw must be provided together")
 
-        self.seq_id = next(Sequence.counter)          # 全局唯一ID: 0, 1, 2, ...
-        self.block_size = int(type(self).block_size)  # 实例级快照，避免多 Config 运行时互相污染
+        self.seq_id = request_id
+        self.block_size = block_size
         self.lifecycle = RequestLifecycle(self.seq_id)
         self.token_ids = copy(token_ids)               # 浅拷贝prompt的token列表(值语义, 类似C++ vector拷贝)
         self.last_token = token_ids[-1]                # 最后一个token(序列化优化用)
@@ -93,6 +85,8 @@ class Sequence:
         inputs: ImageInputs,
         sampling_params: SamplingParams | None = None,
         *,
+        block_size: int,
+        request_id: int,
         position_ids: torch.Tensor | None = None,
         rope_delta: torch.Tensor | None = None,
     ) -> "Sequence":
@@ -101,6 +95,8 @@ class Sequence:
         return cls(
             inputs.token_ids,
             sampling_params,
+            block_size=block_size,
+            request_id=request_id,
             pixel_values=inputs.pixel_values,
             image_grid_thw=inputs.image_grid_thw,
             position_ids=position_ids,
@@ -115,6 +111,8 @@ class Sequence:
         inputs: SingleImageInputs,
         sampling_params: SamplingParams | None = None,
         *,
+        block_size: int,
+        request_id: int,
         position_ids: torch.Tensor | None = None,
         rope_delta: torch.Tensor | None = None,
     ) -> "Sequence":
@@ -123,6 +121,8 @@ class Sequence:
         return cls.from_image_inputs(
             inputs,
             sampling_params,
+            block_size=block_size,
+            request_id=request_id,
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
@@ -133,6 +133,8 @@ class Sequence:
         inputs: VideoInputs,
         sampling_params: SamplingParams | None = None,
         *,
+        block_size: int,
+        request_id: int,
         position_ids: torch.Tensor | None = None,
         rope_delta: torch.Tensor | None = None,
     ) -> "Sequence":
@@ -141,6 +143,8 @@ class Sequence:
         return cls(
             inputs.token_ids,
             sampling_params,
+            block_size=block_size,
+            request_id=request_id,
             pixel_values_videos=inputs.pixel_values_videos,
             video_grid_thw=inputs.video_grid_thw,
             position_ids=position_ids,
@@ -297,6 +301,8 @@ class Sequence:
         """
         is_prefill_payload = self.num_completion_tokens == 0
         return {
+            "seq_id": self.seq_id,
+            "request_state": self.status,
             "block_size": self.block_size,
             "num_tokens": self.num_tokens,
             "num_prompt_tokens": self.num_prompt_tokens,
@@ -332,82 +338,79 @@ class Sequence:
         }
 
     def __setstate__(self, state):
-        """反序列化: 子进程收到数据后恢复对象
-        state就是__getstate__返回的那个元组
-        state[:-1] = 前4个值, state[-1] = token_ids(list)或last_token(int)
-        """
-        self.seq_id = next(Sequence.counter)
-        self.lifecycle = RequestLifecycle(self.seq_id)
+        """Restore an explicit request/page contract in a TP worker."""
 
-        if isinstance(state, dict):
-            self.block_size = int(state.get("block_size", Sequence.block_size))
-            self.temperature = state.get("temperature", 1.0)
-            self.max_tokens = state.get("max_tokens", 0)
-            self.ignore_eos = state.get("ignore_eos", False)
-            self.num_tokens = state["num_tokens"]
-            self.num_prompt_tokens = state["num_prompt_tokens"]
-            self.num_cached_tokens = state["num_cached_tokens"]
-            self.num_computed_tokens = state.get("num_computed_tokens", self.num_cached_tokens)
-            self.block_table = state["block_table"]
-            self.cpu_block_table = state.get("cpu_block_table", [])
-            self.cpu_block_hashes = state.get("cpu_block_hashes", [])
-            self.cpu_block_token_ids = [
-                list(token_ids) for token_ids in state.get("cpu_block_token_ids", [])
-            ]
-            if state["is_prefill_payload"]:
-                self.token_ids = state["payload"]
-                self.last_token = self.token_ids[-1]
-            else:
-                self.last_token = state["payload"]
-            self.pixel_values = state.get("pixel_values")
-            self.image_grid_thw = state.get("image_grid_thw")
-            self.pixel_values_videos = state.get("pixel_values_videos")
-            self.video_grid_thw = state.get("video_grid_thw")
-            self.position_ids = state.get("position_ids")
-            self.rope_delta = state.get("rope_delta")
-            self.image_token_id = state.get("image_token_id")
-            self.image_token_count = state.get("image_token_count", 0)
-            self.video_token_id = state.get("video_token_id")
-            self.video_token_count = state.get("video_token_count", 0)
-            self.visual_pruning_decision_record = state.get(
-                "visual_pruning_decision_record"
+        if not isinstance(state, dict):
+            raise TypeError(
+                "legacy Sequence payloads without explicit request/page state "
+                "are not supported"
             )
-            layout_record = state.get("kv_layout")
-            self.kv_layout = (
-                None
-                if layout_record is None
-                else KVCacheLayoutDescriptor.from_record(layout_record)
+        missing = {"seq_id", "block_size", "num_tokens", "payload"} - set(state)
+        if missing:
+            raise ValueError(
+                "serialized Sequence is missing explicit fields: "
+                + ", ".join(sorted(missing))
             )
-            if self.kv_layout is not None:
-                self.kv_layout.validate(
-                    block_size=self.block_size,
-                    block_table=self.block_table or self.cpu_block_table,
-                    allow_pending_append=True,
-                )
+        self.seq_id = validate_request_id(
+            state["seq_id"],
+            name="serialized seq_id",
+        )
+        request_state = state.get("request_state", RequestState.WAITING)
+        self.lifecycle = RequestLifecycle(self.seq_id, state=request_state)
+        serialized_block_size = state["block_size"]
+        if (
+            isinstance(serialized_block_size, bool)
+            or not isinstance(serialized_block_size, int)
+            or serialized_block_size <= 0
+        ):
+            raise ValueError(
+                "serialized block_size must be a positive integer, "
+                f"got {serialized_block_size!r}"
+            )
+        self.block_size = serialized_block_size
+        self.temperature = state.get("temperature", 1.0)
+        self.max_tokens = state.get("max_tokens", 0)
+        self.ignore_eos = state.get("ignore_eos", False)
+        self.num_tokens = state["num_tokens"]
+        self.num_prompt_tokens = state["num_prompt_tokens"]
+        self.num_cached_tokens = state["num_cached_tokens"]
+        self.num_computed_tokens = state.get(
+            "num_computed_tokens",
+            self.num_cached_tokens,
+        )
+        self.block_table = state["block_table"]
+        self.cpu_block_table = state.get("cpu_block_table", [])
+        self.cpu_block_hashes = state.get("cpu_block_hashes", [])
+        self.cpu_block_token_ids = [
+            list(token_ids) for token_ids in state.get("cpu_block_token_ids", [])
+        ]
+        if state["is_prefill_payload"]:
+            self.token_ids = state["payload"]
+            self.last_token = self.token_ids[-1]
         else:
-            self.block_size = int(Sequence.block_size)
-            self.temperature = 1.0
-            self.max_tokens = 0
-            self.ignore_eos = False
-            self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.block_table = state[:-1]
-            self.num_computed_tokens = self.num_cached_tokens
-            self.cpu_block_table = []
-            self.cpu_block_hashes = []
-            self.cpu_block_token_ids = []
-            if self.num_completion_tokens == 0:
-                self.token_ids = state[-1]   # Prefill: state[-1]是完整列表
-                self.last_token = self.token_ids[-1]
-            else:
-                self.last_token = state[-1]  # Decode: state[-1]是一个int
-            self.pixel_values = None
-            self.image_grid_thw = None
-            self.pixel_values_videos = None
-            self.video_grid_thw = None
-            self.position_ids = None
-            self.rope_delta = None
-            self.image_token_id = None
-            self.image_token_count = 0
-            self.video_token_id = None
-            self.video_token_count = 0
-            self.visual_pruning_decision_record = None
-            self.kv_layout = None
+            self.last_token = state["payload"]
+        self.pixel_values = state.get("pixel_values")
+        self.image_grid_thw = state.get("image_grid_thw")
+        self.pixel_values_videos = state.get("pixel_values_videos")
+        self.video_grid_thw = state.get("video_grid_thw")
+        self.position_ids = state.get("position_ids")
+        self.rope_delta = state.get("rope_delta")
+        self.image_token_id = state.get("image_token_id")
+        self.image_token_count = state.get("image_token_count", 0)
+        self.video_token_id = state.get("video_token_id")
+        self.video_token_count = state.get("video_token_count", 0)
+        self.visual_pruning_decision_record = state.get(
+            "visual_pruning_decision_record"
+        )
+        layout_record = state.get("kv_layout")
+        self.kv_layout = (
+            None
+            if layout_record is None
+            else KVCacheLayoutDescriptor.from_record(layout_record)
+        )
+        if self.kv_layout is not None:
+            self.kv_layout.validate(
+                block_size=self.block_size,
+                block_table=self.block_table or self.cpu_block_table,
+                allow_pending_append=True,
+            )

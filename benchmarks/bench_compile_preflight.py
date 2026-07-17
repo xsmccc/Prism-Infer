@@ -42,7 +42,7 @@ from prism_infer.analysis.compile_preflight import (
     summarize_explain_output,
     validate_compile_preflight_record,
 )
-from prism_infer.engine.model_runner import ModelInputs
+from prism_infer.engine.contracts import DeviceModelInputs
 from prism_infer.utils.context import reset_context
 
 
@@ -205,7 +205,7 @@ def _benchmark_inductor(
 
 def _prepare_engine(
     args: argparse.Namespace,
-) -> tuple[LLM, list[Any], ModelInputs]:
+) -> tuple[LLM, list[Any], DeviceModelInputs]:
     """运行一次真实 single-image prefill，并保留下一步 decode 输入/context。"""
 
     manifest = load_workload_manifest(args.manifest)
@@ -251,7 +251,7 @@ def _slice_decode_tensor(tensor: torch.Tensor, batch_size: int) -> torch.Tensor:
 
 def _build_decoder_workload(
     llm: LLM,
-    decode_inputs: ModelInputs,
+    decode_inputs: DeviceModelInputs,
     batch_sizes: list[int],
     boundary: str,
     benchmark_batch_size: int,
@@ -313,7 +313,7 @@ def _build_decoder_workload(
 
 def _build_language_decode_workload(
     llm: LLM,
-    decode_inputs: ModelInputs,
+    decode_inputs: DeviceModelInputs,
     batch_sizes: list[int],
     benchmark_batch_size: int,
 ) -> RegionWorkload:
@@ -396,7 +396,7 @@ def _build_workload(
     region: str,
     llm: LLM,
     decode_seqs: list[Any],
-    decode_inputs: ModelInputs,
+    decode_inputs: DeviceModelInputs,
     batch_sizes: list[int],
     decoder_boundary: str,
     vision_boundary: str,

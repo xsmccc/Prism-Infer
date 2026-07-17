@@ -24,11 +24,15 @@ def _make_minimal_engine() -> LLMEngine:
         enforce_eager=True,
         max_num_seqs=1,
         max_num_batched_tokens=4096,
+        max_model_len=4096,
         kvcache_block_size=256,
         num_kvcache_blocks=16,
         num_cpu_blocks=0,
         enable_chunked_prefill=True,
         max_chunk_size=512,
+        max_queue_size=None,
+        max_consecutive_prefill_batches=1,
+        enable_prefix_caching=True,
         eos=-1,
     )
     engine.vl_processor = transformers.AutoProcessor.from_pretrained(

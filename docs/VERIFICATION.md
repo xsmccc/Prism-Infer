@@ -3406,7 +3406,8 @@ ABI验收。当前主线full JUnit见P7.5，`281 passed, 6 skipped`。
 
 因此P8静态与动态出口均PASS。这里的“fresh”限定为同一宿主新venv；在P8关闭时，
 TP2、NCU hardware counter、标准大规模质量集和网络server仍是明确后续项，不回写为
-P8失败。P9开始后NCU权限已恢复并关闭KI-004；TP2则更新为software-stack blocker。
+P8失败。P9开始后NCU权限已恢复并关闭KI-004；当前租约仍只分配 GPU0，TP2 保持
+NOT RUN / UNVERIFIED。
 
 交付前必须检查：
 
@@ -3472,36 +3473,32 @@ PYTHONPATH=/data/Prism-Infer python -m pytest -q \
 判定：协议与 source revision PASS。公开数据媒体尚未物化；selected-ID/media SHA256
 是 P9-C 首次标准质量运行前置门禁，不影响 P9-A 的协议冻结。
 
-### P9-A.3 GPU topology 与 TP stack 隔离
+### P9-A.3 GPU 可见性与资源分配边界
 
-硬件与软件身份命令：
+管理员开放 NCU/NSYS 权限后，以下只读命令显示宿主机有 8 张可见设备：
 
 ```bash
 nvidia-smi --query-gpu=index,uuid,name,memory.used,memory.free,utilization.gpu,pci.bus_id \
   --format=csv,noheader,nounits
 nvidia-smi topo -m
 
-python -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.nccl.version(), torch.cuda.device_count())'
-/data/vllm-omni/.venv/bin/python -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.nccl.version(), torch.cuda.device_count())'
 ```
 
-结果：
+但用户确认当前租约只分配 GPU0。`nvidia-smi` 可见性、空闲快照和拓扑都不是调度分配
+证明，也不授权使用其余设备。
+
+P9-A 早期曾误判“可见即有权使用”，并跨 GPU0–1 运行 Prism TP2、Prism-stack
+all-reduce 与隔离 vLLM-stack all-reduce。下面这些旧结果全部标记为无效实验：
 
 ```text
-visible GPUs: 8 x NVIDIA GeForce RTX 5090
-idle snapshot: 1 MiB used / 32149 MiB free / 0% utilization per GPU
-topology: GPU0-3 NUMA0, GPU4-7 NUMA1, no NVLink
-Prism stack: torch 2.6.0a0+ecf3bae40a.nv25.01 / CUDA 12.8 / NCCL 2.25.1
-vLLM stack: torch 2.11.0+cu130 / CUDA 13.0 / NCCL 2.28.9
+INVALID: Prism TP2 / Prism all-reduce on GPU0-1 -> cudaErrorInvalidValue
+INVALID: isolated vLLM-stack all-reduce on GPU0-1 -> 3.0
 ```
 
-`tests/test_llm_vl_tp2.py` 与独立 Prism-stack all-reduce 都在首次 NCCL collective
-得到 `cudaErrorInvalidValue`。提前 set device、传 `device_id`、禁用 P2P/SHM 均不改变
-结果；NCCL 日志给出 requested/max function shared memory `82,240/79,856 B`。同一
-GPU0–1 在隔离 vLLM stack 的 all-reduce 输出 `3.0`，PASS。
-
-判定：8 卡硬件可用，但 Prism TP2 动态门禁仍 BLOCKED；root cause scope 收敛到当前
-Torch/CUDA/NCCL Blackwell stack。P9 单卡主线继续，未经单独批准不升级主环境。
+由于 GPU1 未分配给当前租约，失败不能定位 Torch/CUDA/NCCL/SM120，成功也不能证明
+双卡合法可用。相关日志仅作审计轨迹，不进入 capability/root-cause evidence。判定是
+TP2 NOT RUN / UNVERIFIED；后续命令均限定 `CUDA_VISIBLE_DEVICES=0`，未来获得明确双卡
+分配后再从逐卡 allocation 和最小 collective 重新验证。
 
 ### P9-A.4 NCU hardware counter
 
@@ -3654,10 +3651,11 @@ git diff --check
 
 本地 Markdown 链接检查覆盖 README 与 `docs/**/*.md`，结果为
 `checked_local_links=57 / PASS`；Page Matrix 与四个 NCU report/CSV SHA256 重新计算
-全部匹配；结束快照为 8 卡各 `1 MiB / 0%`。本地证据提交后要求 `git status` clean。
+全部匹配；结束时已分配 GPU0 回到 `1 MiB / 0%`。其他可见设备不属于当前租约，
+不纳入 release gate。本地证据提交后要求 `git status` clean。
 
 - [x] 架构、量化、Graph/compiler、kernel、scheduler/server 与 TP 决策冻结。
-- [x] 8-GPU topology、Prism-stack blocker 和隔离-stack control 已定位。
+- [x] 资源边界已纠正：仅 GPU0 已分配；TP2 与跨 GPU1 的旧实验标记无效。
 - [x] NCU counter 权限恢复，代表性 page16/256 指标已采集。
 - [x] structured benchmark helper tests 与 dirty smoke PASS。
 - [x] H1/H2/H3 与 DocVQA/MuirBench/MVBench manifest/hash/revision 冻结。
@@ -3668,6 +3666,126 @@ git diff --check
 当前判定：P9-A PASS；允许进入 P9-B。P9-B 第一批 diff 仍只允许处理 typed config、
 `Sequence` 全局 page state 与 execution backend contract，不能混入 scaled FP8 或
 kernel 改动。
+
+### P9-B 架构硬化与执行边界（PASS）
+
+P9-B 只修改 config、request/page identity、scheduler/executor contract 和 backend
+lifecycle；没有加入 scaled FP8、NVFP4、W/A quantization 或新 kernel。实现门禁：
+
+- frozen typed domains：`ModelConfig/CacheConfig/SchedulerConfig/ExecutionConfig/
+  QuantizationConfig/ServingConfig`；strict flat adapter 对 unknown kwargs 和隐式 bool
+  coercion fail closed；HF model parsing 在用户配置校验之后；
+- runtime `Config` 的 EOS、GPU/CPU KV capacity 由 replacement API 生成，不原地修改；
+  CPU KV block ratio 是显式 cache policy，不再散落 `// 2`；
+- `Sequence` 必须显式接收 page size 与 request ID；真实 ID 来自 engine-owned
+  `MonotonicRequestIdAllocator`，测试可注入；pickle 保留 request FSM/page/layout 并拒绝
+  legacy tuple 或类型错误 payload；
+- immutable `BatchPlan -> DeviceBatch -> ExecutionResult`；`DeviceBatch` 不包含 mutable
+  `Sequence`，phase/context/ID/token-count/batch-cardinality 均有负向门禁；
+- `ModelExecutor` 只分发 `run_plan`；backend 统一暴露
+  `prepare/warmup/capture/execute/release`，执行异常后 Context 必须释放；
+- 显式 `exit()` 注销 atexit handler、断开 backend -> runner ownership、在 runner exit
+  失败时仍清理引用，并在退出路径回收 Python cycle/CUDA cache；该逻辑不进入推理热路径；
+- `compile_graph`、动态 logical-prune + Graph、超出支持 batch 的 Graph 和未连接的
+  W/A quantization/serving 在 startup 失败，不允许运行时 silent fallback。
+
+专项架构回归（含 frozen Config pickle + `multiprocessing spawn`）：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/data/Prism-Infer \
+  .venv-local/bin/python -m pytest -q \
+  tests/test_p9_architecture_contracts.py
+# 16 passed in 8.91s
+```
+
+受影响 focused regression：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/data/Prism-Infer \
+  .venv-local/bin/python -m pytest -q \
+  tests/test_p9_architecture_contracts.py \
+  tests/test_compile_execution_config.py \
+  tests/test_sequence_multimodal.py \
+  tests/test_engine_contracts.py \
+  tests/test_kv_engine_hardening.py \
+  tests/test_kv_physical_layout.py \
+  tests/test_scheduler_swap_tables.py \
+  tests/test_model_runner_context_reset.py
+# 65 passed in 11.78s
+```
+
+CUDA 隐藏的完整 CPU/contract 回归隔离验证 host contract；原套件中两个直接 CUDA
+test 没有 no-CUDA skip，因此正式命令显式 deselect，并由下方独立 GPU gate 覆盖：
+
+```bash
+CUDA_VISIBLE_DEVICES='' PYTHONPATH=/data/Prism-Infer \
+  .venv-local/bin/python -m pytest -q tests \
+  -k 'not test_prepare_prefill_builds_paged_prefix_context and \
+      not test_text_only_generate_greedy_smoke'
+# 284 passed, 34 skipped, 2 deselected in 107.59s
+```
+
+GPU0 上的 VL input/context/profile 组故意在同一个 pytest 进程连续运行 single-image、
+multi-image 和 video 的 HF -> Prism 8B 路径，用于同时验证 correctness 与退出生命周期：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/data/Prism-Infer \
+  .venv-local/bin/python -m pytest -q \
+  tests/test_llm_vl_generate.py \
+  tests/test_model_runner_vl_mixed_prefill.py \
+  tests/test_model_runner_vl_prefill.py \
+  tests/test_model_runner_context_reset.py \
+  tests/test_performance_profile.py
+# 21 passed in 46.24s
+```
+
+首次组合运行在第一轮 Prism engine 退出后仍看到约 `27.4 GiB` active allocation，后续
+HF load 因而 OOM。root cause 是 runner/backend ownership cycle 使模型与 KV tensor 未被
+确定性释放；同时 atexit 仍保留已完成 engine。修复后同进程 21 项全部 PASS，并新增
+backend-cycle 与 runner-exit-failure 两项 CPU contract test。
+
+真实 Qwen3-VL-8B eager smoke：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/data/Prism-Infer \
+  .venv-local/bin/python -m pytest -q \
+  tests/test_text_only_regression.py
+# 1 passed in 15.87s
+```
+
+真实最小 CUDA Graph smoke 使用 `execution_backend='cuda_graph'`、batch `1`、
+`max_model_len=max_num_batched_tokens=128`、2-token greedy。结果：
+
+```text
+tokens: [785, 3070]
+resolved GPU/CPU KV blocks: 315 / 157
+captured batch sizes: [1]
+capture scope: decode_model_forward
+capture time: 275.993 ms
+requested/selected batch: 1 / 1
+post-exit active/reserved: 17,039,360 / 41,943,040 bytes
+```
+
+这证明 frozen runtime capacity replacement、Graph capture/replay 和 engine release 在真实
+8B 单卡路径可用；它不是 latency claim。eager 与 Graph 都固定
+`CUDA_VISIBLE_DEVICES=0`。进程内剩余量低于本轮设置的 `64 MiB` CUDA runtime-residue
+guard，不再存在模型/KV 级泄漏；进程退出后已分配 GPU0 为 `1 MiB / 0%`。该 guard
+用于防回归，不作为性能收益 claim。
+
+TP2 没有运行有效动态门禁：当前租约未分配第二张 GPU。P9-A 期间跨 GPU1 的 TP2 与
+all-reduce 尝试已经作废，不得用其中的 `cudaErrorInvalidValue` 推导 NCCL/SM120 blocker，
+也不得用隔离环境的成功输出声称双卡可用。TP2 状态为 NOT RUN / UNVERIFIED，不阻塞
+单卡 P9-C；只有未来明确获得至少两张卡后才重新执行 `tests/test_llm_vl_tp2.py`。
+
+静态门禁：
+
+```bash
+.venv-local/bin/python -m compileall -q prism_infer tests benchmarks scripts
+git diff --check
+```
+
+当前判定：P9-B PASS；允许进入 P9-C scaled FP8 scale lifecycle。P9-C 必须保持本节
+backend/identity contract，不得把 unit-scale direct cast 重新命名为 scaled FP8。
 
 ## 每次任务交付模板
 

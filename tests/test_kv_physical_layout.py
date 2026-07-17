@@ -1,6 +1,8 @@
 """P6.4 logical/physical KV layout contract tests。"""
 
 import pickle
+from contextlib import contextmanager
+from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +16,21 @@ from prism_infer.engine.kv_layout import (
 from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.utils.context import get_context, reset_context
+
+
+@contextmanager
+def _page_contract(block_size: int) -> Iterator[int]:
+    """Assert a scenario cannot leak page size through Sequence class state."""
+
+    assert block_size > 0
+    assert not hasattr(Sequence, "block_size")
+    assert not hasattr(Sequence, "set_block_size")
+    try:
+        yield block_size
+    finally:
+        reset_context()
+        assert not hasattr(Sequence, "block_size")
+        assert not hasattr(Sequence, "set_block_size")
 
 
 def _compact_record() -> dict[str, object]:
@@ -54,10 +71,12 @@ def test_kv_layout_separates_logical_and_physical_lengths() -> None:
 
 
 def test_compact_sequence_append_and_decode_pickle_preserve_layout() -> None:
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
-        seq = Sequence([10, 11, 12, 13, 14, 15])
+    with _page_contract(4) as block_size:
+        seq = Sequence(
+            [10, 11, 12, 13, 14, 15],
+            block_size=block_size,
+            request_id=0,
+        )
         seq.block_table = [7]
         seq.visual_pruning_decision_record = _compact_record()
         seq.install_kv_layout(_layout())
@@ -77,15 +96,15 @@ def test_compact_sequence_append_and_decode_pickle_preserve_layout() -> None:
         assert restored.block_table == [7, 8]
         assert restored.kv_layout is not None
         print("P6.4 compact Sequence decode pickle: PASS")
-    finally:
-        Sequence.set_block_size(old_block_size)
 
 
 def test_compact_sequence_swapped_pickle_uses_cpu_table() -> None:
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
-        seq = Sequence([10, 11, 12, 13, 14, 15])
+    with _page_contract(4) as block_size:
+        seq = Sequence(
+            [10, 11, 12, 13, 14, 15],
+            block_size=block_size,
+            request_id=0,
+        )
         seq.block_table = [7]
         seq.install_kv_layout(_layout())
         seq.cpu_block_table = [3]
@@ -97,8 +116,6 @@ def test_compact_sequence_swapped_pickle_uses_cpu_table() -> None:
         assert restored.cpu_block_table == [3]
         assert restored.physical_kv_len == 4
         print("P6.4 compact Sequence swapped pickle: PASS")
-    finally:
-        Sequence.set_block_size(old_block_size)
 
 
 def test_kv_layout_rejects_inconsistent_retained_positions() -> None:
@@ -110,9 +127,11 @@ def test_kv_layout_rejects_inconsistent_retained_positions() -> None:
     print("P6.4 KV layout retained-position guard: PASS")
 
 
-def _manager_sequence() -> Sequence:
+def _manager_sequence(block_size: int = 4) -> Sequence:
     seq = Sequence(
         [10, 11, 99, 99, 99, 99, 99, 99, 12, 13],
+        block_size=block_size,
+        request_id=0,
         image_token_id=99,
         image_token_count=6,
     )
@@ -143,18 +162,16 @@ def _manager_sequence() -> Sequence:
 
 
 def test_block_manager_and_runner_commit_physical_compaction() -> None:
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
-        manager = BlockManager(num_blocks=8, block_size=4)
-        seq = _manager_sequence()
+    with _page_contract(4) as block_size:
+        manager = BlockManager(num_blocks=8, block_size=block_size)
+        seq = _manager_sequence(block_size)
         manager.allocate(seq)
         old_table = list(seq.block_table)
         plan = manager.build_compaction_plan(seq, kv_dtype="torch.float32")
         assert plan is not None
 
         runner = object.__new__(ModelRunner)
-        runner.block_size = 4
+        runner.block_size = block_size
         runner.world_size = 1
         # kv_cache: [2, layers, blocks, block_size, kv_heads, head_dim]
         runner.kv_cache = torch.arange(
@@ -188,16 +205,12 @@ def test_block_manager_and_runner_commit_physical_compaction() -> None:
         assert seq.visual_pruning_decision_record["physical_compaction"] is True
         assert diff.max().item() == 0.0
         print("P6.4 post-prefill KV compact/block release: PASS")
-    finally:
-        Sequence.set_block_size(old_block_size)
 
 
 def test_compact_decode_append_uses_physical_tail_and_clears_hashes() -> None:
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
-        manager = BlockManager(num_blocks=8, block_size=4)
-        seq = _manager_sequence()
+    with _page_contract(4) as block_size:
+        manager = BlockManager(num_blocks=8, block_size=block_size)
+        seq = _manager_sequence(block_size)
         manager.allocate(seq)
         plan = manager.build_compaction_plan(seq, kv_dtype="torch.float32")
         assert plan is not None
@@ -221,38 +234,30 @@ def test_compact_decode_append_uses_physical_tail_and_clears_hashes() -> None:
         assert len(seq.block_table) == 3
         assert seq.physical_last_block_num_tokens == 1
         print("P6.4 compact decode physical-tail append: PASS")
-    finally:
-        Sequence.set_block_size(old_block_size)
 
 
 def test_compaction_rejects_prefix_shared_blocks() -> None:
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
-        manager = BlockManager(num_blocks=8, block_size=4)
-        seq = _manager_sequence()
+    with _page_contract(4) as block_size:
+        manager = BlockManager(num_blocks=8, block_size=block_size)
+        seq = _manager_sequence(block_size)
         manager.allocate(seq)
         manager.blocks[seq.block_table[0]].ref_count = 2
 
         with pytest.raises(RuntimeError, match="prefix-shared blocks"):
             manager.build_compaction_plan(seq, kv_dtype="torch.float32")
         print("P6.4 shared-block compaction guard: PASS")
-    finally:
-        Sequence.set_block_size(old_block_size)
 
 
 def test_compact_swap_pickle_swap_in_preserves_layout_and_hash_state() -> None:
     """Compact KV 经 swap/pickle 后必须保留 physical layout 与禁用 hash。"""
 
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
+    with _page_contract(4) as block_size:
         manager = BlockManager(
             num_blocks=8,
-            block_size=4,
+            block_size=block_size,
             num_cpu_blocks=4,
         )
-        seq = _manager_sequence()
+        seq = _manager_sequence(block_size)
         manager.allocate(seq)
         plan = manager.build_compaction_plan(seq, kv_dtype="torch.bfloat16")
         assert plan is not None
@@ -288,19 +293,15 @@ def test_compact_swap_pickle_swap_in_preserves_layout_and_hash_state() -> None:
         assert all(block_id not in manager.hash_to_block_id.values()
                    for block_id in restored.block_table)
         print("P6.4 compact swap/pickle/swap-in lifecycle: PASS")
-    finally:
-        Sequence.set_block_size(old_block_size)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepare_decode_uses_logical_mrope_and_physical_kv_tail() -> None:
     """Compact decode 必须分离 logical position 与 physical attention/write。"""
 
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
-        manager = BlockManager(num_blocks=8, block_size=4)
-        seq = _manager_sequence()
+    with _page_contract(4) as block_size:
+        manager = BlockManager(num_blocks=8, block_size=block_size)
+        seq = _manager_sequence(block_size)
         seq.rope_delta = torch.tensor([[3]], dtype=torch.long)
         manager.allocate(seq)
         plan = manager.build_compaction_plan(seq, kv_dtype="torch.bfloat16")
@@ -310,11 +311,11 @@ def test_prepare_decode_uses_logical_mrope_and_physical_kv_tail() -> None:
         manager.may_append(seq)
 
         runner = object.__new__(ModelRunner)
-        runner.block_size = 4
+        runner.block_size = block_size
         runner.config = SimpleNamespace(
             compression_mode="visual_compact",
             enable_visual_pruning_shadow=False,
-            kvcache_block_size=4,
+            kvcache_block_size=block_size,
         )
         model_inputs = runner.prepare_decode([seq])
         context = get_context()
@@ -336,9 +337,6 @@ def test_prepare_decode_uses_logical_mrope_and_physical_kv_tail() -> None:
         assert context.context_lens.tolist() == [seq.physical_kv_len]
         assert context.slot_mapping.tolist() == [expected_physical_slot]
         print("P6.4 compact decode logical/physical metadata: PASS")
-    finally:
-        reset_context()
-        Sequence.set_block_size(old_block_size)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -347,11 +345,9 @@ def test_fp8_kv_compaction_matches_independent_retained_reference() -> None:
 
     if not hasattr(torch, "float8_e4m3fn"):
         pytest.skip("torch.float8_e4m3fn is required")
-    old_block_size = Sequence.block_size
-    Sequence.set_block_size(4)
-    try:
-        manager = BlockManager(num_blocks=8, block_size=4)
-        seq = _manager_sequence()
+    with _page_contract(4) as block_size:
+        manager = BlockManager(num_blocks=8, block_size=block_size)
+        seq = _manager_sequence(block_size)
         manager.allocate(seq)
         plan = manager.build_compaction_plan(
             seq,
@@ -360,7 +356,7 @@ def test_fp8_kv_compaction_matches_independent_retained_reference() -> None:
         assert plan is not None
 
         runner = object.__new__(ModelRunner)
-        runner.block_size = 4
+        runner.block_size = block_size
         runner.world_size = 1
         torch.manual_seed(20260711)
         source_cache = torch.randn(
@@ -400,5 +396,3 @@ def test_fp8_kv_compaction_matches_independent_retained_reference() -> None:
         assert actual.shape == expected.shape == (2, 2, 6, 1, 8)
         assert diff.max().item() == 0.0
         print("P6.6 FP8 physical compaction: PASS")
-    finally:
-        Sequence.set_block_size(old_block_size)

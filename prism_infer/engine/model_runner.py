@@ -15,7 +15,6 @@
 # ═══════════════════════════════════════════════════════════════
 
 import pickle                                      # 序列化, 用于多 GPU 间传递数据
-from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from time import perf_counter
 
@@ -23,7 +22,11 @@ import torch
 import torch.distributed as dist                   # 分布式通信 (NCCL)
 
 from prism_infer.analysis.performance_profile import profile_region
-from prism_infer.config import Config
+from prism_infer.config import (
+    Config,
+    ExecutionBackendName,
+    MAX_CUDA_GRAPH_BATCH_SIZE,
+)
 from prism_infer.engine.compression import (
     COMPRESSION_FP8_KV,
     COMPRESSION_VISUAL_COMPACT_FP8,
@@ -32,6 +35,13 @@ from prism_infer.engine.compression import (
     build_visual_pruning_config,
 )
 from prism_infer.engine.sequence import Sequence
+from prism_infer.engine.contracts import (
+    BatchPhase,
+    BatchPlan,
+    DeviceBatch,
+    DeviceModelInputs,
+    ExecutionResult,
+)
 from prism_infer.engine.kv_layout import KVCompactionPlan
 from prism_infer.engine.visual_pruning import (
     build_retained_slot_mapping,
@@ -46,20 +56,17 @@ except ImportError:
 from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 from prism_infer.layers.sampler import Sampler              # 采样器 (温度采样/贪婪)
 from prism_infer.analysis.kv_trace import build_trace_metadata, register_model_config
-from prism_infer.utils.context import set_context, get_context, reset_context  # 全局上下文
+from prism_infer.utils.context import (  # 全局上下文
+    get_context,
+    install_context,
+    reset_context,
+    set_context,
+)
 from prism_infer.utils.loader import load_model             # 权重加载
 
 
-@dataclass
-class ModelInputs:
-    """一次模型 forward 所需的输入张量。"""
-
-    input_ids: torch.Tensor
-    position_ids: torch.Tensor
-    pixel_values: torch.Tensor | None = None
-    image_grid_thw: torch.Tensor | None = None
-    pixel_values_videos: torch.Tensor | None = None
-    video_grid_thw: torch.Tensor | None = None
+CUDA_GRAPH_SMALL_BATCH_BUCKETS = (1, 2, 4, 8)
+CUDA_GRAPH_BATCH_BUCKET_STRIDE = 16
 
 
 def _resolve_model_dtype(hf_config) -> torch.dtype:
@@ -84,6 +91,139 @@ def _text_hf_config(hf_config):
     return getattr(hf_config, "text_config", hf_config)
 
 
+class ModelRunnerExecutionBackend:
+    """Prepare tensor-only batches and execute the startup-selected backend."""
+
+    def __init__(self, runner: "ModelRunner") -> None:
+        self.runner = runner
+        self.name = ExecutionBackendName(
+            runner.config.execution_backend
+        ).value
+        self._released = False
+
+    def prepare(self, plan: BatchPlan) -> DeviceBatch:
+        if self._released:
+            raise RuntimeError("execution backend was released")
+        seqs = list(plan.sequences)
+        try:
+            with profile_region(
+                "runner.prepare_inputs",
+                metadata={"phase": plan.phase.value},
+            ):
+                model_inputs = (
+                    self.runner.prepare_prefill(seqs)
+                    if plan.is_prefill
+                    else self.runner.prepare_decode(seqs)
+                )
+            if not isinstance(model_inputs, DeviceModelInputs):
+                model_inputs = DeviceModelInputs(
+                    input_ids=model_inputs.input_ids,
+                    position_ids=model_inputs.position_ids,
+                    pixel_values=getattr(model_inputs, "pixel_values", None),
+                    image_grid_thw=getattr(model_inputs, "image_grid_thw", None),
+                    pixel_values_videos=getattr(
+                        model_inputs,
+                        "pixel_values_videos",
+                        None,
+                    ),
+                    video_grid_thw=getattr(model_inputs, "video_grid_thw", None),
+                )
+            with profile_region("runner.prepare_sample_inputs"):
+                temperatures = (
+                    self.runner.prepare_sample(seqs)
+                    if self.runner.rank == 0
+                    else None
+                )
+            attention_context = get_context()
+            execution_bucket = plan.batch_size
+            if (
+                plan.phase is BatchPhase.DECODE
+                and self.name == ExecutionBackendName.CUDA_GRAPH.value
+                and hasattr(self.runner, "graph_bs")
+            ):
+                execution_bucket = next(
+                    size
+                    for size in self.runner.graph_bs
+                    if size >= plan.batch_size
+                )
+            return DeviceBatch(
+                phase=plan.phase,
+                sequence_ids=plan.sequence_ids,
+                scheduled_token_counts=plan.scheduled_token_counts,
+                model_inputs=model_inputs,
+                attention_context=attention_context,
+                temperatures=temperatures,
+                execution_bucket=execution_bucket,
+            )
+        finally:
+            # The only state crossing prepare -> execute is the immutable
+            # DeviceBatch.  Attention state is re-installed explicitly below.
+            reset_context()
+
+    def warmup(self, bucket: int | None = None) -> None:
+        if self._released:
+            raise RuntimeError("execution backend was released")
+        if bucket is not None and bucket <= 0:
+            raise ValueError(f"warmup bucket must be positive, got {bucket}")
+        self.runner.warmup_model()
+
+    def capture(self, bucket: int | None = None) -> None:
+        if self._released:
+            raise RuntimeError("execution backend was released")
+        if self.name != ExecutionBackendName.CUDA_GRAPH.value:
+            raise RuntimeError(
+                f"execution backend {self.name!r} does not support capture"
+            )
+        if bucket is not None and bucket <= 0:
+            raise ValueError(f"capture bucket must be positive, got {bucket}")
+        self.runner.capture_cudagraph()
+        if bucket is not None and bucket not in self.runner.graph_bs:
+            raise ValueError(
+                f"capture bucket {bucket} is not in {self.runner.graph_bs}"
+            )
+
+    def execute(self, device_batch: DeviceBatch) -> ExecutionResult:
+        if self._released:
+            raise RuntimeError("execution backend was released")
+        if not isinstance(device_batch, DeviceBatch):
+            raise TypeError(
+                "execute requires DeviceBatch, "
+                f"got {type(device_batch).__name__}"
+            )
+        install_context(device_batch.attention_context)
+        try:
+            with profile_region("runner.run_model"):
+                logits = self.runner.run_model(
+                    device_batch.model_inputs,
+                    device_batch.phase is BatchPhase.PREFILL,
+                )
+            if self.runner.rank == 0:
+                if device_batch.temperatures is None:
+                    raise RuntimeError(
+                        "rank 0 DeviceBatch requires temperatures"
+                    )
+                with profile_region("runner.sampler"):
+                    token_ids = tuple(
+                        self.runner.sampler(
+                            logits,
+                            device_batch.temperatures,
+                        ).tolist()
+                    )
+            else:
+                token_ids = tuple(None for _ in device_batch.sequence_ids)
+            return ExecutionResult(token_ids=token_ids)
+        finally:
+            reset_context()
+
+    def release(self) -> None:
+        if self._released:
+            return
+        for name in ("graphs", "graph_pool", "graph_vars"):
+            if hasattr(self.runner, name):
+                delattr(self.runner, name)
+        self._released = True
+
+
 class ModelRunner:
 
     # ─────────────────────────────────────────────────────────
@@ -94,11 +234,11 @@ class ModelRunner:
         config: Config,
         rank: int,
         control_channel: Connection | list[Connection],
+        distributed_init_method: str,
     ) -> None:
         self.config = config
         hf_config = config.hf_config                # HuggingFace 模型配置 (层数/head数等)
         self.block_size = config.kvcache_block_size  # KV Cache 块大小 (如 16)
-        Sequence.set_block_size(self.block_size)
         self.enforce_eager = config.enforce_eager    # True = 禁用 CUDA Graph, 每次都 eager 执行
         self.world_size = config.tensor_parallel_size  # 几张 GPU (Tensor Parallel 并行度)
         self.rank = rank                             # 当前 GPU 编号 (0, 1, 2, ...)
@@ -113,44 +253,68 @@ class ModelRunner:
         register_model_config(config)
 
         # ── 初始化分布式通信 ──
-        dist.init_process_group("nccl", "tcp://localhost:2333",
-                                world_size=self.world_size, rank=rank)
-        # "nccl": NVIDIA 的 GPU 集合通信库
-        # "tcp://localhost:2333": rendezvous 地址(汇合点), 所有进程连到这里握手
+        if not isinstance(distributed_init_method, str):
+            raise TypeError("distributed_init_method must be a string")
+        torch.cuda.set_device(rank)                  # 绑定当前进程到第 rank 号 GPU
+        distributed_backend = "nccl" if self.world_size > 1 else "gloo"
+        init_options = {
+            "backend": distributed_backend,
+            "init_method": distributed_init_method,
+            "world_size": self.world_size,
+            "rank": rank,
+        }
+        if distributed_backend == "nccl":
+            init_options["device_id"] = torch.device("cuda", rank)
+        dist.init_process_group(**init_options)
+        # TP ranks 使用 NCCL；TP1 用 Gloo 提供 rank/world contract，避免空 collective
+        # 仍提前占用 CUDA communicator memory。
+        # rendezvous 地址由 engine 每次启动动态选择，避免固定端口冲突。
         # C++ 类比: MPI_Init() + MPI_Comm_rank()
 
-        torch.cuda.set_device(rank)                  # 绑定当前进程到第 rank 号 GPU
+        # ── 创建模型、KV Cache 和 CUDA Graph ──
+        default_dtype = torch.get_default_dtype()     # 保存调用方默认类型/设备
+        default_device = torch.get_default_device()
+        try:
+            torch.set_default_dtype(self.model_dtype)   # 设为模型精度 (如 bfloat16)
+            torch.set_default_device("cuda")          # 后续 torch.empty() 等默认在 GPU 上
+            if self._is_vl_config(hf_config) or Qwen3ForCausalLM is None:
+                self.model = Qwen3VLForCausalLM(
+                    hf_config,
+                    mlp_projection_mode=config.mlp_projection_mode,
+                )  # Qwen3-VL 模型结构
+                self.model.logits_precision = config.logits_precision
+                self.is_vl_model = True
+            else:
+                if config.logits_precision != "model":
+                    raise ValueError(
+                        "logits_precision='fp32' historical reproduction is "
+                        "currently supported only for Qwen3-VL"
+                    )
+                self.model = Qwen3ForCausalLM(hf_config)  # legacy Qwen3 纯文本结构
+                self.is_vl_model = False
+            load_model(self.model, config.model)       # 从文件加载权重到模型
+            self.sampler = Sampler()                   # 创建采样器
+            self.execution_backend = ModelRunnerExecutionBackend(self)
 
-        # ── 创建模型并加载权重 ──
-        default_dtype = torch.get_default_dtype()     # 保存原始默认类型 (float32)
-        torch.set_default_dtype(self.model_dtype)       # 设为模型精度 (如 bfloat16)
-        torch.set_default_device("cuda")              # 后续 torch.empty() 等默认在 GPU 上
-        if self._is_vl_config(hf_config) or Qwen3ForCausalLM is None:
-            self.model = Qwen3VLForCausalLM(
-                hf_config,
-                mlp_projection_mode=config.mlp_projection_mode,
-            )  # Qwen3-VL 模型结构
-            self.model.logits_precision = config.logits_precision
-            self.is_vl_model = True
-        else:
-            if config.logits_precision != "model":
-                raise ValueError(
-                    "logits_precision='fp32' historical reproduction is "
-                    "currently supported only for Qwen3-VL"
-                )
-            self.model = Qwen3ForCausalLM(hf_config)    # legacy Qwen3 纯文本结构
-            self.is_vl_model = False
-        load_model(self.model, config.model)           # 从文件加载权重到模型
-        self.sampler = Sampler()                       # 创建采样器
-
-        # ── 初始化 KV Cache 和 CUDA Graph ──
-        self.warmup_model()                            # 热身: 跑一次前向, 触发 CUDA kernel 编译
-        self.allocate_kv_cache()                       # 根据剩余显存计算能分配多少 block, 分配 KV Cache
-        self._configure_decode_compile()
-        if not self.enforce_eager:
-            self.capture_cudagraph()                    # 录制 CUDA Graph (Decode 加速)
-        torch.set_default_device("cpu")                # 还原默认设备为 CPU
-        torch.set_default_dtype(default_dtype)         # 还原默认类型
+            self.execution_backend.warmup()            # 热身: 跑一次前向, 触发 CUDA kernel 编译
+            self.allocate_kv_cache()                   # 根据剩余显存计算能分配多少 block, 分配 KV Cache
+            self._configure_decode_compile()
+            if not self.enforce_eager:
+                self.execution_backend.capture()       # 录制 CUDA Graph (Decode 加速)
+        except BaseException:
+            # Break the runner <-> backend ownership cycle even when model
+            # loading, warmup, KV allocation, or Graph capture fails.
+            backend = getattr(self, "execution_backend", None)
+            if backend is not None:
+                backend.release()
+                del self.execution_backend
+            reset_context()
+            raise
+        finally:
+            try:
+                torch.set_default_device(default_device)
+            finally:
+                torch.set_default_dtype(default_dtype)
 
         # ── 多 GPU 同步 (Tensor Parallel) ──
         if self.world_size > 1:
@@ -162,17 +326,22 @@ class ModelRunner:
                         "rank 0 TP control sender count must equal world_size - 1: "
                         f"senders={len(self.control_channel)}, world_size={self.world_size}"
                     )
-                dist.barrier()                          # 等所有 worker 完成模型初始化
+                self._tp_barrier()                      # 等所有 worker 完成模型初始化
             else:
                 if not isinstance(self.control_channel, Connection):
                     raise TypeError("TP worker requires one control receiver")
-                dist.barrier()
+                self._tp_barrier()
                 self.loop()                             # 从进程进入无限循环, 等待主进程指令
                 # 注意: 只有 rank>0 会进入 loop(), rank=0 继续执行正常流程
 
     # ─────────────────────────────────────────────────────────
     # exit: 清理资源
     # ─────────────────────────────────────────────────────────
+    def _tp_barrier(self) -> None:
+        """Synchronize NCCL ranks on each process's explicitly bound GPU."""
+
+        dist.barrier(device_ids=[self.rank])
+
     def exit(self) -> None:
         if self.world_size > 1:
             channels = (
@@ -182,9 +351,14 @@ class ModelRunner:
             )
             for channel in channels:
                 channel.close()
-            dist.barrier()                              # 等所有进程都关了
-        if not self.enforce_eager:
-            del self.graphs, self.graph_pool            # 释放 CUDA Graph 对象
+            self._tp_barrier()                          # 等所有进程都关了
+        backend = getattr(self, "execution_backend", None)
+        if backend is not None:
+            backend.release()
+            # Backend owns a runner reference.  Removing the reverse edge is
+            # required for deterministic in-process model/KV reclamation.
+            del self.execution_backend
+        reset_context()
         torch.cuda.synchronize()                        # 等所有 GPU 操作完成
         dist.destroy_process_group()                    # 销毁分布式通信组
         # C++ 类比: MPI_Finalize()
@@ -307,7 +481,7 @@ class ModelRunner:
             return torch.float8_e4m3fn
         return _resolve_model_dtype(config.hf_config)
 
-    def _forward_model(self, inputs: ModelInputs):
+    def _forward_model(self, inputs: DeviceModelInputs):
         """Call either the new Qwen3-VL interface or the legacy text model."""
         if self.is_vl_model:
             return self.model(input_ids=inputs.input_ids,
@@ -377,7 +551,14 @@ class ModelRunner:
         # max_model_len: 单条序列最大长度
         num_seqs = min(max_num_batched_tokens // max_model_len, self.config.max_num_seqs)
         # 计算最大并发序列数 (受 token 数和序列数上限约束)
-        seqs = [Sequence([0] * max_model_len) for _ in range(num_seqs)]
+        seqs = [
+            Sequence(
+                [0] * max_model_len,
+                block_size=self.block_size,
+                request_id=synthetic_request_id,
+            )
+            for synthetic_request_id in range(num_seqs)
+        ]
         # 造假序列: 每条都是 max_model_len 个 0
         self.run(seqs, True)                            # 跑一次 Prefill (前向传播)
         # 目的: 让 PyTorch/CUDA 编译 kernel, 知道峰值内存
@@ -415,7 +596,7 @@ class ModelRunner:
             - used                                       # 减去已用
             - peak + current                             # 减去峰值瞬时占用
         ) // block_bytes
-        requested_blocks = int(getattr(config, "num_kvcache_blocks", -1))
+        requested_blocks = config.num_kvcache_blocks
         if requested_blocks > 0:
             if requested_blocks > max_num_kvcache_blocks:
                 raise RuntimeError(
@@ -423,17 +604,21 @@ class ModelRunner:
                     f"requested={requested_blocks}, max={max_num_kvcache_blocks}, "
                     f"kv_cache_dtype={self.kv_cache_dtype}"
                 )
-            config.num_kvcache_blocks = requested_blocks
+            num_kvcache_blocks = requested_blocks
         else:
-            config.num_kvcache_blocks = max_num_kvcache_blocks
+            num_kvcache_blocks = max_num_kvcache_blocks
         # 这就是 "剩余空间能放多少个 block"
-        assert config.num_kvcache_blocks > 0
+        if num_kvcache_blocks <= 0:
+            raise RuntimeError(
+                "no KV cache blocks fit in the configured GPU memory budget"
+            )
+        self.num_kvcache_blocks = num_kvcache_blocks
 
         # ── 一次性分配整个 KV Cache 张量 ──
         self.kv_cache = torch.empty(
             2,                                           # 0=K_cache, 1=V_cache
             text_config.num_hidden_layers,               # 每层一份
-            config.num_kvcache_blocks,                   # block 个数
+            self.num_kvcache_blocks,                     # block 个数
             self.block_size,                             # 每 block token 数
             num_kv_heads,                                # KV head 数
             head_dim,                                    # head 维度
@@ -461,13 +646,14 @@ class ModelRunner:
         # ── 分配 CPU 端 KV Cache (Swap 用, pinned memory 加速 GPU↔CPU 传输) ──
         # C++ 类比: cudaMallocHost (pinned memory, page-locked)
         # 比普通 CPU 内存传输快 2-3 倍, 因为避免了额外的内存拷贝
-        num_cpu_blocks = config.num_kvcache_blocks // 2  # CPU block 数 = GPU 的一半
-        config.num_cpu_blocks = num_cpu_blocks
-        if num_cpu_blocks > 0:
+        self.num_cpu_blocks = int(
+            self.num_kvcache_blocks * config.cpu_kv_cache_ratio
+        )
+        if self.num_cpu_blocks > 0:
             self.cpu_kv_cache = torch.empty(
                 2,
                 text_config.num_hidden_layers,
-                num_cpu_blocks,
+                self.num_cpu_blocks,
                 self.block_size,
                 num_kv_heads,
                 head_dim,
@@ -537,7 +723,7 @@ class ModelRunner:
             )
             compact_kv_slots(flat_cache, source_slots, destination_slots)
         if self.world_size > 1:
-            dist.barrier()
+            self._tp_barrier()
 
     # ── swap_blocks: GPU ↔ CPU KV Cache 数据搬运 ──
     # C++ 类比: cudaMemcpyAsync(dst, src, size, direction, stream)
@@ -741,7 +927,7 @@ class ModelRunner:
             pixel_values_videos = pixel_values_videos.pin_memory().cuda(non_blocking=True)
             video_grid_thw = video_grid_thw.pin_memory().cuda(non_blocking=True)
 
-        return ModelInputs(input_ids=input_ids,
+        return DeviceModelInputs(input_ids=input_ids,
                            position_ids=positions,
                            pixel_values=pixel_values,
                            image_grid_thw=image_grid_thw,
@@ -840,7 +1026,7 @@ class ModelRunner:
                     compression_metadata=compression_metadata,
                     visual_pruning_slot_mappings=visual_pruning_slot_mappings)
         # False = is_decode
-        return ModelInputs(input_ids=input_ids, position_ids=positions)
+        return DeviceModelInputs(input_ids=input_ids, position_ids=positions)
 
     def prepare_sample(self, seqs: list[Sequence]):
         """准备采样参数: 收集每条序列的温度"""
@@ -878,8 +1064,18 @@ class ModelRunner:
 
         if max_bs < 1:
             raise ValueError(f"max_bs must be >= 1, got {max_bs}")
-        graph_bs = [bs for bs in [1, 2, 4, 8] if bs <= max_bs]
-        graph_bs += list(range(16, max_bs + 1, 16))
+        graph_bs = [
+            batch_size
+            for batch_size in CUDA_GRAPH_SMALL_BATCH_BUCKETS
+            if batch_size <= max_bs
+        ]
+        graph_bs += list(
+            range(
+                CUDA_GRAPH_BATCH_BUCKET_STRIDE,
+                max_bs + 1,
+                CUDA_GRAPH_BATCH_BUCKET_STRIDE,
+            )
+        )
         if not graph_bs or graph_bs[-1] != max_bs:
             graph_bs.append(max_bs)
         return sorted(set(graph_bs))
@@ -923,7 +1119,7 @@ class ModelRunner:
     @torch.inference_mode()
     # @torch.inference_mode(): 禁用梯度计算 + 自动求导, 推理更快更省内存
     # 比 torch.no_grad() 更彻底 (连 autograd 元数据都不创建)
-    def run_model(self, model_inputs: ModelInputs, is_prefill: bool):
+    def run_model(self, model_inputs: DeviceModelInputs, is_prefill: bool):
         """执行模型前向推理, 返回 logits"""
         input_ids = model_inputs.input_ids
         context = get_context()
@@ -934,7 +1130,6 @@ class ModelRunner:
         if (
             is_prefill
             or self.enforce_eager
-            or input_ids.size(0) > 512
             or compression_requires_eager
         ):
             # ---- Prefill / Eager / batch 太大 → 直接跑模型 ----
@@ -1016,110 +1211,69 @@ class ModelRunner:
                 return self.model.compute_logits(graph_vars["outputs"][:bs])
             # graph 输出写到 graph_vars["outputs"], 取前 bs 个
 
-    def run(
-        self,
-        seqs: list[Sequence],
-        is_prefill: bool,
-        scheduled_token_counts: list[int] | None = None,
-    ) -> list[int]:
-        """对外入口: scheduler 调用, 完成一次推理并返回采样的 token_ids"""
-        enable_chunked = getattr(self.config, 'enable_chunked_prefill', False)
-        max_chunk = getattr(self.config, 'max_chunk_size', 512)
+    def run_plan(self, plan: BatchPlan) -> ExecutionResult:
+        """Execute one immutable host plan through a tensor-only DeviceBatch."""
 
-        if scheduled_token_counts is not None:
-            if len(scheduled_token_counts) != len(seqs):
-                raise ValueError(
-                    "scheduled_token_counts must match sequences: "
-                    f"{len(scheduled_token_counts)} != {len(seqs)}"
-                )
-            if any(count <= 0 for count in scheduled_token_counts):
-                raise ValueError("scheduled token counts must be positive")
-
-        # warmup 时 block_table 为空, 不走 chunked prefill
+        if not isinstance(plan, BatchPlan):
+            raise TypeError(f"run_plan requires BatchPlan, got {type(plan).__name__}")
+        seqs = list(plan.sequences)
+        enable_chunked = self.config.enable_chunked_prefill
+        max_chunk = self.config.max_chunk_size
         is_warmup = any(not seq.block_table for seq in seqs)
-        chunked_active = is_prefill and enable_chunked and not is_warmup
+        chunked_active = plan.is_prefill and enable_chunked and not is_warmup
         if chunked_active:
-            # ── Chunked Prefill: 限制每条 seq 只暴露 chunk 大小的 token ──
-            # 保存原始 num_cached_tokens, 并设临时值使 prepare_prefill 只看到 chunk
             for index, seq in enumerate(seqs):
-                # 当前 chunk 的实际 token 数
                 remaining = seq.num_prompt_tokens - seq.num_computed_tokens
-                chunk = (
-                    min(remaining, max_chunk)
-                    if scheduled_token_counts is None
-                    else scheduled_token_counts[index]
-                )
+                chunk = plan.scheduled_token_counts[index]
                 if chunk > remaining or chunk > max_chunk:
                     raise ValueError(
                         "invalid scheduled prefill chunk: "
                         f"seq={seq.seq_id} chunk={chunk} "
                         f"remaining={remaining} max_chunk={max_chunk}"
                     )
-                # 设 num_cached_tokens = num_computed_tokens, 让 prepare_prefill 从这里开始
                 seq._orig_num_cached_tokens = seq.num_cached_tokens
                 seq.num_cached_tokens = seq.num_computed_tokens
-                # 临时截断: 设 num_tokens = num_computed_tokens + chunk
-                # 同时截断 token_ids, 使 seq[num_cached_tokens:] 只取 chunk 部分
                 seq._orig_num_tokens = seq.num_tokens
                 seq._orig_token_ids = seq.token_ids
                 seq.num_tokens = seq.num_computed_tokens + chunk
                 seq.token_ids = seq.token_ids[:seq.num_tokens]
 
         try:
-            # 1. 准备输入
-            with profile_region(
-                "runner.prepare_inputs",
-                metadata={"phase": "prefill" if is_prefill else "decode"},
-            ):
-                model_inputs = (
-                    self.prepare_prefill(seqs)
-                    if is_prefill
-                    else self.prepare_decode(seqs)
-                )
-            with profile_region("runner.prepare_sample_inputs"):
-                temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
+            backend = getattr(self, "execution_backend", None)
+            if backend is None:
+                backend = ModelRunnerExecutionBackend(self)
+                self.execution_backend = backend
+            device_batch = backend.prepare(plan)
+            execution = backend.execute(device_batch)
+            token_ids = list(execution.token_ids)
 
-            # 2. 前向推理
-            with profile_region("runner.run_model"):
-                logits = self.run_model(model_inputs, is_prefill)
-
-            if is_prefill:
-                scorer = get_context().visual_pruning_scorer
+            if plan.is_prefill:
+                scorer = device_batch.attention_context.visual_pruning_scorer
                 if scorer is not None:
-                    with profile_region("runner.visual_prune.finalize_attention_scores"):
+                    with profile_region(
+                        "runner.visual_prune.finalize_attention_scores"
+                    ):
                         finalize_attention_pruning_decisions(
                             seqs,
                             build_visual_pruning_config(self.config),
                             scorer,
                         )
 
-            # 3. 采样
-            with profile_region("runner.sampler"):
-                token_ids = (
-                    self.sampler(logits, temperatures).tolist()
-                    if self.rank == 0
-                    else None
-                )
-
             if chunked_active:
-                # ── 恢复 num_tokens, 更新 num_computed_tokens ──
-                for i, seq in enumerate(seqs):
-                    chunk = seq.num_tokens - seq.num_computed_tokens  # 本次 chunk 大小
+                for index, seq in enumerate(seqs):
+                    chunk = seq.num_tokens - seq.num_computed_tokens
                     seq.num_computed_tokens += chunk
-                    # ``num_computed_tokens`` owns chunk progress.
-                    # ``num_cached_tokens`` remains the persistent prefix-hit
-                    # count so compaction/admission do not mistake ordinary
-                    # chunking for shared prefix-cache state.  The next run
-                    # temporarily maps computed progress back to query_start.
                     seq.num_cached_tokens = seq._orig_num_cached_tokens
-                    seq.num_tokens = seq._orig_num_tokens  # 恢复真实总 token 数
-                    seq.token_ids = seq._orig_token_ids     # 恢复完整 token 列表
-                    del seq._orig_num_tokens, seq._orig_token_ids, seq._orig_num_cached_tokens
+                    seq.num_tokens = seq._orig_num_tokens
+                    seq.token_ids = seq._orig_token_ids
+                    del (
+                        seq._orig_num_tokens,
+                        seq._orig_token_ids,
+                        seq._orig_num_cached_tokens,
+                    )
                     if not seq.is_prefill_finished:
-                        # 中间 chunk: 不采样, token_id 设为 None
-                        if token_ids is not None:
-                            token_ids[i] = None
-            return token_ids
+                        token_ids[index] = None
+            return ExecutionResult(token_ids=tuple(token_ids))
         finally:
             if chunked_active:
                 for seq in seqs:
@@ -1127,8 +1281,59 @@ class ModelRunner:
                         seq.num_tokens = seq._orig_num_tokens
                         seq.token_ids = seq._orig_token_ids
                         seq.num_cached_tokens = seq._orig_num_cached_tokens
-                        del seq._orig_num_tokens, seq._orig_token_ids, seq._orig_num_cached_tokens
+                        del (
+                            seq._orig_num_tokens,
+                            seq._orig_token_ids,
+                            seq._orig_num_cached_tokens,
+                        )
             reset_context()
+
+    def run(
+        self,
+        seqs: list[Sequence],
+        is_prefill: bool,
+        scheduled_token_counts: list[int] | None = None,
+    ) -> list[int | None]:
+        """One-cycle compatibility adapter for direct P1-P7 runner calls."""
+
+        if scheduled_token_counts is None:
+            is_warmup = any(not seq.block_table for seq in seqs)
+            chunked_active = (
+                is_prefill
+                and self.config.enable_chunked_prefill
+                and not is_warmup
+            )
+            scheduled_token_counts = [
+                (
+                    max(
+                        1,
+                        min(
+                            seq.num_prompt_tokens
+                            - max(
+                                seq.num_computed_tokens,
+                                seq.num_cached_tokens,
+                            ),
+                            self.config.max_chunk_size,
+                        )
+                        if chunked_active
+                        else seq.num_prompt_tokens
+                        - max(
+                            seq.num_computed_tokens,
+                            seq.num_cached_tokens,
+                        ),
+                    )
+                    if is_prefill
+                    else 1
+                )
+                for seq in seqs
+            ]
+        plan = BatchPlan(
+            phase=BatchPhase.PREFILL if is_prefill else BatchPhase.DECODE,
+            sequences=tuple(seqs),
+            scheduled_token_counts=tuple(scheduled_token_counts),
+            policy_name="legacy_runner_adapter",
+        )
+        return list(self.run_plan(plan).token_ids)
 
     # ═══════════════════════════════════════════════════════════
     # CUDA Graph: 预录制 Decode 操作, 消除 CPU 开销
@@ -1142,7 +1347,10 @@ class ModelRunner:
         config = self.config
         hf_config = config.hf_config
         text_config = _text_hf_config(hf_config)
-        max_bs = min(self.config.max_num_seqs, 512)     # 最大 batch size
+        max_bs = min(
+            self.config.max_num_seqs,
+            MAX_CUDA_GRAPH_BATCH_SIZE,
+        )
         max_num_blocks = (config.max_model_len + self.block_size - 1) // self.block_size
         # 最多需要多少个 block (向上取整)
 
@@ -1172,11 +1380,15 @@ class ModelRunner:
             block_tables[:bs].zero_()
             set_context(False, slot_mapping=slot_mapping[:bs],
                        context_lens=context_lens[:bs], block_tables=block_tables[:bs])
-            outputs[:bs] = self._forward_model(ModelInputs(input_ids[:bs], positions[:, :bs]))
+            outputs[:bs] = self._forward_model(
+                DeviceModelInputs(input_ids[:bs], positions[:, :bs])
+            )
 
             # capture: 录制!
             with torch.cuda.graph(graph, self.graph_pool):
-                outputs[:bs] = self._forward_model(ModelInputs(input_ids[:bs], positions[:, :bs]))
+                outputs[:bs] = self._forward_model(
+                    DeviceModelInputs(input_ids[:bs], positions[:, :bs])
+                )
             # torch.cuda.graph(graph, pool):
             #   pool: 共享内存池, 不同 bs 的 graph 共享 GPU workspace
             #   with 块内的所有 GPU 操作被录制到 graph 里

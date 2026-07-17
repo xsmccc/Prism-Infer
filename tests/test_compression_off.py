@@ -83,12 +83,16 @@ def test_compression_metadata_counts_visual_tokens():
     image_seq = Sequence(
         [1, 99, 99, 2],
         SamplingParams(temperature=0.0, max_tokens=1),
+        block_size=256,
+        request_id=0,
         image_token_id=99,
         image_token_count=2,
     )
     video_seq = Sequence(
         [1, 98, 98, 98, 2],
         SamplingParams(temperature=0.0, max_tokens=1),
+        block_size=256,
+        request_id=1,
         video_token_id=98,
         video_token_count=3,
     )
@@ -129,6 +133,8 @@ def test_visual_pruning_shadow_metadata_records_prefill_decisions():
     seq = Sequence(
         [1, 99, 99, 2, 99],
         SamplingParams(temperature=0.0, max_tokens=1),
+        block_size=256,
+        request_id=0,
         image_token_id=99,
         image_token_count=3,
     )
@@ -173,6 +179,8 @@ def test_visual_pruning_shadow_metadata_is_prefill_only():
     seq = Sequence(
         [1, 99, 99, 2],
         SamplingParams(temperature=0.0, max_tokens=1),
+        block_size=256,
+        request_id=0,
         image_token_id=99,
         image_token_count=2,
     )
@@ -200,6 +208,8 @@ def test_visual_pruning_shadow_score_mode_fails_without_runtime_scores():
     seq = Sequence(
         [1, 99, 99, 2],
         SamplingParams(temperature=0.0, max_tokens=1),
+        block_size=256,
+        request_id=0,
         image_token_id=99,
         image_token_count=2,
     )
@@ -224,6 +234,8 @@ def test_attention_pruning_active_prefill_defers_runtime_decision():
     seq = Sequence(
         [1, 99, 99, 2],
         SamplingParams(temperature=0.0, max_tokens=1),
+        block_size=256,
+        request_id=0,
         image_token_id=99,
         image_token_count=2,
     )
@@ -255,6 +267,8 @@ def test_visual_prune_active_metadata_persists_prefill_to_decode():
     seq = Sequence(
         [1, 99, 99, 2, 99],
         SamplingParams(temperature=0.0, max_tokens=1),
+        block_size=256,
+        request_id=0,
         image_token_id=99,
         image_token_count=3,
     )
@@ -291,6 +305,8 @@ def test_visual_compact_fp8_metadata_activates_both_physical_modes() -> None:
     seq = Sequence(
         [1, 99, 99, 2],
         SamplingParams(temperature=0.0, max_tokens=1),
+        block_size=256,
+        request_id=0,
         image_token_id=99,
         image_token_count=2,
     )
@@ -338,6 +354,8 @@ def test_visual_prune_decision_survives_decode_serialization():
     seq = Sequence(
         [1, 99, 99, 2],
         SamplingParams(temperature=0.0, max_tokens=1),
+        block_size=256,
+        request_id=0,
         image_token_id=99,
         image_token_count=2,
     )

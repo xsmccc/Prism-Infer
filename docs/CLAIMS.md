@@ -71,9 +71,9 @@
 - “offline batch tok/s 等价于 online serving throughput/goodput”。
 - “P7.3 已证明 HTTP/gRPC 服务性能”或“已证明相对 vLLM 的 online goodput 优势”。
 - “P7.3 正式矩阵证明了 swap/recompute 性能”；正式 9-cell matrix 未触发 preemption。
-- “TP2 已验证”或“多卡可扩展”；当前 8 张 RTX 5090 均可见，但 Prism
-  Torch 2.6/CUDA 12.8/NCCL 2.25.1 的 SM120 collective 失败。隔离的新栈 control
-  PASS 只定位 software-stack blocker，不等于 Prism TP2 PASS。
+- “TP2 已验证”“多卡可扩展”或“当前 NCCL/SM120 软件栈阻断 TP2”；当前租约只分配
+  GPU0，管理员开放 NCU/NSYS 后额外设备可见不等于可用。此前跨 GPU1 的失败与成功
+  control 都是无效实验，TP2 仍为 NOT RUN / UNVERIFIED。
 - “已实现 megakernel/PD 分离/投机解码”。
 - “GPU span减去 busy就是 occupancy/可消除 idle”或“sampler的 CPU range可与 Graph
   replay直接相加”；node tracing有 instrumentation，sampler CPU时间暴露前序 stream同步。

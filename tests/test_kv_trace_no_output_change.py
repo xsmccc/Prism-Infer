@@ -35,6 +35,8 @@ def _run_prefill_attention(enable_trace: bool):
         seq = Sequence(
             [1, 99, 99, 2, 3],
             SamplingParams(temperature=0.0, max_tokens=1),
+            block_size=256,
+            request_id=0,
             image_token_id=99,
             image_token_count=2,
         )
@@ -111,6 +113,8 @@ def _run_decode_attention(enable_trace: bool):
         seq = Sequence(
             [1, 99, 99, 2, 3],
             SamplingParams(temperature=0.0, max_tokens=1),
+            block_size=block_size,
+            request_id=0,
             image_token_id=99,
             image_token_count=2,
         )

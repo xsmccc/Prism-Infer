@@ -1,16 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-# context.py —— 全局上下文 (model_runner 和 attention 层之间的"传话筒")
+# context.py —— 单次执行上下文的 attention bridge
 #
-# 职责: 存储一次推理步骤中 attention 层需要的元数据
-#       model_runner 在 prepare_prefill/decode 里 set_context()
-#       attention 层在 forward() 里 get_context() 读取
-#
-# 为什么要用全局变量?
-#   因为 model.forward(input_ids, positions) 的接口只接受这两个参数,
-#   而 attention 层需要 slot_mapping, block_tables, cu_seqlens 等信息。
-#   不想改模型接口 → 用全局变量"偷偷"传递。
-#
-# C++ 类比: 类似 thread_local 全局状态, 或者一个 Context 单例
+# prepare 阶段生成 immutable Context 并装入 DeviceBatch；execute 阶段显式安装，
+# model/attention forward 完成后立即 reset。该 process-local bridge 不拥有跨 batch
+# 状态，也不能替代 scheduler/request contract。
 # ═══════════════════════════════════════════════════════════════
 
 from dataclasses import dataclass
@@ -18,7 +11,7 @@ from typing import Any
 import torch
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class Context:
     """一次推理步骤的上下文信息"""
     is_prefill: bool = False                       # True=Prefill, False=Decode
@@ -35,13 +28,60 @@ class Context:
     visual_pruning_slot_mappings: tuple[torch.Tensor, ...] = ()
     visual_pruning_scorer: Any | None = None        # prefill runtime attention score collector
 
-# ── 模块级全局变量: 单例 Context ──
+    def __post_init__(self) -> None:
+        if not isinstance(self.is_prefill, bool):
+            raise TypeError(
+                f"Context.is_prefill must be a boolean, got {self.is_prefill!r}"
+            )
+        for name in ("max_seqlen_q", "max_seqlen_k"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"Context.{name} must be a non-negative integer, got {value!r}"
+                )
+        for name in (
+            "cu_seqlens_q",
+            "cu_seqlens_k",
+            "slot_mapping",
+            "context_lens",
+            "logical_context_lens",
+            "block_tables",
+        ):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, torch.Tensor):
+                raise TypeError(f"Context.{name} must be a tensor or None")
+        if not isinstance(self.visual_pruning_slot_mappings, tuple) or any(
+            not isinstance(mapping, torch.Tensor)
+            for mapping in self.visual_pruning_slot_mappings
+        ):
+            raise TypeError(
+                "Context.visual_pruning_slot_mappings must be a tuple of tensors"
+            )
+
+
+# ── Process-local forward bridge; ownership remains in DeviceBatch. ──
 _CONTEXT = Context()
-# 只有一个实例, 整个进程共享 (单线程推理, 不需要锁)
+
 
 def get_context() -> Context:
     """attention 层调用: 获取当前步骤的上下文"""
     return _CONTEXT
+
+
+def install_context(context: Context) -> None:
+    """Install an immutable context carried by a prepared device batch."""
+
+    if not isinstance(context, Context):
+        raise TypeError(
+            f"context must be Context, got {type(context).__name__}"
+        )
+    global _CONTEXT
+    _CONTEXT = context
+
 
 def set_context(
     is_prefill: bool,
@@ -75,8 +115,7 @@ def set_context(
         visual_pruning_slot_mappings=visual_pruning_slot_mappings,
         visual_pruning_scorer=visual_pruning_scorer,
     )
-    # 每次创建新的 Context 对象 (不是修改旧的)
-    # dataclass 的 __init__ 按字段顺序接收参数
+
 
 def reset_context() -> None:
     """推理完成后调用: 清除上下文, 释放 tensor 引用"""

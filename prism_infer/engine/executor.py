@@ -49,14 +49,17 @@ class ModelExecutor:
                 )
 
         with profile_region("engine.model_runner"):
-            token_ids = self.runner.call(
-                "run",
-                list(plan.sequences),
-                plan.is_prefill,
-                list(plan.scheduled_token_counts),
+            runner_result = self.runner.call("run_plan", plan)
+        if not isinstance(runner_result, ExecutionResult):
+            raise RuntimeError(
+                "rank-0 runner must return ExecutionResult, got "
+                f"{type(runner_result).__name__}"
             )
-        if token_ids is None:
-            raise RuntimeError("rank-0 executor received no sampled token ids")
+        if len(runner_result.token_ids) != plan.batch_size:
+            raise RuntimeError(
+                "rank-0 runner result must match the planned batch size: "
+                f"{len(runner_result.token_ids)} != {plan.batch_size}"
+            )
 
         compaction_count = 0
         if (
@@ -95,6 +98,6 @@ class ModelExecutor:
                 compaction_count = len(plans)
 
         return ExecutionResult(
-            token_ids=tuple(token_ids),
+            token_ids=runner_result.token_ids,
             compaction_count=compaction_count,
         )

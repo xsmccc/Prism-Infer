@@ -55,6 +55,8 @@ def _single_image_sequence() -> Sequence:
     seq = Sequence.from_single_image_inputs(
         inputs,
         SamplingParams(max_tokens=4),
+        block_size=256,
+        request_id=0,
         position_ids=position_ids,
         rope_delta=rope_delta,
     )

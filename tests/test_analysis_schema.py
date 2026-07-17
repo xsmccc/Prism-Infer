@@ -40,6 +40,8 @@ def test_build_trace_metadata_serializes_shapes_and_visual_spans():
     seq = Sequence(
         [1, 10, 10, 2, 20, 20, 20, 3],
         SamplingParams(temperature=0.0, max_tokens=1),
+        block_size=256,
+        request_id=0,
         pixel_values=torch.zeros(4, 8),
         image_grid_thw=torch.tensor([[1, 4, 4]], dtype=torch.long),
         pixel_values_videos=torch.zeros(8, 8),

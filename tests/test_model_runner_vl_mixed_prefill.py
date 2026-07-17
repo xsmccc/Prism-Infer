@@ -73,6 +73,8 @@ def _vl_sequence(kind: str, block_start: int) -> Sequence:
         seq = Sequence.from_single_image_inputs(
             inputs,
             sampling,
+            block_size=256,
+            request_id=block_start,
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
@@ -91,6 +93,8 @@ def _vl_sequence(kind: str, block_start: int) -> Sequence:
         seq = Sequence.from_image_inputs(
             inputs,
             sampling,
+            block_size=256,
+            request_id=block_start,
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
@@ -109,6 +113,8 @@ def _vl_sequence(kind: str, block_start: int) -> Sequence:
         seq = Sequence.from_video_inputs(
             inputs,
             sampling,
+            block_size=256,
+            request_id=block_start,
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
@@ -120,7 +126,12 @@ def _vl_sequence(kind: str, block_start: int) -> Sequence:
 
 
 def _text_sequence(block_start: int) -> Sequence:
-    seq = Sequence([151644, 872, 198, 77091, 198], SamplingParams(max_tokens=2))
+    seq = Sequence(
+        [151644, 872, 198, 77091, 198],
+        SamplingParams(max_tokens=2),
+        block_size=256,
+        request_id=block_start,
+    )
     seq.block_table = list(range(block_start, block_start + seq.num_blocks))
     return seq
 
