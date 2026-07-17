@@ -3246,7 +3246,9 @@ git status --short
 
 ## 每次任务交付模板
 
-每个任务完成时，在回复或阶段文档中使用:
+阶段级交付使用 `docs/STAGE_DELIVERY_TEMPLATE.md`，其中包含 requirement mapping、
+环境身份、correctness/quality/performance、claim边界和 raw evidence完整门禁。每个
+较小任务完成时，在回复或阶段文档中至少使用:
 
 ```text
 模块:

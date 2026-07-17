@@ -1,6 +1,6 @@
 # Prism-Infer 项目路线图
 
-> 修订日期: 2026-07-16
+> 修订日期: 2026-07-17
 > 目标模型: Qwen3-VL-8B-Instruct
 > 项目目标: 自实现 Qwen3-VL 多模态推理引擎，并在可靠 FP baseline 上完成视觉 token KV Cache 分析与压缩研究。
 
@@ -66,8 +66,8 @@ Plan -> Implement -> Verify -> Teach -> Document -> Gate Review
 - [x] 记录当前模型路径和 full logits 风险。
 - [x] 将路线图改为阶段门禁结构。
 - [x] 建立统一验证文档: `docs/VERIFICATION.md`。
-- [ ] 将历史 `DAY_*.md` 文档标注为历史记录，避免与主路线图冲突。
-- [ ] 建立每阶段交付模板: 目标、改动范围、验证输出、风险、下一步。
+- [x] 历史 `DAY_01.md/DAY_02.md` 已在 `311f055` 删除；`docs/HISTORY.md` 明确其只保留在 Git 历史，不再作为当前计划来源。
+- [x] 建立 `docs/STAGE_DELIVERY_TEMPLATE.md`，统一目标、范围、环境、验证、claim、风险与下一步字段。
 
 ### 出口标准
 

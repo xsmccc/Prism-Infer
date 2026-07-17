@@ -21,7 +21,7 @@ nano-vllm/
 │   ├── analysis/          # KV Cache analysis tools (new)
 │   └── utils/             # context, loader
 ├── scripts/               # Exploration & trace scripts
-├── docs/                  # ROADMAP.md, DAY_XX.md task plans
+├── docs/                  # ROADMAP、验证、报告、claim ledger 与历史索引
 ├── tests/                 # Unit & integration tests
 ├── data/                  # Experiment outputs (gitignored)
 ├── .claude/skills/rigor/  # Anti-laziness enforcement skill
