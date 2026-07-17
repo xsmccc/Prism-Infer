@@ -29,7 +29,9 @@ Prism-Infer 的交付目标不是单个 demo，而是一套可验证、可复现
 | KV Cache 分析 | P4 已完成当前门禁 | 已实现 repo 内 KV trace schema/session、attention/KV 采集、entropy 指标、离线 summary 和三类样例报告；trace on/off greedy tokens 已验证一致。 |
 | KV Engine Hardening | P4.5 已完成当前门禁 | 已统一 canonical 4D paged KV layout 写入语义，修复 CPU fallback、prefix hash 释放清理、swap CPU/GPU 页表混用，补齐 Sequence/Config block size contract，并把 prefix-cache prefill 提前显式拒绝。 |
 | KV Cache 压缩 | P5 当前门禁已完成 | 已保留 `compression_mode="off"` baseline，新增 `visual_prune` logical decode retention，并完成 `fp8_kv` physical KV storage baseline；固定 16 blocks 下 FP8 KV cache bytes 为 BF16 的 `0.5x`，质量矩阵 32/32 token exact match；FP8 当前 latency 更慢，吞吐优化进入 P6。 |
-| 系统性能优化 | P6.12-C BF16 content-aware 主线已完成并冻结 | 默认 last-layer attention scorer 在 7 张固定 COCO 图片、35 条 caption reference 上通过当前 lexical task gate：token-F1/ROUGE-L drop 为 `0.003288/0.003710`；physical token/active-byte ratio 为 `0.536x/0.571x`。freeze tag 为 `p6.12-content-aware-kv`。这不是标准 COCO accuracy，FP8 quality、两卡动态 TP 和 RTX hardware counter 仍未完成。 |
+| 系统性能优化 | P6.12-C BF16 content-aware 主线已完成并冻结 | 默认 last-layer attention scorer 在 7 张固定 COCO 图片、35 条 caption reference 上通过当前 lexical task gate：token-F1/ROUGE-L drop 为 `0.003288/0.003710`；7-image aggregate physical token/active-byte ratio 为 `0.535x/0.538x`。COCO batch4稳定性能 cell为 `0.536x/0.571x`。freeze tag 为 `p6.12-content-aware-kv`。这不是标准 COCO accuracy，FP8 quality、两卡动态 TP 和 RTX hardware counter 仍未完成。 |
+| 单机性能与外部对标 | P7.0-P7.4 已完成，P7.5 PARTIAL | online engine、external protocol、logits优化和Graph replay分析已闭环；packed gate/up仅完成组件 correctness。完整8B与性能门禁被同一物理GPU的隐藏外部负载阻塞。 |
+| 项目交付 | P8 文档交付已完成，动态GPU验收待补 | README、技术报告、复现手册、Known Issues、投递材料和安装preflight已落地；隔离安装与CPU smoke `40 passed`，fresh环境完整8B demo尚待稳定独占GPU。 |
 
 ## 阶段门禁总览
 
@@ -688,17 +690,27 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
 
 ### 小任务
 
-- [ ] 重写 README，覆盖安装、模型准备、快速运行、验证和压缩实验。
-- [ ] 整理技术报告，覆盖模型自实现、M-RoPE、DeepStack、KV 分析、压缩和性能。
-- [ ] 固定最小复现实验命令和日志样例。
-- [ ] 整理 Known Issues，不把未验证内容写成完成。
-- [ ] 准备面试/投递材料。
+- [x] 重写 README，覆盖安装、模型准备、快速运行、验证和压缩实验。
+- [x] 整理 `docs/TECHNICAL_REPORT.md`，覆盖模型自实现、M-RoPE、DeepStack、KV 分析、压缩和性能。
+- [x] 在 `docs/REPRODUCIBILITY.md` 固定分层复现实验命令、真实CPU日志样例、GPU恢复门禁和raw evidence规则。
+- [x] 整理 `docs/KNOWN_ISSUES.md`，记录隐藏GPU负载、P7.5、TP2、hardware counter、FP8、server和prefix/video边界。
+- [x] 准备 `docs/APPLICATION_MATERIALS.md`，所有简历数字绑定 claim限制与证据入口。
+- [x] 修复 editable install metadata和依赖边界；隔离venv完成build/import，CPU/focused smoke为 `40 passed in 5.11s`。
 
 ### 出口标准
 
-- 新环境能按 README 跑通最小 demo。
-- 所有关键 claim 都能追溯到验证输出、报告或源码。
-- 项目有清楚的限制说明和下一步方向。
+- [ ] 新环境能按 README 跑通完整8B最小 demo；package/API/CPU smoke已PASS，权重加载因KI-001当前不可执行。
+- [x] 所有README与投递材料关键 claim均能追溯到验证输出、报告或源码。
+- [x] 项目有清楚的限制说明、恢复门禁和下一步方向。
+
+### 当前状态
+
+- P8静态交付物已齐全，Markdown本地链接检查 `46/46` PASS。
+- clean `568f7bb` 修复PEP 621/setuptools metadata、项目URL和核心依赖；隔离venv
+  editable wheel构建与`LLM` import PASS。
+- clean `d547385` 新增无权重加载的环境/model/CUDA检查器及3个单测。
+- P8阶段保持 `PARTIAL`：fresh环境完整8B demo和主线full regression必须在KI-001
+  外部GPU占用消失后执行，不能由CPU smoke替代。
 
 ## 下一步执行顺序
 
@@ -712,7 +724,11 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
 4. ~~完成 P7.4 Graph replay、CPU/GPU timeline和 fixed-bucket coverage。~~ clean
    trace与8-cell matrix已闭环；P7.5按 `70.55%` linear/GEMV和约 `15.15%` 小 kernel
    证据评估 Inductor/custom kernel，硬件 counter缺失时不虚构结论。
-5. 两卡平台补 P6.8/P7.6；开放 hardware counter 平台补 P6.2-B，不阻塞单卡主线。
-6. P8 重写 README、固定最小复现命令并整理投递材料。
+5. 稳定独占GPU恢复后完成P7.5 clean paired micro、full HF/E2E/online、TPOT、Systems
+   trace；无稳定端到端收益则回退packed gate/up。
+6. 同一恢复窗口完成P8 fresh环境8B demo、当前主线full regression和最终requirement audit。
+7. 两卡平台补P6.8/P7.6；开放hardware counter平台补P6.2-B，不阻塞单卡文档交付。
+8. ~~P8重写README、技术报告、复现手册、Known Issues和投递材料。~~ 静态交付已完成，
+   动态GPU出口见第6项。
 
 P3/P4/P4.5/P5 已建立多模态 FP baseline、KV trace、KV 语义硬化、logical pruning 和 FP8 storage baseline。P6 只允许在统一 benchmark 和固定外部版本下形成性能 claim；没有真实 megakernel实现或 launch-bound 证据时，不开展 megakernel 对比。

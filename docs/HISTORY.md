@@ -8,6 +8,11 @@
 - 可执行验证命令与 PASS 标准：`docs/VERIFICATION.md`
 - 性能数字、环境与适用边界：`docs/PERFORMANCE_REPORT.md`
 - 可用、受限与禁止的项目结论：`docs/CLAIMS.md`
+- 外部安装与分层复现：`README.md`、`docs/REPRODUCIBILITY.md`
+- 当前完整技术总结：`docs/TECHNICAL_REPORT.md`
+- 当前限制与恢复门禁：`docs/KNOWN_ISSUES.md`
+- 简历与面试措辞：`docs/APPLICATION_MATERIALS.md`（必须服从 claim ledger）
+- P8阶段验收与交接：`docs/P8_DELIVERY.md`
 - 阶段交付格式：`docs/STAGE_DELIVERY_TEMPLATE.md`
 
 这些文件优先于早期日计划、聊天记录和未汇总的实验日志。状态冲突时，以能追溯到

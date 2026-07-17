@@ -290,6 +290,7 @@ python -m pytest -q tests -s
 - [复现实验](docs/REPRODUCIBILITY.md)：从安装 smoke 到正式 GPU matrix 的命令与样例。
 - [Known Issues](docs/KNOWN_ISSUES.md)：当前 blocker、限制、恢复条件和待补命令。
 - [投递与面试材料](docs/APPLICATION_MATERIALS.md)：可核查项目描述、简历 bullet 与问答。
+- [P8 Gate Review](docs/P8_DELIVERY.md)：当前静态PASS、动态blocker与恢复交接。
 - [路线图](docs/ROADMAP.md)：阶段状态与下一执行顺序。
 - [验证合同](docs/VERIFICATION.md)：correctness、quality、performance 门禁。
 - [性能报告](docs/PERFORMANCE_REPORT.md)：benchmark contract、结果和 raw evidence。

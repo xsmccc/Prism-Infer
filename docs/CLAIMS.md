@@ -2,6 +2,7 @@
 
 > P6 冻结基线: `p6.12-content-aware-kv` (`c970c61`)
 > 当前 P7.4-B 验证点: `72f85ba`
+> 当前 P7.5/P8 实现点: packed gate/up `8767b7a`；安装诊断 `d547385`
 > 更新日期: 2026-07-17
 
 本表区分“已实现”“已验证”和“性能占优”。README、简历和面试中的数字必须能
@@ -15,7 +16,7 @@
 | visual KV 是真实 physical compaction，不只是逻辑 mask | BF16/FP8 paged KV；prefill 后 compact、page 回收、decode append | P6.4 tests 与 `PERFORMANCE_REPORT.md` |
 | logical M-RoPE position 与 physical KV position 分离 | compact decode | layout/append/mixed/swap focused regression |
 | content-aware last-layer scorer 通过当前 reference task gate | 7 张固定 COCO 图片、35 captions、output32、keep=0.5、BF16 | token-F1 `0.321635 -> 0.318347`，drop `0.003288`；ROUGE-L `0.289116 -> 0.285406`，drop `0.003710` |
-| 质量合格策略减少物理 KV | 同一 7-image gate | physical token ratio `0.536x`，active prompt bytes ratio `0.571x` |
+| 质量合格策略减少物理 KV | 7-image aggregate | physical token ratio `0.535x`，active prompt bytes ratio `0.538x` |
 | 压缩 CUDA Graph 路径有效 | RTX 5090，offline decode，batch1-8 | eager/Graph token exact；decode speedup约 `1.76x-1.94x`，见 P6.11 |
 | 当前质量合格压缩的短 workload 性能收益很小 | COCO batch4/output32 | decode-step `1.021x`，engine output throughput `1.013x`，E2E `1.005x` |
 | P6.12 后全量回归通过 | 单卡环境 | `238 passed, 6 skipped in 232.90s` |
@@ -31,13 +32,14 @@
 | P7.3 online matrix 的已完成请求全部满足各 cell 声明的 SLO | clean `e7796e9`，9 cells | 9/9 cell goodput fraction `1.0`；text-short 20 req/s peak active `5`，mixed 10 req/s peak active `4-5` |
 | P7.3 后全量回归通过 | clean `e7796e9`，单卡环境 | JUnit `262 passed, 6 skipped in 245.36s`，0 failure/error |
 | P7.4-B 已完成 Graph replay分类与 fixed-bucket correctness | clean `0fdd4a6` trace + clean `00b1012` matrix | replay `2,000` kernels/step、kernel busy median `12.921 ms`；linear/GEMV占 `70.55%`；batch1-8全部命中 `[1,2,4,8]` 预期 bucket且输出 exact |
+| Prism editable package可在隔离venv构建并导入 | clean `568f7bb/d547385`，复用宿主CUDA/PyTorch stack | wheel build、`from prism_infer import LLM` PASS；6-file CPU/focused smoke `40 passed in 5.11s` |
 
 ## 必须带限制的结论
 
 | 现象 | 必须同时说明 |
 |---|---|
 | uniform/FP8 组合曾观察到 `4.016x` peak running capacity | uniform quality FAIL；FP8 quality 未通过；不是 online throughput |
-| active prompt bytes 降至 `0.571x` | 不是整个模型/GPU peak memory 降至 `0.571x` |
+| 7-image aggregate active prompt bytes降至 `0.538x`；COCO batch4性能cell为`0.571x` | 都不是整个模型/GPU peak memory按相同比例下降 |
 | CUDA Graph 提升约 1.8 倍 | 是 Prism internal eager→Graph，不是对 vLLM speedup |
 | P6.12 reference token-F1/ROUGE-L drop 小于 0.004 | 不是标准 COCO CIDEr/SPICE，也不是通用 VQA accuracy |
 | external eager baseline 比 Prism eager 快约 2 倍 | 仅为 P6 diagnostic matched eager；P7 重新比较双方 Graph |
@@ -47,7 +49,8 @@
 | text-only prefix reuse 已验证 | 只复用并发请求仍持有的 full block；尚无独立 persistent prefix store，VL token-id prefix hash因不包含像素语义而禁用 |
 | Graph replay CPU range只有 `1.899 ms` | 这是异步提交窗口；CPU返回后 GPU tail为 `13.089 ms`，不能把 CPU range当作完整 Graph时长 |
 | fixed-bucket matrix列出 batch1-8 TPOT | 每个 cell是一次独立 process-level run；只证明 bucket/padding coverage与输出隔离，不证明 padding加速/减速，也不是 online goodput |
-| packed gate/up已通过 BF16 component correctness | 仅覆盖 Qwen MLP batch/rows `1/2/4/8/210/408/988` bitwise exact与 focused回归；完整 HF logits、E2E、online和性能仍待干净 GPU |
+| packed gate/up已通过 BF16 component correctness | 仅覆盖 Qwen MLP batch/rows `1/2/4/8/210/408/988` bitwise exact与 focused回归；完整 HF logits、E2E、online和性能仍待稳定独占 GPU |
+| P8 fresh-environment安装已通过 | venv复用了宿主CUDA/PyTorch stack；只证明build/import/CPU smoke，不证明新机器的CUDA ABI、完整8B或性能 |
 
 ## 当前禁止的结论
 
@@ -64,6 +67,8 @@
   replay直接相加”；node tracing有 instrumentation，sampler CPU时间暴露前序 stream同步。
 - “packed gate/up已提升 full-engine TPOT/online goodput”；当前 GPU有不可见外部负载，
   只完成组件 correctness，正式 micro/E2E/trace尚未运行。
+- “README已在全新机器完成完整8B验收”；当前只完成隔离package/API/CPU smoke，模型
+  权重加载仍受同一GPU外部占用阻塞。
 
 ## P7.1 历史基线与 P7.4 当前结论
 
