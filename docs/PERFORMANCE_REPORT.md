@@ -1077,3 +1077,52 @@ data/p7_graph/p74b_single_image_graph_semantic_0fdd4a6.jsonl
 data/p7_graph/p74b_padding_fixed8_matrix_00b1012.jsonl
 data/p7_graph/p74b_summary_72f85ba.{json,md}
 ```
+
+### 6.12 P7.5 Projection Fusion Preflight（性能待干净 GPU）
+
+P7.4-B trace将 replay中的 linear/GEMV定位为 `253 kernels/step`、
+`9.123 ms/step`、`70.55%`。源码映射为每层 attention `q/k/v/o` 四次投影和
+MLP `gate/up/down` 三次投影：36 层分别为 `144` 与 `108` 次，另有 1 次
+Graph内 linear。P7.5先比较不改变模型数学结构的 projection packing候选。
+
+#### 6.12.1 QKV packing：correctness-first rejection
+
+clean `01b3625` correctness-only probe在同一 BF16输入/权重上比较三次独立投影与
+一次 `[Q;K;V]` packed projection。batch1本轮 exact，但 batch `2/4/8` 的 K/V均
+不 exact，最大绝对差为 `1.0`，平均绝对差约 `0.079-0.089`；Q在四个 batch中
+保持 exact。大 packed矩阵改变了小 K/V GEMV的 cuBLAS算法/舍入，因此该候选在
+计时前即被严格门禁拒绝，不报告受污染 GPU上的 speedup。
+
+#### 6.12.2 Gate/up packing：实现与低显存 correctness
+
+commit `8767b7a` 将同一输入的 MLP gate/up权重放入一段连续 storage，以一次
+`gate_up_proj`完成投影后做 view split。`gate_proj.weight` 与 `up_proj.weight`
+仍是该 storage的 Parameter view，因此：
+
+- HF-compatible state-dict仍只有 `gate_proj/up_proj/down_proj`，strict load通过；
+- 没有复制 36 层权重或增加实际模型 storage；`Module.to/_apply` 后会重建 view；
+- supported forward每层从 `gate + up + down` 三次 linear降为
+  `gate_up + down` 两次，预计 Graph内 linear count由 `253` 降到 `217`，最终值
+  必须由后续 clean Systems trace确认。
+
+clean `01b3625` 的真实 Qwen shape BF16 correctness覆盖 decode batch
+`1/2/4/8`和代表性 prefill rows `210/408/988`，七个 case的 packed/legacy MLP
+output均 bitwise exact，max/mean diff均为 `0`。focused model/loader/attention/runner
+回归为 `32 passed in 62.19s`。
+
+当前物理 GPU UUID `GPU-989db6f6-3273-d1dd-b2b9-56cced4f30a4` 在多个重建容器中
+始终存在不可见的 `17,282 MiB`、约 `0-35%` 外部负载；只剩 `14,869 MiB`，低于
+完整 8B engine既有约 `17.4 GiB` allocator peak。microbenchmark runner因此把本轮
+记录标记为 `formal_eligible=false`，原因是 baseline memory/utilization超过
+`1024 MiB/5%`门禁。当前不报告 packed gate/up速度，也不声称 full-engine收益。
+
+待 GPU恢复后必须补：完整 HF logits/PPL、multi-modal greedy/E2E、offline/online
+回归、同条件 packed/legacy microbenchmark、无 profiler TPOT与 node-level kernel
+count。详细候选记录见 `docs/issues/P7-009-PROJECTION-FUSION.md`。
+
+Raw evidence：
+
+```text
+data/p7_optimization/p75_qkv_correctness_01b3625.json
+data/p7_optimization/p75_packed_mlp_shape_correctness_01b3625.json
+```

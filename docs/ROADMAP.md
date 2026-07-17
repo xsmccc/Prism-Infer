@@ -649,7 +649,10 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
   - [x] P7.4-B clean 31-step trace将 replay分为八类：`2,000` kernels/step、kernel busy `12.921 ms`，linear/GEMV占 `70.55%`；Graph 外 kernel busy差约 `0.769 ms`。
   - [x] 固定 `max_num_seqs=8` 的 batch1-8 matrix验证 `[1,2,4,8]` bucket/padding、repeat稳定和 padding row输出隔离；该 matrix不用于 padding性能 claim。
   - [x] CPU/GPU timeline确认 replay CPU range只是异步提交窗口；sampler CPU时间暴露 stream同步，不能与 replay重复相加。
-- [ ] P7.5 profiling 触发的 Inductor custom-op/partition 或 ThunderKittens Blackwell kernel。
+- [ ] P7.5 profiling触发的 projection/custom-op/Blackwell kernel优化：
+  - [x] trace将 linear/GEMV映射为每步 `253` 次 projection；QKV packed候选因 batch2/4/8 K/V BF16 max diff `1.0`在计时前拒绝。
+  - [x] gate/up共享 packed storage实现已落地，保持旧 state-dict strict load；batch `1/2/4/8/210/408/988` MLP output bitwise exact，focused `32 passed`。
+  - [ ] 干净独占 GPU上补 paired microbenchmark、完整 8B HF/E2E/online回归、TPOT和 Systems kernel count；当前隐藏外部占用 `17,282 MiB`，不形成性能 claim。
 - [ ] P7.6 两卡可用时补 TP2 correctness/communication/performance，不阻塞单卡主线。
 
 ### 出口标准
@@ -671,6 +674,9 @@ batching，并用 trace 驱动 CUDA Graph、Inductor 和 Blackwell kernel 优化
   `2,000` kernels/step；linear/GEMV占 `70.55%`，attention占 `13.17%`，小型
   elementwise/copy/reduction合计约 `15.15%`。P7.5只从这些证据选择候选，不再优化
   已退出 critical path 的 logits。
+- P7.5已完成低显存 projection preflight：QKV fusion由严格数值证据拒绝，gate/up
+  packing通过组件与代表性 prefill/decode shape correctness。完整 engine与性能闭环
+  因平台侧隐藏 GPU workload暂缓，P7.5仍保持未完成。
 - offline TTFT/vision prefill 存在双峰，当前不把 E2E中位数差异归因为压缩；见 `docs/issues/P7-005-TTFT_VISION_BIMODALITY.md`。
 - P7.4 focused regression、HF logits/PPL、7-image task gate均 PASS；clean完整回归 JUnit 为 `241 passed, 6 skipped in 264.664s`，无 failure/error。
 

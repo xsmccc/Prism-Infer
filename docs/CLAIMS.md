@@ -47,6 +47,7 @@
 | text-only prefix reuse 已验证 | 只复用并发请求仍持有的 full block；尚无独立 persistent prefix store，VL token-id prefix hash因不包含像素语义而禁用 |
 | Graph replay CPU range只有 `1.899 ms` | 这是异步提交窗口；CPU返回后 GPU tail为 `13.089 ms`，不能把 CPU range当作完整 Graph时长 |
 | fixed-bucket matrix列出 batch1-8 TPOT | 每个 cell是一次独立 process-level run；只证明 bucket/padding coverage与输出隔离，不证明 padding加速/减速，也不是 online goodput |
+| packed gate/up已通过 BF16 component correctness | 仅覆盖 Qwen MLP batch/rows `1/2/4/8/210/408/988` bitwise exact与 focused回归；完整 HF logits、E2E、online和性能仍待干净 GPU |
 
 ## 当前禁止的结论
 
@@ -61,6 +62,8 @@
 - “已实现 megakernel/PD 分离/投机解码”。
 - “GPU span减去 busy就是 occupancy/可消除 idle”或“sampler的 CPU range可与 Graph
   replay直接相加”；node tracing有 instrumentation，sampler CPU时间暴露前序 stream同步。
+- “packed gate/up已提升 full-engine TPOT/online goodput”；当前 GPU有不可见外部负载，
+  只完成组件 correctness，正式 micro/E2E/trace尚未运行。
 
 ## P7.1 历史基线与 P7.4 当前结论
 

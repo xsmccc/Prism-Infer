@@ -3181,6 +3181,56 @@ cell是单独 process-level run，故本门禁只证明 capture coverage/correct
 padding性能或 online goodput claim。timeline解释见
 `docs/issues/P7-008-CUDAGRAPH-TIMELINE-ACCOUNTING.md`。
 
+### P7.5 Projection Fusion Preflight（部分完成）
+
+packed gate/up合同与低显存回归：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+PRISM_MODEL_PATH="$PRISM_MODEL_PATH" \
+.venv-local/bin/python -m pytest -q \
+  tests/test_p7_packed_mlp.py \
+  tests/test_qwen3_vl.py \
+  tests/test_full_model_structure.py \
+  tests/test_qwen3_vl_attention_kv.py \
+  tests/test_model_runner_vl_cudagraph.py \
+  tests/test_model_runner_vl_prefill.py
+# 32 passed in 62.19s
+```
+
+门禁覆盖 packed storage/view alias、旧 state-dict strict load、`Module.to()` 后
+rebind、supported forward只调用一次 gate_up projection，以及真实
+`hidden/intermediate=4096/12288` BF16 CUDA shape。clean component matrix：
+
+```bash
+.venv-local/bin/python benchmarks/bench_packed_mlp.py \
+  --correctness-only \
+  --batch-sizes 1,2,4,8,210,408,988 \
+  --output \
+    data/p7_optimization/p75_packed_mlp_shape_correctness_01b3625.json
+```
+
+七个 case的 packed/legacy MLP outputs均 bitwise exact，max/mean diff为 `0`。
+该记录来自 clean `01b3625`，但 runner正确标记 `formal_eligible=false`：启动前已有
+不可见的 `17,282 MiB`外部显存占用，并观察到超过 `5%` 的外部 GPU utilization。
+
+QKV correctness-first probe：
+
+```bash
+.venv-local/bin/python benchmarks/probe_p7_qkv_fusion.py \
+  --output data/p7_optimization/p75_qkv_correctness_01b3625.json
+```
+
+batch1 exact；batch2/4/8 的 K/V不 exact且 max diff `1.0`，Q exact。record状态为
+`rejected_by_strict_correctness`、`performance_measured=false`，所以不会为已失败候选
+制造 timing claim。
+
+完整 P7.5尚未通过：当前可用显存 `14,869 MiB`不足以构建约 `17.4 GiB` peak的
+Qwen3-VL-8B engine，且外部 workload会污染 timing。GPU恢复后必须补 full-model
+HF logits/PPL、multi-modal generation、offline/online regression、clean paired
+microbenchmark、full-engine TPOT和 Systems kernel count；在这些门禁完成前不得
+声称 gate/up packing带来端到端加速。
+
 交付前必须检查:
 
 ```bash
