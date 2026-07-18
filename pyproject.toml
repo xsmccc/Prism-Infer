@@ -20,6 +20,13 @@ dependencies = [
     "Pillow>=10.0",
 ]
 
+[project.optional-dependencies]
+quality = [
+    "opencv-python-headless==4.10.0.84",
+    "pyarrow>=14.0",
+    "requests>=2.31",
+]
+
 [project.urls]
 Homepage = "https://github.com/xsmccc/Prism-Infer"
 Repository = "https://github.com/xsmccc/Prism-Infer.git"

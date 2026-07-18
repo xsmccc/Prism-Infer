@@ -1,0 +1,186 @@
+{
+  "schema_version": 1,
+  "dataset_revision": "230a2d4fac8900333c61754641c7a13e069ac9c6",
+  "mapping_source": {
+    "repository": "OpenGVLab/Ask-Anything",
+    "revision": "4dd8210b030374bb0c510a57dfbe916f70d3ef71",
+    "path": "video_chat2/mvbench.ipynb",
+    "url": "https://github.com/OpenGVLab/Ask-Anything/blob/4dd8210b030374bb0c510a57dfbe916f70d3ef71/video_chat2/mvbench.ipynb"
+  },
+  "sample_id_encoding": "task_file_stem|video|zero_based_question_index",
+  "archives": {
+    "FunQA_test.zip": {
+      "repository_path": "video/FunQA_test.zip",
+      "bytes": 1350969357,
+      "sha256": "d6ef954652c2a1b48fb772d52c97da35dc7f8b54e5bdf4b43ba4f773ed726723"
+    },
+    "Moments_in_Time_Raw.zip": {
+      "repository_path": "video/Moments_in_Time_Raw.zip",
+      "bytes": 67108520,
+      "sha256": "16add0d03cbb7c6b76974551879f7dc8a7ce985b89699a2231136b81d3ba9967"
+    },
+    "clevrer.zip": {
+      "repository_path": "video/clevrer.zip",
+      "bytes": 1123944836,
+      "sha256": "9040ad663440611bd8580fc0fc3da31bd1a4bfef877631db7b570a7d7d41de1c"
+    },
+    "perception.zip": {
+      "repository_path": "video/perception.zip",
+      "bytes": 11199611859,
+      "sha256": "98fc197a90c875fb24f34fe89cb91e2788e1e7ac2459bf860ed62d9f07104b34"
+    },
+    "scene_qa.zip": {
+      "repository_path": "video/scene_qa.zip",
+      "bytes": 525972733,
+      "sha256": "26b3dc385e5a8f7b8fd9aab32a3522488fdfe7bbe06f0d98206d43647c77cce9"
+    },
+    "ssv2_video.zip": {
+      "repository_path": "video/ssv2_video.zip",
+      "bytes": 16819261,
+      "sha256": "8493fe3762bdc205b587c4d02e016f9ccbb314b523ed0bf2c5bdbe367456d1e9"
+    },
+    "sta.zip": {
+      "repository_path": "video/sta.zip",
+      "bytes": 1085038855,
+      "sha256": "4c27cbf62bbc1b0217b5183871f298e7a76b2a498dd4482365c617f25338de9a"
+    },
+    "star.zip": {
+      "repository_path": "video/star.zip",
+      "bytes": 727887646,
+      "sha256": "bdb5f192a98f78e79e51da6ae801f8ba79d1d09c0d8c19b6e63105251cb17585"
+    },
+    "tvqa.zip": {
+      "repository_path": "video/tvqa.zip",
+      "bytes": 1147595693,
+      "sha256": "6c5bccf237164286123a7afcc1bd7e8323487d7f2fd0dc5f43609a34064f5d73"
+    },
+    "vlnqa.zip": {
+      "repository_path": "video/vlnqa.zip",
+      "bytes": 40331555,
+      "sha256": "578f9edf2973560ac0d79990d9a2961ccae8edcdb1cb0be2c3bf15045f04428a"
+    }
+  },
+  "tasks": {
+    "action_antonym": {
+      "archive": "ssv2_video.zip",
+      "media_prefix": "ssv2_video",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "action_count": {
+      "archive": "perception.zip",
+      "media_prefix": "perception/videos",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "action_localization": {
+      "archive": "sta.zip",
+      "media_prefix": "sta/sta_video",
+      "media_type": "video",
+      "uses_temporal_bound": true
+    },
+    "action_prediction": {
+      "archive": "star.zip",
+      "media_prefix": "star/Charades_v1_480",
+      "media_type": "video",
+      "uses_temporal_bound": true
+    },
+    "action_sequence": {
+      "archive": "star.zip",
+      "media_prefix": "star/Charades_v1_480",
+      "media_type": "video",
+      "uses_temporal_bound": true
+    },
+    "character_order": {
+      "archive": "perception.zip",
+      "media_prefix": "perception/videos",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "counterfactual_inference": {
+      "archive": "clevrer.zip",
+      "media_prefix": "clevrer/video_validation",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "egocentric_navigation": {
+      "archive": "vlnqa.zip",
+      "media_prefix": "vlnqa",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "episodic_reasoning": {
+      "archive": "tvqa.zip",
+      "media_prefix": "tvqa/frames_fps3_hq",
+      "media_type": "frames",
+      "uses_temporal_bound": true
+    },
+    "fine_grained_action": {
+      "archive": "Moments_in_Time_Raw.zip",
+      "media_prefix": "Moments_in_Time_Raw/videos",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "fine_grained_pose": {
+      "archive": null,
+      "media_prefix": "nturgbd",
+      "media_type": "video",
+      "uses_temporal_bound": false,
+      "availability": "manual_ntu_rgbd_license_required"
+    },
+    "moving_attribute": {
+      "archive": "clevrer.zip",
+      "media_prefix": "clevrer/video_validation",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "moving_count": {
+      "archive": "clevrer.zip",
+      "media_prefix": "clevrer/video_validation",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "moving_direction": {
+      "archive": "clevrer.zip",
+      "media_prefix": "clevrer/video_validation",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "object_existence": {
+      "archive": "clevrer.zip",
+      "media_prefix": "clevrer/video_validation",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "object_interaction": {
+      "archive": "star.zip",
+      "media_prefix": "star/Charades_v1_480",
+      "media_type": "video",
+      "uses_temporal_bound": true
+    },
+    "object_shuffle": {
+      "archive": "perception.zip",
+      "media_prefix": "perception/videos",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "scene_transition": {
+      "archive": "scene_qa.zip",
+      "media_prefix": "scene_qa/video",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "state_change": {
+      "archive": "perception.zip",
+      "media_prefix": "perception/videos",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    },
+    "unexpected_action": {
+      "archive": "FunQA_test.zip",
+      "media_prefix": "FunQA_test/test",
+      "media_type": "video",
+      "uses_temporal_bound": false
+    }
+  }
+}

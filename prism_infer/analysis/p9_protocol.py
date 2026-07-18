@@ -242,11 +242,13 @@ def validate_p9_quality_protocol(protocol: Mapping[str, Any]) -> None:
     _git_revision(model, "processor_revision", "protocol.model")
 
     non_inferiority = _mapping(protocol, "non_inferiority", "protocol")
-    _positive_number(
+    accuracy_margin = _positive_number(
         non_inferiority,
         "bounded_accuracy_margin_percentage_points",
         "protocol.non_inferiority",
     )
+    if accuracy_margin >= 100.0:
+        raise ValueError("bounded accuracy margin must be < 100 percentage points")
     normalized_margin = _positive_number(
         non_inferiority,
         "normalized_generation_metric_margin",
@@ -259,7 +261,29 @@ def validate_p9_quality_protocol(protocol: Mapping[str, Any]) -> None:
         "bootstrap_resamples",
         "protocol.non_inferiority",
     )
-    _string(non_inferiority, "confidence_interval", "protocol.non_inferiority")
+    _positive_int(
+        non_inferiority,
+        "bootstrap_seed",
+        "protocol.non_inferiority",
+    )
+    if (
+        _string(
+            non_inferiority,
+            "confidence_interval",
+            "protocol.non_inferiority",
+        )
+        != "paired_bootstrap_95_percent"
+    ):
+        raise ValueError("quality confidence interval must be paired bootstrap 95%")
+    if (
+        _string(
+            non_inferiority,
+            "eligibility",
+            "protocol.non_inferiority",
+        )
+        != "confidence_interval_lower_bound_within_margin"
+    ):
+        raise ValueError("quality eligibility rule is unsupported")
 
     selection = _mapping(protocol, "selection", "protocol")
     _string(selection, "algorithm", "protocol.selection")

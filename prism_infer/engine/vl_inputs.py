@@ -16,6 +16,8 @@ resize/patch packing/chat template/tokenizer 属于成熟预处理基础设施�
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -83,7 +85,12 @@ class VideoInputs:
 SingleImageInputs = ImageInputs
 
 
-def load_vl_processor(model_path: str) -> Any:
+def load_vl_processor(
+    model_path: str,
+    *,
+    image_max_pixels: int | None = None,
+    video_max_pixels: int | None = None,
+) -> Any:
     """从本地模型目录加载 Qwen3-VL processor。
 
     transformers 是可选运行时依赖，因此延迟导入，避免普通模型单元测试
@@ -97,11 +104,27 @@ def load_vl_processor(model_path: str) -> Any:
             "transformers is required for Qwen3-VL processor preprocessing"
         ) from exc
 
-    return AutoProcessor.from_pretrained(
+    processor = AutoProcessor.from_pretrained(
         model_path,
         trust_remote_code=True,
         local_files_only=True,
     )
+    for name, value, component_name in (
+        ("image_max_pixels", image_max_pixels, "image_processor"),
+        ("video_max_pixels", video_max_pixels, "video_processor"),
+    ):
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer or None")
+        component = getattr(processor, component_name, None)
+        size = getattr(component, "size", None)
+        if size is None or not hasattr(size, "longest_edge"):
+            raise ValueError(
+                f"processor.{component_name}.size has no longest_edge budget"
+            )
+        size.longest_edge = value
+    return processor
 
 
 def _normalize_images(images: Any | list[Any] | tuple[Any, ...]) -> list[Any]:
@@ -128,6 +151,65 @@ def _normalize_video(video: Any | list[Any] | tuple[Any, ...]) -> Any:
     return list(video) if isinstance(video, tuple) else video
 
 
+def _processor_video_metadata(
+    video: Any,
+    metadata: Mapping[str, Any] | None,
+) -> list[dict[str, Any]] | None:
+    """Map audited source-frame identity to the HF processor metadata contract."""
+
+    if metadata is None:
+        return None
+    if not isinstance(metadata, Mapping):
+        raise TypeError("video_metadata must be a mapping or None")
+    required = ("fps", "source_frame_count", "sampled_indices")
+    missing = [name for name in required if name not in metadata]
+    if missing:
+        raise ValueError(f"video_metadata missing required fields: {missing}")
+
+    fps = metadata["fps"]
+    source_frame_count = metadata["source_frame_count"]
+    sampled_indices = metadata["sampled_indices"]
+    if (
+        isinstance(fps, bool)
+        or not isinstance(fps, (int, float))
+        or not math.isfinite(float(fps))
+        or float(fps) <= 0.0
+    ):
+        raise ValueError("video_metadata.fps must be finite and positive")
+    if (
+        isinstance(source_frame_count, bool)
+        or not isinstance(source_frame_count, int)
+        or source_frame_count <= 0
+    ):
+        raise ValueError("video_metadata.source_frame_count must be positive")
+    if not isinstance(sampled_indices, list) or any(
+        isinstance(index, bool)
+        or not isinstance(index, int)
+        or index < 0
+        or index > source_frame_count
+        for index in sampled_indices
+    ):
+        raise ValueError("video_metadata.sampled_indices are outside the source video")
+    try:
+        provided_frames = len(video)
+    except TypeError as exc:
+        raise TypeError(
+            "video_metadata requires an in-memory sequence of preselected frames"
+        ) from exc
+    if len(sampled_indices) != provided_frames:
+        raise ValueError(
+            "video_metadata sampled index count must match provided frames: "
+            f"{len(sampled_indices)} != {provided_frames}"
+        )
+    return [
+        {
+            "total_num_frames": source_frame_count,
+            "fps": float(fps),
+            "frames_indices": list(sampled_indices),
+        }
+    ]
+
+
 def build_image_prompt(
     processor: Any,
     prompt: str,
@@ -150,6 +232,47 @@ def build_image_prompt(
             "content": image_items + [{"type": "text", "text": prompt}],
         }
     ]
+    return processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=add_generation_prompt,
+    )
+
+
+def build_interleaved_image_prompt(
+    processor: Any,
+    prompt: str,
+    images: Any | list[Any] | tuple[Any, ...],
+    *,
+    image_marker: str = "<image>",
+    add_generation_prompt: bool = True,
+) -> str:
+    """按文本 marker 的位置构造交错多图 chat prompt。
+
+    该显式 API 用于 MuirBench 一类“图片出现在问题或选项中”的输入。普通
+    ``build_image_prompt`` 仍保持 all-images-first 语义，避免改变既有调用方。
+    """
+
+    normalized_images = _normalize_images(images)
+    if not isinstance(prompt, str) or not prompt:
+        raise ValueError("interleaved image prompt must be a non-empty string")
+    if not isinstance(image_marker, str) or not image_marker:
+        raise ValueError("image_marker must be a non-empty string")
+    segments = prompt.split(image_marker)
+    marker_count = len(segments) - 1
+    if marker_count != len(normalized_images):
+        raise ValueError(
+            "interleaved image marker count must equal image count: "
+            f"markers={marker_count}, images={len(normalized_images)}"
+        )
+    content = []
+    for index, image in enumerate(normalized_images):
+        if segments[index]:
+            content.append({"type": "text", "text": segments[index]})
+        content.append({"type": "image", "image": image})
+    if segments[-1]:
+        content.append({"type": "text", "text": segments[-1]})
+    messages = [{"role": "user", "content": content}]
     return processor.apply_chat_template(
         messages,
         tokenize=False,
@@ -199,27 +322,13 @@ def build_single_image_prompt(
     )
 
 
-def prepare_image_inputs(
+def _prepare_image_inputs_from_prompt_text(
     processor: Any,
-    prompt: str,
-    images: Any | list[Any] | tuple[Any, ...],
-    *,
-    add_generation_prompt: bool = True,
+    prompt_text: str,
+    normalized_images: list[Any],
 ) -> ImageInputs:
-    """把 prompt + 一张或多张图片预处理为 engine 可消费的数据。
+    """执行普通/交错 image prompt 共用的 processor 与 shape 校验。"""
 
-    当前只处理 image 模态；video 会在 P3.2 单独扩展。processor 仅作为
-    非核心预处理工具使用，核心 position ids、模型 forward 和 KV cache
-    仍由 Prism-Infer 自实现。
-    """
-
-    normalized_images = _normalize_images(images)
-    prompt_text = build_image_prompt(
-        processor,
-        prompt,
-        normalized_images,
-        add_generation_prompt=add_generation_prompt,
-    )
     batch = processor(text=prompt_text, images=normalized_images, return_tensors="pt")
 
     required_keys = ("input_ids", "attention_mask", "pixel_values", "image_grid_thw")
@@ -249,6 +358,54 @@ def prepare_image_inputs(
         prompt_text=prompt_text,
     )
     return validate_image_inputs(result, int(merge_size))
+
+
+def prepare_image_inputs(
+    processor: Any,
+    prompt: str,
+    images: Any | list[Any] | tuple[Any, ...],
+    *,
+    add_generation_prompt: bool = True,
+) -> ImageInputs:
+    """把 all-images-first prompt 预处理为 engine 可消费的数据。"""
+
+    normalized_images = _normalize_images(images)
+    prompt_text = build_image_prompt(
+        processor,
+        prompt,
+        normalized_images,
+        add_generation_prompt=add_generation_prompt,
+    )
+    return _prepare_image_inputs_from_prompt_text(
+        processor,
+        prompt_text,
+        normalized_images,
+    )
+
+
+def prepare_interleaved_image_inputs(
+    processor: Any,
+    prompt: str,
+    images: Any | list[Any] | tuple[Any, ...],
+    *,
+    image_marker: str = "<image>",
+    add_generation_prompt: bool = True,
+) -> ImageInputs:
+    """把 marker-interleaved prompt 预处理为 engine 可消费的数据。"""
+
+    normalized_images = _normalize_images(images)
+    prompt_text = build_interleaved_image_prompt(
+        processor,
+        prompt,
+        normalized_images,
+        image_marker=image_marker,
+        add_generation_prompt=add_generation_prompt,
+    )
+    return _prepare_image_inputs_from_prompt_text(
+        processor,
+        prompt_text,
+        normalized_images,
+    )
 
 
 def prepare_single_image_inputs(
@@ -282,6 +439,7 @@ def prepare_video_inputs(
     prompt: str,
     video: Any | list[Any] | tuple[Any, ...],
     *,
+    video_metadata: Mapping[str, Any] | None = None,
     add_generation_prompt: bool = True,
 ) -> VideoInputs:
     """把 prompt + 一个视频预处理为 engine 可消费的数据。
@@ -297,7 +455,24 @@ def prepare_video_inputs(
         normalized_video,
         add_generation_prompt=add_generation_prompt,
     )
-    batch = processor(text=prompt_text, videos=[normalized_video], return_tensors="pt")
+    processor_metadata = _processor_video_metadata(
+        normalized_video,
+        video_metadata,
+    )
+    videos_kwargs: dict[str, Any] = {}
+    # A list/tuple is already a caller-selected frame sequence.  Preserve it
+    # exactly; path/URL/array inputs without source metadata retain the HF
+    # processor's configured sampling policy.
+    if isinstance(normalized_video, list) or processor_metadata is not None:
+        videos_kwargs["do_sample_frames"] = False
+    if processor_metadata is not None:
+        videos_kwargs["video_metadata"] = processor_metadata
+    batch = processor(
+        text=prompt_text,
+        videos=[normalized_video],
+        return_tensors="pt",
+        videos_kwargs=videos_kwargs,
+    )
 
     required_keys = (
         "input_ids",

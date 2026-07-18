@@ -41,7 +41,12 @@ def test_video_processor_pipeline_matches_hf_reference():
 
     ours = prepare_video_inputs(processor, prompt, frames)
     reference_prompt = build_video_prompt(processor, prompt, frames)
-    reference = processor(text=reference_prompt, videos=[frames], return_tensors="pt")
+    reference = processor(
+        text=reference_prompt,
+        videos=[frames],
+        return_tensors="pt",
+        videos_kwargs={"do_sample_frames": False},
+    )
 
     input_ids_equal = torch.equal(ours.input_ids, reference["input_ids"])
     attention_equal = torch.equal(ours.attention_mask, reference["attention_mask"])
@@ -65,6 +70,48 @@ def test_video_processor_pipeline_matches_hf_reference():
     assert list(ours.video_grid_thw.shape) == [1, 3]
     assert ours.video_token_count == ours.expected_video_tokens
     print("video processor pipeline: PASS")
+
+
+def test_video_processor_preserves_preselected_frames_and_source_timestamps():
+    processor = _load_processor()
+    frames = [
+        Image.new("RGB", (480, 320), color=(index, 40, 80))
+        for index in range(16)
+    ]
+    sampled_indices = [
+        3,
+        11,
+        19,
+        27,
+        35,
+        43,
+        51,
+        59,
+        67,
+        74,
+        82,
+        90,
+        98,
+        106,
+        114,
+        122,
+    ]
+
+    inputs = prepare_video_inputs(
+        processor,
+        "Describe this video.",
+        frames,
+        video_metadata={
+            "fps": 25.0,
+            "source_frame_count": 128,
+            "sampled_indices": sampled_indices,
+        },
+    )
+    decoded_prompt = processor.tokenizer.decode(inputs.token_ids)
+
+    assert inputs.video_grid_thw[0, 0].item() == 8
+    assert "<0.3 seconds>" in decoded_prompt
+    assert "<4.7 seconds>" in decoded_prompt
 
 
 def test_video_processor_rejects_video_token_mismatch():

@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "name": "p9_quality_evaluator",
+  "quality_protocol_sha256": "85adb4b246ab3fc55bc70e02ad75d97c5aa903e89387e499fc3aea1ac2edb25d",
+  "model": {
+    "name": "Qwen3-VL-8B-Instruct",
+    "revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
+  },
+  "runtime": {
+    "execution_backend": "eager",
+    "tensor_parallel_size": 1,
+    "max_model_len": 8192,
+    "max_num_batched_tokens": 8192,
+    "max_num_seqs": 1,
+    "enable_chunked_prefill": false,
+    "max_chunk_size": 512,
+    "kv_cache_page_size": 256,
+    "num_kv_cache_blocks": 40,
+    "gpu_memory_utilization": 0.9,
+    "enable_prefix_caching": false,
+    "image_max_pixels": 602112,
+    "video_max_pixels": 802816,
+    "video_frames": 16,
+    "sampling": {
+      "temperature": 0.0,
+      "ignore_eos": false
+    }
+  },
+  "datasets": {
+    "docvqa_validation": {
+      "max_output_tokens": 32,
+      "prompt_builder": "question + newline + single-word-or-phrase instruction",
+      "metric": "official_ANLS",
+      "parser": "raw_generation",
+      "reference": {
+        "repository": "EvolvingLMMs-Lab/lmms-eval",
+        "revision": "b485e662a95aa9c62616e9b48bb085442422a928",
+        "paths": [
+          "lmms_eval/tasks/docvqa/_default_template_docvqa_yaml",
+          "lmms_eval/api/metrics.py"
+        ]
+      }
+    },
+    "muirbench_test": {
+      "max_output_tokens": 16,
+      "prompt_builder": "official_create_prompt_use_hint_true",
+      "image_layout": "marker_interleaved",
+      "image_marker": "<image>",
+      "metric": "official_multiple_choice_accuracy",
+      "parser": "official_seed42_fallback_plus_strict_guardrail",
+      "reference": {
+        "repository": "MUIRBench/MUIRBench",
+        "revision": "840b85fe960ab6160cd566fe8360bfa80f9164db",
+        "paths": [
+          "eval/utils/preprocess.py",
+          "eval/utils/postprocess.py"
+        ]
+      }
+    },
+    "mvbench_test": {
+      "max_output_tokens": 16,
+      "prompt_builder": "lmms_eval_mvbench_question_option_post_prompt",
+      "metric": "official_multiple_choice_accuracy",
+      "parser": "lmms_eval_mcq_acc_plus_selected_denominator_guardrail",
+      "video_sampling": {
+        "algorithm": "official_uniform_segment_centers",
+        "frames": 16,
+        "frame_directory_fps": 3,
+        "video_file_decoder": {
+          "distribution": "opencv-python-headless",
+          "distribution_version": "4.10.0.84",
+          "api_version": "4.10.0",
+          "backend": "FFMPEG",
+          "color_conversion": "BGR_to_RGB"
+        }
+      },
+      "reference": {
+        "repository": "EvolvingLMMs-Lab/lmms-eval",
+        "revision": "b485e662a95aa9c62616e9b48bb085442422a928",
+        "path": "lmms_eval/tasks/mvbench/utils.py"
+      },
+      "frame_sampling_reference": {
+        "repository": "OpenGVLab/Ask-Anything",
+        "revision": "4dd8210b030374bb0c510a57dfbe916f70d3ef71",
+        "path": "video_chat2/mvbench.ipynb"
+      }
+    }
+  },
+  "artifact_contract": {
+    "raw_prediction": true,
+    "decoded_with_special_tokens": true,
+    "output_token_ids": true,
+    "prompt_token_ids_sha256": true,
+    "prompt_token_count": true,
+    "media_sha256": true,
+    "per_sample_score": true,
+    "incremental_atomic_checkpoint": true,
+    "aggregate_only_is_invalid": true
+  }
+}

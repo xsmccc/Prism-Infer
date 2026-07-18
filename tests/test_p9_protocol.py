@@ -108,3 +108,8 @@ def test_p9_quality_protocol_rejects_post_result_selection_or_bad_revision() -> 
     bad_revision["datasets"][0]["revision"] = "main"
     with pytest.raises(ValueError, match="full lowercase Git revision"):
         validate_p9_quality_protocol(bad_revision)
+
+    bad_interval = deepcopy(protocol)
+    bad_interval["non_inferiority"]["confidence_interval"] = "point_estimate"
+    with pytest.raises(ValueError, match="paired bootstrap"):
+        validate_p9_quality_protocol(bad_interval)

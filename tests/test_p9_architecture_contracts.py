@@ -18,6 +18,7 @@ from prism_infer.config import (
     ExecutionBackendName,
     ExecutionConfig,
     ModelConfig,
+    MultimodalConfig,
     PrismConfig,
     SchedulerConfig,
 )
@@ -109,6 +110,10 @@ def test_nested_config_and_flat_compatibility_adapter_are_equivalent(
             logits_precision="fp32",
             mlp_projection_mode="legacy",
         ),
+        multimodal=MultimodalConfig(
+            image_max_pixels=602112,
+            video_max_pixels=802816,
+        ),
         cache=CacheConfig(
             gpu_memory_utilization=0.75,
             page_size=32,
@@ -133,6 +138,8 @@ def test_nested_config_and_flat_compatibility_adapter_are_equivalent(
         tensor_parallel_size=1,
         logits_precision="fp32",
         mlp_projection_mode="legacy",
+        image_max_pixels=602112,
+        video_max_pixels=802816,
         gpu_memory_utilization=0.75,
         kvcache_block_size=32,
         num_kvcache_blocks=24,
@@ -149,6 +156,8 @@ def test_nested_config_and_flat_compatibility_adapter_are_equivalent(
 
     assert flat_runtime.prism_config == nested_runtime.prism_config
     assert flat_runtime.max_model_len == nested_runtime.max_model_len == 1024
+    assert flat_runtime.image_max_pixels == 602112
+    assert flat_runtime.video_max_pixels == 802816
     with pytest.raises(TypeError, match="cannot be combined with flat options"):
         Config(nested, max_num_seqs=4)
 

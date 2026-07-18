@@ -9,7 +9,9 @@ from PIL import Image
 from conftest import get_model_path, require_transformers
 from prism_infer.engine.vl_inputs import (
     build_image_prompt,
+    build_interleaved_image_prompt,
     prepare_image_inputs,
+    prepare_interleaved_image_inputs,
     validate_image_inputs,
 )
 
@@ -78,3 +80,47 @@ def test_multi_image_processor_rejects_image_token_mismatch():
     with pytest.raises(ValueError, match="image token count mismatch"):
         validate_image_inputs(bad_inputs, merge_size)
     print("multi image mismatch rejection: PASS")
+
+
+def test_interleaved_multi_image_processor_matches_explicit_hf_message():
+    """交错 API 必须保持文本/图片顺序且与 HF processor reference 一致。"""
+
+    processor = _load_processor()
+    images = _demo_images()
+    prompt = "Compare <image> against <image> and answer briefly."
+    ours = prepare_interleaved_image_inputs(processor, prompt, images)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Compare "},
+                {"type": "image", "image": images[0]},
+                {"type": "text", "text": " against "},
+                {"type": "image", "image": images[1]},
+                {"type": "text", "text": " and answer briefly."},
+            ],
+        }
+    ]
+    reference_prompt = processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    reference = processor(text=reference_prompt, images=images, return_tensors="pt")
+
+    assert ours.prompt_text == reference_prompt
+    assert torch.equal(ours.input_ids, reference["input_ids"])
+    assert torch.equal(ours.image_grid_thw, reference["image_grid_thw"])
+    assert (ours.pixel_values - reference["pixel_values"]).abs().max().item() == 0.0
+    assert ours.image_token_count == ours.expected_image_tokens
+
+
+def test_interleaved_multi_image_prompt_rejects_marker_count_mismatch():
+    processor = _load_processor()
+
+    with pytest.raises(ValueError, match="marker count must equal image count"):
+        build_interleaved_image_prompt(
+            processor,
+            "Only one marker: <image>",
+            _demo_images(),
+        )

@@ -2,6 +2,7 @@ import atexit                           # atexit.register: 注册进程退出时
 import gc
 import socket
 from time import perf_counter, perf_counter_ns
+from typing import Any
 from tqdm.auto import tqdm              # 进度条库, auto版本自动适配终端/Jupyter
 from transformers import AutoTokenizer  # HuggingFace分词器: 文本↔token_ids
 import torch
@@ -15,8 +16,11 @@ from prism_infer.config import Config, PrismConfig
 from prism_infer.sampling_params import SamplingParams
 from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.vl_inputs import (
+    ImageInputs,
+    VideoInputs,
     load_vl_processor,
     prepare_image_inputs,
+    prepare_interleaved_image_inputs,
     prepare_video_inputs,
 )
 from prism_infer.engine.scheduler import Scheduler
@@ -144,7 +148,15 @@ class LLMEngine:
         self.model_runner.config = config
 
         # --- Tokenizer + Scheduler ---
-        self.vl_processor = load_vl_processor(config.model) if self.model_runner.is_vl_model else None
+        self.vl_processor = (
+            load_vl_processor(
+                config.model,
+                image_max_pixels=config.image_max_pixels,
+                video_max_pixels=config.video_max_pixels,
+            )
+            if self.model_runner.is_vl_model
+            else None
+        )
         self.config = config
         self.clock_ns = clock_ns
         self.scheduler = Scheduler(config, clock_ns=clock_ns)  # 调度器
@@ -297,6 +309,37 @@ class LLMEngine:
                 )
         return seq.seq_id
 
+    def _submit_image_inputs(
+        self,
+        inputs: ImageInputs,
+        sampling_params: SamplingParams,
+        *,
+        submitted_ns: int | None,
+        raise_on_reject: bool,
+    ) -> int:
+        """将已通过 processor 校验的单图/多图输入提交给统一 runtime。"""
+
+        with profile_region("preprocess.mrope_positions", cuda=False):
+            position_ids, rope_delta = get_qwen3_vl_rope_index_from_config(
+                inputs.input_ids,
+                config=self.config.hf_config,
+                image_grid_thw=inputs.image_grid_thw,
+                attention_mask=inputs.attention_mask,
+            )
+        seq = Sequence.from_image_inputs(
+            inputs,
+            sampling_params,
+            block_size=self.config.kvcache_block_size,
+            request_id=self._allocate_request_id(),
+            position_ids=position_ids,
+            rope_delta=rope_delta,
+        )
+        return self._submit_sequence(
+            seq,
+            submitted_ns=submitted_ns,
+            raise_on_reject=raise_on_reject,
+        )
+
     def add_vl_request(
         self,
         prompt: str,
@@ -316,23 +359,9 @@ class LLMEngine:
             raise ValueError("generate_vl requires a Qwen3-VL model config")
         with profile_region("preprocess.image_processor", cuda=False):
             inputs = prepare_image_inputs(self.vl_processor, prompt, image)
-        with profile_region("preprocess.mrope_positions", cuda=False):
-            position_ids, rope_delta = get_qwen3_vl_rope_index_from_config(
-                inputs.input_ids,
-                config=self.config.hf_config,
-                image_grid_thw=inputs.image_grid_thw,
-                attention_mask=inputs.attention_mask,
-            )
-        seq = Sequence.from_image_inputs(
+        return self._submit_image_inputs(
             inputs,
             sampling_params,
-            block_size=self.config.kvcache_block_size,
-            request_id=self._allocate_request_id(),
-            position_ids=position_ids,
-            rope_delta=rope_delta,
-        )
-        return self._submit_sequence(
-            seq,
             submitted_ns=submitted_ns,
             raise_on_reject=raise_on_reject,
         )
@@ -356,6 +385,36 @@ class LLMEngine:
             raise_on_reject=raise_on_reject,
         )
 
+    def add_interleaved_images_request(
+        self,
+        prompt: str,
+        images,
+        sampling_params: SamplingParams,
+        *,
+        image_marker: str = "<image>",
+        submitted_ns: int | None = None,
+        raise_on_reject: bool = True,
+    ) -> int:
+        """提交图片按 marker 穿插在文本中的多图请求。"""
+
+        if self.vl_processor is None:
+            raise ValueError(
+                "add_interleaved_images_request requires a Qwen3-VL model config"
+            )
+        with profile_region("preprocess.image_processor", cuda=False):
+            inputs = prepare_interleaved_image_inputs(
+                self.vl_processor,
+                prompt,
+                images,
+                image_marker=image_marker,
+            )
+        return self._submit_image_inputs(
+            inputs,
+            sampling_params,
+            submitted_ns=submitted_ns,
+            raise_on_reject=raise_on_reject,
+        )
+
     def add_video_request(
         self,
         prompt: str,
@@ -371,6 +430,23 @@ class LLMEngine:
             raise ValueError("generate_video requires a Qwen3-VL model config")
         with profile_region("preprocess.video_processor", cuda=False):
             inputs = prepare_video_inputs(self.vl_processor, prompt, video)
+        return self._submit_video_inputs(
+            inputs,
+            sampling_params,
+            submitted_ns=submitted_ns,
+            raise_on_reject=raise_on_reject,
+        )
+
+    def _submit_video_inputs(
+        self,
+        inputs: VideoInputs,
+        sampling_params: SamplingParams,
+        *,
+        submitted_ns: int | None,
+        raise_on_reject: bool,
+    ) -> int:
+        """将已通过 processor 校验的视频输入提交给统一 runtime。"""
+
         with profile_region("preprocess.mrope_positions", cuda=False):
             position_ids, rope_delta = get_qwen3_vl_rope_index_from_config(
                 inputs.input_ids,
@@ -503,7 +579,7 @@ class LLMEngine:
         prompts: list[str] | list[list[int]],          # 输入: 字符串列表或token_id列表的列表
         sampling_params: SamplingParams | list[SamplingParams],  # 采样参数: 单个(所有请求共用)或列表
         use_tqdm: bool = True,                          # 是否显示进度条
-    ) -> list[str]:
+    ) -> list[dict[str, Any]]:
         """对外公开接口: 批量输入prompt, 返回生成结果"""
         if use_tqdm:
             pbar = tqdm(total=len(prompts), desc="Generating", dynamic_ncols=True)
@@ -538,10 +614,60 @@ class LLMEngine:
 
         # --- 结果整理 ---
         outputs = [outputs[seq_id] for seq_id in sorted(outputs.keys())]  # 按seq_id排序, 保证与输入顺序一致
-        outputs = [{"text": self.tokenizer.decode(token_ids), "token_ids": token_ids} for token_ids in outputs]  # token_ids→文本
+        outputs = [self._format_generation_output(token_ids) for token_ids in outputs]
         if use_tqdm:
             pbar.close()
         return outputs  # 返回: [{"text": "...", "token_ids": [...]}, ...]
+
+    def _format_generation_output(self, token_ids: list[int]) -> dict[str, Any]:
+        """Expose user text and a lossless special-token decode alongside IDs."""
+
+        decode_options = {"clean_up_tokenization_spaces": False}
+        return {
+            "text": self.tokenizer.decode(
+                token_ids,
+                skip_special_tokens=True,
+                **decode_options,
+            ),
+            "raw_text": self.tokenizer.decode(
+                token_ids,
+                skip_special_tokens=False,
+                **decode_options,
+            ),
+            "token_ids": token_ids,
+        }
+
+    def _finish_single_generation(
+        self,
+        seq_id: int,
+        progress_bar: Any | None,
+    ) -> dict[str, Any]:
+        """统一收集 image/video 单请求，避免公开 VL API 漂移。"""
+
+        outputs = {}
+        prefill_throughput = decode_throughput = 0.0
+        while not self.is_finished():
+            started = perf_counter()
+            output, num_tokens = self.step()
+            if progress_bar is not None:
+                if num_tokens > 0:
+                    prefill_throughput = num_tokens / (perf_counter() - started)
+                else:
+                    decode_throughput = -num_tokens / (perf_counter() - started)
+                progress_bar.set_postfix(
+                    {
+                        "Prefill": f"{int(prefill_throughput)}tok/s",
+                        "Decode": f"{int(decode_throughput)}tok/s",
+                    }
+                )
+            for done_seq_id, token_ids in output:
+                outputs[done_seq_id] = token_ids
+                if progress_bar is not None:
+                    progress_bar.update(1)
+        if progress_bar is not None:
+            progress_bar.close()
+        token_ids = outputs[seq_id]
+        return self._format_generation_output(token_ids)
 
     def generate_vl(
         self,
@@ -562,32 +688,7 @@ class LLMEngine:
             pbar = None
 
         seq_id = self.add_vl_request(prompt, image, sampling_params)
-        outputs = {}
-        prefill_throughput = decode_throughput = 0.
-        while not self.is_finished():
-            t = perf_counter()
-            output, num_tokens = self.step()
-            if pbar is not None:
-                if num_tokens > 0:
-                    prefill_throughput = num_tokens / (perf_counter() - t)
-                else:
-                    decode_throughput = -num_tokens / (perf_counter() - t)
-                pbar.set_postfix({
-                    "Prefill": f"{int(prefill_throughput)}tok/s",
-                    "Decode": f"{int(decode_throughput)}tok/s",
-                })
-            for done_seq_id, token_ids in output:
-                outputs[done_seq_id] = token_ids
-                if pbar is not None:
-                    pbar.update(1)
-
-        if pbar is not None:
-            pbar.close()
-        token_ids = outputs[seq_id]
-        return {
-            "text": self.tokenizer.decode(token_ids),
-            "token_ids": token_ids,
-        }
+        return self._finish_single_generation(seq_id, pbar)
 
     def generate_images(
         self,
@@ -599,6 +700,52 @@ class LLMEngine:
         """多图生成入口，语义化别名。"""
 
         return self.generate_vl(prompt, images, sampling_params, use_tqdm=use_tqdm)
+
+    def generate_interleaved_images(
+        self,
+        prompt: str,
+        images,
+        sampling_params: SamplingParams,
+        *,
+        image_marker: str = "<image>",
+        use_tqdm: bool = True,
+    ) -> dict[str, Any]:
+        """生成 marker-interleaved 多图请求。"""
+
+        pbar = (
+            tqdm(total=1, desc="Generating Interleaved Images", dynamic_ncols=True)
+            if use_tqdm
+            else None
+        )
+        seq_id = self.add_interleaved_images_request(
+            prompt,
+            images,
+            sampling_params,
+            image_marker=image_marker,
+        )
+        return self._finish_single_generation(seq_id, pbar)
+
+    def generate_prepared_image_inputs(
+        self,
+        inputs: ImageInputs,
+        sampling_params: SamplingParams,
+        *,
+        use_tqdm: bool = True,
+    ) -> dict[str, Any]:
+        """生成一次已预处理 image 输入，供需要审计 prompt IDs 的工具使用。"""
+
+        pbar = (
+            tqdm(total=1, desc="Generating Prepared Images", dynamic_ncols=True)
+            if use_tqdm
+            else None
+        )
+        seq_id = self._submit_image_inputs(
+            inputs,
+            sampling_params,
+            submitted_ns=None,
+            raise_on_reject=True,
+        )
+        return self._finish_single_generation(seq_id, pbar)
 
     def generate_video(
         self,
@@ -615,32 +762,29 @@ class LLMEngine:
             pbar = None
 
         seq_id = self.add_video_request(prompt, video, sampling_params)
-        outputs = {}
-        prefill_throughput = decode_throughput = 0.
-        while not self.is_finished():
-            t = perf_counter()
-            output, num_tokens = self.step()
-            if pbar is not None:
-                if num_tokens > 0:
-                    prefill_throughput = num_tokens / (perf_counter() - t)
-                else:
-                    decode_throughput = -num_tokens / (perf_counter() - t)
-                pbar.set_postfix({
-                    "Prefill": f"{int(prefill_throughput)}tok/s",
-                    "Decode": f"{int(decode_throughput)}tok/s",
-                })
-            for done_seq_id, token_ids in output:
-                outputs[done_seq_id] = token_ids
-                if pbar is not None:
-                    pbar.update(1)
+        return self._finish_single_generation(seq_id, pbar)
 
-        if pbar is not None:
-            pbar.close()
-        token_ids = outputs[seq_id]
-        return {
-            "text": self.tokenizer.decode(token_ids),
-            "token_ids": token_ids,
-        }
+    def generate_prepared_video_inputs(
+        self,
+        inputs: VideoInputs,
+        sampling_params: SamplingParams,
+        *,
+        use_tqdm: bool = True,
+    ) -> dict[str, Any]:
+        """生成一次已预处理 video 输入，供质量工具复核 prompt IDs。"""
+
+        pbar = (
+            tqdm(total=1, desc="Generating Prepared Video", dynamic_ncols=True)
+            if use_tqdm
+            else None
+        )
+        seq_id = self._submit_video_inputs(
+            inputs,
+            sampling_params,
+            submitted_ns=None,
+            raise_on_reject=True,
+        )
+        return self._finish_single_generation(seq_id, pbar)
 
     def generate_mixed(
         self,
@@ -720,7 +864,4 @@ class LLMEngine:
             pbar.close()
 
         ordered = [outputs[seq_id] for seq_id in seq_ids]
-        return [
-            {"text": self.tokenizer.decode(token_ids), "token_ids": token_ids}
-            for token_ids in ordered
-        ]
+        return [self._format_generation_output(token_ids) for token_ids in ordered]

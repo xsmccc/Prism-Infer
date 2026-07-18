@@ -17,10 +17,26 @@ from typing import Any
 from prism_infer.analysis.reference_quality import normalize_reference_text
 
 
-BENCHMARK_SCHEMA_VERSION = 6
-SUPPORTED_BENCHMARK_SCHEMA_VERSIONS = (1, 2, 3, 4, 5, 6)
+BENCHMARK_SCHEMA_VERSION = 7
+SUPPORTED_BENCHMARK_SCHEMA_VERSIONS = (1, 2, 3, 4, 5, 6, 7)
 WORKLOAD_SCHEMA_VERSION = 1
 STAT_KEYS = ("count", "median", "p90", "p99", "min", "max")
+TORCH_DTYPE_ELEMENT_BYTES = {
+    "torch.bool": 1,
+    "torch.int8": 1,
+    "torch.uint8": 1,
+    "torch.float8_e4m3fn": 1,
+    "torch.float8_e4m3fnuz": 1,
+    "torch.float8_e5m2": 1,
+    "torch.float8_e5m2fnuz": 1,
+    "torch.int16": 2,
+    "torch.float16": 2,
+    "torch.bfloat16": 2,
+    "torch.int32": 4,
+    "torch.float32": 4,
+    "torch.int64": 8,
+    "torch.float64": 8,
+}
 
 
 def percentile(values: Sequence[float], fraction: float) -> float:
@@ -63,6 +79,20 @@ def canonical_json_sha256(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _tensor_bytes_from_metadata(
+    *,
+    dtype: str,
+    shape: Sequence[int],
+    path: str,
+) -> int:
+    """Compute tensor bytes from auditable dtype/shape metadata."""
+
+    element_bytes = TORCH_DTYPE_ELEMENT_BYTES.get(dtype)
+    if element_bytes is None:
+        raise ValueError(f"{path}.dtype has unsupported element size: {dtype!r}")
+    return math.prod(shape) * element_bytes
 
 
 def load_workload_manifest(path: str | Path) -> dict[str, Any]:
@@ -844,7 +874,7 @@ def validate_benchmark_record(record: Mapping[str, Any]) -> None:
         )
 
     kv_cache = _require_mapping(record, "kv_cache", "record")
-    _require_string(kv_cache, "dtype", "record.kv_cache")
+    kv_dtype = _require_string(kv_cache, "dtype", "record.kv_cache")
     shape = _require_list(kv_cache, "shape", "record.kv_cache")
     if not shape or not all(isinstance(dim, int) and dim >= 0 for dim in shape):
         raise ValueError("record.kv_cache.shape must contain non-negative ints")
@@ -908,6 +938,126 @@ def validate_benchmark_record(record: Mapping[str, Any]) -> None:
         bytes_per_block = dense_prompt_bytes // dense_prompt_blocks
         if active_prompt_bytes != active_prompt_blocks * bytes_per_block:
             raise ValueError("active prompt bytes do not match active blocks")
+        if schema_version >= 7:
+            scale_dtype = _require_string(
+                kv_cache,
+                "scale_dtype",
+                "record.kv_cache",
+            )
+            scale_shape = _require_list(
+                kv_cache,
+                "scale_shape",
+                "record.kv_cache",
+            )
+            if not all(
+                isinstance(dimension, int)
+                and not isinstance(dimension, bool)
+                and dimension >= 0
+                for dimension in scale_shape
+            ):
+                raise ValueError(
+                    "record.kv_cache.scale_shape must contain non-negative ints"
+                )
+            payload_bytes = _require_int(
+                kv_cache,
+                "payload_bytes",
+                "record.kv_cache",
+                minimum=1,
+            )
+            scale_bytes = _require_int(
+                kv_cache,
+                "scale_bytes",
+                "record.kv_cache",
+                minimum=0,
+            )
+            if kv_cache["bytes"] != payload_bytes + scale_bytes:
+                raise ValueError(
+                    "record.kv_cache.bytes must equal payload_bytes + scale_bytes"
+                )
+            expected_payload_bytes = _tensor_bytes_from_metadata(
+                dtype=kv_dtype,
+                shape=shape,
+                path="record.kv_cache",
+            )
+            if payload_bytes != expected_payload_bytes:
+                raise ValueError(
+                    "record.kv_cache.payload_bytes does not match dtype and shape"
+                )
+            if scale_bytes == 0:
+                if scale_dtype != "none" or scale_shape:
+                    raise ValueError(
+                        "zero scale bytes require scale_dtype='none' and empty scale_shape"
+                    )
+            elif scale_dtype == "none" or not scale_shape:
+                raise ValueError(
+                    "non-zero scale bytes require a scale dtype and shape"
+                )
+            else:
+                if scale_shape != shape[:-1]:
+                    raise ValueError(
+                        "record.kv_cache.scale_shape must equal payload shape without "
+                        "the head dimension"
+                    )
+                expected_scale_bytes = _tensor_bytes_from_metadata(
+                    dtype=scale_dtype,
+                    shape=scale_shape,
+                    path="record.kv_cache.scale",
+                )
+                if scale_bytes != expected_scale_bytes:
+                    raise ValueError(
+                        "record.kv_cache.scale_bytes does not match dtype and shape"
+                    )
+
+            dense_payload_bytes = _require_int(
+                kv_cache,
+                "dense_prompt_payload_bytes",
+                "record.kv_cache",
+                minimum=1,
+            )
+            dense_scale_bytes = _require_int(
+                kv_cache,
+                "dense_prompt_scale_bytes",
+                "record.kv_cache",
+                minimum=0,
+            )
+            active_payload_bytes = _require_int(
+                kv_cache,
+                "active_prompt_payload_bytes",
+                "record.kv_cache",
+                minimum=1,
+            )
+            active_scale_bytes = _require_int(
+                kv_cache,
+                "active_prompt_scale_bytes",
+                "record.kv_cache",
+                minimum=0,
+            )
+            if dense_prompt_bytes != dense_payload_bytes + dense_scale_bytes:
+                raise ValueError(
+                    "dense prompt bytes must equal payload + scale bytes"
+                )
+            if active_prompt_bytes != active_payload_bytes + active_scale_bytes:
+                raise ValueError(
+                    "active prompt bytes must equal payload + scale bytes"
+                )
+            if dense_payload_bytes % dense_prompt_blocks != 0:
+                raise ValueError(
+                    "dense prompt payload bytes must be divisible by dense blocks"
+                )
+            payload_bytes_per_block = dense_payload_bytes // dense_prompt_blocks
+            if active_payload_bytes != active_prompt_blocks * payload_bytes_per_block:
+                raise ValueError(
+                    "active prompt payload bytes do not match active blocks"
+                )
+            if dense_scale_bytes % dense_prompt_blocks != 0:
+                raise ValueError(
+                    "dense prompt scale bytes must be divisible by dense blocks"
+                )
+            scale_bytes_per_block = dense_scale_bytes // dense_prompt_blocks
+            if active_scale_bytes != active_prompt_blocks * scale_bytes_per_block:
+                raise ValueError(
+                    "active prompt scale bytes do not match active blocks"
+                )
         layouts = _require_list(kv_cache, "layouts", "record.kv_cache")
         if len(layouts) != num_requests:
             raise ValueError("KV layout record count must match workload requests")

@@ -105,3 +105,17 @@ def tensor_storage_bytes(tensor: torch.Tensor | None) -> int:
             f"storage object must be a tensor or None, got {type(tensor).__name__}"
         )
     return tensor.numel() * tensor.element_size()
+
+
+def kv_cache_storage_bytes(
+    payload_cache: torch.Tensor,
+    scale_cache: torch.Tensor | None,
+) -> KVStorageBytes:
+    """Return total physical payload/scale bytes for an allocated KV cache."""
+
+    if not isinstance(payload_cache, torch.Tensor):
+        raise TypeError("payload_cache must be a tensor")
+    return KVStorageBytes(
+        payload=tensor_storage_bytes(payload_cache),
+        scales=tensor_storage_bytes(scale_cache),
+    )

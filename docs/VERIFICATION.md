@@ -3787,6 +3787,83 @@ git diff --check
 当前判定：P9-B PASS；允许进入 P9-C scaled FP8 scale lifecycle。P9-C 必须保持本节
 backend/identity contract，不得把 unit-scale direct cast 重新命名为 scaled FP8。
 
+### P9-C.1 scaled FP8 与标准质量 evaluator 预检（PASS；formal gate 待运行）
+
+本检查点把 unit-scale `fp8_kv` 与动态 `scaled_fp8_kv` 保持为两个独立模式。scaled
+路径使用 per-token-per-KV-head FP32 scale，并在 GPU/CPU swap、copy-on-write、physical
+compaction、Triton store、paged decode 和 CUDA Graph replay 中与 FP8 payload 同生命周期。
+KV artifact/schema v7 分别记录并交叉校验 payload、scale 和 total bytes。
+
+标准质量协议固定为 DocVQA validation、MuirBench test 与 MVBench test。物化数据被
+`data/` gitignore 隔离，未进入仓库；本轮复核结果为 31 个 source 文件、5,196 个唯一
+媒体文件、1,212,748,856 bytes，状态 `PASS`。身份如下：
+
+```text
+quality protocol canonical SHA256:
+85adb4b246ab3fc55bc70e02ad75d97c5aa903e89387e499fc3aea1ac2edb25d
+quality evaluator canonical SHA256:
+f1f93d6ae9fede46729056982e10dc3d9a78275f7bb44bf4b531c940f568ea8a
+materialization manifest SHA256:
+dcfe4c82691013cccd7fd58f987919ee83c329caef50dd243c28522d7082a50a
+tracked selection SHA256:
+c511ab44dca420a5b4ef65ae378104ce046f21f81703203a26a73620f9a9651e
+```
+
+评测链路的两项真实缺陷在正式运行前被 fail closed：
+
+- interleaved MuirBench 首样本含 4 个 576-token image span；原冻结的 512-token
+  chunk 无法原子消费。质量 evaluator 因而明确使用 non-chunked eager prefill，隔离
+  KV precision 变量；per-image chunk payload slicing 留给独立 runtime 工作，不在质量
+  结论中临时改参数。
+- 容器预装 `opencv==4.10.0` 没有 FFmpeg/GStreamer，且 HF processor 会把已选 16 帧
+  按默认 24 FPS 二次采样为 4 帧。quality extra 现固定
+  `opencv-python-headless==4.10.0.84 / FFMPEG`，artifact 记录 decoder 身份；processor
+  使用 `do_sample_frames=false` 并接收原视频 FPS/帧索引。MVBench smoke 最终
+  `video_grid_thw.T=8`，对应保留 16 个输入帧。
+
+生成 artifact 同时保存 clean raw prediction、含特殊 token 的 lossless decode 与 token
+IDs。官方 scorer 使用 clean prediction；修复前 DocVQA 样本的 `<|im_end|>` 尾缀把
+ANLS 错误压到 `0.6`，修复后为 `1.0`。独立 comparator 不信任 artifact 内的 score 或
+aggregate：它从 run contract 绑定的物化 manifest/JSONL 按 sample ID 定位 reference，
+核对媒体 SHA，独立重算每条 score 及汇总；缺少 reference 的 formal artifact 会 fail
+closed。随后检查 run/evaluator/protocol/input 哈希链与 KV 字节，执行 seed `20260717`、
+10,000 resamples 的 paired-bootstrap 95% CI；MuirBench strict parser 是必过 guardrail。
+
+GPU0 dirty smoke（每项 1 sample，仅验证链路，不是质量 headline）：
+
+| dataset | off artifact SHA256 | scaled artifact SHA256 | comparison SHA256 | token exact | score off/scaled |
+|---|---|---|---|---:|---:|
+| DocVQA | `1583eb0ced1ff7c6daee6b85bf794de7a4ed57f0c06579ee9516738205d14e77` | `49e13cee1d4d4494bbf50e048a3f6d361642d97f5d787734c665c98ddc960630` | `f3412b99ca78139f6961823faae4c4c8769727a9f187b32d87af3076e9367760` | 1/1 | ANLS `1.0/1.0` |
+| MuirBench | `f929cab356f76785f89308ad2e1e6f9a44551780c4c47c489e959bedebc27772` | `540322f4e52f17b2631deb8aeef44049f7c467eb961ec2bc497d036a9a1ba776` | `8b0dad864bed75eaadc9bb0c70a570d66467922bec16e02f0827f753b827205e` | 1/1 | accuracy `0.0/0.0` |
+| MVBench | `3a753b87a72a67a734b425cc14d65a68b9878cd686b2ebc04267b6bdc383ac83` | `6ca475ddb4b8acbca8c3a3183c9e07c98a9ac3ebb9fe0d7e75d2a7dbaaa74879` | `bda4e52d21c750044e2717407d1f4459cf7f0bd3e54e8b9d7985efe5ab3af8f4` | 1/1 | accuracy `0.0/0.0` |
+
+三组 scaled KV pool 都是 payload `754,974,720` + scale `23,592,960` =
+`778,567,680` bytes；BF16 pool 为 `1,509,949,440` bytes，因此物理总比例为
+`0.515625`，节省 `48.4375%`。三组 paired delta 与 CI 均为 `0.0`，但单样本 smoke
+只允许标记 `SMOKE_ONLY`，不得用来声称标准质量 non-inferiority。
+
+验证命令：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 .venv-local/bin/python -m pytest -q \
+  tests/test_p9_*.py tests/test_scaled_fp8_kv_cache.py \
+  tests/test_benchmark_schema.py tests/test_processor_pipeline.py \
+  tests/test_processor_pipeline_multi_image.py \
+  tests/test_processor_pipeline_video.py tests/test_http_range_reader.py \
+  tests/test_llm_output_decoding.py
+# 125 passed in 14.28s
+
+CUDA_VISIBLE_DEVICES=0 .venv-local/bin/python -m pytest -q
+# 375 passed, 6 skipped in 265.90s
+
+.venv-local/bin/python -m compileall -q prism_infer benchmarks scripts tests
+git diff --check
+```
+
+当前判定：scaled FP8 端到端实现、标准数据物化、evaluator、真实三模态 smoke 与统计
+比较工具预检 PASS。尚未运行 clean commit 上的完整 development/final paired quality
+set，因此 P9-C 的正式质量 gate 和任何标准集 headline 仍为 `PENDING`。
+
 ## 每次任务交付模板
 
 阶段级交付使用 `docs/STAGE_DELIVERY_TEMPLATE.md`，其中包含 requirement mapping、

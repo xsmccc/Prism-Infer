@@ -238,6 +238,22 @@ class SchedulerConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class MultimodalConfig:
+    """HF processor 的显式视觉像素预算；``None`` 保留模型默认值。"""
+
+    image_max_pixels: int | None = None
+    video_max_pixels: int | None = None
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("image_max_pixels", self.image_max_pixels),
+            ("video_max_pixels", self.video_max_pixels),
+        ):
+            if value is not None:
+                _positive_int(value, name=name)
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionConfig:
     backend: ExecutionBackendName | str = ExecutionBackendName.CUDA_GRAPH
     compile_region: str = "none"
@@ -370,6 +386,7 @@ class PrismConfig:
     """Validated user configuration before HF-derived resolution."""
 
     model: ModelConfig
+    multimodal: MultimodalConfig = field(default_factory=MultimodalConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
@@ -379,6 +396,7 @@ class PrismConfig:
     def __post_init__(self) -> None:
         domains = {
             "model": (self.model, ModelConfig),
+            "multimodal": (self.multimodal, MultimodalConfig),
             "cache": (self.cache, CacheConfig),
             "scheduler": (self.scheduler, SchedulerConfig),
             "execution": (self.execution, ExecutionConfig),
@@ -437,6 +455,10 @@ class PrismConfig:
             "logits_precision": "logits_precision",
             "mlp_projection_mode": "mlp_projection_mode",
         }
+        multimodal_fields = {
+            "image_max_pixels": "image_max_pixels",
+            "video_max_pixels": "video_max_pixels",
+        }
         cache_fields = {
             "gpu_memory_utilization": "gpu_memory_utilization",
             "kvcache_block_size": "page_size",
@@ -477,6 +499,7 @@ class PrismConfig:
         control_fields = {"enforce_eager", "execution_backend"}
         allowed = (
             set(model_fields)
+            | set(multimodal_fields)
             | set(cache_fields)
             | set(scheduler_fields)
             | set(execution_fields)
@@ -538,6 +561,7 @@ class PrismConfig:
         execution_options["backend"] = backend
         return cls(
             model=ModelConfig(model=model, **select(model_fields)),
+            multimodal=MultimodalConfig(**select(multimodal_fields)),
             cache=CacheConfig(**select(cache_fields)),
             scheduler=SchedulerConfig(**select(scheduler_fields)),
             execution=ExecutionConfig(**execution_options),
@@ -692,6 +716,10 @@ class Config:
         return self.prism_config.model
 
     @property
+    def multimodal_config(self) -> MultimodalConfig:
+        return self.prism_config.multimodal
+
+    @property
     def cache_config(self) -> CacheConfig:
         return self.prism_config.cache
 
@@ -730,6 +758,14 @@ class Config:
     @property
     def mlp_projection_mode(self) -> str:
         return self.model_config.mlp_projection_mode
+
+    @property
+    def image_max_pixels(self) -> int | None:
+        return self.multimodal_config.image_max_pixels
+
+    @property
+    def video_max_pixels(self) -> int | None:
+        return self.multimodal_config.video_max_pixels
 
     @property
     def max_num_batched_tokens(self) -> int:

@@ -19,6 +19,24 @@ import torch
 from PIL import Image
 
 from prism_infer import LLM, SamplingParams
+from prism_infer.engine.kv_quantization import kv_cache_storage_bytes
+
+
+def _kv_cache_record(llm: LLM) -> dict[str, Any]:
+    """Build auditable payload/scale/total physical KV storage metadata."""
+
+    payload_cache = llm.model_runner.kv_cache
+    scale_cache = llm.model_runner.kv_scale_cache
+    storage = kv_cache_storage_bytes(payload_cache, scale_cache)
+    return {
+        "dtype": str(payload_cache.dtype),
+        "shape": list(payload_cache.shape),
+        "scale_dtype": "none" if scale_cache is None else str(scale_cache.dtype),
+        "scale_shape": [] if scale_cache is None else list(scale_cache.shape),
+        "payload_bytes": storage.payload,
+        "scale_bytes": storage.scales,
+        "bytes": storage.total,
+    }
 
 
 def _percentile(values: list[float], pct: float) -> float:
@@ -80,8 +98,7 @@ def _run_timed_case(
         **_make_common_kwargs(args),
     )
     try:
-        kv_cache = llm.model_runner.kv_cache
-        kv_bytes = kv_cache.numel() * kv_cache.element_size()
+        kv_cache_record = _kv_cache_record(llm)
         for _ in range(args.warmup):
             run_once(llm, params)
 
@@ -119,9 +136,7 @@ def _run_timed_case(
                 "max_num_batched_tokens": args.max_num_batched_tokens,
             },
             "kv_cache": {
-                "dtype": str(kv_cache.dtype),
-                "shape": list(kv_cache.shape),
-                "bytes": kv_bytes,
+                **kv_cache_record,
             },
             "tokens": outputs[0],
             "outputs_identical": all(tokens == outputs[0] for tokens in outputs),
@@ -161,14 +176,9 @@ def _run_quality_matrix(args: argparse.Namespace, mode: str) -> dict[str, Any]:
         **_make_common_kwargs(args),
     )
     try:
-        kv_cache = llm.model_runner.kv_cache
         return {
             "mode": mode,
-            "kv_cache": {
-                "dtype": str(kv_cache.dtype),
-                "shape": list(kv_cache.shape),
-                "bytes": kv_cache.numel() * kv_cache.element_size(),
-            },
+            "kv_cache": _kv_cache_record(llm),
             "outputs": {
                 "text": llm.generate(
                     [[151644, 872, 198, 77091, 198]],

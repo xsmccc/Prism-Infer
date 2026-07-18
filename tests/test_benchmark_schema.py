@@ -160,6 +160,10 @@ def _complete_record() -> dict[str, object]:
         "kv_cache": {
             "dtype": "torch.bfloat16",
             "shape": [2, 36, 16, 256, 8, 128],
+            "scale_dtype": "none",
+            "scale_shape": [],
+            "payload_bytes": 603979776,
+            "scale_bytes": 0,
             "bytes": 603979776,
             "blocks": 16,
             "block_size": 256,
@@ -169,7 +173,11 @@ def _complete_record() -> dict[str, object]:
             "dense_prompt_blocks": 1,
             "active_prompt_blocks": 1,
             "released_prompt_blocks": 0,
+            "dense_prompt_payload_bytes": 37748736,
+            "dense_prompt_scale_bytes": 0,
             "dense_prompt_bytes": 37748736,
+            "active_prompt_payload_bytes": 37748736,
+            "active_prompt_scale_bytes": 0,
             "active_prompt_bytes": 37748736,
             "layouts": [
                 {
@@ -195,6 +203,72 @@ def test_schema_v5_remains_compatible_without_projection_mode() -> None:
     del record["model"]["mlp_projection_mode"]
 
     validate_benchmark_record(record)
+
+
+def test_schema_v6_remains_compatible_without_scale_byte_breakdown() -> None:
+    record = _complete_record()
+    record["schema_version"] = 6
+    for key in (
+        "scale_dtype",
+        "scale_shape",
+        "payload_bytes",
+        "scale_bytes",
+        "dense_prompt_payload_bytes",
+        "dense_prompt_scale_bytes",
+        "active_prompt_payload_bytes",
+        "active_prompt_scale_bytes",
+    ):
+        del record["kv_cache"][key]
+
+    validate_benchmark_record(record)
+
+
+def test_schema_v7_accepts_scaled_fp8_physical_byte_breakdown() -> None:
+    record = _complete_record()
+    kv_cache = record["kv_cache"]
+    kv_cache.update(
+        {
+            "dtype": "torch.float8_e4m3fn",
+            "scale_dtype": "torch.float32",
+            "scale_shape": [2, 36, 16, 256, 8],
+            "payload_bytes": 301989888,
+            "scale_bytes": 9437184,
+            "bytes": 311427072,
+            "dense_prompt_payload_bytes": 18874368,
+            "dense_prompt_scale_bytes": 589824,
+            "dense_prompt_bytes": 19464192,
+            "active_prompt_payload_bytes": 18874368,
+            "active_prompt_scale_bytes": 589824,
+            "active_prompt_bytes": 19464192,
+        }
+    )
+
+    validate_benchmark_record(record)
+    assert kv_cache["bytes"] / 603979776 == 0.515625
+
+
+def test_schema_v7_rejects_unverifiable_scale_storage_metadata() -> None:
+    record = _complete_record()
+    kv_cache = record["kv_cache"]
+    kv_cache.update(
+        {
+            "dtype": "torch.float8_e4m3fn",
+            "scale_dtype": "torch.float32",
+            "scale_shape": [2, 36, 16, 256, 7],
+            "payload_bytes": 301989888,
+            "scale_bytes": 8257536,
+            "bytes": 310247424,
+            "dense_prompt_payload_bytes": 18874368,
+            "dense_prompt_scale_bytes": 516096,
+            "dense_prompt_bytes": 19390464,
+            "active_prompt_payload_bytes": 18874368,
+            "active_prompt_scale_bytes": 516096,
+            "active_prompt_bytes": 19390464,
+        }
+    )
+
+    with pytest.raises(ValueError, match="scale_shape must equal payload shape"):
+        validate_benchmark_record(record)
 
 
 def test_summarize_values_reports_required_percentiles() -> None:
@@ -434,7 +508,12 @@ def test_p611_physical_compression_modes_have_eager_graph_pairs() -> None:
     expected_pairs = (
         ("visual_compact", "visual_compact_graph"),
         ("fp8_kv", "fp8_kv_graph"),
+        ("scaled_fp8_kv", "scaled_fp8_kv_graph"),
         ("visual_compact_fp8", "visual_compact_fp8_graph"),
+        (
+            "visual_compact_scaled_fp8",
+            "visual_compact_scaled_fp8_graph",
+        ),
     )
     for eager_name, graph_name in expected_pairs:
         eager = MODE_SPECS[eager_name]

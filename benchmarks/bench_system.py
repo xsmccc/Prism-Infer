@@ -41,6 +41,10 @@ from prism_infer.analysis.performance_profile import (
     performance_profile,
     validate_performance_profile_record,
 )
+from prism_infer.engine.kv_quantization import (
+    kv_cache_storage_bytes,
+    tensor_storage_bytes,
+)
 
 
 DEFAULT_MANIFEST = Path(__file__).with_name("workloads") / "p6_internal_smoke.json"
@@ -116,6 +120,20 @@ MODE_SPECS = {
         compression="fp8_kv",
         enforce_eager=False,
     ),
+    "scaled_fp8_kv": ModeSpec(
+        name="scaled_fp8_kv",
+        execution="eager",
+        attention="prefill_sdpa_decode_scaled_fp8_paged_triton",
+        compression="scaled_fp8_kv",
+        enforce_eager=True,
+    ),
+    "scaled_fp8_kv_graph": ModeSpec(
+        name="scaled_fp8_kv_graph",
+        execution="cuda_graph",
+        attention="prefill_sdpa_decode_scaled_fp8_paged_triton",
+        compression="scaled_fp8_kv",
+        enforce_eager=False,
+    ),
     "visual_compact_fp8": ModeSpec(
         name="visual_compact_fp8",
         execution="eager",
@@ -128,6 +146,20 @@ MODE_SPECS = {
         execution="cuda_graph",
         attention="prefill_sdpa_decode_compact_fp8_paged_triton",
         compression="visual_compact_fp8",
+        enforce_eager=False,
+    ),
+    "visual_compact_scaled_fp8": ModeSpec(
+        name="visual_compact_scaled_fp8",
+        execution="eager",
+        attention="prefill_sdpa_decode_compact_scaled_fp8_paged_triton",
+        compression="visual_compact_scaled_fp8",
+        enforce_eager=True,
+    ),
+    "visual_compact_scaled_fp8_graph": ModeSpec(
+        name="visual_compact_scaled_fp8_graph",
+        execution="cuda_graph",
+        attention="prefill_sdpa_decode_compact_scaled_fp8_paged_triton",
+        compression="visual_compact_scaled_fp8",
         enforce_eager=False,
     ),
 }
@@ -160,7 +192,11 @@ class IterationResult:
     dense_prompt_blocks: int
     active_prompt_blocks: int
     released_prompt_blocks: int
+    dense_prompt_payload_bytes: int
+    dense_prompt_scale_bytes: int
     dense_prompt_bytes: int
+    active_prompt_payload_bytes: int
+    active_prompt_scale_bytes: int
     active_prompt_bytes: int
     kv_layouts: list[dict[str, Any]]
 
@@ -453,10 +489,16 @@ def _run_iteration(
             active_prompt_blocks = sum(
                 len(seq.block_table) for seq in ordered_sequences
             )
-            block_bytes = (
-                llm.model_runner.kv_cache[:, :, 0].numel()
-                * llm.model_runner.kv_cache.element_size()
+            payload_block_bytes = tensor_storage_bytes(
+                llm.model_runner.kv_cache[:, :, 0]
             )
+            scale_cache = llm.model_runner.kv_scale_cache
+            scale_block_bytes = (
+                0
+                if scale_cache is None
+                else tensor_storage_bytes(scale_cache[:, :, 0])
+            )
+            block_bytes = payload_block_bytes + scale_block_bytes
             layouts = []
             for seq in ordered_sequences:
                 if seq.kv_layout is None:
@@ -486,7 +528,19 @@ def _run_iteration(
                 "released_prompt_blocks": (
                     dense_prompt_blocks - active_prompt_blocks
                 ),
+                "dense_prompt_payload_bytes": (
+                    dense_prompt_blocks * payload_block_bytes
+                ),
+                "dense_prompt_scale_bytes": (
+                    dense_prompt_blocks * scale_block_bytes
+                ),
                 "dense_prompt_bytes": dense_prompt_blocks * block_bytes,
+                "active_prompt_payload_bytes": (
+                    active_prompt_blocks * payload_block_bytes
+                ),
+                "active_prompt_scale_bytes": (
+                    active_prompt_blocks * scale_block_bytes
+                ),
                 "active_prompt_bytes": active_prompt_blocks * block_bytes,
                 "kv_layouts": layouts,
             }
@@ -613,7 +667,11 @@ def _build_record(
         "dense_prompt_blocks",
         "active_prompt_blocks",
         "released_prompt_blocks",
+        "dense_prompt_payload_bytes",
+        "dense_prompt_scale_bytes",
         "dense_prompt_bytes",
+        "active_prompt_payload_bytes",
+        "active_prompt_scale_bytes",
         "active_prompt_bytes",
     )
     for metric_name in kv_metric_names:
@@ -627,6 +685,8 @@ def _build_record(
     commit, dirty = _git_metadata()
     gpu_metadata = _gpu_metadata()
     kv_cache = llm.model_runner.kv_cache
+    kv_scale_cache = llm.model_runner.kv_scale_cache
+    storage_bytes = kv_cache_storage_bytes(kv_cache, kv_scale_cache)
     config = llm.config
     model_config_path = Path(args.model) / "config.json"
     request_types = [request["type"] for request in case["requests"]]
@@ -825,16 +885,28 @@ def _build_record(
         "kv_cache": {
             "dtype": str(kv_cache.dtype),
             "shape": list(kv_cache.shape),
-            "bytes": kv_cache.numel() * kv_cache.element_size(),
-            "blocks": config.num_kvcache_blocks,
+            "scale_dtype": (
+                "none" if kv_scale_cache is None else str(kv_scale_cache.dtype)
+            ),
+            "scale_shape": (
+                [] if kv_scale_cache is None else list(kv_scale_cache.shape)
+            ),
+            "payload_bytes": storage_bytes.payload,
+            "scale_bytes": storage_bytes.scales,
+            "bytes": storage_bytes.total,
+            "blocks": kv_cache.shape[2],
             "block_size": config.kvcache_block_size,
-            "capacity_tokens": config.num_kvcache_blocks * config.kvcache_block_size,
+            "capacity_tokens": kv_cache.shape[2] * config.kvcache_block_size,
             "logical_prompt_tokens": first.logical_prompt_kv_tokens,
             "physical_prompt_tokens": first.physical_prompt_kv_tokens,
             "dense_prompt_blocks": first.dense_prompt_blocks,
             "active_prompt_blocks": first.active_prompt_blocks,
             "released_prompt_blocks": first.released_prompt_blocks,
+            "dense_prompt_payload_bytes": first.dense_prompt_payload_bytes,
+            "dense_prompt_scale_bytes": first.dense_prompt_scale_bytes,
             "dense_prompt_bytes": first.dense_prompt_bytes,
+            "active_prompt_payload_bytes": first.active_prompt_payload_bytes,
+            "active_prompt_scale_bytes": first.active_prompt_scale_bytes,
             "active_prompt_bytes": first.active_prompt_bytes,
             "layouts": first.kv_layouts,
         },
