@@ -6,14 +6,13 @@ import json
 import random
 from pathlib import Path
 
-from benchmarks.bench_p9_quality import (
-    _prepare_dataset_records,
-    aggregate_predictions,
-    score_prediction,
-)
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
-from prism_infer.analysis.p9_quality_metrics import MUIRBENCH_RANDOM_FALLBACK_SEED
-
+from prism_infer.analysis.p9_quality_metrics import (
+    MUIRBENCH_RANDOM_FALLBACK_SEED,
+    aggregate_quality_predictions,
+    score_quality_prediction,
+)
+from prism_infer.analysis.p9_quality_runtime import prepare_dataset_records
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EVALUATOR = REPO_ROOT / "benchmarks/workloads/p9_quality_evaluator.json"
@@ -46,18 +45,18 @@ def test_evaluator_protocol_is_frozen_and_references_quality_protocol() -> None:
 
 
 def test_dataset_scorers_keep_raw_parser_guardrails() -> None:
-    doc = score_prediction(
+    doc = score_quality_prediction(
         "docvqa_validation",
         {"answers": ["invoice"]},
         "invoice",
     )
-    muir = score_prediction(
+    muir = score_quality_prediction(
         "muirbench_test",
         {"options": ["red", "blue"], "answer": "B"},
         "(B)",
         muirbench_random=random.Random(MUIRBENCH_RANDOM_FALLBACK_SEED),
     )
-    mv = score_prediction(
+    mv = score_quality_prediction(
         "mvbench_test",
         {"candidates": ["run", "sit"], "answer_index": 0},
         "A. run",
@@ -70,7 +69,7 @@ def test_dataset_scorers_keep_raw_parser_guardrails() -> None:
 
 
 def test_aggregates_are_recomputed_from_per_sample_scores() -> None:
-    muir = aggregate_predictions(
+    muir = aggregate_quality_predictions(
         "muirbench_test",
         [
             {
@@ -89,7 +88,7 @@ def test_aggregates_are_recomputed_from_per_sample_scores() -> None:
             },
         ],
     )
-    mv = aggregate_predictions(
+    mv = aggregate_quality_predictions(
         "mvbench_test",
         [
             {"task": "a", "score": {"score": 1, "answered": True}},
@@ -133,7 +132,7 @@ def test_subset_selection_preserves_frozen_order_and_explicit_exclusion(
         },
     }
 
-    eligible, exclusions, contract_ids = _prepare_dataset_records(
+    eligible, exclusions, contract_ids = prepare_dataset_records(
         artifact=artifact,
         materialized_root=tmp_path,
         subset="development",

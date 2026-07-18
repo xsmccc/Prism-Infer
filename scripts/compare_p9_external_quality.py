@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and compare paired P9 baseline/candidate quality artifacts."""
+"""Validate and compare a Prism P9 artifact with a vLLM quality artifact."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from prism_infer.analysis.p9_quality_comparison import compare_quality_artifacts
+from prism_infer.analysis.p9_external_quality import compare_prism_external_quality
 from prism_infer.analysis.p9_quality_materialization import write_json_atomic
 from prism_infer.analysis.p9_quality_runtime import (
     load_reference_records_for_artifacts,
@@ -26,8 +26,8 @@ DEFAULT_MATERIALIZED_ROOT = REPO_ROOT / "data/p9_quality/materialized"
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", type=Path, required=True)
-    parser.add_argument("--candidate", type=Path, required=True)
+    parser.add_argument("--prism", type=Path, required=True)
+    parser.add_argument("--external", type=Path, required=True)
     parser.add_argument("--evaluator", type=Path, default=DEFAULT_EVALUATOR)
     parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL)
     parser.add_argument(
@@ -36,31 +36,32 @@ def main() -> None:
         default=DEFAULT_MATERIALIZED_ROOT,
     )
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument(
-        "--require-headline",
-        action="store_true",
-        help="Reject smoke artifacts and require clean formal runs.",
-    )
+    parser.add_argument("--require-headline", action="store_true")
     args = parser.parse_args()
     if args.output.exists():
         raise SystemExit(f"refusing to overwrite comparison artifact: {args.output}")
 
-    baseline = read_json_object(args.baseline)
-    candidate = read_json_object(args.candidate)
+    prism = read_json_object(args.prism)
+    external = read_json_object(args.external)
     evaluator = read_json_object(args.evaluator)
     protocol = read_json_object(args.protocol)
     reference_records = load_reference_records_for_artifacts(
         args.materialized_root,
-        [baseline, candidate],
+        [prism, external],
         protocol=protocol,
     )
-    result = compare_quality_artifacts(
-        baseline,
-        candidate,
+    model_path = external.get("run_contract", {}).get("model")
+    if not isinstance(model_path, str):
+        raise ValueError("external artifact has no model path")
+    model_config = read_json_object(Path(model_path) / "config.json")
+    result = compare_prism_external_quality(
+        prism,
+        external,
         evaluator=evaluator,
         protocol=protocol,
-        require_headline=args.require_headline,
+        model_config=model_config,
         reference_records=reference_records,
+        require_headline=args.require_headline,
     )
     output_sha256 = write_json_atomic(args.output, result)
     print(
@@ -69,12 +70,14 @@ def main() -> None:
                 "output": str(args.output),
                 "output_sha256": output_sha256,
                 "dataset": result["dataset"],
-                "candidate_mode": result["candidate_mode"],
+                "external_mode": result["external_mode"],
                 "samples": result["samples"],
                 "decision": result["decision"],
+                "semantic_input_exact": result["semantic_input_exact"],
                 "all_required_metrics_pass": result["all_required_metrics_pass"],
-                "headline_eligible": result["headline_eligible"],
-                "reference_scores_recomputed": result["reference_scores_recomputed"],
+                "full_physical_comparable": result["kv_cache"][
+                    "full_physical_comparable"
+                ],
             },
             indent=2,
             sort_keys=True,

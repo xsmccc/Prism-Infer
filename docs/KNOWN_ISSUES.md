@@ -200,8 +200,12 @@ goodput和 request FSM。当前没有：
 
 当前 correctness覆盖 synthetic frame list、M-RoPE、Vision Encoder和mixed batch。
 仓库不提供通用视频文件容器解码、FPS/时间戳采样、音频处理或生产上传 pipeline。
-不同框架对 Qwen3-VL timestamp placeholder的处理曾造成 prompt token差异，相关 external
-cell会自动标为不可比。
+P9 标准质量路径另行冻结 `opencv-python-headless==4.10.0.84 / FFMPEG` 解码与 16 帧
+采样，不能外推为通用视频服务。vLLM 0.24 会替换完整
+`vision_start + video_pad + vision_end` triplet，而 pinned HF processor只替换中间的
+`video_pad`，原始行为会丢失最外层 marker；external runner使用显式 versioned prompt
+adapter补回外层 marker，并要求最终 request token IDs与 Prism逐项相同。若 vLLM版本、
+processor marker或 placeholder数量改变，adapter会 fail closed，不能静默继续比较。
 
 ## KI-009：torch.compile候选已拒绝
 

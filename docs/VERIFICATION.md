@@ -3908,6 +3908,83 @@ Prism 内部 BF16→scaled FP8 的质量与 cache-pool bytes，不等于完整 P
 同一 Qwen3-VL/processor 语义下 vLLM 最强 scaled-FP8 baseline 的质量–物理显存 Pareto，
 也不包含 page-table/allocator metadata、外部 runtime 或服务端 headline。
 
+### P9-C.2 vLLM External Gate A 集成门禁（SMOKE PASS / FORMAL PENDING）
+
+External runner使用隔离的 vLLM `0.24.0`（distribution commit `gee0da84ab`）与同一
+Qwen3-VL-8B-Instruct revision。质量 cell固定单卡 GPU0、eager、TP1、关闭 prefix
+cache/chunked prefill/async scheduling，并设置
+`VLLM_ENABLE_V1_MULTIPROCESSING=0`、`VLLM_USE_FLASHINFER_SAMPLER=0`。运行时对象审计
+确认 language 36层均为 `TRITON_ATTN`，vision 27层均为 `FLASH_ATTN`；不能仅依据请求
+参数或启动日志推断实际 backend。
+
+公平容量使用框架原生 page layout：Prism `40 × 256` 与 vLLM `640 × 16` 都是
+10,240 logical token slots。vLLM BF16实际36个 KV tensor合计 `1,509,949,440` bytes；
+`fp8_per_token_head` payload为 `754,974,720` bytes，inline FP32 K/V scales为
+`23,592,960` bytes，总计 `778,567,680` bytes，即 BF16 pool的 `0.515625x`。每个 cell
+还读取实际 worker block-table tensor：GPU/CPU各 `2,048` bytes。Python allocator对象图
+尚无跨框架统一字节合同，Prism schema-v1 formal quality artifact也未记录 page-table/
+allocator metadata，因此 artifact明确设置 `full_physical_comparable=false`；这些 smoke
+数字不能包装成完整物理显存 Pareto优势。未测 allocator字段显式写为 `null`，validator
+拒绝把不完整计量写成 `0`。环境证据同时强制记录 GPU UUID、driver、compute capability、
+total memory，并直接哈希13个实际 vLLM执行文件和3个 Transformers Qwen3-VL/Qwen2-VL
+processor文件；完整环境对象进入 `run_contract`，因此跨版本、跨源码或跨GPU的 checkpoint
+不能被 `--resume` 混入同一 artifact。validator同时锁定 vLLM `0.24.0`、distribution
+commit `gee0da84ab` 与 Transformers `5.13.0`，避免仅凭 package标签推断本地执行代码。
+
+集成门禁发现并修复了三个会破坏公平性的 harness问题：
+
+- `mm_processor_kwargs={"max_pixels": ...}` 对 Transformers 5.13 Qwen3-VL video
+  processor是无效参数。runner现传完整 `size={shortest_edge,longest_edge}`，并在启动
+  engine前核对 pinned processor有效值；MVBench恢复冻结 grid `[8,10,16]` 和320个
+  visual placeholder，而不是未resize输入产生的1,200个 placeholder。
+- vLLM 0.24视频 processor替换完整 marker triplet，HF只替换中间 `video_pad`。版本化
+  adapter `qwen3_vl_preserve_hf_outer_video_markers_v1` 在送入 vLLM前增加一层 marker；
+  CPU重建与真实 `RequestOutput.prompt_token_ids` 两道门禁都证明展开后459个 token与
+  Prism/HF逐项相同。adapter、processor size和最终 token hash均写入合同；数量或
+  marker变化时 fail closed。
+- 对 `.venv-local/bin/python` 使用 `Path.resolve()` 会解引用 symlink并误启动系统
+  Python，丢失冻结 OpenCV/FFmpeg。runner现保留 venv entrypoint；视频帧由 Prism环境
+  解码成临时 lossless NPZ，vLLM消费后自动删除。首样本 sampled RGB identity为
+  `d28fdd49eb3c9859b5568965b46ea0e7ac474f7c0babf8a82b30a9b862549531`。
+
+最终 dirty smoke artifacts如下。每项均通过独立 validator：从 materialized JSONL重算
+score、核对媒体/selection/run identity、实际 KV tensor bytes、backend evidence，并与
+既有 Prism formal artifact中的同一样本 `input` 对象逐字段相等。MuirBench/MVBench
+单样本 accuracy为0只说明各自首样本答错，不是整体质量结论。
+
+| dataset | vLLM mode | sample | prompt tokens / visual tokens | quality | artifact SHA256 |
+|---|---|---|---:|---|---|
+| DocVQA | BF16 KV | `5437` | `611 / 575` | ANLS `1.0` | `7b9c8448175c0207af7d95db659d3f193dcb36ff12c6a9c8176ee70480efefa9` |
+| DocVQA | per-token-head FP8 KV | `5437` | `611 / 575` | ANLS `1.0` | `3dd61d6e466785e0716363999c544b008b9ff0b2647508429d1fea42e07187ef` |
+| MuirBench | per-token-head FP8 KV | `63` | `2381 / 2304` | official/strict `0/0` | `567bd80a4465a9dc2db8cefcf51719cfd4c2f53513986b5c94cf52f8753a8927` |
+| MVBench | per-token-head FP8 KV | `counterfactual_inference\|video_12359.mp4\|150` | `459 / 320` | accuracy `0` | `e2914414483dc470c95511d771f0a2a20910f3fd8c93a8a6463b1172849cf04a` |
+
+本检查点回归与静态门禁：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 .venv-local/bin/python -m pytest -q \
+  tests/test_p9_*.py tests/test_scaled_fp8_kv_cache.py \
+  tests/test_benchmark_schema.py tests/test_processor_pipeline.py \
+  tests/test_processor_pipeline_multi_image.py \
+  tests/test_processor_pipeline_video.py tests/test_http_range_reader.py \
+  tests/test_llm_output_decoding.py
+# 158 passed in 14.61s
+
+CUDA_VISIBLE_DEVICES=0 .venv-local/bin/python -m pytest -q
+# 408 passed, 6 skipped in 270.48s
+
+.venv-local/bin/python -m compileall -q prism_infer benchmarks scripts tests
+.venv-local/bin/python -m black --check <12 changed Python files>
+/data/vllm-omni/.venv/bin/ruff check --ignore E402 <12 changed Python files>
+git diff --check
+```
+
+当前判定仅为 External Gate A runner/integration `SMOKE PASS`。下一门禁是在 clean harness
+commit上运行冻结 development/final矩阵的 vLLM BF16与 per-token-head FP8 cells，再用
+paired bootstrap和相同 margin构建 Prism/vLLM质量–allocated-KV-pool对比。完整物理显存
+headline继续阻塞，直到双方 page-table/allocator metadata采用统一可复核字节合同。
+TP2/TP4因当前租约只分配 GPU0，仍为 **NOT RUN / UNVERIFIED**。
+
 ## 每次任务交付模板
 
 阶段级交付使用 `docs/STAGE_DELIVERY_TEMPLATE.md`，其中包含 requirement mapping、

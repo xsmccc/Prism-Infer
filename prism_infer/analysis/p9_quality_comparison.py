@@ -26,7 +26,6 @@ from prism_infer.engine.compression import (
     normalize_compression_mode,
 )
 
-
 QUALITY_ARTIFACT_SCHEMA_VERSION = 1
 QUALITY_COMPARISON_SCHEMA_VERSION = 1
 QUALITY_DATASETS = {
@@ -453,6 +452,63 @@ def _validate_sample(
     return sample_id
 
 
+def validate_quality_samples(
+    samples: Sequence[Mapping[str, Any]],
+    *,
+    dataset_id: str,
+    runtime: Mapping[str, Any],
+    dataset_evaluator: Mapping[str, Any],
+    reference_records: Sequence[Mapping[str, Any]] | None = None,
+    path_prefix: str = "artifact.samples",
+) -> dict[str, Any]:
+    """Validate and independently rescore framework-neutral P9 sample rows."""
+
+    if isinstance(samples, (str, bytes)) or not samples:
+        raise ValueError(f"{path_prefix} must be a non-empty sequence")
+    references_by_id = (
+        None
+        if reference_records is None
+        else _index_reference_records(reference_records)
+    )
+    muirbench_random = (
+        random.Random(MUIRBENCH_RANDOM_FALLBACK_SEED)
+        if references_by_id is not None and dataset_id == "muirbench_test"
+        else None
+    )
+    normalized_samples = []
+    sample_ids = []
+    for index, value in enumerate(samples):
+        path = f"{path_prefix}[{index}]"
+        sample = _mapping(value, path)
+        sample_id = _validate_sample(
+            sample,
+            dataset_id=dataset_id,
+            runtime=runtime,
+            dataset_evaluator=dataset_evaluator,
+            path=path,
+        )
+        normalized_samples.append(sample)
+        sample_ids.append(sample_id)
+        if references_by_id is not None:
+            reference = references_by_id.get(sample_id)
+            if reference is None:
+                raise ValueError(f"{path} has no matching reference record")
+            _validate_reference_score(
+                sample,
+                reference,
+                dataset_id=dataset_id,
+                muirbench_random=muirbench_random,
+                path=path,
+            )
+    if len(sample_ids) != len(set(sample_ids)):
+        raise ValueError(f"{path_prefix} contains duplicate sample IDs")
+    return {
+        "sample_ids": sample_ids,
+        "aggregate": aggregate_quality_predictions(dataset_id, normalized_samples),
+        "reference_scores_recomputed": references_by_id is not None,
+    }
+
+
 def validate_quality_artifact(
     artifact: Mapping[str, Any],
     *,
@@ -560,41 +616,14 @@ def validate_quality_artifact(
     samples = _list(artifact.get("samples"), "artifact.samples")
     if not samples:
         raise ValueError("artifact.samples must not be empty")
-    references_by_id = (
-        None
-        if reference_records is None
-        else _index_reference_records(reference_records)
+    sample_validation = validate_quality_samples(
+        samples,
+        dataset_id=dataset_id,
+        runtime=runtime,
+        dataset_evaluator=dataset_evaluator,
+        reference_records=reference_records,
     )
-    muirbench_random = (
-        random.Random(MUIRBENCH_RANDOM_FALLBACK_SEED)
-        if references_by_id is not None and dataset_id == "muirbench_test"
-        else None
-    )
-    sample_ids = []
-    for index, sample in enumerate(samples):
-        path = f"artifact.samples[{index}]"
-        sample = _mapping(sample, path)
-        sample_id = _validate_sample(
-            sample,
-            dataset_id=dataset_id,
-            runtime=runtime,
-            dataset_evaluator=dataset_evaluator,
-            path=path,
-        )
-        sample_ids.append(sample_id)
-        if references_by_id is not None:
-            reference = references_by_id.get(sample_id)
-            if reference is None:
-                raise ValueError(f"{path} has no matching reference record")
-            _validate_reference_score(
-                sample,
-                reference,
-                dataset_id=dataset_id,
-                muirbench_random=muirbench_random,
-                path=path,
-            )
-    if len(sample_ids) != len(set(sample_ids)):
-        raise ValueError("artifact.samples contains duplicate sample IDs")
+    sample_ids = sample_validation["sample_ids"]
 
     selection = _mapping(artifact.get("selection"), "artifact.selection")
     eligible_samples = _integer(
@@ -641,7 +670,7 @@ def validate_quality_artifact(
     )
     if completed != len(samples):
         raise ValueError("artifact.completed_samples is inconsistent")
-    recomputed = aggregate_quality_predictions(dataset_id, samples)
+    recomputed = sample_validation["aggregate"]
     if artifact.get("aggregate") != recomputed:
         raise ValueError("artifact.aggregate does not match per-sample scores")
 
@@ -759,6 +788,101 @@ def _validate_paired_samples(
                 )
 
 
+def compare_quality_sample_sets(
+    dataset_id: str,
+    baseline_samples: Sequence[Mapping[str, Any]],
+    candidate_samples: Sequence[Mapping[str, Any]],
+    *,
+    protocol: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Compare two already-validated sample sets under the frozen P9 gate."""
+
+    _validate_paired_samples(dataset_id, baseline_samples, candidate_samples)
+    non_inferiority = _mapping(
+        protocol.get("non_inferiority"),
+        "protocol.non_inferiority",
+    )
+    seed = _integer(
+        non_inferiority.get("bootstrap_seed"),
+        "protocol.non_inferiority.bootstrap_seed",
+        minimum=1,
+    )
+    resamples = _integer(
+        non_inferiority.get("bootstrap_resamples"),
+        "protocol.non_inferiority.bootstrap_resamples",
+        minimum=1,
+    )
+    margin = (
+        _number(
+            non_inferiority.get("normalized_generation_metric_margin"),
+            "protocol.non_inferiority.normalized_generation_metric_margin",
+        )
+        if dataset_id == "docvqa_validation"
+        else _number(
+            non_inferiority.get("bounded_accuracy_margin_percentage_points"),
+            "protocol.non_inferiority.bounded_accuracy_margin_percentage_points",
+        )
+        / 100.0
+    )
+    metric_results = {}
+    required_passes = []
+    for metric_name, left_scores, right_scores, required in _score_vectors(
+        dataset_id,
+        baseline_samples,
+        candidate_samples,
+    ):
+        result = paired_bootstrap_non_inferiority(
+            left_scores,
+            right_scores,
+            margin=margin,
+            seed=seed,
+            resamples=resamples,
+        )
+        result["required_for_gate"] = required
+        metric_results[metric_name] = result
+        if required:
+            required_passes.append(bool(result["pass"]))
+
+    exact_tokens = sum(
+        left["output_token_ids"] == right["output_token_ids"]
+        for left, right in zip(baseline_samples, candidate_samples, strict=True)
+    )
+    diagnostics: dict[str, Any] = {
+        "exact_output_token_matches": exact_tokens,
+        "exact_output_token_match_rate": exact_tokens / len(baseline_samples),
+    }
+    if dataset_id == "muirbench_test":
+        diagnostics["official_random_fallback_samples"] = {
+            "baseline": sum(
+                sample["score"]["official_parse_method"] == "official_random_fallback"
+                for sample in baseline_samples
+            ),
+            "candidate": sum(
+                sample["score"]["official_parse_method"] == "official_random_fallback"
+                for sample in candidate_samples
+            ),
+        }
+    if dataset_id == "mvbench_test":
+        diagnostics["answered_samples"] = {
+            "baseline": sum(sample["score"]["answered"] for sample in baseline_samples),
+            "candidate": sum(
+                sample["score"]["answered"] for sample in candidate_samples
+            ),
+        }
+    paired_input_identity = []
+    for sample in baseline_samples:
+        identity = {"sample_id": sample["sample_id"], "input": sample["input"]}
+        if dataset_id == "mvbench_test":
+            identity["video_sampling"] = sample["video_sampling"]
+        paired_input_identity.append(identity)
+    return {
+        "metrics": metric_results,
+        "diagnostics": diagnostics,
+        "paired_input_identity_sha256": canonical_json_sha256(paired_input_identity),
+        "all_required_metrics_pass": all(required_passes),
+    }
+
+
 def compare_quality_artifacts(
     baseline: Mapping[str, Any],
     candidate: Mapping[str, Any],
@@ -823,89 +947,25 @@ def compare_quality_artifacts(
 
     baseline_samples = baseline["samples"]
     candidate_samples = candidate["samples"]
-    _validate_paired_samples(dataset_id, baseline_samples, candidate_samples)
-
-    non_inferiority = _mapping(
-        protocol.get("non_inferiority"),
-        "protocol.non_inferiority",
-    )
-    seed = _integer(
-        non_inferiority.get("bootstrap_seed"),
-        "protocol.non_inferiority.bootstrap_seed",
-        minimum=1,
-    )
-    resamples = _integer(
-        non_inferiority.get("bootstrap_resamples"),
-        "protocol.non_inferiority.bootstrap_resamples",
-        minimum=1,
-    )
-    margin = (
-        _number(
-            non_inferiority.get("normalized_generation_metric_margin"),
-            "protocol.non_inferiority.normalized_generation_metric_margin",
-        )
-        if dataset_id == "docvqa_validation"
-        else _number(
-            non_inferiority.get("bounded_accuracy_margin_percentage_points"),
-            "protocol.non_inferiority.bounded_accuracy_margin_percentage_points",
-        )
-        / 100.0
-    )
-    metric_results = {}
-    required_passes = []
-    for metric_name, left_scores, right_scores, required in _score_vectors(
+    sample_comparison = compare_quality_sample_sets(
         dataset_id,
         baseline_samples,
         candidate_samples,
-    ):
-        result = paired_bootstrap_non_inferiority(
-            left_scores,
-            right_scores,
-            margin=margin,
-            seed=seed,
-            resamples=resamples,
-        )
-        result["required_for_gate"] = required
-        metric_results[metric_name] = result
-        if required:
-            required_passes.append(bool(result["pass"]))
-
-    all_required_pass = all(required_passes)
+        protocol=protocol,
+    )
+    metric_results = sample_comparison["metrics"]
+    diagnostics = sample_comparison["diagnostics"]
+    all_required_pass = sample_comparison["all_required_metrics_pass"]
     formal_evidence = bool(
         baseline["headline_eligible"] and candidate["headline_eligible"]
     )
     if require_headline and not formal_evidence:
         raise ValueError("comparison requires formal headline artifacts")
-    exact_tokens = sum(
-        left["output_token_ids"] == right["output_token_ids"]
-        for left, right in zip(baseline_samples, candidate_samples)
-    )
-    diagnostics: dict[str, Any] = {
-        "exact_output_token_matches": exact_tokens,
-        "exact_output_token_match_rate": exact_tokens / len(baseline_samples),
-    }
-    if dataset_id == "muirbench_test":
-        diagnostics["official_random_fallback_samples"] = {
-            "baseline": baseline["aggregate"]["official_random_fallback_samples"],
-            "candidate": candidate["aggregate"]["official_random_fallback_samples"],
-        }
-    if dataset_id == "mvbench_test":
-        diagnostics["answered_samples"] = {
-            "baseline": baseline["aggregate"]["answered_samples"],
-            "candidate": candidate["aggregate"]["answered_samples"],
-        }
-
     baseline_cache = baseline["kv_cache"]
     candidate_cache = candidate["kv_cache"]
     decision = (
         ("PASS" if all_required_pass else "FAIL") if formal_evidence else "SMOKE_ONLY"
     )
-    paired_input_identity = []
-    for sample in baseline_samples:
-        identity = {"sample_id": sample["sample_id"], "input": sample["input"]}
-        if dataset_id == "mvbench_test":
-            identity["video_sampling"] = sample["video_sampling"]
-        paired_input_identity.append(identity)
     return {
         "schema_version": QUALITY_COMPARISON_SCHEMA_VERSION,
         "record_type": "p9_quality_non_inferiority",
@@ -920,7 +980,9 @@ def compare_quality_artifacts(
         "evaluator_sha256": canonical_json_sha256(evaluator),
         "baseline_artifact_sha256": canonical_json_sha256(baseline),
         "candidate_artifact_sha256": canonical_json_sha256(candidate),
-        "paired_input_identity_sha256": canonical_json_sha256(paired_input_identity),
+        "paired_input_identity_sha256": sample_comparison[
+            "paired_input_identity_sha256"
+        ],
         "reference_scores_recomputed": reference_records is not None,
         "metrics": metric_results,
         "diagnostics": diagnostics,

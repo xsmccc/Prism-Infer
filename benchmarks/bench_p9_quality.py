@@ -5,19 +5,16 @@ from __future__ import annotations
 
 import argparse
 import gc
-import hashlib
 import json
 import os
 import random
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 import torch
 from PIL import Image
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -32,11 +29,22 @@ from prism_infer.analysis.p9_quality_materialization import (
 )
 from prism_infer.analysis.p9_quality_metrics import (
     MUIRBENCH_RANDOM_FALLBACK_SEED,
-    aggregate_quality_predictions as aggregate_predictions,
+    aggregate_quality_predictions,
     build_docvqa_prompt,
     build_muirbench_prompt,
     build_mvbench_prompt,
-    score_quality_prediction as score_prediction,
+    score_quality_prediction,
+)
+from prism_infer.analysis.p9_quality_runtime import (
+    close_images,
+    git_metadata,
+    load_record_images,
+    materialization_artifact_by_id,
+    prepare_dataset_records,
+    quality_input_identity,
+    read_json_object,
+    safe_materialized_path,
+    validate_resume_samples,
 )
 from prism_infer.analysis.p9_video_sampling import (
     sample_frame_manifest,
@@ -46,13 +54,11 @@ from prism_infer.engine.compression import SUPPORTED_COMPRESSION_MODES
 from prism_infer.engine.kv_quantization import kv_cache_storage_bytes
 from prism_infer.engine.vl_inputs import (
     ImageInputs,
-    VideoInputs,
     prepare_image_inputs,
     prepare_interleaved_image_inputs,
     prepare_video_inputs,
 )
 from scripts.verify_p9_quality_materialization import verify_materialization
-
 
 QUALITY_RECORD_SCHEMA_VERSION = 1
 DEFAULT_EVALUATOR = REPO_ROOT / "benchmarks/workloads/p9_quality_evaluator.json"
@@ -63,135 +69,8 @@ DEFAULT_MATERIALIZED_ROOT = REPO_ROOT / "data/p9_quality/materialized"
 DATASET_IDS = ("docvqa_validation", "muirbench_test", "mvbench_test")
 
 
-def _read_json(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise ValueError(f"expected JSON object: {path}")
-    return value
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    records = [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    if not records or not all(isinstance(record, dict) for record in records):
-        raise ValueError(f"expected non-empty JSONL records: {path}")
-    return records
-
-
 def _git_metadata() -> dict[str, Any]:
-    commit = subprocess.check_output(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
-        text=True,
-    ).strip()
-    status = subprocess.check_output(
-        ["git", "-C", str(REPO_ROOT), "status", "--porcelain"],
-        text=True,
-    ).strip()
-    return {"commit": commit, "dirty": bool(status)}
-
-
-def _artifact_by_id(
-    manifest: Mapping[str, Any],
-    dataset_id: str,
-) -> Mapping[str, Any]:
-    for artifact in manifest["datasets"]:
-        if artifact["id"] == dataset_id:
-            return artifact
-    raise ValueError(f"materialization has no dataset {dataset_id!r}")
-
-
-def _safe_path(root: Path, relative: str) -> Path:
-    path = (root / relative).resolve()
-    if not path.is_relative_to(root.resolve()) or not path.is_file():
-        raise ValueError(f"invalid materialized path: {relative!r}")
-    return path
-
-
-def _load_images(
-    record: Mapping[str, Any],
-    *,
-    materialized_root: Path,
-) -> list[Image.Image]:
-    images = []
-    for media in record["media"]:
-        path = _safe_path(materialized_root, media["materialized_path"])
-        with Image.open(path) as image:
-            images.append(image.convert("RGB").copy())
-    return images
-
-
-def _close_images(images: Sequence[Image.Image]) -> None:
-    for image in images:
-        image.close()
-
-
-def _input_identity(
-    inputs: ImageInputs | VideoInputs,
-    *,
-    source_prompt: str,
-    media_sha256: Sequence[str],
-) -> dict[str, Any]:
-    record = {
-        "source_prompt_sha256": hashlib.sha256(
-            source_prompt.encode("utf-8")
-        ).hexdigest(),
-        "chat_prompt_sha256": hashlib.sha256(
-            inputs.prompt_text.encode("utf-8")
-        ).hexdigest(),
-        "prompt_token_count": len(inputs.token_ids),
-        "prompt_token_ids_sha256": canonical_json_sha256(inputs.token_ids),
-        "media_sha256": list(media_sha256),
-    }
-    if isinstance(inputs, ImageInputs):
-        record.update(
-            {
-                "modality": "image",
-                "image_grid_thw": inputs.image_grid_thw.tolist(),
-                "visual_placeholder_tokens": inputs.image_token_count,
-            }
-        )
-    else:
-        record.update(
-            {
-                "modality": "video",
-                "video_grid_thw": inputs.video_grid_thw.tolist(),
-                "visual_placeholder_tokens": inputs.video_token_count,
-            }
-        )
-    return record
-
-
-def _prepare_dataset_records(
-    *,
-    artifact: Mapping[str, Any],
-    materialized_root: Path,
-    subset: str,
-    max_samples: int | None,
-) -> tuple[list[dict[str, Any]], list[dict[str, str]], list[str]]:
-    records_path = materialized_root / artifact["selected_records"]["path"]
-    records = _read_jsonl(records_path)
-    by_id = {record["sample_id"]: record for record in records}
-    selected_ids = artifact["selection"][subset]["sample_ids"]
-    selected_records = [by_id[sample_id] for sample_id in selected_ids]
-    eligible = []
-    exclusions = []
-    for record in selected_records:
-        unresolved = [media for media in record["media"] if media.get("sha256") is None]
-        if unresolved:
-            reasons = sorted(
-                str(media.get("materialization_status")) for media in unresolved
-            )
-            exclusions.append(
-                {"sample_id": record["sample_id"], "reason": ",".join(reasons)}
-            )
-        else:
-            eligible.append(record)
-    if max_samples is not None:
-        eligible = eligible[:max_samples]
-    return eligible, exclusions, list(selected_ids)
+    return git_metadata(REPO_ROOT)
 
 
 def _build_llm(
@@ -249,11 +128,11 @@ def _run_sample(
     try:
         if dataset_id == "docvqa_validation":
             prompt = build_docvqa_prompt(record["question"])
-            images = _load_images(record, materialized_root=materialized_root)
+            images = load_record_images(record, materialized_root=materialized_root)
             inputs = prepare_image_inputs(llm.vl_processor, prompt, images)
         elif dataset_id == "muirbench_test":
             prompt = build_muirbench_prompt(record["question"], record["options"])
-            images = _load_images(record, materialized_root=materialized_root)
+            images = load_record_images(record, materialized_root=materialized_root)
             inputs = prepare_interleaved_image_inputs(
                 llm.vl_processor,
                 prompt,
@@ -272,7 +151,9 @@ def _run_sample(
                     temporal_bound=record["temporal_bound"],
                 )
             else:
-                path = _safe_path(materialized_root, media["materialized_path"])
+                path = safe_materialized_path(
+                    materialized_root, media["materialized_path"]
+                )
                 images, video_sampling = sample_video_file(
                     path,
                     frames=runtime["video_frames"],
@@ -310,7 +191,7 @@ def _run_sample(
         raw_prediction = output["text"]
         sample = {
             "sample_id": record["sample_id"],
-            "input": _input_identity(
+            "input": quality_input_identity(
                 inputs,
                 source_prompt=prompt,
                 media_sha256=[media["sha256"] for media in record["media"]],
@@ -318,7 +199,7 @@ def _run_sample(
             "raw_prediction": raw_prediction,
             "decoded_with_special_tokens": output["raw_text"],
             "output_token_ids": list(output["token_ids"]),
-            "score": score_prediction(
+            "score": score_quality_prediction(
                 dataset_id,
                 record,
                 raw_prediction,
@@ -330,24 +211,7 @@ def _run_sample(
             sample["video_sampling"] = video_sampling
         return sample
     finally:
-        _close_images(images)
-
-
-def _validate_resume(
-    artifact: Mapping[str, Any],
-    *,
-    run_identity_sha256: str,
-    expected_ids: Sequence[str],
-) -> list[dict[str, Any]]:
-    if artifact.get("run_identity_sha256") != run_identity_sha256:
-        raise ValueError("resume artifact run identity differs from requested run")
-    samples = artifact.get("samples")
-    if not isinstance(samples, list):
-        raise ValueError("resume artifact has no sample list")
-    completed_ids = [sample["sample_id"] for sample in samples]
-    if completed_ids != list(expected_ids[: len(completed_ids)]):
-        raise ValueError("resume samples are not a prefix of frozen eligible IDs")
-    return samples
+        close_images(images)
 
 
 def main() -> None:
@@ -385,14 +249,14 @@ def main() -> None:
         raw_root=args.raw_root,
         materialized_root=materialized_root,
     )
-    evaluator = _read_json(args.evaluator)
-    protocol = _read_json(args.protocol)
+    evaluator = read_json_object(args.evaluator)
+    protocol = read_json_object(args.protocol)
     if evaluator["quality_protocol_sha256"] != canonical_json_sha256(protocol):
         raise SystemExit("evaluator references a different quality protocol")
     manifest_path = materialized_root / "p9_quality_materialization.json"
-    materialization = _read_json(manifest_path)
-    artifact = _artifact_by_id(materialization, args.dataset)
-    records, exclusions, selected_contract_ids = _prepare_dataset_records(
+    materialization = read_json_object(manifest_path)
+    artifact = materialization_artifact_by_id(materialization, args.dataset)
+    records, exclusions, selected_contract_ids = prepare_dataset_records(
         artifact=artifact,
         materialized_root=materialized_root,
         subset=args.subset,
@@ -430,8 +294,8 @@ def main() -> None:
     if args.output.exists():
         if not args.resume:
             raise SystemExit(f"output already exists; pass --resume: {args.output}")
-        output_artifact = _read_json(args.output)
-        samples = _validate_resume(
+        output_artifact = read_json_object(args.output)
+        samples = validate_resume_samples(
             output_artifact,
             run_identity_sha256=run_identity_sha256,
             expected_ids=expected_ids,
@@ -468,7 +332,7 @@ def main() -> None:
     muirbench_random = random.Random(MUIRBENCH_RANDOM_FALLBACK_SEED)
     for index, sample in enumerate(samples):
         if args.dataset == "muirbench_test":
-            replayed = score_prediction(
+            replayed = score_quality_prediction(
                 args.dataset,
                 records[index],
                 sample["raw_prediction"],
@@ -516,7 +380,7 @@ def main() -> None:
             )
             samples.append(sample)
             output_artifact["samples"] = samples
-            output_artifact["aggregate"] = aggregate_predictions(
+            output_artifact["aggregate"] = aggregate_quality_predictions(
                 args.dataset,
                 samples,
             )
@@ -540,7 +404,7 @@ def main() -> None:
     output_artifact["status"] = "complete"
     output_artifact["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
     output_artifact["completed_samples"] = len(samples)
-    output_artifact["aggregate"] = aggregate_predictions(args.dataset, samples)
+    output_artifact["aggregate"] = aggregate_quality_predictions(args.dataset, samples)
     output_artifact["headline_eligible"] = scope.startswith("formal_")
     output_sha256 = write_json_atomic(args.output, output_artifact)
     print(
