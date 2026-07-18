@@ -354,14 +354,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
     parser.add_argument("--dataset", choices=DATASET_IDS, required=True)
-    parser.add_argument("--subset", choices=("development", "final"), default="development")
-    parser.add_argument("--mode", choices=sorted(SUPPORTED_COMPRESSION_MODES), required=True)
+    parser.add_argument(
+        "--subset", choices=("development", "final"), default="development"
+    )
+    parser.add_argument(
+        "--mode", choices=sorted(SUPPORTED_COMPRESSION_MODES), required=True
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--evaluator", type=Path, default=DEFAULT_EVALUATOR)
     parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL)
     parser.add_argument("--selection", type=Path, default=DEFAULT_SELECTION)
     parser.add_argument("--raw-root", type=Path, default=DEFAULT_RAW_ROOT)
-    parser.add_argument("--materialized-root", type=Path, default=DEFAULT_MATERIALIZED_ROOT)
+    parser.add_argument(
+        "--materialized-root", type=Path, default=DEFAULT_MATERIALIZED_ROOT
+    )
     parser.add_argument("--max-samples", type=int)
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
@@ -430,6 +436,10 @@ def main() -> None:
             run_identity_sha256=run_identity_sha256,
             expected_ids=expected_ids,
         )
+        output_artifact["status"] = "in_progress"
+        output_artifact["headline_eligible"] = False
+        output_artifact.pop("failure", None)
+        write_json_atomic(args.output, output_artifact)
     else:
         samples = []
         output_artifact = {
@@ -465,7 +475,9 @@ def main() -> None:
                 muirbench_random=muirbench_random,
             )
             if replayed != sample["score"]:
-                raise ValueError("resume MuirBench parser state differs from checkpoint")
+                raise ValueError(
+                    "resume MuirBench parser state differs from checkpoint"
+                )
 
     llm: LLM | None = None
     try:
@@ -476,13 +488,15 @@ def main() -> None:
             "cuda": torch.version.cuda,
         }
         output_artifact["kv_cache"] = _cache_record(llm)
-        if llm.vl_processor.image_processor.size.longest_edge != runtime[
-            "image_max_pixels"
-        ]:
+        if (
+            llm.vl_processor.image_processor.size.longest_edge
+            != runtime["image_max_pixels"]
+        ):
             raise RuntimeError("runtime image pixel budget differs from evaluator")
-        if llm.vl_processor.video_processor.size.longest_edge != runtime[
-            "video_max_pixels"
-        ]:
+        if (
+            llm.vl_processor.video_processor.size.longest_edge
+            != runtime["video_max_pixels"]
+        ):
             raise RuntimeError("runtime video pixel budget differs from evaluator")
         sampling = SamplingParams(
             temperature=runtime["sampling"]["temperature"],

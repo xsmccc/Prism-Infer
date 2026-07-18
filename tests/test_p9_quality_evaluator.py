@@ -25,7 +25,7 @@ def test_evaluator_protocol_is_frozen_and_references_quality_protocol() -> None:
     protocol = json.loads(PROTOCOL.read_text(encoding="utf-8"))
 
     assert canonical_json_sha256(evaluator) == (
-        "f1f93d6ae9fede46729056982e10dc3d9a78275f7bb44bf4b531c940f568ea8a"
+        "aa00962fd516c08d7a9fb42df33f20929e360b17b97c369757ce4bd46999d91b"
     )
     assert evaluator["quality_protocol_sha256"] == canonical_json_sha256(protocol)
     assert evaluator["runtime"]["enable_chunked_prefill"] is False
@@ -39,6 +39,7 @@ def test_evaluator_protocol_is_frozen_and_references_quality_protocol() -> None:
         "api_version": "4.10.0",
         "backend": "FFMPEG",
         "color_conversion": "BGR_to_RGB",
+        "frame_access_policy": "random_seek_then_sequential_count_and_decode",
     }
     assert evaluator["artifact_contract"]["aggregate_only_is_invalid"] is True
     assert evaluator["artifact_contract"]["decoded_with_special_tokens"] is True

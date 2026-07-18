@@ -11,6 +11,7 @@ import pytest
 
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
 from prism_infer.analysis.p9_quality_comparison import (
+    _validate_paired_samples,
     compare_quality_artifacts,
     paired_bootstrap_non_inferiority,
     validate_quality_artifact,
@@ -197,6 +198,21 @@ def test_quality_pair_rejects_unpaired_input_identity() -> None:
             evaluator=EVALUATOR,
             protocol=PROTOCOL,
         )
+
+
+def test_quality_pair_rejects_different_decoded_video_identity() -> None:
+    baseline = {
+        "sample_id": "mv-1",
+        "input": {"media_sha256": ["1" * 64]},
+        "score": {"target": "A"},
+        "task": "action",
+        "video_sampling": {"sampled_rgb_identity_sha256": "2" * 64},
+    }
+    candidate = deepcopy(baseline)
+    candidate["video_sampling"]["sampled_rgb_identity_sha256"] = "3" * 64
+
+    with pytest.raises(ValueError, match="decoded video identity"):
+        _validate_paired_samples("mvbench_test", [baseline], [candidate])
 
 
 def test_paired_bootstrap_fails_when_lower_bound_exceeds_margin() -> None:

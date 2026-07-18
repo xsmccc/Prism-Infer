@@ -3802,14 +3802,14 @@ KV artifact/schema v7 分别记录并交叉校验 payload、scale 和 total byte
 quality protocol canonical SHA256:
 85adb4b246ab3fc55bc70e02ad75d97c5aa903e89387e499fc3aea1ac2edb25d
 quality evaluator canonical SHA256:
-f1f93d6ae9fede46729056982e10dc3d9a78275f7bb44bf4b531c940f568ea8a
+aa00962fd516c08d7a9fb42df33f20929e360b17b97c369757ce4bd46999d91b
 materialization manifest SHA256:
 dcfe4c82691013cccd7fd58f987919ee83c329caef50dd243c28522d7082a50a
 tracked selection SHA256:
 c511ab44dca420a5b4ef65ae378104ce046f21f81703203a26a73620f9a9651e
 ```
 
-评测链路的两项真实缺陷在正式运行前被 fail closed：
+评测链路的三项真实缺陷在正式质量结论冻结前被 fail closed：
 
 - interleaved MuirBench 首样本含 4 个 576-token image span；原冻结的 512-token
   chunk 无法原子消费。质量 evaluator 因而明确使用 non-chunked eager prefill，隔离
@@ -3820,6 +3820,12 @@ c511ab44dca420a5b4ef65ae378104ce046f21f81703203a26a73620f9a9651e
   `opencv-python-headless==4.10.0.84 / FFMPEG`，artifact 记录 decoder 身份；processor
   使用 `do_sample_frames=false` 并接收原视频 FPS/帧索引。MVBench smoke 最终
   `video_grid_thw.T=8`，对应保留 16 个输入帧。
+- MVBench final 的 `86438.webm` 容器元数据报告 41 帧，但 OpenCV/FFmpeg 只能顺序
+  解码 25 帧，随机 seek 到 frame 26 必然失败。冻结 decoder contract 现显式记录
+  `random_seek_then_sequential_count_and_decode`：仅在 seek/decode 失败时顺序统计实际
+  可解码帧数，重算 segment centers 并顺序取帧。完整 final 预检为 190/190 eligible
+  PASS，仅该样本触发 fallback；artifact 记录 reported/actual count、触发操作/索引与
+  sampled RGB identity，paired comparator 强制 off/scaled 的逐帧身份完全一致。
 
 生成 artifact 同时保存 clean raw prediction、含特殊 token 的 lossless decode 与 token
 IDs。官方 scorer 使用 clean prediction；修复前 DocVQA 样本的 `<|im_end|>` 尾缀把
@@ -3829,7 +3835,9 @@ aggregate：它从 run contract 绑定的物化 manifest/JSONL 按 sample ID 定
 closed。随后检查 run/evaluator/protocol/input 哈希链与 KV 字节，执行 seed `20260717`、
 10,000 resamples 的 paired-bootstrap 95% CI；MuirBench strict parser 是必过 guardrail。
 
-GPU0 dirty smoke（每项 1 sample，仅验证链路，不是质量 headline）：
+历史 GPU0 dirty smoke（每项 1 sample，evaluator
+`f1f93d6ae9fede46729056982e10dc3d9a78275f7bb44bf4b531c940f568ea8a`；仅验证链路，
+已被当前 fallback-aware evaluator supersede，不是质量 headline）：
 
 | dataset | off artifact SHA256 | scaled artifact SHA256 | comparison SHA256 | token exact | score off/scaled |
 |---|---|---|---|---:|---:|
@@ -3851,10 +3859,10 @@ CUDA_VISIBLE_DEVICES=0 .venv-local/bin/python -m pytest -q \
   tests/test_processor_pipeline_multi_image.py \
   tests/test_processor_pipeline_video.py tests/test_http_range_reader.py \
   tests/test_llm_output_decoding.py
-# 125 passed in 14.28s
+# 127 passed in 14.41s
 
 CUDA_VISIBLE_DEVICES=0 .venv-local/bin/python -m pytest -q
-# 375 passed, 6 skipped in 265.90s
+# 377 passed, 6 skipped in 265.78s
 
 .venv-local/bin/python -m compileall -q prism_infer benchmarks scripts tests
 git diff --check

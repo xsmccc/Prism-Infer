@@ -374,11 +374,25 @@ def _validate_sample(
             f"{path}.video_sampling.sampled_rgb_identity_sha256",
         )
         _number(video_sampling.get("fps"), f"{path}.video_sampling.fps", minimum=1e-12)
-        _integer(
+        source_frame_count = _integer(
             video_sampling.get("source_frame_count"),
             f"{path}.video_sampling.source_frame_count",
             minimum=1,
         )
+        frame_access = _mapping(
+            video_sampling.get("frame_access"),
+            f"{path}.video_sampling.frame_access",
+        )
+        frame_access_method = _string(
+            frame_access.get("method"),
+            f"{path}.video_sampling.frame_access.method",
+        )
+        reported_frame_count = _integer(
+            frame_access.get("reported_frame_count"),
+            f"{path}.video_sampling.frame_access.reported_frame_count",
+            minimum=1,
+        )
+        fallback_trigger = frame_access.get("fallback_trigger")
         source_kind = _string(
             video_sampling.get("source_kind"),
             f"{path}.video_sampling.source_kind",
@@ -396,9 +410,44 @@ def _validate_sample(
                 raise ValueError(
                     f"{path}.video_sampling.decoder drifted from evaluator"
                 )
+            if frame_access_method == "random_seek":
+                if fallback_trigger is not None:
+                    raise ValueError(
+                        f"{path}.video_sampling random seek cannot have a fallback"
+                    )
+                if source_frame_count != reported_frame_count:
+                    raise ValueError(
+                        f"{path}.video_sampling random seek frame count drifted"
+                    )
+            elif frame_access_method == "sequential_fallback":
+                trigger = _mapping(
+                    fallback_trigger,
+                    f"{path}.video_sampling.frame_access.fallback_trigger",
+                )
+                if _string(
+                    trigger.get("operation"),
+                    f"{path}.video_sampling.frame_access.fallback_trigger.operation",
+                ) not in ("seek", "decode"):
+                    raise ValueError(
+                        f"{path}.video_sampling has an unsupported fallback trigger"
+                    )
+                _integer(
+                    trigger.get("frame_index"),
+                    f"{path}.video_sampling.frame_access.fallback_trigger.frame_index",
+                )
+            else:
+                raise ValueError(
+                    f"{path}.video_sampling.frame_access.method is unsupported"
+                )
         elif source_kind == "frame_directory":
             if decoder != "Pillow":
                 raise ValueError(f"{path}.video_sampling.decoder must be Pillow")
+            if (
+                frame_access_method != "frame_manifest"
+                or reported_frame_count != source_frame_count
+                or fallback_trigger is not None
+            ):
+                raise ValueError(f"{path}.video_sampling frame manifest drifted")
         else:
             raise ValueError(f"{path}.video_sampling.source_kind is unsupported")
     return sample_id
@@ -687,6 +736,29 @@ def _score_vectors(
     ]
 
 
+def _validate_paired_samples(
+    dataset_id: str,
+    baseline_samples: Sequence[Mapping[str, Any]],
+    candidate_samples: Sequence[Mapping[str, Any]],
+) -> None:
+    if len(baseline_samples) != len(candidate_samples):
+        raise ValueError("quality pair sample counts differ")
+    for index, (left, right) in enumerate(zip(baseline_samples, candidate_samples)):
+        if left["sample_id"] != right["sample_id"]:
+            raise ValueError(f"quality pair sample order differs at index {index}")
+        if left["input"] != right["input"]:
+            raise ValueError(f"quality pair input identity differs at index {index}")
+        if left["score"]["target"] != right["score"]["target"]:
+            raise ValueError(f"quality pair target differs at index {index}")
+        if dataset_id == "mvbench_test":
+            if left["task"] != right["task"]:
+                raise ValueError(f"quality pair MVBench task differs at index {index}")
+            if left["video_sampling"] != right["video_sampling"]:
+                raise ValueError(
+                    f"quality pair decoded video identity differs at index {index}"
+                )
+
+
 def compare_quality_artifacts(
     baseline: Mapping[str, Any],
     candidate: Mapping[str, Any],
@@ -724,6 +796,7 @@ def compare_quality_artifacts(
 
     baseline_contract = _mapping(baseline["run_contract"], "baseline.run_contract")
     candidate_contract = _mapping(candidate["run_contract"], "candidate.run_contract")
+    dataset_id = str(baseline_contract["dataset"])
     baseline_mode = normalize_compression_mode(str(baseline_contract["mode"]))
     candidate_mode = normalize_compression_mode(str(candidate_contract["mode"]))
     if baseline_mode != COMPRESSION_OFF:
@@ -750,13 +823,7 @@ def compare_quality_artifacts(
 
     baseline_samples = baseline["samples"]
     candidate_samples = candidate["samples"]
-    for index, (left, right) in enumerate(zip(baseline_samples, candidate_samples)):
-        if left["sample_id"] != right["sample_id"]:
-            raise ValueError(f"quality pair sample order differs at index {index}")
-        if left["input"] != right["input"]:
-            raise ValueError(f"quality pair input identity differs at index {index}")
-        if left["score"]["target"] != right["score"]["target"]:
-            raise ValueError(f"quality pair target differs at index {index}")
+    _validate_paired_samples(dataset_id, baseline_samples, candidate_samples)
 
     non_inferiority = _mapping(
         protocol.get("non_inferiority"),
@@ -772,7 +839,6 @@ def compare_quality_artifacts(
         "protocol.non_inferiority.bootstrap_resamples",
         minimum=1,
     )
-    dataset_id = str(baseline_contract["dataset"])
     margin = (
         _number(
             non_inferiority.get("normalized_generation_metric_margin"),
@@ -834,10 +900,12 @@ def compare_quality_artifacts(
     decision = (
         ("PASS" if all_required_pass else "FAIL") if formal_evidence else "SMOKE_ONLY"
     )
-    paired_input_identity = [
-        {"sample_id": sample["sample_id"], "input": sample["input"]}
-        for sample in baseline_samples
-    ]
+    paired_input_identity = []
+    for sample in baseline_samples:
+        identity = {"sample_id": sample["sample_id"], "input": sample["input"]}
+        if dataset_id == "mvbench_test":
+            identity["video_sampling"] = sample["video_sampling"]
+        paired_input_identity.append(identity)
     return {
         "schema_version": QUALITY_COMPARISON_SCHEMA_VERSION,
         "record_type": "p9_quality_non_inferiority",

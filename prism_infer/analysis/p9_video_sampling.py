@@ -15,6 +15,7 @@ from prism_infer.analysis.benchmark_schema import canonical_json_sha256
 
 VIDEO_DECODER_DISTRIBUTION = "opencv-python-headless"
 VIDEO_COLOR_CONVERSION = "BGR_to_RGB"
+VIDEO_FRAME_ACCESS_POLICY = "random_seek_then_sequential_count_and_decode"
 
 
 def _validate_decoder_contract(
@@ -31,6 +32,7 @@ def _validate_decoder_contract(
         "api_version",
         "backend",
         "color_conversion",
+        "frame_access_policy",
     }
     if set(expected) != required:
         raise ValueError(
@@ -96,11 +98,7 @@ def uniform_segment_center_indices(
         )
     segment_size = float(end_index - start_index) / frames
     return [
-        int(
-            start_index
-            + segment_size / 2.0
-            + round(segment_size * index)
-        )
+        int(start_index + segment_size / 2.0 + round(segment_size * index))
         for index in range(frames)
     ]
 
@@ -115,6 +113,81 @@ def _rgb_frame_identity(image: Image.Image, *, index: int) -> dict[str, Any]:
     }
 
 
+def _open_video_capture(cv2: Any, video_path: Path) -> Any:
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        capture.release()
+        raise ValueError(f"cannot open MVBench video: {video_path}")
+    return capture
+
+
+def _close_decoded_frames(decoded: Mapping[int, Image.Image]) -> None:
+    for image in decoded.values():
+        image.close()
+
+
+def _decode_random_access_frames(
+    cv2: Any,
+    capture: Any,
+    indices: Sequence[int],
+) -> tuple[dict[int, Image.Image], dict[str, Any] | None]:
+    decoded: dict[int, Image.Image] = {}
+    for index in sorted(set(indices)):
+        if not capture.set(cv2.CAP_PROP_POS_FRAMES, index):
+            return decoded, {"operation": "seek", "frame_index": index}
+        ok, frame = capture.read()
+        if not ok or frame is None:
+            return decoded, {"operation": "decode", "frame_index": index}
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        decoded[index] = Image.fromarray(rgb)
+    return decoded, None
+
+
+def _sequential_decodable_frame_count(cv2: Any, video_path: Path) -> int:
+    capture = _open_video_capture(cv2, video_path)
+    count = 0
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                break
+            count += 1
+    finally:
+        capture.release()
+    if count <= 0:
+        raise ValueError(f"video has no sequentially decodable frames: {video_path}")
+    return count
+
+
+def _decode_sequential_frames(
+    cv2: Any,
+    video_path: Path,
+    indices: Sequence[int],
+) -> dict[int, Image.Image]:
+    targets = set(indices)
+    decoded: dict[int, Image.Image] = {}
+    capture = _open_video_capture(cv2, video_path)
+    try:
+        for index in range(max(targets) + 1):
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                raise ValueError(
+                    f"sequential decode ended at video {video_path} frame {index}"
+                )
+            if index in targets:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                decoded[index] = Image.fromarray(rgb)
+    except BaseException:
+        _close_decoded_frames(decoded)
+        raise
+    finally:
+        capture.release()
+    if set(decoded) != targets:
+        _close_decoded_frames(decoded)
+        raise ValueError(f"sequential decode missed target frames for {video_path}")
+    return decoded
+
+
 def sample_video_file(
     path: str | Path,
     *,
@@ -127,7 +200,9 @@ def sample_video_file(
     try:
         import cv2
     except ImportError as exc:
-        raise RuntimeError("MVBench video sampling requires optional dependency cv2") from exc
+        raise RuntimeError(
+            "MVBench video sampling requires optional dependency cv2"
+        ) from exc
     try:
         distribution_version = version(VIDEO_DECODER_DISTRIBUTION)
     except PackageNotFoundError as exc:
@@ -136,10 +211,8 @@ def sample_video_file(
             "quality dependency; a different cv2 distribution is not accepted"
         ) from exc
     video_path = Path(path)
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        capture.release()
-        raise ValueError(f"cannot open MVBench video: {video_path}")
+    capture = _open_video_capture(cv2, video_path)
+    decoded: dict[int, Image.Image] = {}
     try:
         decoder = {
             "distribution": VIDEO_DECODER_DISTRIBUTION,
@@ -147,31 +220,56 @@ def sample_video_file(
             "api_version": str(cv2.__version__),
             "backend": str(capture.getBackendName()),
             "color_conversion": VIDEO_COLOR_CONVERSION,
+            "frame_access_policy": VIDEO_FRAME_ACCESS_POLICY,
         }
         _validate_decoder_contract(decoder, decoder_contract)
-        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        reported_frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = float(capture.get(cv2.CAP_PROP_FPS))
-        if frame_count <= 0:
+        if reported_frame_count <= 0:
             raise ValueError(f"video reports no frames: {video_path}")
         indices = uniform_segment_center_indices(
             first_index=0,
-            max_index=frame_count - 1,
+            max_index=reported_frame_count - 1,
             frames=frames,
             fps=fps,
             temporal_bound=temporal_bound,
         )
-        decoded: dict[int, Image.Image] = {}
-        for index in sorted(set(indices)):
-            if not capture.set(cv2.CAP_PROP_POS_FRAMES, index):
-                raise ValueError(f"cannot seek video {video_path} to frame {index}")
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                raise ValueError(f"cannot decode video {video_path} frame {index}")
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            decoded[index] = Image.fromarray(rgb)
+        decoded, fallback_trigger = _decode_random_access_frames(
+            cv2,
+            capture,
+            indices,
+        )
+        if fallback_trigger is None:
+            frame_count = reported_frame_count
+            frame_access = {
+                "method": "random_seek",
+                "reported_frame_count": reported_frame_count,
+                "fallback_trigger": None,
+            }
+        else:
+            _close_decoded_frames(decoded)
+            decoded = {}
+            capture.release()
+            capture = None
+            frame_count = _sequential_decodable_frame_count(cv2, video_path)
+            indices = uniform_segment_center_indices(
+                first_index=0,
+                max_index=frame_count - 1,
+                frames=frames,
+                fps=fps,
+                temporal_bound=temporal_bound,
+            )
+            decoded = _decode_sequential_frames(cv2, video_path, indices)
+            frame_access = {
+                "method": "sequential_fallback",
+                "reported_frame_count": reported_frame_count,
+                "fallback_trigger": fallback_trigger,
+            }
         sampled = [decoded[index].copy() for index in indices]
     finally:
-        capture.release()
+        if capture is not None:
+            capture.release()
+        _close_decoded_frames(decoded)
     frame_identity = [
         _rgb_frame_identity(image, index=index)
         for image, index in zip(sampled, indices)
@@ -181,6 +279,7 @@ def sample_video_file(
         "decoder": decoder,
         "fps": fps,
         "source_frame_count": frame_count,
+        "frame_access": frame_access,
         "sampled_indices": indices,
         "sampled_rgb_identity_sha256": canonical_json_sha256(frame_identity),
     }
@@ -214,7 +313,9 @@ def sample_frame_manifest(
     expected = set(range(1, max_index + 1))
     if set(by_index) != expected:
         missing = sorted(expected - set(by_index))
-        raise ValueError(f"MVBench frame directory is not contiguous: missing={missing}")
+        raise ValueError(
+            f"MVBench frame directory is not contiguous: missing={missing}"
+        )
     indices = uniform_segment_center_indices(
         first_index=1,
         max_index=max_index,
@@ -237,6 +338,11 @@ def sample_frame_manifest(
         "decoder": "Pillow",
         "fps": float(fps),
         "source_frame_count": max_index,
+        "frame_access": {
+            "method": "frame_manifest",
+            "reported_frame_count": max_index,
+            "fallback_trigger": None,
+        },
         "sampled_indices": indices,
         "sampled_rgb_identity_sha256": canonical_json_sha256(frame_identity),
     }
