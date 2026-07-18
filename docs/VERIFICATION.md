@@ -1,6 +1,6 @@
 # Prism-Infer 验证标准
 
-> 修订日期: 2026-07-17
+> 修订日期: 2026-07-18
 > 目的: 统一记录每个阶段的验证命令、PASS 标准和禁止行为。所有完成声明必须能追溯到本文件中的命令或等价验证输出。
 
 ## 全局规则
@@ -3908,7 +3908,7 @@ Prism 内部 BF16→scaled FP8 的质量与 cache-pool bytes，不等于完整 P
 同一 Qwen3-VL/processor 语义下 vLLM 最强 scaled-FP8 baseline 的质量–物理显存 Pareto，
 也不包含 page-table/allocator metadata、外部 runtime 或服务端 headline。
 
-### P9-C.2 vLLM External Gate A 集成门禁（SMOKE PASS / FORMAL PENDING）
+### P9-C.2 vLLM External Gate A（FORMAL MATRIX COMPLETE / MIXED）
 
 External runner使用隔离的 vLLM `0.24.0`（distribution commit `gee0da84ab`）与同一
 Qwen3-VL-8B-Instruct revision。质量 cell固定单卡 GPU0、eager、TP1、关闭 prefix
@@ -3959,6 +3959,73 @@ score、核对媒体/selection/run identity、实际 KV tensor bytes、backend e
 | MuirBench | per-token-head FP8 KV | `63` | `2381 / 2304` | official/strict `0/0` | `567bd80a4465a9dc2db8cefcf51719cfd4c2f53513986b5c94cf52f8753a8927` |
 | MVBench | per-token-head FP8 KV | `counterfactual_inference\|video_12359.mp4\|150` | `459 / 320` | accuracy `0` | `e2914414483dc470c95511d771f0a2a20910f3fd8c93a8a6463b1172849cf04a` |
 
+正式 development/final 矩阵于 2026-07-18 在 clean harness commit
+`3ec90a504a31f17e58ccf5271411a6933dddf09b`（`git_dirty=false`）完成。12 个 vLLM
+prediction artifact 全部来自同一 RTX 5090
+`GPU-fa649184-cff6-76d2-cda0-328763ddd1ea`、driver `610.43.02`、vLLM `0.24.0`
+distribution commit `gee0da84ab`、wheel RECORD
+`a936c81ea72ecd7e1c51e35391d7e3f667595312687dbd6f99cecd57d6724e66` 与
+Transformers `5.13.0`。evaluator、materialization manifest、模型 revision 和 16 个
+关键执行文件哈希在所有 cell 中完全相同。六组 development sample arrays 与对应
+final 前缀的 canonical SHA256 逐组相同；运行期间未修改 tracked file、协议、阈值或
+样本选择。
+
+下面每一行都先由独立 validator 从物化 reference 重算 score，再核对 selection、媒体、
+prompt token、视频 sampled-RGB、实际 backend、KV tensor 和 run identity，最后运行
+seed `20260717`、10,000 resamples 的 paired bootstrap。`validation_status=PASS` 表示
+证据结构和重算通过，不等于质量 gate 的 `decision=PASS`；所有行都满足
+`formal_evidence=true` 与 `semantic_input_exact=true`。
+
+| dataset | subset | vLLM KV | Prism off → vLLM metric | delta / paired 95% CI | token exact | pool ratio | decision |
+|---|---|---|---|---|---:|---:|---|
+| DocVQA | development | BF16 | ANLS `0.9246396993 → 0.9248802921` | `+0.0002405927 / [-0.0070670996, +0.0073559774]` | 195/200 | `1.0x` | PASS |
+| DocVQA | development | per-token-head FP8 | ANLS `0.9246396993 → 0.9259975082` | `+0.0013578089 / [-0.0058741259, +0.0085489510]` | 192/200 | `0.515625x` | PASS |
+| DocVQA | final | BF16 | ANLS `0.9225580116 → 0.9212837223` | `-0.0012742892 / [-0.0082694043, +0.0054985779]` | 485/500 | `1.0x` | PASS |
+| DocVQA | final | per-token-head FP8 | ANLS `0.9225580116 → 0.9195411351` | `-0.0030168765 / [-0.0090901632, +0.0018194872]` | 483/500 | `0.515625x` | PASS |
+| MuirBench | development | BF16 | official `0.695 → 0.695`; strict `0.690 → 0.690` | official `0 / [-0.015, +0.015]`; strict `0 / [0, 0]` | 198/200 | `1.0x` | **FAIL (official)** |
+| MuirBench | development | per-token-head FP8 | official `0.695 → 0.715`; strict `0.690 → 0.715` | official `+0.020 / [0, +0.045]`; strict `+0.025 / [0, +0.050]` | 190/200 | `0.515625x` | PASS |
+| MuirBench | final | BF16 | official `0.654 → 0.650`; strict `0.646 → 0.644` | official `-0.004 / [-0.016, +0.008]`; strict `-0.002 / [-0.010, +0.004]` | 486/500 | `1.0x` | **FAIL (official)** |
+| MuirBench | final | per-token-head FP8 | official `0.654 → 0.660`; strict `0.646 → 0.650` | official `+0.006 / [-0.006, +0.020]`; strict `+0.004 / [-0.008, +0.016]` | 476/500 | `0.515625x` | PASS |
+| MVBench | development | BF16 | accuracy `0.6082474227 → 0.6082474227` | `0 / [0, 0]` | 97/97 | `1.0x` | PASS |
+| MVBench | development | per-token-head FP8 | accuracy `0.6082474227 → 0.6185567010` | `+0.0103092784 / [-0.0206185567, +0.0515463918]` | 93/97 | `0.515625x` | **FAIL** |
+| MVBench | final | BF16 | accuracy `0.6157894737 → 0.6210526316` | `+0.0052631579 / [0, +0.0157894737]` | 189/190 | `1.0x` | PASS |
+| MVBench | final | per-token-head FP8 | accuracy `0.6157894737 → 0.6263157895` | `+0.0105263158 / [-0.0105263158, +0.0315789474]` | 184/190 | `0.515625x` | **FAIL** |
+
+MuirBench BF16 的 formal FAIL 必须保留，但不能误读为 strict accuracy 大幅回退。
+development/final 的 strict CI 分别为 `[0, 0]` 与 `[-0.010, +0.004]`，均通过；失败只
+来自 official parser 的随机 fallback。两套框架出现不同数量的不可解析输出后，会以
+不同节奏消费同一个 seed-42 RNG 序列，甚至使相同 raw output 得到不同随机字母。
+development/final 的 fallback 数分别为 Prism/vLLM `4/3` 与 `15/13`。协议已预注册
+official 与 strict 都为 required metric，因此没有在看到结果后删除 official gate；对外
+叙述同时报告 formal FAIL、strict PASS 与 `97.2%` final token exact。
+
+MVBench FP8 的 FAIL 不含随机 parser。final 共有 6 个 token 翻转，其中相对 Prism off
+是 3 个改善、1 个回退、2 个同错，净多 2 个正确样本；但 paired CI 下界
+`-1.05263158pp` 仍略低于预注册 `-1pp` margin，所以均值更高也不能改写为
+non-inferiority PASS。作为非 headline 的归因诊断，直接以同一 vLLM BF16 为 baseline
+时，FP8 final 为 184/190 token exact、净多 1 个正确样本，CI
+`[-1.57894737pp, +2.63157895pp]`，同样 FAIL。这证明 formal FAIL 不是 Prism/vLLM
+BF16 唯一分歧造成的。
+
+与 P9-C.1 的同容量 Prism scaled-FP8 结果并列后，预注册结论清晰：两者 allocated KV
+pool 都是 `778,567,680 / 1,509,949,440 = 0.515625x`，但 Prism scaled-FP8 在
+DocVQA、MuirBench、MVBench development/final 六项全部 PASS，MVBench final 更是
+190/190 token exact；vLLM per-token-head FP8 在 DocVQA/MuirBench PASS、MVBench
+development/final FAIL。该结论是“同 logical capacity、同 allocated-KV-pool 比例下，
+Prism 通过了全部预注册质量稳定性门禁”，不是“Prism accuracy 显著高于 vLLM”；vLLM
+MVBench FP8 的点估计实际更高。
+
+正式原始文件 SHA256：
+
+| dataset/subset | vLLM BF16 prediction | BF16 comparison | vLLM FP8 prediction | FP8 comparison |
+|---|---|---|---|---|
+| DocVQA development | `a8d6af7869d3dda69041a3294f7849718d83399d7bc910e8218367bce50a1886` | `205e891cc0ed640afd7ea5ea4665325e770102531463037ee2cad9ebe822e9c5` | `ec832a79191896427a5d9e9de86ffa4df515488e8644b7437cb1eeb5a185d679` | `d63adcd379078dccd587d0d6284546280f60b0996f748ef57bd4912db7250925` |
+| DocVQA final | `dfaa5f63a9aaea6ae6246342f0d6e2fc6b0aba43faa868c891540180a9710600` | `5899cb1a4237d75f5c8ebf80938b0e767d0fb9312e6ef3f2f3f0b34cbd59d39c` | `c3e7c57512b39b495df2f5e97fd83800ae17a0838865fb77c15816a2e836eee5` | `8e9b7a098adf554c5c6ab8cd3ad1ce73a724ba1ecf48f4909c33f75ff7848b85` |
+| MuirBench development | `8f0473ebfd7f0fa70bd949488888e99251efd1407aabfa282697d4761f85ac08` | `11310c7052b5f8734fc8bb6dbf374a64d4cc3f4b373f2fdf4d092d1271945d6b` | `0c5b59ac512d81e699e985ffed9315040f99377c479d7754ca5b4bc6fc6be8e8` | `2f1bb1b4b362a7183bb2348eeba33492146c1249fca75611f22f66048056de6b` |
+| MuirBench final | `2572c13ca0147321b1df69bf0995d635f2e1eb0313b70589f87100d5bdd10353` | `7a606e170bb1b5d59a9af69a3bb6aa55dd76aa308116807bf228616adfd9b66d` | `9695588080803e66cae233fde894c0027a0255fffded20e1d615bb71e10d1d7d` | `d28d46ed8ffe9f5c51d782cf6384bf824f778a00a112c86498440fc7de243475` |
+| MVBench development | `b66932eb3c9dc1ef6bbf2cd6481ba3d2bd77a77bd3aab0ed6de9d3a0944811b2` | `7568460d4ef765a0a331d3fcd7dba321bd7340696d98a12387ed18e5b28fb7d4` | `915e39a0dd54bb10434db45c5061f7671217f2eff9fc940ab461b390fb047ba3` | `d63c051bb0fe4a2965ec5528f7e6e277e58fcfcdf41646e30b657bb1da8bc87b` |
+| MVBench final | `4ce6b12f775a6f2484d0e82a46d86cf635518b4577b8b2ce58fb1bbed8cdb062` | `3013ebe5844596e3259123cc902ea2f9dd6ce2bc160fe05b0d24d37293fbf5de` | `8ec852db14f34ac0ad685faabdf3d6a74646eeab50c0d77a76ab4138c9661466` | `1b91927c645af04bcc5573017311e94a0ceebe9a1554a17f37ab0a6a8723886f` |
+
 本检查点回归与静态门禁：
 
 ```bash
@@ -3968,10 +4035,12 @@ CUDA_VISIBLE_DEVICES=0 .venv-local/bin/python -m pytest -q \
   tests/test_processor_pipeline_multi_image.py \
   tests/test_processor_pipeline_video.py tests/test_http_range_reader.py \
   tests/test_llm_output_decoding.py
-# 158 passed in 14.61s
+# 158 passed in 14.56s
 
-CUDA_VISIBLE_DEVICES=0 .venv-local/bin/python -m pytest -q
-# 408 passed, 6 skipped in 270.48s
+/usr/bin/env --chdir=/data/Prism-Infer \
+  CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/data/Prism-Infer \
+  /data/Prism-Infer/.venv-local/bin/python -m pytest -q
+# 408 passed, 6 skipped in 264.68s
 
 .venv-local/bin/python -m compileall -q prism_infer benchmarks scripts tests
 .venv-local/bin/python -m black --check <12 changed Python files>
@@ -3979,11 +4048,13 @@ CUDA_VISIBLE_DEVICES=0 .venv-local/bin/python -m pytest -q
 git diff --check
 ```
 
-当前判定仅为 External Gate A runner/integration `SMOKE PASS`。下一门禁是在 clean harness
-commit上运行冻结 development/final矩阵的 vLLM BF16与 per-token-head FP8 cells，再用
-paired bootstrap和相同 margin构建 Prism/vLLM质量–allocated-KV-pool对比。完整物理显存
-headline继续阻塞，直到双方 page-table/allocator metadata采用统一可复核字节合同。
-TP2/TP4因当前租约只分配 GPU0，仍为 **NOT RUN / UNVERIFIED**。
+当前判定：External Gate A 的 runner/integration 为 `PASS`，冻结 formal matrix 已完成，
+质量结果为 `MIXED`，不得汇总伪装成全 PASS。Prism scaled-FP8 的三数据集正式
+non-inferiority 为全 PASS；同容量 vLLM per-token-head FP8 为 DocVQA/MuirBench PASS、
+MVBench FAIL。完整物理显存 Pareto headline 继续阻塞，直到双方 page-table/allocator
+metadata 采用统一可复核字节合同；本节也不包含 TTFT/TPOT、online scheduling、
+Torch Compile/CUDA Graph 或 server SLO 结论。TP2/TP4 因当前租约只分配 GPU0，仍为
+**NOT RUN / UNVERIFIED**。
 
 ## 每次任务交付模板
 
