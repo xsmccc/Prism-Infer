@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 
 BlockPair = tuple[int, int]
+BLOCK_PAIR_ARITY = 2
 
 
 def _positive_int(value: object, *, name: str) -> int:
@@ -32,22 +33,47 @@ def _validate_block_pairs(pairs: object, *, name: str) -> None:
     for pair in pairs:
         if (
             not isinstance(pair, tuple)
-            or len(pair) != 2
+            or len(pair) != BLOCK_PAIR_ARITY
             or any(
-                isinstance(block_id, bool)
-                or not isinstance(block_id, int)
-                or block_id < 0
+                isinstance(block_id, bool) or not isinstance(block_id, int) or block_id < 0
                 for block_id in pair
             )
         ):
-            raise ValueError(
-                f"{name} must contain non-negative integer block pairs"
-            )
+            raise ValueError(f"{name} must contain non-negative integer block pairs")
 
 
 class BatchPhase(str, Enum):
     PREFILL = "prefill"
     DECODE = "decode"
+
+
+@dataclass(frozen=True, slots=True)
+class PrefillSlice:
+    """Immutable sequence-local token range consumed by one prefill step."""
+
+    sequence_id: int
+    token_start: int
+    token_end: int
+
+    def __post_init__(self) -> None:
+        validate_request_id(self.sequence_id, name="PrefillSlice sequence id")
+        for name, value in (
+            ("token_start", self.token_start),
+            ("token_end", self.token_end),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    f"PrefillSlice.{name} must be a non-negative integer, got {value!r}"
+                )
+        if self.token_end <= self.token_start:
+            raise ValueError(
+                "PrefillSlice must contain at least one token: "
+                f"[{self.token_start}, {self.token_end})"
+            )
+
+    @property
+    def num_tokens(self) -> int:
+        return self.token_end - self.token_start
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,32 +106,37 @@ class BatchPlan:
     phase: BatchPhase
     sequences: tuple["Sequence", ...]
     scheduled_token_counts: tuple[int, ...]
+    prefill_slices: tuple[PrefillSlice, ...] = ()
     kv_transfers: KVTransferPlan = field(default_factory=KVTransferPlan)
     policy_name: str = "fcfs"
     created_ns: int = field(default_factory=perf_counter_ns)
 
     def __post_init__(self) -> None:
+        sequence_ids = self._validate_sequences()
+        if len(set(sequence_ids)) != len(sequence_ids):
+            raise ValueError("BatchPlan sequence ids must be unique")
+        self._validate_scheduled_counts()
+        self._validate_phase_slices()
+        self._validate_metadata()
+
+    def _validate_sequences(self) -> tuple[int, ...]:
         if not isinstance(self.phase, BatchPhase):
-            raise TypeError(
-                f"BatchPlan.phase must be BatchPhase, got {type(self.phase).__name__}"
-            )
+            raise TypeError(f"BatchPlan.phase must be BatchPhase, got {type(self.phase).__name__}")
         if not isinstance(self.sequences, tuple):
             raise TypeError("BatchPlan.sequences must be an immutable tuple")
         if not self.sequences:
             raise ValueError("BatchPlan requires at least one sequence")
-        sequence_ids = tuple(
+        return tuple(
             validate_request_id(
                 getattr(seq, "seq_id", None),
                 name="BatchPlan sequence id",
             )
             for seq in self.sequences
         )
-        if len(set(sequence_ids)) != len(sequence_ids):
-            raise ValueError("BatchPlan sequence ids must be unique")
+
+    def _validate_scheduled_counts(self) -> None:
         if not isinstance(self.scheduled_token_counts, tuple):
-            raise TypeError(
-                "BatchPlan.scheduled_token_counts must be an immutable tuple"
-            )
+            raise TypeError("BatchPlan.scheduled_token_counts must be an immutable tuple")
         if len(self.scheduled_token_counts) != len(self.sequences):
             raise ValueError(
                 "scheduled_token_counts must match sequences: "
@@ -113,6 +144,74 @@ class BatchPlan:
             )
         for count in self.scheduled_token_counts:
             _positive_int(count, name="scheduled token count")
+        if self.phase is BatchPhase.DECODE and any(
+            count != 1 for count in self.scheduled_token_counts
+        ):
+            raise ValueError("decode BatchPlan must schedule one token per request")
+
+    def _validate_phase_slices(self) -> None:
+        if self.phase is BatchPhase.PREFILL:
+            self._validate_prefill_slices()
+            return
+        if self.prefill_slices:
+            raise ValueError("decode BatchPlan must not contain prefill_slices")
+
+    def _validate_prefill_slices(self) -> None:
+        slices = self.prefill_slices or tuple(
+            self._default_prefill_slice(seq, count)
+            for seq, count in zip(self.sequences, self.scheduled_token_counts)
+        )
+        if not self.prefill_slices:
+            object.__setattr__(self, "prefill_slices", slices)
+        if not isinstance(slices, tuple):
+            raise TypeError("BatchPlan.prefill_slices must be an immutable tuple")
+        if len(slices) != len(self.sequences):
+            raise ValueError("prefill_slices must match BatchPlan sequences")
+        for seq, count, prefill_slice in zip(
+            self.sequences,
+            self.scheduled_token_counts,
+            slices,
+        ):
+            self._validate_prefill_slice(seq, count, prefill_slice)
+
+    @staticmethod
+    def _default_prefill_slice(seq: "Sequence", count: int) -> PrefillSlice:
+        token_start = max(
+            int(getattr(seq, "num_cached_tokens", 0)),
+            int(getattr(seq, "num_computed_tokens", 0)),
+        )
+        return PrefillSlice(
+            sequence_id=seq.seq_id,
+            token_start=token_start,
+            token_end=token_start + count,
+        )
+
+    @staticmethod
+    def _validate_prefill_slice(
+        seq: "Sequence",
+        count: int,
+        prefill_slice: PrefillSlice,
+    ) -> None:
+        if not isinstance(prefill_slice, PrefillSlice):
+            raise TypeError("BatchPlan.prefill_slices must contain PrefillSlice values")
+        if prefill_slice.sequence_id != seq.seq_id:
+            raise ValueError(
+                f"prefill slice sequence id mismatch: {prefill_slice.sequence_id} != {seq.seq_id}"
+            )
+        if prefill_slice.num_tokens != count:
+            raise ValueError(
+                "prefill slice size must match scheduled token count: "
+                f"{prefill_slice.num_tokens} != {count}"
+            )
+        prompt_tokens = int(getattr(seq, "num_prompt_tokens", len(seq)))
+        if prefill_slice.token_end > prompt_tokens:
+            raise ValueError(
+                "prefill slice exceeds the prompt: "
+                f"seq={seq.seq_id} end={prefill_slice.token_end} "
+                f"prompt_tokens={prompt_tokens}"
+            )
+
+    def _validate_metadata(self) -> None:
         if not isinstance(self.kv_transfers, KVTransferPlan):
             raise TypeError("BatchPlan.kv_transfers must be KVTransferPlan")
         if not isinstance(self.policy_name, str) or not self.policy_name:
@@ -123,10 +222,6 @@ class BatchPlan:
             or self.created_ns < 0
         ):
             raise ValueError("BatchPlan.created_ns must be a non-negative integer")
-        if self.phase is BatchPhase.DECODE and any(
-            count != 1 for count in self.scheduled_token_counts
-        ):
-            raise ValueError("decode BatchPlan must schedule one token per request")
 
     @property
     def is_prefill(self) -> bool:
@@ -143,6 +238,18 @@ class BatchPlan:
     @property
     def num_scheduled_tokens(self) -> int:
         return sum(self.scheduled_token_counts)
+
+    @property
+    def num_scheduled_vision_patches(self) -> int:
+        if not self.is_prefill:
+            return 0
+        return sum(
+            seq.vision_patch_count_for_prefill_range(
+                prefill_slice.token_start,
+                prefill_slice.token_end,
+            )
+            for seq, prefill_slice in zip(self.sequences, self.prefill_slices)
+        )
 
     def as_legacy_tuple(
         self,
@@ -201,6 +308,20 @@ class DeviceModelInputs:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedModelInputs:
+    """Host-prepared tensors paired with their immutable attention context."""
+
+    model_inputs: DeviceModelInputs
+    attention_context: Context
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.model_inputs, DeviceModelInputs):
+            raise TypeError("PreparedModelInputs.model_inputs must be DeviceModelInputs")
+        if not isinstance(self.attention_context, Context):
+            raise TypeError("PreparedModelInputs.attention_context must be Context")
+
+
+@dataclass(frozen=True, slots=True)
 class DeviceBatch:
     """Immutable tensor boundary consumed by an execution backend.
 
@@ -218,6 +339,13 @@ class DeviceBatch:
     kv_scale_views: tuple[torch.Tensor, ...] = ()
 
     def __post_init__(self) -> None:
+        batch_size = self._validate_request_identity()
+        self._validate_scheduled_counts(batch_size)
+        self._validate_model_context()
+        self._validate_sampling(batch_size)
+        self._validate_execution_bucket(batch_size)
+
+    def _validate_request_identity(self) -> int:
         if not isinstance(self.phase, BatchPhase):
             raise TypeError(
                 f"DeviceBatch.phase must be BatchPhase, got {type(self.phase).__name__}"
@@ -231,42 +359,41 @@ class DeviceBatch:
             raise ValueError("DeviceBatch requires at least one request")
         if len(set(self.sequence_ids)) != batch_size:
             raise ValueError("DeviceBatch sequence_ids must be unique")
+        return batch_size
+
+    def _validate_scheduled_counts(self, batch_size: int) -> None:
         if not isinstance(self.scheduled_token_counts, tuple):
-            raise TypeError(
-                "DeviceBatch.scheduled_token_counts must be an immutable tuple"
-            )
+            raise TypeError("DeviceBatch.scheduled_token_counts must be an immutable tuple")
         if len(self.scheduled_token_counts) != batch_size:
-            raise ValueError(
-                "DeviceBatch scheduled_token_counts must match sequence_ids"
-            )
+            raise ValueError("DeviceBatch scheduled_token_counts must match sequence_ids")
         for count in self.scheduled_token_counts:
             _positive_int(count, name="DeviceBatch scheduled token count")
         if self.phase is BatchPhase.DECODE and any(
             count != 1 for count in self.scheduled_token_counts
         ):
             raise ValueError("decode DeviceBatch must schedule one token per request")
+
+    def _validate_model_context(self) -> None:
         if not isinstance(self.model_inputs, DeviceModelInputs):
             raise TypeError("DeviceBatch.model_inputs must be DeviceModelInputs")
         if not isinstance(self.attention_context, Context):
             raise TypeError("DeviceBatch.attention_context must be Context")
-        if self.attention_context.is_prefill != (
-            self.phase is BatchPhase.PREFILL
-        ):
+        if self.attention_context.is_prefill != (self.phase is BatchPhase.PREFILL):
             raise ValueError("DeviceBatch phase/context mismatch")
+
+    def _validate_sampling(self, batch_size: int) -> None:
         if self.temperatures is not None and not isinstance(
             self.temperatures,
             torch.Tensor,
         ):
             raise TypeError("DeviceBatch.temperatures must be a tensor or None")
         if self.temperatures is not None and self.temperatures.numel() != batch_size:
-            raise ValueError(
-                "DeviceBatch temperatures must contain one value per request"
-            )
+            raise ValueError("DeviceBatch temperatures must contain one value per request")
+
+    def _validate_execution_bucket(self, batch_size: int) -> None:
         _positive_int(self.execution_bucket, name="DeviceBatch execution_bucket")
         if self.execution_bucket < batch_size:
-            raise ValueError(
-                "DeviceBatch execution_bucket must cover the request batch"
-            )
+            raise ValueError("DeviceBatch execution_bucket must cover the request batch")
         if not isinstance(self.kv_scale_views, tuple) or any(
             not isinstance(view, torch.Tensor) for view in self.kv_scale_views
         ):
@@ -283,24 +410,16 @@ class ExecutionResult:
             raise TypeError("ExecutionResult.token_ids must be an immutable tuple")
         if any(
             token_id is not None
-            and (
-                isinstance(token_id, bool)
-                or not isinstance(token_id, int)
-                or token_id < 0
-            )
+            and (isinstance(token_id, bool) or not isinstance(token_id, int) or token_id < 0)
             for token_id in self.token_ids
         ):
-            raise ValueError(
-                "ExecutionResult token ids must be non-negative integers or None"
-            )
+            raise ValueError("ExecutionResult token ids must be non-negative integers or None")
         if (
             isinstance(self.compaction_count, bool)
             or not isinstance(self.compaction_count, int)
             or self.compaction_count < 0
         ):
-            raise ValueError(
-                "ExecutionResult.compaction_count must be a non-negative integer"
-            )
+            raise ValueError("ExecutionResult.compaction_count must be a non-negative integer")
 
 
 @runtime_checkable
@@ -336,18 +455,11 @@ class StepResult:
 
     @property
     def legacy_num_tokens(self) -> int:
-        return (
-            self.plan.num_scheduled_tokens
-            if self.plan.is_prefill
-            else -self.plan.batch_size
-        )
+        return self.plan.num_scheduled_tokens if self.plan.is_prefill else -self.plan.batch_size
 
     def as_legacy_tuple(self) -> tuple[list[tuple[int, list[int]]], int]:
         return (
-            [
-                (output.request_id, list(output.token_ids))
-                for output in self.outputs
-            ],
+            [(output.request_id, list(output.token_ids)) for output in self.outputs],
             self.legacy_num_tokens,
         )
 
@@ -388,6 +500,7 @@ class KVCacheManager(Protocol):
         seq: "Sequence",
         plan: "KVCompactionPlan",
     ) -> None: ...
+
 
 class EngineExecutor(Protocol):
     def execute(self, plan: BatchPlan) -> ExecutionResult: ...

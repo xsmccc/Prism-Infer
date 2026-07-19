@@ -64,10 +64,7 @@ def _make_common_kwargs(args: argparse.Namespace) -> dict[str, Any]:
 def _make_images() -> tuple[Image.Image, Image.Image, list[Image.Image]]:
     image_a = Image.new("RGB", (448, 448), color=(100, 150, 200))
     image_b = Image.new("RGB", (448, 448), color=(200, 120, 80))
-    frames = [
-        Image.new("RGB", (448, 448), color=(80 + i * 30, 120, 180))
-        for i in range(4)
-    ]
+    frames = [Image.new("RGB", (448, 448), color=(80 + i * 30, 120, 180)) for i in range(4)]
     return image_a, image_b, frames
 
 
@@ -227,8 +224,7 @@ def main() -> None:
     modes = [mode.strip() for mode in args.modes.split(",") if mode.strip()]
     if args.case == "single_image":
         records = [
-            _run_timed_case(args=args, mode=mode, run_once=_run_single_image_once)
-            for mode in modes
+            _run_timed_case(args=args, mode=mode, run_once=_run_single_image_once) for mode in modes
         ]
     else:
         records = [_run_quality_matrix(args, mode) for mode in modes]
@@ -241,9 +237,7 @@ def main() -> None:
                 for key, baseline_tokens in baseline.items():
                     current_tokens = record["outputs"][key]
                     row_total = min(len(baseline_tokens), len(current_tokens))
-                    row_matched = sum(
-                        a == b for a, b in zip(baseline_tokens, current_tokens)
-                    )
+                    row_matched = sum(a == b for a, b in zip(baseline_tokens, current_tokens))
                     total += row_total
                     matched += row_matched
                     per_case[key] = {

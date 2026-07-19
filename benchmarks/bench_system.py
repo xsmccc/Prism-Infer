@@ -11,7 +11,6 @@ import argparse
 import gc
 import hashlib
 import json
-import subprocess
 import sys
 from copy import deepcopy
 from dataclasses import dataclass
@@ -22,13 +21,20 @@ from typing import Any
 
 import torch
 import transformers
-from PIL import Image
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from benchmarks.harness import (
+    collect_git_metadata,
+    collect_gpu_metadata,
+    describe_case_inputs,
+    expand_case_batch,
+    find_workload_case,
+    materialize_requests,
+)
 from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import (
     BENCHMARK_SCHEMA_VERSION,
@@ -80,7 +86,7 @@ MODE_SPECS = {
     "off_compile_attention": ModeSpec(
         name="off_compile_attention",
         execution="torch_compile_attention",
-        attention="prefill_sdpa_decode_compiled_paged",
+        attention="prefill_sdpa_decode_compiled_qkv_paged",
         compression="off",
         enforce_eager=True,
         decode_compile_region="attention",
@@ -201,188 +207,8 @@ class IterationResult:
     kv_layouts: list[dict[str, Any]]
 
 
-def _git_metadata() -> tuple[str, bool]:
-    """返回 Prism 仓库当前 commit 和 dirty 状态。"""
-
-    try:
-        commit = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=REPO_ROOT,
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        dirty = bool(
-            subprocess.check_output(
-                ["git", "status", "--porcelain"],
-                cwd=REPO_ROOT,
-                text=True,
-                stderr=subprocess.DEVNULL,
-            ).strip()
-        )
-        return commit, dirty
-    except (OSError, subprocess.SubprocessError):
-        return "unknown", True
-
-
-def _gpu_metadata() -> dict[str, Any]:
-    """Capture hardware identity separately from framework versions."""
-
-    properties = torch.cuda.get_device_properties(0)
-    metadata: dict[str, Any] = {
-        "gpu": properties.name,
-        "compute_capability": f"{properties.major}.{properties.minor}",
-        "total_memory_bytes": properties.total_memory,
-    }
-    try:
-        raw = subprocess.check_output(
-            [
-                "nvidia-smi",
-                "--query-gpu=uuid,driver_version",
-                "--format=csv,noheader,nounits",
-            ],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).splitlines()[0]
-        uuid, driver = (part.strip() for part in raw.split(",", maxsplit=1))
-        metadata["gpu_uuid"] = uuid
-        metadata["driver"] = driver
-    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
-        metadata["gpu_uuid"] = "unknown"
-        metadata["driver"] = "unknown"
-    return metadata
-
-
 def _mb(num_bytes: int) -> float:
     return num_bytes / 1024 / 1024
-
-
-def _make_image(spec: dict[str, Any]) -> Image.Image:
-    """根据 workload spec 构造一张 deterministic RGB 图像。"""
-
-    size = (int(spec["width"]), int(spec["height"]))
-    color = tuple(int(channel) for channel in spec["color"])
-    return Image.new("RGB", size, color=color)
-
-
-def _load_file_image(spec: dict[str, Any]) -> Image.Image:
-    """加载并校验 manifest 固定的真实 RGB 图片。"""
-
-    configured_path = Path(spec["path"])
-    image_path = (
-        configured_path
-        if configured_path.is_absolute()
-        else REPO_ROOT / configured_path
-    )
-    if not image_path.is_file():
-        raise FileNotFoundError(
-            f"benchmark image is missing: {image_path}; "
-            "run scripts/download_p6_real_samples.sh"
-        )
-    actual_sha256 = hashlib.sha256(image_path.read_bytes()).hexdigest()
-    expected_sha256 = spec["sha256"]
-    if actual_sha256 != expected_sha256:
-        raise ValueError(
-            f"benchmark image SHA256 mismatch for {image_path}: "
-            f"expected {expected_sha256}, got {actual_sha256}"
-        )
-    with Image.open(image_path) as source:
-        image = source.convert("RGB")
-    expected_size = (int(spec["width"]), int(spec["height"]))
-    if image.size != expected_size:
-        raise ValueError(
-            f"benchmark image size mismatch for {image_path}: "
-            f"expected {expected_size}, got {image.size}"
-        )
-    return image
-
-
-def _materialize_requests(case: dict[str, Any]) -> list[dict[str, Any]]:
-    """把 JSON 图像/帧 spec 转换为公开 LLM request payload。"""
-
-    requests: list[dict[str, Any]] = []
-    for request in case["requests"]:
-        request_type = request["type"]
-        materialized: dict[str, Any] = {
-            "type": request_type,
-            "prompt": request["prompt"],
-        }
-        if request_type == "image":
-            materialized["image"] = _make_image(request["image"])
-        elif request_type == "image_file":
-            materialized["type"] = "image"
-            materialized["image"] = _load_file_image(request["image"])
-        elif request_type == "images":
-            materialized["images"] = [
-                _make_image(image) for image in request["images"]
-            ]
-        elif request_type == "video":
-            materialized["video"] = [
-                _make_image(frame) for frame in request["frames"]
-            ]
-        requests.append(materialized)
-    return requests
-
-
-def _describe_case_inputs(case: dict[str, Any]) -> tuple[list[dict[str, Any]], int, int, int]:
-    """返回一个 case 可审计的视觉 shape 和图像/视频计数。"""
-
-    input_shapes: list[dict[str, Any]] = []
-    image_count = 0
-    video_count = 0
-    video_frame_count = 0
-    for request in case["requests"]:
-        request_type = request["type"]
-        visual_specs: list[dict[str, Any]] = []
-        if request_type in ("image", "image_file"):
-            visual_specs = [request["image"]]
-            image_count += 1
-        elif request_type == "images":
-            visual_specs = request["images"]
-            image_count += len(visual_specs)
-        elif request_type == "video":
-            visual_specs = request["frames"]
-            video_count += 1
-            video_frame_count += len(visual_specs)
-        input_shapes.append(
-            {
-                "type": request_type,
-                "visual_shapes": [
-                    [int(spec["height"]), int(spec["width"]), 3]
-                    for spec in visual_specs
-                ],
-            }
-        )
-    return input_shapes, image_count, video_count, video_frame_count
-
-
-def _find_case(manifest: dict[str, Any], case_id: str) -> dict[str, Any]:
-    for case in manifest["cases"]:
-        if case["id"] == case_id:
-            return case
-    available = [case["id"] for case in manifest["cases"]]
-    raise ValueError(f"unknown case {case_id!r}; available cases: {available}")
-
-
-def _expand_case_batch(
-    case: dict[str, Any],
-    batch_size: int,
-) -> tuple[dict[str, Any], int, int]:
-    """按完整 request group 复制 case，生成显式 offline batch。"""
-
-    source_num_requests = len(case["requests"])
-    if batch_size < source_num_requests or batch_size % source_num_requests != 0:
-        raise ValueError(
-            "batch size must be a positive multiple of the source case size: "
-            f"case={case['id']}, source={source_num_requests}, requested={batch_size}"
-        )
-    replication_factor = batch_size // source_num_requests
-    expanded = deepcopy(case)
-    expanded["requests"] = [
-        deepcopy(request)
-        for _ in range(replication_factor)
-        for request in case["requests"]
-    ]
-    return expanded, source_num_requests, replication_factor
 
 
 def _add_requests(
@@ -423,9 +249,7 @@ def _add_requests(
 
         seq = llm.scheduler.waiting[-1]
         if seq.seq_id != seq_id:
-            raise RuntimeError(
-                "scheduler waiting order changed while adding benchmark requests"
-            )
+            raise RuntimeError("scheduler waiting order changed while adding benchmark requests")
         seq_ids.append(seq_id)
         prompt_tokens += seq.num_prompt_tokens
         image_tokens += seq.image_token_count
@@ -440,7 +264,7 @@ def _run_iteration(
 ) -> IterationResult:
     """运行一次 workload 并测量公开 engine step，不改变推理语义。"""
 
-    requests = _materialize_requests(case)
+    requests = materialize_requests(case, repo_root=REPO_ROOT)
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
 
@@ -462,18 +286,12 @@ def _run_iteration(
         if num_tokens > 0:
             prefill_step_ms.append(elapsed_ms)
             active_sequences = {
-                seq.seq_id: seq
-                for seq in llm.scheduler.running
-                if seq.seq_id in seq_ids
+                seq.seq_id: seq for seq in llm.scheduler.running if seq.seq_id in seq_ids
             }
             if set(active_sequences) != set(seq_ids):
-                raise RuntimeError(
-                    "benchmark could not capture all post-prefill KV layouts"
-                )
+                raise RuntimeError("benchmark could not capture all post-prefill KV layouts")
             ordered_sequences = [active_sequences[seq_id] for seq_id in seq_ids]
-            logical_prompt_kv_tokens = sum(
-                seq.num_prompt_tokens for seq in ordered_sequences
-            )
+            logical_prompt_kv_tokens = sum(seq.num_prompt_tokens for seq in ordered_sequences)
             physical_prompt_kv_tokens = sum(
                 (
                     seq.num_prompt_tokens
@@ -486,17 +304,11 @@ def _run_iteration(
                 (seq.num_prompt_tokens + seq.block_size - 1) // seq.block_size
                 for seq in ordered_sequences
             )
-            active_prompt_blocks = sum(
-                len(seq.block_table) for seq in ordered_sequences
-            )
-            payload_block_bytes = tensor_storage_bytes(
-                llm.model_runner.kv_cache[:, :, 0]
-            )
+            active_prompt_blocks = sum(len(seq.block_table) for seq in ordered_sequences)
+            payload_block_bytes = tensor_storage_bytes(llm.model_runner.kv_cache[:, :, 0])
             scale_cache = llm.model_runner.kv_scale_cache
             scale_block_bytes = (
-                0
-                if scale_cache is None
-                else tensor_storage_bytes(scale_cache[:, :, 0])
+                0 if scale_cache is None else tensor_storage_bytes(scale_cache[:, :, 0])
             )
             block_bytes = payload_block_bytes + scale_block_bytes
             layouts = []
@@ -517,30 +329,18 @@ def _run_iteration(
                         }
                     )
                 else:
-                    layouts.append(
-                        seq.kv_layout.to_record(block_table=seq.block_table)
-                    )
+                    layouts.append(seq.kv_layout.to_record(block_table=seq.block_table))
             prompt_kv_snapshot = {
                 "logical_prompt_kv_tokens": logical_prompt_kv_tokens,
                 "physical_prompt_kv_tokens": physical_prompt_kv_tokens,
                 "dense_prompt_blocks": dense_prompt_blocks,
                 "active_prompt_blocks": active_prompt_blocks,
-                "released_prompt_blocks": (
-                    dense_prompt_blocks - active_prompt_blocks
-                ),
-                "dense_prompt_payload_bytes": (
-                    dense_prompt_blocks * payload_block_bytes
-                ),
-                "dense_prompt_scale_bytes": (
-                    dense_prompt_blocks * scale_block_bytes
-                ),
+                "released_prompt_blocks": (dense_prompt_blocks - active_prompt_blocks),
+                "dense_prompt_payload_bytes": (dense_prompt_blocks * payload_block_bytes),
+                "dense_prompt_scale_bytes": (dense_prompt_blocks * scale_block_bytes),
                 "dense_prompt_bytes": dense_prompt_blocks * block_bytes,
-                "active_prompt_payload_bytes": (
-                    active_prompt_blocks * payload_block_bytes
-                ),
-                "active_prompt_scale_bytes": (
-                    active_prompt_blocks * scale_block_bytes
-                ),
+                "active_prompt_payload_bytes": (active_prompt_blocks * payload_block_bytes),
+                "active_prompt_scale_bytes": (active_prompt_blocks * scale_block_bytes),
                 "active_prompt_bytes": active_prompt_blocks * block_bytes,
                 "kv_layouts": layouts,
             }
@@ -555,9 +355,7 @@ def _run_iteration(
     if prompt_kv_snapshot is None:
         raise RuntimeError("benchmark did not capture a prompt KV snapshot")
     if not decode_step_ms or decode_tokens <= 0:
-        raise RuntimeError(
-            "benchmark requires max_tokens >= 2 so decode TPOT can be measured"
-        )
+        raise RuntimeError("benchmark requires max_tokens >= 2 so decode TPOT can be measured")
     if set(outputs) != set(seq_ids):
         raise RuntimeError(
             f"finished outputs mismatch: expected={seq_ids}, actual={sorted(outputs)}"
@@ -631,9 +429,7 @@ def _build_llm(
         visual_pruning_keep_ratio=args.visual_pruning_keep_ratio,
         visual_pruning_min_keep_tokens=args.visual_pruning_min_keep_tokens,
         visual_pruning_strategy=args.visual_pruning_strategy,
-        visual_pruning_attention_last_n_layers=(
-            args.visual_pruning_attention_last_n_layers
-        ),
+        visual_pruning_attention_last_n_layers=(args.visual_pruning_attention_last_n_layers),
         logits_precision=args.logits_precision,
         mlp_projection_mode=args.mlp_projection_mode,
     )
@@ -654,13 +450,9 @@ def _build_record(
 
     first = results[0]
     outputs_identical = all(result.token_ids == first.token_ids for result in results)
-    decoded_texts_identical = all(
-        result.decoded_texts == first.decoded_texts for result in results
-    )
+    decoded_texts_identical = all(result.decoded_texts == first.decoded_texts for result in results)
     if not outputs_identical or not decoded_texts_identical:
-        raise RuntimeError(
-            f"deterministic greedy outputs changed across {len(results)} repeats"
-        )
+        raise RuntimeError(f"deterministic greedy outputs changed across {len(results)} repeats")
     kv_metric_names = (
         "logical_prompt_kv_tokens",
         "physical_prompt_kv_tokens",
@@ -676,23 +468,18 @@ def _build_record(
     )
     for metric_name in kv_metric_names:
         if any(
-            getattr(result, metric_name) != getattr(first, metric_name)
-            for result in results[1:]
+            getattr(result, metric_name) != getattr(first, metric_name) for result in results[1:]
         ):
-            raise RuntimeError(
-                f"prompt KV metric changed across repeats: {metric_name}"
-            )
-    commit, dirty = _git_metadata()
-    gpu_metadata = _gpu_metadata()
+            raise RuntimeError(f"prompt KV metric changed across repeats: {metric_name}")
+    git = collect_git_metadata(REPO_ROOT)
+    gpu_metadata = collect_gpu_metadata().environment_dict()
     kv_cache = llm.model_runner.kv_cache
     kv_scale_cache = llm.model_runner.kv_scale_cache
     storage_bytes = kv_cache_storage_bytes(kv_cache, kv_scale_cache)
     config = llm.config
     model_config_path = Path(args.model) / "config.json"
     request_types = [request["type"] for request in case["requests"]]
-    input_shapes, image_count, video_count, video_frame_count = (
-        _describe_case_inputs(case)
-    )
+    input_shapes, image_count, video_count, video_frame_count = describe_case_inputs(case)
     output_tokens = sum(len(tokens) for tokens in first.token_ids)
     graph_metadata = llm.model_runner.cudagraph_metadata(len(case["requests"]))
     compile_metadata = llm.model_runner.compile_metadata()
@@ -703,9 +490,7 @@ def _build_record(
             or llm.model_runner.last_cudagraph_replay_batch_size
             != graph_metadata["selected_batch_size"]
         ):
-            raise RuntimeError(
-                "observed CUDA Graph replay batch does not match recorded metadata"
-            )
+            raise RuntimeError("observed CUDA Graph replay batch does not match recorded metadata")
     record: dict[str, Any] = {
         "schema_version": BENCHMARK_SCHEMA_VERSION,
         "record_type": "system_benchmark",
@@ -715,8 +500,8 @@ def _build_record(
             "process_scope": "fresh_model_per_case_and_mode",
         },
         "environment": {
-            "git_commit": commit,
-            "git_dirty": dirty,
+            "git_commit": git.commit,
+            "git_dirty": git.dirty,
             "python": sys.version.split()[0],
             "torch": torch.__version__,
             "transformers": transformers.__version__,
@@ -751,9 +536,7 @@ def _build_record(
             "visual_pruning_keep_ratio": args.visual_pruning_keep_ratio,
             "visual_pruning_min_keep_tokens": args.visual_pruning_min_keep_tokens,
             "visual_pruning_strategy": args.visual_pruning_strategy,
-            "visual_pruning_attention_last_n_layers": (
-                args.visual_pruning_attention_last_n_layers
-            ),
+            "visual_pruning_attention_last_n_layers": (args.visual_pruning_attention_last_n_layers),
         },
         "workload": {
             "manifest_name": manifest["name"],
@@ -801,14 +584,12 @@ def _build_record(
             "decode_batch_padding": graph_metadata["batch_padding"],
             "torch_compile_enabled": compile_metadata["enabled"],
             "torch_compile_region": compile_metadata["region"],
+            "torch_compile_subgraph": compile_metadata["subgraph"],
+            "torch_compile_kv_cache_boundary": compile_metadata["kv_cache_boundary"],
             "torch_compile_backend": compile_metadata["backend"],
             "torch_compile_mode": compile_metadata["mode"],
-            "torch_compile_emulate_precision_casts": compile_metadata[
-                "emulate_precision_casts"
-            ],
-            "torch_compile_force_same_precision": compile_metadata[
-                "force_same_precision"
-            ],
+            "torch_compile_emulate_precision_casts": compile_metadata["emulate_precision_casts"],
+            "torch_compile_force_same_precision": compile_metadata["force_same_precision"],
             "torch_compile_first_call_ms": compile_metadata["first_call_ms"],
         },
         "measurement": {
@@ -828,30 +609,18 @@ def _build_record(
             "decoded_texts_sha256": canonical_json_sha256(first.decoded_texts),
         },
         "timing_ms": {
-            "preprocessing": summarize_values(
-                [result.preprocessing_ms for result in results]
-            ),
+            "preprocessing": summarize_values([result.preprocessing_ms for result in results]),
             "engine_ttft": summarize_values([result.ttft_ms for result in results]),
             "end_to_end_ttft": summarize_values(
                 [result.preprocessing_ms + result.ttft_ms for result in results]
             ),
             "prefill": summarize_values(
-                [
-                    step_ms
-                    for result in results
-                    for step_ms in result.prefill_step_ms
-                ]
+                [step_ms for result in results for step_ms in result.prefill_step_ms]
             ),
             "decode_step": summarize_values(
-                [
-                    step_ms
-                    for result in results
-                    for step_ms in result.decode_step_ms
-                ]
+                [step_ms for result in results for step_ms in result.decode_step_ms]
             ),
-            "end_to_end": summarize_values(
-                [result.end_to_end_ms for result in results]
-            ),
+            "end_to_end": summarize_values([result.end_to_end_ms for result in results]),
         },
         "throughput": {
             "engine_output_tokens_per_s": summarize_values(
@@ -872,25 +641,15 @@ def _build_record(
         },
         "memory_mb": {
             "measurement": "torch_cuda_allocator",
-            "allocated": summarize_values(
-                [result.allocated_mb for result in results]
-            ),
-            "reserved": summarize_values(
-                [result.reserved_mb for result in results]
-            ),
-            "peak_allocated": summarize_values(
-                [result.peak_allocated_mb for result in results]
-            ),
+            "allocated": summarize_values([result.allocated_mb for result in results]),
+            "reserved": summarize_values([result.reserved_mb for result in results]),
+            "peak_allocated": summarize_values([result.peak_allocated_mb for result in results]),
         },
         "kv_cache": {
             "dtype": str(kv_cache.dtype),
             "shape": list(kv_cache.shape),
-            "scale_dtype": (
-                "none" if kv_scale_cache is None else str(kv_scale_cache.dtype)
-            ),
-            "scale_shape": (
-                [] if kv_scale_cache is None else list(kv_scale_cache.shape)
-            ),
+            "scale_dtype": ("none" if kv_scale_cache is None else str(kv_scale_cache.dtype)),
+            "scale_shape": ([] if kv_scale_cache is None else list(kv_scale_cache.shape)),
             "payload_bytes": storage_bytes.payload,
             "scale_bytes": storage_bytes.scales,
             "bytes": storage_bytes.total,
@@ -942,9 +701,7 @@ def _bench_mode(
     try:
         for _ in range(args.warmup):
             _run_iteration(llm, case, sampling)
-        results = [
-            _run_iteration(llm, case, sampling) for _ in range(args.repeat)
-        ]
+        results = [_run_iteration(llm, case, sampling) for _ in range(args.repeat)]
         benchmark_record = _build_record(
             args=args,
             manifest=manifest,
@@ -957,12 +714,12 @@ def _bench_mode(
         )
         profile_record = None
         if args.profile_output is not None:
-            commit, dirty = _git_metadata()
+            git = collect_git_metadata(REPO_ROOT)
             with performance_profile(
                 metadata={
                     "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                    "git_commit": commit,
-                    "git_dirty": dirty,
+                    "git_commit": git.commit,
+                    "git_dirty": git.dirty,
                     "gpu": torch.cuda.get_device_name(0),
                     "cuda": torch.version.cuda,
                     "torch": torch.__version__,
@@ -979,9 +736,7 @@ def _bench_mode(
                     "batch_size": len(case["requests"]),
                     "source_num_requests": source_num_requests,
                     "request_replication_factor": request_replication_factor,
-                    "execution_backend": llm.model_runner.cudagraph_metadata(
-                        len(case["requests"])
-                    ),
+                    "execution_backend": llm.model_runner.cudagraph_metadata(len(case["requests"])),
                     "max_model_len": args.max_model_len,
                     "max_num_batched_tokens": args.max_num_batched_tokens,
                     "num_kvcache_blocks": args.num_kvcache_blocks,
@@ -993,16 +748,13 @@ def _bench_mode(
                     torch.cuda.cudart().cudaProfilerStart()
                 try:
                     profile_results = [
-                        _run_iteration(llm, case, sampling)
-                        for _ in range(args.profile_repeat)
+                        _run_iteration(llm, case, sampling) for _ in range(args.profile_repeat)
                     ]
                 finally:
                     if args.cuda_profiler_range:
                         torch.cuda.cudart().cudaProfilerStop()
             baseline_tokens = results[0].token_ids
-            if not all(
-                result.token_ids == baseline_tokens for result in profile_results
-            ):
+            if not all(result.token_ids == baseline_tokens for result in profile_results):
                 raise RuntimeError(
                     f"profiled {mode.name} output differs from its benchmark baseline"
                 )
@@ -1050,7 +802,8 @@ def _annotate_comparisons(records: list[dict[str, Any]]) -> None:
                 "kv_byte_ratio": record["kv_cache"].get(
                     "active_prompt_bytes",
                     record["kv_cache"]["bytes"],
-                ) / baseline_kv_bytes,
+                )
+                / baseline_kv_bytes,
             }
 
 
@@ -1060,9 +813,7 @@ def _parse_modes(value: str) -> list[ModeSpec]:
         raise ValueError("at least one benchmark mode is required")
     unknown = [name for name in names if name not in MODE_SPECS]
     if unknown:
-        raise ValueError(
-            f"unsupported modes {unknown}; supported modes: {sorted(MODE_SPECS)}"
-        )
+        raise ValueError(f"unsupported modes {unknown}; supported modes: {sorted(MODE_SPECS)}")
     if len(names) != len(set(names)):
         raise ValueError(f"duplicate modes are not allowed: {names}")
     return [MODE_SPECS[name] for name in names]
@@ -1098,14 +849,9 @@ def _parse_keep_ratios(value: str) -> list[float]:
             f"--visual-pruning-keep-ratios must contain numbers: {raw_values}"
         ) from exc
     if any(not 0.0 < ratio <= 1.0 for ratio in values):
-        raise ValueError(
-            "--visual-pruning-keep-ratios values must be in (0, 1]: "
-            f"{values}"
-        )
+        raise ValueError(f"--visual-pruning-keep-ratios values must be in (0, 1]: {values}")
     if len(values) != len(set(values)):
-        raise ValueError(
-            f"--visual-pruning-keep-ratios duplicate values are not allowed: {values}"
-        )
+        raise ValueError(f"--visual-pruning-keep-ratios duplicate values are not allowed: {values}")
     return values
 
 
@@ -1175,10 +921,7 @@ def main() -> None:
     parser.add_argument(
         "--max-num-seqs",
         type=int,
-        help=(
-            "engine/CUDA Graph capture batch ceiling; defaults to each cell's "
-            "actual batch size"
-        ),
+        help=("engine/CUDA Graph capture batch ceiling; defaults to each cell's actual batch size"),
     )
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     parser.add_argument("--num-kvcache-blocks", type=int, default=16)
@@ -1246,7 +989,7 @@ def main() -> None:
         raise SystemExit("--cuda-profiler-range requires --profile-output")
 
     manifest = load_workload_manifest(args.manifest)
-    source_case = _find_case(manifest, args.case)
+    source_case = find_workload_case(manifest, args.case)
     modes = _parse_modes(args.modes)
     output_lengths = (
         _parse_positive_ints(
@@ -1266,9 +1009,7 @@ def main() -> None:
         else [source_batch_size]
     )
     if args.max_num_seqs is not None and args.max_num_seqs < max(batch_sizes):
-        raise SystemExit(
-            "--max-num-seqs must be >= the largest requested --batch-sizes value"
-        )
+        raise SystemExit("--max-num-seqs must be >= the largest requested --batch-sizes value")
     keep_ratios = (
         _parse_keep_ratios(args.visual_pruning_keep_ratios)
         if args.visual_pruning_keep_ratios is not None
@@ -1277,7 +1018,7 @@ def main() -> None:
     records = []
     profile_records = []
     for batch_size in batch_sizes:
-        case, source_num_requests, replication_factor = _expand_case_batch(
+        case, source_num_requests, replication_factor = expand_case_batch(
             source_case,
             batch_size,
         )

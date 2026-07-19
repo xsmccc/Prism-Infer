@@ -13,6 +13,10 @@ from dataclasses import dataclass
 from typing import Sequence as TypingSequence
 
 from prism_infer.engine.visual_pruning import (
+    DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS,
+    DEFAULT_VISUAL_PRUNING_KEEP_RATIO,
+    DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
+    DEFAULT_VISUAL_PRUNING_STRATEGY,
     VisualPruningConfig,
     compute_pruning_decision,
 )
@@ -79,8 +83,7 @@ class CompressionMetadata:
         """logical pruning mode 是否在当前 batch 真正删除了 visual token。"""
 
         return self.visual_pruning_active and any(
-            record is not None
-            and int(record.get("dropped_visual_tokens", 0)) > 0
+            record is not None and int(record.get("dropped_visual_tokens", 0)) > 0
             for record in self.visual_pruning_records_by_batch
         )
 
@@ -131,9 +134,7 @@ def normalize_compression_mode(mode: str | None) -> str:
     normalized = (mode or COMPRESSION_OFF).strip().lower()
     if normalized not in SUPPORTED_COMPRESSION_MODES:
         supported = ", ".join(repr(value) for value in sorted(SUPPORTED_COMPRESSION_MODES))
-        raise ValueError(
-            f"supported compression_mode values are {supported}; got {mode!r}"
-        )
+        raise ValueError(f"supported compression_mode values are {supported}; got {mode!r}")
     return normalized
 
 
@@ -162,11 +163,33 @@ def build_visual_pruning_config(config) -> VisualPruningConfig:
     """Build the config for P5.2 visual-pruning decisions."""
 
     return VisualPruningConfig(
-        keep_ratio=float(getattr(config, "visual_pruning_keep_ratio", 0.6)),
-        min_keep_tokens=int(getattr(config, "visual_pruning_min_keep_tokens", 32)),
-        strategy=str(getattr(config, "visual_pruning_strategy", "uniform")),
+        keep_ratio=float(
+            getattr(
+                config,
+                "visual_pruning_keep_ratio",
+                DEFAULT_VISUAL_PRUNING_KEEP_RATIO,
+            )
+        ),
+        min_keep_tokens=int(
+            getattr(
+                config,
+                "visual_pruning_min_keep_tokens",
+                DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
+            )
+        ),
+        strategy=str(
+            getattr(
+                config,
+                "visual_pruning_strategy",
+                DEFAULT_VISUAL_PRUNING_STRATEGY,
+            )
+        ),
         attention_last_n_layers=int(
-            getattr(config, "visual_pruning_attention_last_n_layers", 1)
+            getattr(
+                config,
+                "visual_pruning_attention_last_n_layers",
+                DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS,
+            )
         ),
     )
 
@@ -174,9 +197,7 @@ def build_visual_pruning_config(config) -> VisualPruningConfig:
 def _sequence_visual_token_count(seq) -> int:
     """Return the number of visual placeholder tokens recorded on a sequence."""
 
-    return int(getattr(seq, "image_token_count", 0)) + int(
-        getattr(seq, "video_token_count", 0)
-    )
+    return int(getattr(seq, "image_token_count", 0)) + int(getattr(seq, "video_token_count", 0))
 
 
 def _with_batch_index(record: dict[str, object], batch_index: int) -> dict[str, object]:
@@ -309,9 +330,7 @@ def ensure_supported_compression_metadata(
             and metadata.total_visual_tokens > 0
             and not metadata.visual_pruning_records_by_batch
         ):
-            raise RuntimeError(
-                "visual_prune decode requires batch-aligned pruning records"
-            )
+            raise RuntimeError("visual_prune decode requires batch-aligned pruning records")
         return
     if metadata.mode in (
         COMPRESSION_VISUAL_COMPACT,
@@ -323,9 +342,7 @@ def ensure_supported_compression_metadata(
             and metadata.total_visual_tokens > 0
             and not metadata.visual_pruning_records_by_batch
         ):
-            raise RuntimeError(
-                "visual_compact decode requires batch-aligned pruning records"
-            )
+            raise RuntimeError("visual_compact decode requires batch-aligned pruning records")
         return
     if metadata.mode in (COMPRESSION_FP8_KV, COMPRESSION_SCALED_FP8_KV):
         return

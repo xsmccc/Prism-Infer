@@ -7,18 +7,11 @@ attention 内部节点，定位 full logits 的第一处误差来源。
 再构建 Prism-Infer 模型，只加载 layer0 相关权重。
 """
 import gc
-import sys
-
-if "pytest" in sys.modules:
-    import pytest
-
-    pytest.skip("manual GPU debug script", allow_module_level=True)
 
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, "/data/Prism-Infer")
-from conftest import get_model_path
+from _common import get_model_path
 from prism_infer.vision.mrope import apply_mrope
 
 

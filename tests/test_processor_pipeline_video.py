@@ -8,10 +8,14 @@ from PIL import Image
 
 from conftest import get_model_path, require_transformers
 from prism_infer.engine.vl_inputs import (
+    _processor_video_metadata,
     build_video_prompt,
     prepare_video_inputs,
     validate_video_inputs,
 )
+
+
+pytestmark = [pytest.mark.model, pytest.mark.integration]
 
 
 def _load_processor():
@@ -26,10 +30,19 @@ def _load_processor():
 def demo_video_frames() -> list[Image.Image]:
     """构造本地可复现的 4 帧 synthetic video。"""
 
-    return [
-        Image.new("RGB", (448, 448), color=(80 + i * 30, 120, 180))
-        for i in range(4)
-    ]
+    return [Image.new("RGB", (448, 448), color=(80 + i * 30, 120, 180)) for i in range(4)]
+
+
+def test_video_metadata_rejects_index_equal_to_source_frame_count() -> None:
+    with pytest.raises(ValueError, match="outside the source video"):
+        _processor_video_metadata(
+            [object()],
+            {
+                "fps": 24.0,
+                "source_frame_count": 4,
+                "sampled_indices": [4],
+            },
+        )
 
 
 def test_video_processor_pipeline_matches_hf_reference():
@@ -52,8 +65,8 @@ def test_video_processor_pipeline_matches_hf_reference():
     attention_equal = torch.equal(ours.attention_mask, reference["attention_mask"])
     grid_equal = torch.equal(ours.video_grid_thw, reference["video_grid_thw"])
     pixel_max_diff = (
-        ours.pixel_values_videos - reference["pixel_values_videos"]
-    ).abs().max().item()
+        (ours.pixel_values_videos - reference["pixel_values_videos"]).abs().max().item()
+    )
 
     print(f"video input_ids shape: {list(ours.input_ids.shape)}")
     print(f"video pixel_values_videos shape: {list(ours.pixel_values_videos.shape)}")
@@ -74,10 +87,7 @@ def test_video_processor_pipeline_matches_hf_reference():
 
 def test_video_processor_preserves_preselected_frames_and_source_timestamps():
     processor = _load_processor()
-    frames = [
-        Image.new("RGB", (480, 320), color=(index, 40, 80))
-        for index in range(16)
-    ]
+    frames = [Image.new("RGB", (480, 320), color=(index, 40, 80)) for index in range(16)]
     sampled_indices = [
         3,
         11,

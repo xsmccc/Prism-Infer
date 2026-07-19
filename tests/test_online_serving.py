@@ -37,16 +37,10 @@ class _DeterministicExecutor:
     def execute(self, plan) -> ExecutionResult:
         token_ids: list[int | None] = []
         if plan.is_prefill:
-            for seq, count in zip(
-                plan.sequences, plan.scheduled_token_counts
-            ):
+            for seq, count in zip(plan.sequences, plan.scheduled_token_counts):
                 seq.num_computed_tokens += count
                 seq.num_cached_tokens = seq.num_computed_tokens
-                token_ids.append(
-                    None
-                    if not seq.is_prefill_finished
-                    else 1000 + seq.seq_id
-                )
+                token_ids.append(None if not seq.is_prefill_finished else 1000 + seq.seq_id)
         else:
             token_ids = [2000 + seq.seq_id for seq in plan.sequences]
         self.clock.advance(self.step_s)
@@ -102,6 +96,47 @@ def _request(
     )
 
 
+def test_online_request_rejects_nonfinite_time_and_incomplete_media_payload() -> None:
+    sampling = SamplingParams(max_tokens=1)
+    with pytest.raises(ValueError, match="finite non-negative"):
+        OnlineRequest(
+            request_key="nan-arrival",
+            arrival_offset_s=float("nan"),
+            payload={"type": "text", "prompt": "hello"},
+            sampling_params=sampling,
+        )
+    with pytest.raises(ValueError, match="requires 'image'"):
+        OnlineRequest(
+            request_key="missing-image",
+            arrival_offset_s=0.0,
+            payload={"type": "image", "prompt": "describe"},
+            sampling_params=sampling,
+        )
+
+
+def test_online_arrival_loop_refreshes_clock_after_host_preprocessing() -> None:
+    clock = _FakeClock()
+    session = OnlineServingSession(
+        SimpleNamespace(is_finished=lambda: True),
+        clock_ns=clock,
+        sleep_fn=clock.advance,
+    )
+    requests = (_request("first", 0.0), _request("second", 0.5))
+    state = session._new_run_state(requests)
+    submitted: list[str] = []
+
+    def submit(request: OnlineRequest, _arrival_ns: int) -> int:
+        submitted.append(request.request_key)
+        clock.advance(1.0)
+        return len(submitted)
+
+    session._submit = submit
+    session._submit_ready_arrivals(state)
+
+    assert submitted == ["first", "second"]
+    assert not state.pending
+
+
 def test_online_session_preserves_arrival_and_continuous_batching() -> None:
     clock = _FakeClock()
     engine = _engine(clock)
@@ -118,13 +153,8 @@ def test_online_session_preserves_arrival_and_continuous_batching() -> None:
         "finished",
     ]
     assert all(len(request.token_ids) == 3 for request in result.requests)
-    request_metrics = {
-        record["request_id"]: record
-        for record in result.engine_metrics["requests"]
-    }
-    request_b = next(
-        request for request in result.requests if request.request_key == "b"
-    )
+    request_metrics = {record["request_id"]: record for record in result.engine_metrics["requests"]}
+    request_b = next(request for request in result.requests if request.request_key == "b")
     assert request_metrics[request_b.request_id]["submitted_ns"] == 15_000_000
     assert request_metrics[request_b.request_id]["queue_ms"] >= 5.0
 

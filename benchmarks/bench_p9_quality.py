@@ -69,10 +69,6 @@ DEFAULT_MATERIALIZED_ROOT = REPO_ROOT / "data/p9_quality/materialized"
 DATASET_IDS = ("docvqa_validation", "muirbench_test", "mvbench_test")
 
 
-def _git_metadata() -> dict[str, Any]:
-    return git_metadata(REPO_ROOT)
-
-
 def _build_llm(
     model: str,
     mode: str,
@@ -151,16 +147,12 @@ def _run_sample(
                     temporal_bound=record["temporal_bound"],
                 )
             else:
-                path = safe_materialized_path(
-                    materialized_root, media["materialized_path"]
-                )
+                path = safe_materialized_path(materialized_root, media["materialized_path"])
                 images, video_sampling = sample_video_file(
                     path,
                     frames=runtime["video_frames"],
                     temporal_bound=record["temporal_bound"],
-                    decoder_contract=evaluator_dataset["video_sampling"][
-                        "video_file_decoder"
-                    ],
+                    decoder_contract=evaluator_dataset["video_sampling"]["video_file_decoder"],
                 )
             inputs = prepare_video_inputs(
                 llm.vl_processor,
@@ -218,20 +210,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
     parser.add_argument("--dataset", choices=DATASET_IDS, required=True)
-    parser.add_argument(
-        "--subset", choices=("development", "final"), default="development"
-    )
-    parser.add_argument(
-        "--mode", choices=sorted(SUPPORTED_COMPRESSION_MODES), required=True
-    )
+    parser.add_argument("--subset", choices=("development", "final"), default="development")
+    parser.add_argument("--mode", choices=sorted(SUPPORTED_COMPRESSION_MODES), required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--evaluator", type=Path, default=DEFAULT_EVALUATOR)
     parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL)
     parser.add_argument("--selection", type=Path, default=DEFAULT_SELECTION)
     parser.add_argument("--raw-root", type=Path, default=DEFAULT_RAW_ROOT)
-    parser.add_argument(
-        "--materialized-root", type=Path, default=DEFAULT_MATERIALIZED_ROOT
-    )
+    parser.add_argument("--materialized-root", type=Path, default=DEFAULT_MATERIALIZED_ROOT)
     parser.add_argument("--max-samples", type=int)
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
@@ -266,12 +252,8 @@ def main() -> None:
     if not expected_ids:
         raise SystemExit("quality run selected no eligible samples")
 
-    git = _git_metadata()
-    scope = (
-        "smoke_not_quality_gate"
-        if args.max_samples is not None
-        else f"formal_{args.subset}"
-    )
+    git = git_metadata(REPO_ROOT)
+    scope = "smoke_not_quality_gate" if args.max_samples is not None else f"formal_{args.subset}"
     if scope.startswith("formal_") and git["dirty"]:
         raise SystemExit("formal quality runs require a clean evaluator commit")
     runtime = evaluator["runtime"]
@@ -316,9 +298,7 @@ def main() -> None:
             "run_contract": run_contract,
             "selection": {
                 "selected_contract_samples": len(selected_contract_ids),
-                "selected_contract_ids_sha256": selected_ids_sha256(
-                    selected_contract_ids
-                ),
+                "selected_contract_ids_sha256": selected_ids_sha256(selected_contract_ids),
                 "eligible_run_samples": len(expected_ids),
                 "eligible_run_ids_sha256": selected_ids_sha256(expected_ids),
                 "protocol_exclusions": exclusions,
@@ -339,9 +319,7 @@ def main() -> None:
                 muirbench_random=muirbench_random,
             )
             if replayed != sample["score"]:
-                raise ValueError(
-                    "resume MuirBench parser state differs from checkpoint"
-                )
+                raise ValueError("resume MuirBench parser state differs from checkpoint")
 
     llm: LLM | None = None
     try:
@@ -352,15 +330,9 @@ def main() -> None:
             "cuda": torch.version.cuda,
         }
         output_artifact["kv_cache"] = _cache_record(llm)
-        if (
-            llm.vl_processor.image_processor.size.longest_edge
-            != runtime["image_max_pixels"]
-        ):
+        if llm.vl_processor.image_processor.size.longest_edge != runtime["image_max_pixels"]:
             raise RuntimeError("runtime image pixel budget differs from evaluator")
-        if (
-            llm.vl_processor.video_processor.size.longest_edge
-            != runtime["video_max_pixels"]
-        ):
+        if llm.vl_processor.video_processor.size.longest_edge != runtime["video_max_pixels"]:
             raise RuntimeError("runtime video pixel budget differs from evaluator")
         sampling = SamplingParams(
             temperature=runtime["sampling"]["temperature"],

@@ -20,6 +20,17 @@ from prism_infer.sampling_params import SamplingParams
 from prism_infer.utils.context import get_context, reset_context
 
 
+pytestmark = (
+    []
+    if pytest is None
+    else [
+        pytest.mark.model,
+        pytest.mark.gpu,
+        pytest.mark.integration,
+    ]
+)
+
+
 def _require_cuda() -> None:
     if not torch.cuda.is_available():
         message = "ModelRunner VL prepare tests require CUDA"
@@ -147,11 +158,14 @@ def test_prepare_vl_followup_chunk_uses_paged_history_without_pixels():
     _require_cuda()
     runner = _make_runner()
     seq = _single_image_sequence()
-    visual_end = max(
-        index
-        for index, token_id in enumerate(seq.prompt_token_ids)
-        if token_id == seq.image_token_id
-    ) + 1
+    visual_end = (
+        max(
+            index
+            for index, token_id in enumerate(seq.prompt_token_ids)
+            if token_id == seq.image_token_id
+        )
+        + 1
+    )
     assert visual_end < seq.num_prompt_tokens
     seq.num_cached_tokens = visual_end
     seq.num_computed_tokens = visual_end
@@ -169,9 +183,7 @@ def test_prepare_vl_followup_chunk_uses_paged_history_without_pixels():
         assert context.cu_seqlens_k.tolist() == [0, seq.num_prompt_tokens]
         assert context.context_lens.tolist() == [seq.num_prompt_tokens]
         assert context.block_tables.tolist() == [[0]]
-        assert context.slot_mapping.tolist() == list(
-            range(visual_end, seq.num_prompt_tokens)
-        )
+        assert context.slot_mapping.tolist() == list(range(visual_end, seq.num_prompt_tokens))
     finally:
         reset_context()
     print("VL follow-up paged prefill chunk: PASS")

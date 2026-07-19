@@ -21,7 +21,7 @@ def _run_prefill_attention(enable_trace: bool):
         num_heads=num_heads,
         num_kv_heads=num_kv_heads,
         head_dim=head_dim,
-        scale=head_dim ** -0.5,
+        scale=head_dim**-0.5,
     )
     attn.layer_idx = 0
     cu_seqlens = torch.tensor([0, seqlen], dtype=torch.int32)
@@ -97,7 +97,7 @@ def _run_decode_attention(enable_trace: bool):
         num_heads=num_heads,
         num_kv_heads=num_kv_heads,
         head_dim=head_dim,
-        scale=head_dim ** -0.5,
+        scale=head_dim**-0.5,
     )
     attn.layer_idx = 0
     attn.k_cache = k_cache

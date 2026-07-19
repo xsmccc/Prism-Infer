@@ -88,9 +88,7 @@ def test_analyze_nsys_sqlite_reports_phase_and_target_metrics(tmp_path: Path) ->
     assert target["kernel_categories"]["linear_gemv"]["kernel_count_total"] == 1
     assert target["kernel_categories"]["linear_gemv"]["kernel_time_fraction"] == 1
     assert target["top_kernels"][0]["name"] == "internal::gemvx::kernel"
-    assert (
-        result["target_ranges"]["prism::target"]["stream_synchronize_count_total"] == 1
-    )
+    assert result["target_ranges"]["prism::target"]["stream_synchronize_count_total"] == 1
     print("P6.2 Nsight SQLite phase/target analysis: PASS")
 
 

@@ -1,18 +1,20 @@
-import atexit                           # atexit.register: 注册进程退出时的清理函数(类似C++ std::atexit)
+import atexit  # atexit.register: 注册进程退出时的清理函数(类似C++ std::atexit)
 import gc
 import socket
+from dataclasses import dataclass
 from time import perf_counter, perf_counter_ns
-from typing import Any
-from tqdm.auto import tqdm              # 进度条库, auto版本自动适配终端/Jupyter
+from typing import Any, cast
+from tqdm.auto import tqdm  # 进度条库, auto版本自动适配终端/Jupyter
 from transformers import AutoTokenizer  # HuggingFace分词器: 文本↔token_ids
 import torch
-import torch.multiprocessing as mp      # PyTorch多进程模块(比标准multiprocessing多CUDA tensor共享支持)
+import torch.multiprocessing as mp  # PyTorch多进程模块(比标准multiprocessing多CUDA tensor共享支持)
 
-from prism_infer.analysis.performance_profile import (
+from prism_infer.observability import (
     get_performance_profile_session,
     profile_region,
 )
 from prism_infer.config import Config, PrismConfig
+from prism_infer.runtime_capabilities import validate_runtime_capabilities
 from prism_infer.sampling_params import SamplingParams
 from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.vl_inputs import (
@@ -28,12 +30,61 @@ from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.engine.contracts import MetricsSink, StepResult
 from prism_infer.engine.executor import ModelExecutor
 from prism_infer.engine.metrics import EngineMetrics
+from prism_infer.engine.tp_control import DEFAULT_TP_CONTROL_TIMEOUT_SECONDS
 from prism_infer.engine.request import (
     MonotonicRequestIdAllocator,
     RequestIdAllocator,
     validate_request_id,
 )
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
+from prism_infer.models.model_registry import validate_model_architecture
+
+
+@dataclass(slots=True)
+class _GenerationProgress:
+    """Own optional progress reporting for every synchronous generation API."""
+
+    progress_bar: Any | None
+    prefill_throughput: float = 0.0
+    decode_throughput: float = 0.0
+
+    def observe_step(self, *, signed_tokens: int, elapsed_seconds: float) -> None:
+        if self.progress_bar is None or elapsed_seconds <= 0:
+            return
+        if signed_tokens > 0:
+            self.prefill_throughput = signed_tokens / elapsed_seconds
+        else:
+            self.decode_throughput = -signed_tokens / elapsed_seconds
+        self.progress_bar.set_postfix(
+            {
+                "Prefill": f"{int(self.prefill_throughput)}tok/s",
+                "Decode": f"{int(self.decode_throughput)}tok/s",
+            }
+        )
+
+    def complete_request(self) -> None:
+        if self.progress_bar is not None:
+            self.progress_bar.update(1)
+
+    def close(self) -> None:
+        if self.progress_bar is not None:
+            self.progress_bar.close()
+
+
+@dataclass(frozen=True, slots=True)
+class _MixedRequestSpec:
+    """Validated host-side description of one heterogeneous request."""
+
+    request_type: str
+    prompt: str | list[int]
+    media: Any | None = None
+
+
+_MIXED_MEDIA_FIELD_BY_TYPE = {
+    "image": "image",
+    "images": "images",
+    "video": "video",
+}
 
 
 def select_distributed_init_method() -> str:
@@ -70,8 +121,7 @@ def validate_tensor_parallel_environment(config: Config, device_count: int) -> N
     }
     if invalid:
         raise ValueError(
-            f"tensor_parallel_size={tp_size} cannot evenly shard model dimensions: "
-            f"{invalid}"
+            f"tensor_parallel_size={tp_size} cannot evenly shard model dimensions: {invalid}"
         )
 
 
@@ -90,39 +140,42 @@ class LLMEngine:
         **config_options: object,
     ):
         config = Config(model, **config_options)
+        validate_runtime_capabilities(
+            execution_backend=config.execution_backend,
+            compression_mode=config.compression_mode,
+        )
+        validate_model_architecture(config.hf_config)
         validate_tensor_parallel_environment(config, torch.cuda.device_count())
         self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
         config = config.with_eos(self.tokenizer.eos_token_id)
         if request_id_allocator is None:
             request_id_allocator = MonotonicRequestIdAllocator()
         if not isinstance(request_id_allocator, RequestIdAllocator):
-            raise TypeError(
-                "request_id_allocator must implement allocate() -> int"
-            )
+            raise TypeError("request_id_allocator must implement allocate() -> int")
         self.request_id_allocator = request_id_allocator
 
         # --- 多进程TP初始化 ---
-        self.ps = []                 # 子进程列表
-        self.control_senders = []    # rank 0 -> worker 的变长控制消息通道
+        self.ps = []  # 子进程列表
+        self.control_senders = []  # rank 0 <-> worker 的 typed duplex 控制通道
         distributed_init_method = select_distributed_init_method()
         ctx = mp.get_context("spawn")  # spawn模式: 新建Python解释器(fork对CUDA不安全)
         try:
             # 创建子进程: rank=1,2,...,N-1 分别在GPU1,2,...,N-1上运行
             for i in range(1, config.tensor_parallel_size):
-                receiver, sender = ctx.Pipe(duplex=False)
+                rank0_channel, worker_channel = ctx.Pipe(duplex=True)
                 process = ctx.Process(
                     target=ModelRunner,
                     args=(
                         config,
                         i,
-                        receiver,
+                        worker_channel,
                         distributed_init_method,
                     ),
                 )
                 process.start()
-                receiver.close()        # rank 0 不持有 worker 的接收端
+                worker_channel.close()
                 self.ps.append(process)
-                self.control_senders.append(sender)
+                self.control_senders.append(rank0_channel)
             # 主进程自己也创建ModelRunner: rank=0, 在GPU0上运行
             self.model_runner = ModelRunner(
                 config,
@@ -131,12 +184,15 @@ class LLMEngine:
                 distributed_init_method,
             )
         except BaseException:
-            for sender in self.control_senders:
-                sender.close()
+            for channel in self.control_senders:
+                channel.close()
             for process in self.ps:
                 if process.is_alive():
                     process.terminate()
-                process.join()
+                process.join(timeout=config.tensor_parallel_timeout_seconds)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=config.tensor_parallel_timeout_seconds)
             if torch.distributed.is_initialized():
                 torch.distributed.destroy_process_group()
             torch.cuda.empty_cache()
@@ -165,9 +221,7 @@ class LLMEngine:
             self.model_runner,
             self.scheduler.block_manager,
         )
-        self.metrics: MetricsSink = (
-            metrics_sink if metrics_sink is not None else EngineMetrics()
-        )
+        self.metrics: MetricsSink = metrics_sink if metrics_sink is not None else EngineMetrics()
         atexit.register(self.exit)  # 注册退出清理函数(类似RAII析构+atexit)
 
     def _allocate_request_id(self) -> int:
@@ -188,19 +242,17 @@ class LLMEngine:
             )
         except ValueError as exc:
             raise RuntimeError(
-                "request id allocator returned an invalid value: "
-                f"{request_id!r}"
+                f"request id allocator returned an invalid value: {request_id!r}"
             ) from exc
 
-    def exit(self):
-        """清理: 通知子进程退出, 释放GPU资源, 等待子进程结束"""
-        if getattr(self, "_exited", False):
-            return
-        self._exited = True
-        # ``atexit`` keeps a strong reference to bound methods.  Explicit
-        # shutdown must unregister it so completed engines do not accumulate
-        # in a long-lived process.
-        atexit.unregister(self.exit)
+    @staticmethod
+    def _first_cleanup_failure(
+        current: BaseException | None,
+        candidate: BaseException | None,
+    ) -> BaseException | None:
+        return current if current is not None else candidate
+
+    def _release_model_runner(self) -> BaseException | None:
         failure: BaseException | None = None
         model_runner = getattr(self, "model_runner", None)
         if model_runner is not None:
@@ -222,21 +274,89 @@ class LLMEngine:
                         del model_runner.execution_backend
                 # ModelExecutor intentionally owns a runner reference.  Drop
                 # both public references before releasing the CUDA cache.
-                if hasattr(self, "executor"):
-                    del self.executor
-                del self.model_runner
-                backend = None
-                model_runner = None
-        for sender in getattr(self, "control_senders", []):
+                if hasattr(self, "model_runner"):
+                    del self.model_runner
+        if hasattr(self, "executor"):
+            del self.executor
+        return failure
+
+    def _close_control_channels(self) -> BaseException | None:
+        failure: BaseException | None = None
+        channels = tuple(getattr(self, "control_senders", ()))
+        self.control_senders = []
+        for sender in channels:
             try:
                 sender.close()
             except BaseException as exc:
                 if failure is None:
                     failure = exc
-        for p in getattr(self, "ps", []):
-            if failure is not None and p.is_alive():
-                p.terminate()
-            p.join()                     # 等待所有子进程退出(类似C++ thread.join)
+        return failure
+
+    def _worker_shutdown_timeout(self) -> float:
+        return float(
+            getattr(
+                getattr(self, "config", None),
+                "tensor_parallel_timeout_seconds",
+                DEFAULT_TP_CONTROL_TIMEOUT_SECONDS,
+            )
+        )
+
+    @staticmethod
+    def _shutdown_worker(
+        process: Any,
+        *,
+        timeout: float,
+        terminate_first: bool,
+    ) -> BaseException | None:
+        try:
+            if terminate_first and process.is_alive():
+                process.terminate()
+            process.join(timeout=timeout)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=timeout)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=timeout)
+            if process.is_alive():
+                return RuntimeError(f"TP worker process {process.pid} did not exit within timeout")
+        except BaseException as exc:
+            return exc
+        return None
+
+    def _shutdown_workers(self, *, terminate_first: bool) -> BaseException | None:
+        failure: BaseException | None = None
+        processes = tuple(getattr(self, "ps", ()))
+        self.ps = []
+        timeout = self._worker_shutdown_timeout()
+        for process in processes:
+            worker_failure = self._shutdown_worker(
+                process,
+                timeout=timeout,
+                terminate_first=terminate_first,
+            )
+            failure = self._first_cleanup_failure(failure, worker_failure)
+        return failure
+
+    def exit(self) -> None:
+        """Stop workers and release all runner-owned CPU/GPU resources once."""
+
+        if getattr(self, "_exited", False):
+            return
+        self._exited = True
+        # ``atexit`` keeps a strong reference to bound methods. Explicit
+        # shutdown must unregister it so completed engines do not accumulate
+        # in a long-lived process.
+        atexit.unregister(self.exit)
+        failure = self._release_model_runner()
+        failure = self._first_cleanup_failure(
+            failure,
+            self._close_control_channels(),
+        )
+        failure = self._first_cleanup_failure(
+            failure,
+            self._shutdown_workers(terminate_first=failure is not None),
+        )
         # Model modules and hooks may contain cycles outside the explicit
         # runner/backend edge.  Collection is exit-only, never on the hot path.
         gc.collect()
@@ -254,19 +374,31 @@ class LLMEngine:
         raise_on_reject: bool = True,
     ) -> int:
         """添加一条推理请求: 文本→tokenize→创建Sequence→加入调度队列"""
-        if isinstance(prompt, str):
-            with profile_region("preprocess.tokenizer", cuda=False):
-                prompt = self.tokenizer.encode(prompt)  # 文本→token_ids
-        seq = Sequence(
-            prompt,
-            sampling_params,
-            block_size=self.config.kvcache_block_size,
-            request_id=self._allocate_request_id(),
-        )
+
+        seq = self._prepare_text_sequence(prompt, sampling_params)
         return self._submit_sequence(
             seq,
             submitted_ns=submitted_ns,
             raise_on_reject=raise_on_reject,
+        )
+
+    def _prepare_text_sequence(
+        self,
+        prompt: str | list[int],
+        sampling_params: SamplingParams,
+    ) -> Sequence:
+        """Convert one text request into scheduler-owned host state."""
+
+        if isinstance(prompt, str):
+            with profile_region("preprocess.tokenizer", cuda=False):
+                prompt = self.tokenizer.encode(prompt)  # 文本→token_ids
+        elif not isinstance(prompt, list):
+            raise TypeError("text prompt must be a string or list of token ids")
+        return Sequence(
+            prompt,
+            sampling_params,
+            block_size=self.config.kvcache_block_size,
+            request_id=self._allocate_request_id(),
         )
 
     def _submit_sequence(
@@ -319,6 +451,20 @@ class LLMEngine:
     ) -> int:
         """将已通过 processor 校验的单图/多图输入提交给统一 runtime。"""
 
+        seq = self._prepare_image_sequence(inputs, sampling_params)
+        return self._submit_sequence(
+            seq,
+            submitted_ns=submitted_ns,
+            raise_on_reject=raise_on_reject,
+        )
+
+    def _prepare_image_sequence(
+        self,
+        inputs: ImageInputs,
+        sampling_params: SamplingParams,
+    ) -> Sequence:
+        """Build one image sequence without mutating scheduler queues."""
+
         with profile_region("preprocess.mrope_positions", cuda=False):
             position_ids, rope_delta = get_qwen3_vl_rope_index_from_config(
                 inputs.input_ids,
@@ -326,7 +472,7 @@ class LLMEngine:
                 image_grid_thw=inputs.image_grid_thw,
                 attention_mask=inputs.attention_mask,
             )
-        seq = Sequence.from_image_inputs(
+        return Sequence.from_image_inputs(
             inputs,
             sampling_params,
             block_size=self.config.kvcache_block_size,
@@ -334,11 +480,20 @@ class LLMEngine:
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
-        return self._submit_sequence(
-            seq,
-            submitted_ns=submitted_ns,
-            raise_on_reject=raise_on_reject,
-        )
+
+    def _prepare_image_request(
+        self,
+        prompt: str,
+        image: Any,
+        sampling_params: SamplingParams,
+    ) -> Sequence:
+        """Run image preprocessing without publishing a request."""
+
+        if self.vl_processor is None:
+            raise ValueError("image generation requires a Qwen3-VL model config")
+        with profile_region("preprocess.image_processor", cuda=False):
+            inputs = prepare_image_inputs(self.vl_processor, prompt, image)
+        return self._prepare_image_sequence(inputs, sampling_params)
 
     def add_vl_request(
         self,
@@ -355,13 +510,9 @@ class LLMEngine:
         非核心预处理工具使用；position ids 和 engine 推理由 Prism-Infer 自实现。
         """
 
-        if self.vl_processor is None:
-            raise ValueError("generate_vl requires a Qwen3-VL model config")
-        with profile_region("preprocess.image_processor", cuda=False):
-            inputs = prepare_image_inputs(self.vl_processor, prompt, image)
-        return self._submit_image_inputs(
-            inputs,
-            sampling_params,
+        seq = self._prepare_image_request(prompt, image, sampling_params)
+        return self._submit_sequence(
+            seq,
             submitted_ns=submitted_ns,
             raise_on_reject=raise_on_reject,
         )
@@ -398,9 +549,7 @@ class LLMEngine:
         """提交图片按 marker 穿插在文本中的多图请求。"""
 
         if self.vl_processor is None:
-            raise ValueError(
-                "add_interleaved_images_request requires a Qwen3-VL model config"
-            )
+            raise ValueError("add_interleaved_images_request requires a Qwen3-VL model config")
         with profile_region("preprocess.image_processor", cuda=False):
             inputs = prepare_interleaved_image_inputs(
                 self.vl_processor,
@@ -426,13 +575,9 @@ class LLMEngine:
     ) -> int:
         """添加一条视频 VL 请求。"""
 
-        if self.vl_processor is None:
-            raise ValueError("generate_video requires a Qwen3-VL model config")
-        with profile_region("preprocess.video_processor", cuda=False):
-            inputs = prepare_video_inputs(self.vl_processor, prompt, video)
-        return self._submit_video_inputs(
-            inputs,
-            sampling_params,
+        seq = self._prepare_video_request(prompt, video, sampling_params)
+        return self._submit_sequence(
+            seq,
             submitted_ns=submitted_ns,
             raise_on_reject=raise_on_reject,
         )
@@ -447,6 +592,20 @@ class LLMEngine:
     ) -> int:
         """将已通过 processor 校验的视频输入提交给统一 runtime。"""
 
+        seq = self._prepare_video_sequence(inputs, sampling_params)
+        return self._submit_sequence(
+            seq,
+            submitted_ns=submitted_ns,
+            raise_on_reject=raise_on_reject,
+        )
+
+    def _prepare_video_sequence(
+        self,
+        inputs: VideoInputs,
+        sampling_params: SamplingParams,
+    ) -> Sequence:
+        """Build one video sequence without mutating scheduler queues."""
+
         with profile_region("preprocess.mrope_positions", cuda=False):
             position_ids, rope_delta = get_qwen3_vl_rope_index_from_config(
                 inputs.input_ids,
@@ -454,7 +613,7 @@ class LLMEngine:
                 video_grid_thw=inputs.video_grid_thw,
                 attention_mask=inputs.attention_mask,
             )
-        seq = Sequence.from_video_inputs(
+        return Sequence.from_video_inputs(
             inputs,
             sampling_params,
             block_size=self.config.kvcache_block_size,
@@ -462,11 +621,20 @@ class LLMEngine:
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
-        return self._submit_sequence(
-            seq,
-            submitted_ns=submitted_ns,
-            raise_on_reject=raise_on_reject,
-        )
+
+    def _prepare_video_request(
+        self,
+        prompt: str,
+        video: Any,
+        sampling_params: SamplingParams,
+    ) -> Sequence:
+        """Run video preprocessing without publishing a request."""
+
+        if self.vl_processor is None:
+            raise ValueError("video generation requires a Qwen3-VL model config")
+        with profile_region("preprocess.video_processor", cuda=False):
+            inputs = prepare_video_inputs(self.vl_processor, prompt, video)
+        return self._prepare_video_sequence(inputs, sampling_params)
 
     def step_result(self) -> StepResult:
         """Execute one strongly typed schedule → execute → commit cycle."""
@@ -485,15 +653,10 @@ class LLMEngine:
                     batch_size=plan.batch_size,
                     sequence_ids=list(plan.sequence_ids),
                     sequence_lengths=[len(seq) for seq in plan.sequences],
-                    prompt_tokens=sum(
-                        seq.num_prompt_tokens for seq in plan.sequences
-                    ),
-                    image_tokens=sum(
-                        seq.image_token_count for seq in plan.sequences
-                    ),
-                    video_tokens=sum(
-                        seq.video_token_count for seq in plan.sequences
-                    ),
+                    prompt_tokens=sum(seq.num_prompt_tokens for seq in plan.sequences),
+                    image_tokens=sum(seq.image_token_count for seq in plan.sequences),
+                    video_tokens=sum(seq.video_token_count for seq in plan.sequences),
+                    vision_patches=plan.num_scheduled_vision_patches,
                     scheduled_tokens=plan.num_scheduled_tokens,
                     scheduler_policy=plan.policy_name,
                 )
@@ -508,9 +671,7 @@ class LLMEngine:
                 finished_ns=finished_ns,
             )
             with profile_region("engine.scheduler.postprocess", cuda=False):
-                outputs = self.scheduler.postprocess(
-                    plan, execution.token_ids
-                )
+                outputs = self.scheduler.postprocess(plan, execution.token_ids)
             completed_ns = clock_ns()
             self.metrics.on_requests_finished(
                 outputs,
@@ -574,50 +735,95 @@ class LLMEngine:
         seq = self.scheduler.get_request(request_id)
         return None if seq is None else seq.status
 
+    @staticmethod
+    def _normalize_sampling_params(
+        sampling_params: SamplingParams | list[SamplingParams],
+        *,
+        request_count: int,
+        request_label: str,
+    ) -> list[SamplingParams]:
+        normalized = (
+            list(sampling_params)
+            if isinstance(sampling_params, list)
+            else [sampling_params] * request_count
+        )
+        if len(normalized) != request_count:
+            raise ValueError(
+                f"sampling_params must contain one entry per {request_label}: "
+                f"{len(normalized)} != {request_count}"
+            )
+        invalid = [
+            type(params).__name__ for params in normalized if not isinstance(params, SamplingParams)
+        ]
+        if invalid:
+            raise TypeError(f"sampling_params entries must be SamplingParams, got {invalid}")
+        return normalized
+
+    def _run_generation(
+        self,
+        sequence_ids: list[int],
+        *,
+        progress_bar: Any | None,
+    ) -> list[dict[str, Any]]:
+        """Drive one synchronous generation set through the shared engine loop."""
+
+        requested_ids = frozenset(sequence_ids)
+        completed: dict[int, list[int]] = {}
+        progress = _GenerationProgress(progress_bar)
+        try:
+            while not self.is_finished():
+                started = perf_counter()
+                step_outputs, signed_tokens = self.step()
+                progress.observe_step(
+                    signed_tokens=signed_tokens,
+                    elapsed_seconds=perf_counter() - started,
+                )
+                for request_id, token_ids in step_outputs:
+                    if request_id not in requested_ids:
+                        continue
+                    if request_id not in completed:
+                        progress.complete_request()
+                    completed[request_id] = token_ids
+            missing = [request_id for request_id in sequence_ids if request_id not in completed]
+            if missing:
+                raise RuntimeError(
+                    f"generation finished without terminal outputs for request ids: {missing}"
+                )
+            return [
+                self._format_generation_output(completed[request_id]) for request_id in sequence_ids
+            ]
+        finally:
+            progress.close()
+
     def generate(
         self,
-        prompts: list[str] | list[list[int]],          # 输入: 字符串列表或token_id列表的列表
-        sampling_params: SamplingParams | list[SamplingParams],  # 采样参数: 单个(所有请求共用)或列表
-        use_tqdm: bool = True,                          # 是否显示进度条
+        prompts: list[str] | list[list[int]],  # 输入: 字符串列表或token_id列表的列表
+        sampling_params: SamplingParams
+        | list[SamplingParams],  # 采样参数: 单个(所有请求共用)或列表
+        use_tqdm: bool = True,  # 是否显示进度条
     ) -> list[dict[str, Any]]:
         """对外公开接口: 批量输入prompt, 返回生成结果"""
-        if use_tqdm:
-            pbar = tqdm(total=len(prompts), desc="Generating", dynamic_ncols=True)
-        # 如果sampling_params不是列表, 复制N份(所有请求共用同一参数)
-        if not isinstance(sampling_params, list):
-            sampling_params = [sampling_params] * len(prompts)
-        # 逐个添加请求到调度队列
-        for prompt, sp in zip(prompts, sampling_params):
-            self.add_request(prompt, sp)
-
-        # --- 主推理循环 ---
-        outputs = {}                                   # {seq_id: completion_token_ids}
-        prefill_throughput = decode_throughput = 0.
-        while not self.is_finished():
-            t = perf_counter()                         # 计时开始
-            output, num_tokens = self.step()            # 执行一步推理
-            # 更新吞吐量统计(进度条显示用)
-            if use_tqdm:
-                if num_tokens > 0:  # prefill
-                    prefill_throughput = num_tokens / (perf_counter() - t)  # tokens/sec
-                else:               # decode
-                    decode_throughput = -num_tokens / (perf_counter() - t)  # tokens/sec
-                pbar.set_postfix({
-                    "Prefill": f"{int(prefill_throughput)}tok/s",
-                    "Decode": f"{int(decode_throughput)}tok/s",
-                })
-            # 收集本步完成的序列
-            for seq_id, token_ids in output:
-                outputs[seq_id] = token_ids
-                if use_tqdm:
-                    pbar.update(1)  # 进度条+1(每完成一条序列, 不是每步+1)
-
-        # --- 结果整理 ---
-        outputs = [outputs[seq_id] for seq_id in sorted(outputs.keys())]  # 按seq_id排序, 保证与输入顺序一致
-        outputs = [self._format_generation_output(token_ids) for token_ids in outputs]
-        if use_tqdm:
-            pbar.close()
-        return outputs  # 返回: [{"text": "...", "token_ids": [...]}, ...]
+        normalized_params = self._normalize_sampling_params(
+            sampling_params,
+            request_count=len(prompts),
+            request_label="prompt",
+        )
+        if not prompts:
+            return []
+        sequences = [
+            self._prepare_text_sequence(prompt, params)
+            for prompt, params in zip(prompts, normalized_params, strict=True)
+        ]
+        # Request identifiers are allocator-defined and need not be monotonic.
+        # Preserve submission order explicitly instead of sorting identifiers.
+        submitted_ids = [self._submit_sequence(sequence) for sequence in sequences]
+        progress_bar = (
+            tqdm(total=len(prompts), desc="Generating", dynamic_ncols=True) if use_tqdm else None
+        )
+        return self._run_generation(
+            submitted_ids,
+            progress_bar=progress_bar,
+        )
 
     def _format_generation_output(self, token_ids: list[int]) -> dict[str, Any]:
         """Expose user text and a lossless special-token decode alongside IDs."""
@@ -644,30 +850,10 @@ class LLMEngine:
     ) -> dict[str, Any]:
         """统一收集 image/video 单请求，避免公开 VL API 漂移。"""
 
-        outputs = {}
-        prefill_throughput = decode_throughput = 0.0
-        while not self.is_finished():
-            started = perf_counter()
-            output, num_tokens = self.step()
-            if progress_bar is not None:
-                if num_tokens > 0:
-                    prefill_throughput = num_tokens / (perf_counter() - started)
-                else:
-                    decode_throughput = -num_tokens / (perf_counter() - started)
-                progress_bar.set_postfix(
-                    {
-                        "Prefill": f"{int(prefill_throughput)}tok/s",
-                        "Decode": f"{int(decode_throughput)}tok/s",
-                    }
-                )
-            for done_seq_id, token_ids in output:
-                outputs[done_seq_id] = token_ids
-                if progress_bar is not None:
-                    progress_bar.update(1)
-        if progress_bar is not None:
-            progress_bar.close()
-        token_ids = outputs[seq_id]
-        return self._format_generation_output(token_ids)
+        return self._run_generation(
+            [seq_id],
+            progress_bar=progress_bar,
+        )[0]
 
     def generate_vl(
         self,
@@ -682,12 +868,8 @@ class LLMEngine:
         单请求 eager correctness 路径；视频和 batch VL 会在 P3 后续阶段扩展。
         """
 
-        if use_tqdm:
-            pbar = tqdm(total=1, desc="Generating VL", dynamic_ncols=True)
-        else:
-            pbar = None
-
         seq_id = self.add_vl_request(prompt, image, sampling_params)
+        pbar = tqdm(total=1, desc="Generating VL", dynamic_ncols=True) if use_tqdm else None
         return self._finish_single_generation(seq_id, pbar)
 
     def generate_images(
@@ -712,16 +894,16 @@ class LLMEngine:
     ) -> dict[str, Any]:
         """生成 marker-interleaved 多图请求。"""
 
-        pbar = (
-            tqdm(total=1, desc="Generating Interleaved Images", dynamic_ncols=True)
-            if use_tqdm
-            else None
-        )
         seq_id = self.add_interleaved_images_request(
             prompt,
             images,
             sampling_params,
             image_marker=image_marker,
+        )
+        pbar = (
+            tqdm(total=1, desc="Generating Interleaved Images", dynamic_ncols=True)
+            if use_tqdm
+            else None
         )
         return self._finish_single_generation(seq_id, pbar)
 
@@ -734,16 +916,16 @@ class LLMEngine:
     ) -> dict[str, Any]:
         """生成一次已预处理 image 输入，供需要审计 prompt IDs 的工具使用。"""
 
-        pbar = (
-            tqdm(total=1, desc="Generating Prepared Images", dynamic_ncols=True)
-            if use_tqdm
-            else None
-        )
         seq_id = self._submit_image_inputs(
             inputs,
             sampling_params,
             submitted_ns=None,
             raise_on_reject=True,
+        )
+        pbar = (
+            tqdm(total=1, desc="Generating Prepared Images", dynamic_ncols=True)
+            if use_tqdm
+            else None
         )
         return self._finish_single_generation(seq_id, pbar)
 
@@ -756,12 +938,8 @@ class LLMEngine:
     ) -> dict:
         """Qwen3-VL 视频生成入口。"""
 
-        if use_tqdm:
-            pbar = tqdm(total=1, desc="Generating Video", dynamic_ncols=True)
-        else:
-            pbar = None
-
         seq_id = self.add_video_request(prompt, video, sampling_params)
+        pbar = tqdm(total=1, desc="Generating Video", dynamic_ncols=True) if use_tqdm else None
         return self._finish_single_generation(seq_id, pbar)
 
     def generate_prepared_video_inputs(
@@ -773,25 +951,73 @@ class LLMEngine:
     ) -> dict[str, Any]:
         """生成一次已预处理 video 输入，供质量工具复核 prompt IDs。"""
 
-        pbar = (
-            tqdm(total=1, desc="Generating Prepared Video", dynamic_ncols=True)
-            if use_tqdm
-            else None
-        )
         seq_id = self._submit_video_inputs(
             inputs,
             sampling_params,
             submitted_ns=None,
             raise_on_reject=True,
         )
+        pbar = (
+            tqdm(total=1, desc="Generating Prepared Video", dynamic_ncols=True)
+            if use_tqdm
+            else None
+        )
         return self._finish_single_generation(seq_id, pbar)
+
+    @staticmethod
+    def _parse_mixed_request(
+        request: object,
+        *,
+        index: int,
+    ) -> _MixedRequestSpec:
+        if not isinstance(request, dict):
+            raise TypeError(f"mixed request {index} must be a dict")
+        request_type = request.get("type", "text")
+        if not isinstance(request_type, str):
+            raise TypeError(f"mixed request {index} type must be a string")
+        if "prompt" not in request or request["prompt"] is None:
+            raise ValueError(f"mixed request {index} is missing 'prompt'")
+        prompt = request["prompt"]
+        if request_type == "text":
+            if not isinstance(prompt, (str, list)):
+                raise TypeError(
+                    f"mixed text request {index} prompt must be a string or token-id list"
+                )
+            return _MixedRequestSpec(request_type=request_type, prompt=prompt)
+
+        media_field = _MIXED_MEDIA_FIELD_BY_TYPE.get(request_type)
+        if media_field is None:
+            raise ValueError(f"unsupported mixed request type: {request_type}")
+        if not isinstance(prompt, str):
+            raise TypeError(f"mixed {request_type} request {index} prompt must be a string")
+        if media_field not in request:
+            raise ValueError(f"{request_type} request must provide {media_field!r}")
+        return _MixedRequestSpec(
+            request_type=request_type,
+            prompt=prompt,
+            media=request[media_field],
+        )
+
+    def _prepare_mixed_sequence(
+        self,
+        request: _MixedRequestSpec,
+        sampling_params: SamplingParams,
+    ) -> Sequence:
+        if request.request_type == "text":
+            return self._prepare_text_sequence(request.prompt, sampling_params)
+        prompt = cast(str, request.prompt)
+        if request.request_type in {"image", "images"}:
+            return self._prepare_image_request(prompt, request.media, sampling_params)
+        if request.request_type == "video":
+            return self._prepare_video_request(prompt, request.media, sampling_params)
+        raise RuntimeError(f"unvalidated mixed request type: {request.request_type}")
 
     def generate_mixed(
         self,
-        requests: list[dict],
+        requests: list[dict[str, Any]],
         sampling_params: SamplingParams | list[SamplingParams],
         use_tqdm: bool = True,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """混合 text/image/images/video 请求批量生成。
 
         request 格式:
@@ -805,63 +1031,28 @@ class LLMEngine:
 
         if not requests:
             return []
-        if not isinstance(sampling_params, list):
-            sampling_params = [sampling_params] * len(requests)
-        if len(sampling_params) != len(requests):
-            raise ValueError(
-                "sampling_params length must match requests length, "
-                f"got {len(sampling_params)} vs {len(requests)}"
-            )
-
-        if use_tqdm:
-            pbar = tqdm(total=len(requests), desc="Generating Mixed", dynamic_ncols=True)
-        else:
-            pbar = None
-
-        seq_ids = []
-        for request, sp in zip(requests, sampling_params):
-            request_type = request.get("type", "text")
-            prompt = request.get("prompt")
-            if prompt is None:
-                raise ValueError(f"mixed request missing prompt: {request}")
-            if request_type == "text":
-                seq_ids.append(self.add_request(prompt, sp))
-            elif request_type == "image":
-                if "image" not in request:
-                    raise ValueError("image request must provide 'image'")
-                seq_ids.append(self.add_vl_request(prompt, request["image"], sp))
-            elif request_type == "images":
-                if "images" not in request:
-                    raise ValueError("images request must provide 'images'")
-                seq_ids.append(self.add_images_request(prompt, request["images"], sp))
-            elif request_type == "video":
-                if "video" not in request:
-                    raise ValueError("video request must provide 'video'")
-                seq_ids.append(self.add_video_request(prompt, request["video"], sp))
-            else:
-                raise ValueError(f"unsupported mixed request type: {request_type}")
-
-        outputs = {}
-        prefill_throughput = decode_throughput = 0.
-        while not self.is_finished():
-            t = perf_counter()
-            output, num_tokens = self.step()
-            if pbar is not None:
-                if num_tokens > 0:
-                    prefill_throughput = num_tokens / (perf_counter() - t)
-                else:
-                    decode_throughput = -num_tokens / (perf_counter() - t)
-                pbar.set_postfix({
-                    "Prefill": f"{int(prefill_throughput)}tok/s",
-                    "Decode": f"{int(decode_throughput)}tok/s",
-                })
-            for done_seq_id, token_ids in output:
-                outputs[done_seq_id] = token_ids
-                if pbar is not None:
-                    pbar.update(1)
-
-        if pbar is not None:
-            pbar.close()
-
-        ordered = [outputs[seq_id] for seq_id in seq_ids]
-        return [self._format_generation_output(token_ids) for token_ids in ordered]
+        normalized_params = self._normalize_sampling_params(
+            sampling_params,
+            request_count=len(requests),
+            request_label="mixed request",
+        )
+        specs = [
+            self._parse_mixed_request(request, index=index)
+            for index, request in enumerate(requests)
+        ]
+        # Complete host preprocessing before publishing any request to the
+        # scheduler. A malformed later media item cannot strand earlier work.
+        sequences = [
+            self._prepare_mixed_sequence(request, params)
+            for request, params in zip(specs, normalized_params, strict=True)
+        ]
+        sequence_ids = [self._submit_sequence(sequence) for sequence in sequences]
+        progress_bar = (
+            tqdm(total=len(requests), desc="Generating Mixed", dynamic_ncols=True)
+            if use_tqdm
+            else None
+        )
+        return self._run_generation(
+            sequence_ids,
+            progress_bar=progress_bar,
+        )

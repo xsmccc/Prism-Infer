@@ -15,8 +15,7 @@ from benchmarks.bench_packed_mlp import (
 
 def _legacy_forward(mlp: Qwen3VLTextMLP, x: torch.Tensor) -> torch.Tensor:
     return F.linear(
-        F.silu(F.linear(x, mlp.gate_proj.weight))
-        * F.linear(x, mlp.up_proj.weight),
+        F.silu(F.linear(x, mlp.gate_proj.weight)) * F.linear(x, mlp.up_proj.weight),
         mlp.down_proj.weight,
     )
 
@@ -80,9 +79,7 @@ def test_packed_gate_up_executes_one_projection() -> None:
         mlp.gate_proj.register_forward_hook(
             lambda *_: calls.__setitem__("gate", calls["gate"] + 1)
         ),
-        mlp.up_proj.register_forward_hook(
-            lambda *_: calls.__setitem__("up", calls["up"] + 1)
-        ),
+        mlp.up_proj.register_forward_hook(lambda *_: calls.__setitem__("up", calls["up"] + 1)),
     ]
     try:
         with torch.inference_mode():
@@ -116,9 +113,7 @@ def test_legacy_mode_executes_two_projections_with_identical_weights() -> None:
         legacy.gate_proj.register_forward_hook(
             lambda *_: calls.__setitem__("gate", calls["gate"] + 1)
         ),
-        legacy.up_proj.register_forward_hook(
-            lambda *_: calls.__setitem__("up", calls["up"] + 1)
-        ),
+        legacy.up_proj.register_forward_hook(lambda *_: calls.__setitem__("up", calls["up"] + 1)),
     ]
     x = torch.randn(2, 16)
     try:
@@ -140,14 +135,14 @@ def test_mlp_projection_mode_rejects_unknown_value() -> None:
 def test_projection_mode_propagates_to_every_decoder_layer() -> None:
     model = Qwen3VLTextModel(
         vocab_size=32,
-        hidden_size=8,
+        hidden_size=12,
         num_heads=2,
         num_kv_heads=1,
         num_layers=3,
         intermediate_size=16,
         dtype=torch.float32,
-        head_dim=4,
-        mrope_section=[1, 1, 0],
+        head_dim=6,
+        mrope_section=[1, 1, 1],
         mlp_projection_mode="legacy",
     )
     assert [layer.mlp.projection_mode for layer in model.layers] == [
@@ -197,14 +192,19 @@ def test_packed_mlp_benchmark_statistics_use_nearest_rank() -> None:
     }
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_qwen_shape_bf16_cuda_packed_gate_up_is_bitwise_exact() -> None:
     torch.manual_seed(20260717)
-    mlp = Qwen3VLTextMLP(
-        hidden_size=4096,
-        intermediate_size=12288,
-        dtype=torch.bfloat16,
-    ).cuda().eval()
+    mlp = (
+        Qwen3VLTextMLP(
+            hidden_size=4096,
+            intermediate_size=12288,
+            dtype=torch.bfloat16,
+        )
+        .cuda()
+        .eval()
+    )
     try:
         with torch.inference_mode():
             for batch in (1, 2, 4, 8, 210, 408, 988):

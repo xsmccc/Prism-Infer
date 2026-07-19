@@ -109,6 +109,10 @@ def test_batch_plan_is_immutable_and_keeps_legacy_adapter() -> None:
     assert is_prefill
     assert cow == swap_in == swap_out == []
     assert plan.num_scheduled_tokens == 2
+    assert len(plan.prefill_slices) == 1
+    assert plan.prefill_slices[0].sequence_id == seq.seq_id
+    assert plan.prefill_slices[0].token_start == 0
+    assert plan.prefill_slices[0].token_end == 2
     with pytest.raises(FrozenInstanceError):
         plan.phase = BatchPhase.DECODE
 
@@ -150,13 +154,9 @@ def test_fcfs_policy_admission_and_chunk_budget_are_pure() -> None:
         enable_chunked_prefill=True,
         max_chunk_size=5,
     )
-    assert visual_policy.prefill_token_count(
-        visual, available_tokens=4
-    ) == 1
+    assert visual_policy.prefill_token_count(visual, available_tokens=4) == 1
     visual.num_computed_tokens = 1
-    assert visual_policy.prefill_token_count(
-        visual, available_tokens=5
-    ) == 5
+    assert visual_policy.prefill_token_count(visual, available_tokens=5) == 5
 
 
 def test_scheduler_emits_named_plan_and_advances_fsm() -> None:
@@ -183,6 +183,42 @@ def test_scheduler_emits_named_plan_and_advances_fsm() -> None:
         assert finished[0].request_id == seq.seq_id
         assert finished[0].finish_reason == "length"
         assert scheduler.is_finished()
+
+
+def test_scheduler_bounds_aggregate_vision_patches_and_isolates_oversized_request() -> None:
+    def image_sequence(patches: int) -> Sequence:
+        return _sequence(
+            [1, 99, 99, 2],
+            SamplingParams(max_tokens=1),
+            pixel_values=torch.zeros(patches, 4),
+            image_grid_thw=torch.tensor([[1, 2, patches // 2]]),
+            image_token_id=99,
+            image_token_count=2,
+        )
+
+    scheduler = Scheduler(_scheduler_config(max_vision_patches_per_batch=8))
+    first = image_sequence(6)
+    second = image_sequence(6)
+    scheduler.add(first)
+    scheduler.add(second)
+
+    plan = scheduler.schedule()
+
+    assert plan.sequences == (first,)
+    assert plan.num_scheduled_vision_patches == 6
+    assert list(scheduler.waiting) == [second]
+
+    oversized_scheduler = Scheduler(_scheduler_config(max_vision_patches_per_batch=4))
+    oversized = image_sequence(6)
+    trailing = _sequence([3, 4], SamplingParams(max_tokens=1))
+    oversized_scheduler.add(oversized)
+    oversized_scheduler.add(trailing)
+
+    dedicated = oversized_scheduler.schedule()
+
+    assert dedicated.sequences == (oversized,)
+    assert dedicated.num_scheduled_vision_patches == 6
+    assert list(oversized_scheduler.waiting) == [trailing]
 
 
 def test_scheduler_admission_rejection_and_swapped_cancel_are_terminal() -> None:
@@ -227,9 +263,7 @@ def test_online_prefix_hit_prefill_uses_remaining_token_budget() -> None:
                 max_chunk_size=8,
             )
         )
-        sampling = SamplingParams(
-            temperature=0.0, max_tokens=3, ignore_eos=True
-        )
+        sampling = SamplingParams(temperature=0.0, max_tokens=3, ignore_eos=True)
         first = _sequence([1, 2, 3, 4, 5], sampling)
         scheduler.add(first)
         first_prefill = scheduler.schedule()
@@ -260,9 +294,7 @@ def test_scheduler_swap_preemption_round_trip_is_measured() -> None:
                 max_num_seqs=2,
             )
         )
-        sampling = SamplingParams(
-            temperature=0.0, max_tokens=2, ignore_eos=True
-        )
+        sampling = SamplingParams(temperature=0.0, max_tokens=2, ignore_eos=True)
         first = _sequence([1, 2, 3, 4], sampling)
         second = _sequence([5, 6, 7, 8], sampling)
         scheduler.add(first)

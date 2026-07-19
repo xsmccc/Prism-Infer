@@ -15,9 +15,7 @@ import argparse
 import gc
 import importlib.metadata
 import json
-import os
 import platform
-import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -32,6 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
 from prism_infer.analysis.benchmark_schema import summarize_values
 from prism_infer.ops.paged_decode import HAS_TRITON, paged_decode_attention
 
@@ -82,99 +81,6 @@ def _parse_positive_int_csv(raw: str, *, option_name: str) -> tuple[int, ...]:
     return values
 
 
-def _git_metadata() -> dict[str, Any]:
-    """记录 benchmark harness 的完整 commit 和 worktree 状态。"""
-
-    try:
-        commit = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=REPO_ROOT,
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        status = subprocess.check_output(
-            ["git", "status", "--porcelain"],
-            cwd=REPO_ROOT,
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        return {"commit": commit, "dirty": bool(status)}
-    except (OSError, subprocess.SubprocessError):
-        return {"commit": "unknown", "dirty": True}
-
-
-def _safe_float(raw: str) -> float | None:
-    try:
-        return float(raw)
-    except ValueError:
-        return None
-
-
-def _nvidia_smi_metadata(gpu_uuid: str) -> dict[str, Any]:
-    """按 UUID 匹配 NVML 快照，避免 CUDA_VISIBLE_DEVICES 重映射错误。"""
-
-    query_fields = (
-        "uuid",
-        "driver_version",
-        "memory.used",
-        "memory.free",
-        "utilization.gpu",
-        "clocks.sm",
-        "power.draw",
-    )
-    try:
-        output = subprocess.check_output(
-            [
-                "nvidia-smi",
-                f"--query-gpu={','.join(query_fields)}",
-                "--format=csv,noheader,nounits",
-            ],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return {"available": False}
-
-    normalized_target = gpu_uuid.removeprefix("GPU-").lower()
-    for line in output.splitlines():
-        fields = [field.strip() for field in line.split(",")]
-        if len(fields) != len(query_fields):
-            continue
-        observed_uuid = fields[0]
-        if observed_uuid.removeprefix("GPU-").lower() != normalized_target:
-            continue
-        return {
-            "available": True,
-            "gpu_uuid": observed_uuid,
-            "driver": fields[1],
-            "memory_used_mib": _safe_float(fields[2]),
-            "memory_free_mib": _safe_float(fields[3]),
-            "utilization_gpu_percent": _safe_float(fields[4]),
-            "sm_clock_mhz": _safe_float(fields[5]),
-            "power_draw_w": _safe_float(fields[6]),
-        }
-    return {"available": False}
-
-
-def _gpu_metadata(device_index: int) -> dict[str, Any]:
-    """记录当前 CUDA logical device 和稳定物理身份。"""
-
-    properties = torch.cuda.get_device_properties(device_index)
-    raw_uuid = str(getattr(properties, "uuid", "unknown"))
-    gpu_uuid = raw_uuid if raw_uuid.startswith("GPU-") else f"GPU-{raw_uuid}"
-    return {
-        "logical_device_index": device_index,
-        "name": properties.name,
-        "gpu_uuid": gpu_uuid,
-        "compute_capability": f"{properties.major}.{properties.minor}",
-        "multiprocessor_count": properties.multi_processor_count,
-        "total_memory_bytes": properties.total_memory,
-        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
-        "nvidia_visible_devices": os.environ.get("NVIDIA_VISIBLE_DEVICES"),
-        "nvidia_smi": _nvidia_smi_metadata(gpu_uuid),
-    }
-
-
 def _framework_metadata() -> dict[str, str]:
     try:
         triton_version = importlib.metadata.version("triton")
@@ -216,15 +122,10 @@ def _validate_preflight(
     observed_utilization = snapshot.get("utilization_gpu_percent")
     if max_memory_used_mib is not None:
         if observed_memory is None or observed_memory > max_memory_used_mib:
-            failures.append(
-                f"memory.used={observed_memory} MiB > {max_memory_used_mib} MiB"
-            )
+            failures.append(f"memory.used={observed_memory} MiB > {max_memory_used_mib} MiB")
     if max_utilization_percent is not None:
         if observed_utilization is None or observed_utilization > max_utilization_percent:
-            failures.append(
-                "utilization.gpu="
-                f"{observed_utilization}% > {max_utilization_percent}%"
-            )
+            failures.append(f"utilization.gpu={observed_utilization}% > {max_utilization_percent}%")
     if failures:
         raise RuntimeError("GPU preflight failed: " + "; ".join(failures))
     return {"enabled": True, "passed": True, "thresholds": thresholds}
@@ -443,10 +344,7 @@ def _build_case_record(
     difference = (kernel.output - reference.output).abs()
     max_abs_diff = difference.max().item()
     mean_abs_diff = difference.float().mean().item()
-    correctness_passed = (
-        max_abs_diff < max_abs_diff_limit
-        and mean_abs_diff < mean_abs_diff_limit
-    )
+    correctness_passed = max_abs_diff < max_abs_diff_limit and mean_abs_diff < mean_abs_diff_limit
     kernel_latency = _latency_record(kernel.samples_ms, batch)
     reference_latency = _latency_record(reference.samples_ms, batch)
     kernel_median = float(kernel_latency["stats_ms"]["median"])
@@ -459,18 +357,9 @@ def _build_case_record(
         "context_lens": _tensor_bytes(context_lens),
     }
     tensor_memory["total"] = sum(tensor_memory.values())
-    logical_cache_bytes = (
-        batch
-        * context_len
-        * num_kv_heads
-        * head_dim
-        * k_cache.element_size()
-        * 2
-    )
+    logical_cache_bytes = batch * context_len * num_kv_heads * head_dim * k_cache.element_size() * 2
     return {
-        "case_id": (
-            f"{cache_dtype_name}_page{page_size}_batch{batch}_context{context_len}"
-        ),
+        "case_id": (f"{cache_dtype_name}_page{page_size}_batch{batch}_context{context_len}"),
         "parameters": {
             "cache_dtype": cache_dtype_name,
             "query_dtype": str(q.dtype),
@@ -666,9 +555,7 @@ def main() -> None:
     if not torch.cuda.is_available() or not HAS_TRITON:
         raise SystemExit("CUDA and Triton are required")
     if args.device < 0 or args.device >= torch.cuda.device_count():
-        parser.error(
-            f"--device must be in [0, {torch.cuda.device_count() - 1}], got {args.device}"
-        )
+        parser.error(f"--device must be in [0, {torch.cuda.device_count() - 1}], got {args.device}")
     if args.warmup < 0 or args.repeat <= 0:
         parser.error("--warmup must be non-negative and --repeat must be positive")
     if args.seed < 0:
@@ -681,16 +568,10 @@ def main() -> None:
         parser.error("correctness thresholds must be positive")
 
     try:
-        batch_sizes = _parse_positive_int_csv(
-            args.batch_sizes, option_name="--batch-sizes"
-        )
-        context_lens = _parse_positive_int_csv(
-            args.context_lens, option_name="--context-lens"
-        )
+        batch_sizes = _parse_positive_int_csv(args.batch_sizes, option_name="--batch-sizes")
+        context_lens = _parse_positive_int_csv(args.context_lens, option_name="--context-lens")
         if args.page_sizes is not None:
-            page_sizes = _parse_positive_int_csv(
-                args.page_sizes, option_name="--page-sizes"
-            )
+            page_sizes = _parse_positive_int_csv(args.page_sizes, option_name="--page-sizes")
         elif args.block_size is not None:
             if args.block_size <= 0:
                 raise ValueError("--block-size must be positive")
@@ -708,7 +589,7 @@ def main() -> None:
     device = torch.device("cuda", args.device)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
-    gpu = _gpu_metadata(args.device)
+    gpu = collect_gpu_metadata(args.device).detailed_dict()
     try:
         preflight = _validate_preflight(
             gpu,
@@ -722,7 +603,7 @@ def main() -> None:
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
         "finished_at_utc": None,
         "status": "running",
-        "git": _git_metadata(),
+        "git": collect_git_metadata(REPO_ROOT).as_dict(),
         "framework": _framework_metadata(),
         "gpu": gpu,
         "preflight": preflight,
@@ -761,19 +642,17 @@ def main() -> None:
                 for batch in batch_sizes:
                     for context_len in context_lens:
                         _reset_cuda_allocator(device)
-                        q, k_cache, v_cache, block_tables, case_context_lens = (
-                            _make_inputs(
-                                batch=batch,
-                                context_len=context_len,
-                                page_size=page_size,
-                                num_query_heads=args.num_heads,
-                                num_kv_heads=args.num_kv_heads,
-                                head_dim=args.head_dim,
-                                query_dtype=query_dtype,
-                                cache_dtype=cache_dtype,
-                                device=device,
-                                seed=args.seed,
-                            )
+                        q, k_cache, v_cache, block_tables, case_context_lens = _make_inputs(
+                            batch=batch,
+                            context_len=context_len,
+                            page_size=page_size,
+                            num_query_heads=args.num_heads,
+                            num_kv_heads=args.num_kv_heads,
+                            head_dim=args.head_dim,
+                            query_dtype=query_dtype,
+                            cache_dtype=cache_dtype,
+                            device=device,
+                            seed=args.seed,
                         )
                         scale = args.head_dim**-0.5
                         kernel = _measure(
@@ -825,9 +704,7 @@ def main() -> None:
                         cases.append(record)
                         _print_case(record)
 
-    failed_case_ids = [
-        case["case_id"] for case in cases if not case["correctness"]["passed"]
-    ]
+    failed_case_ids = [case["case_id"] for case in cases if not case["correctness"]["passed"]]
     run["finished_at_utc"] = datetime.now(timezone.utc).isoformat()
     run["status"] = "failed" if failed_case_ids else "passed"
     run["case_count"] = len(cases)
@@ -849,8 +726,7 @@ def main() -> None:
     )
     if failed_case_ids:
         raise RuntimeError(
-            "paged decode benchmark correctness failed: "
-            + ", ".join(failed_case_ids)
+            "paged decode benchmark correctness failed: " + ", ".join(failed_case_ids)
         )
 
 

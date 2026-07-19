@@ -52,9 +52,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     records = [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
     if not records or not all(isinstance(record, dict) for record in records):
         raise ValueError(f"expected non-empty JSONL objects: {path}")
@@ -132,12 +130,8 @@ def _inventory_archive(
         "selected_samples": len(selected_media),
         "unique_members": len(unique_infos),
         "missing_members": sorted(missing),
-        "selected_compressed_bytes": sum(
-            info.compress_size for info in unique_infos.values()
-        ),
-        "selected_uncompressed_bytes": sum(
-            info.file_size for info in unique_infos.values()
-        ),
+        "selected_compressed_bytes": sum(info.compress_size for info in unique_infos.values()),
+        "selected_uncompressed_bytes": sum(info.file_size for info in unique_infos.values()),
     }
 
 
@@ -145,9 +139,7 @@ def _safe_suffix(info: zipfile.ZipInfo, *, media_type: str) -> str:
     suffix = PurePosixPath(info.filename).suffix.lower()
     allowed = FRAME_SUFFIXES if media_type == "frames" else VIDEO_SUFFIXES
     if suffix not in allowed:
-        raise ValueError(
-            f"unsupported {media_type} suffix in ZIP member {info.filename!r}"
-        )
+        raise ValueError(f"unsupported {media_type} suffix in ZIP member {info.filename!r}")
     return suffix
 
 
@@ -183,10 +175,7 @@ def _extract_member(
             )
         media_sha256 = digest.hexdigest()
         relative_path = (
-            PurePosixPath("media")
-            / "mvbench_test"
-            / media_sha256[:2]
-            / f"{media_sha256}{suffix}"
+            PurePosixPath("media") / "mvbench_test" / media_sha256[:2] / f"{media_sha256}{suffix}"
         )
         target_path = output_root / Path(relative_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -195,9 +184,7 @@ def _extract_member(
                 target_path.stat().st_size != copied_bytes
                 or sha256_file(target_path) != media_sha256
             ):
-                raise ValueError(
-                    f"existing MVBench media has wrong identity: {target_path}"
-                )
+                raise ValueError(f"existing MVBench media has wrong identity: {target_path}")
             staging.unlink()
         else:
             os.replace(staging, target_path)
@@ -287,12 +274,9 @@ def _exclude_manual_sources(records: Sequence[dict[str, Any]]) -> None:
             ):
                 media.update(
                     {
-                        "materialization_status": (
-                            "excluded_manual_ntu_rgbd_license_required"
-                        ),
+                        "materialization_status": ("excluded_manual_ntu_rgbd_license_required"),
                         "exclusion_reason": (
-                            "frozen MVBench source requires separately licensed "
-                            "NTU RGB+D media"
+                            "frozen MVBench source requires separately licensed NTU RGB+D media"
                         ),
                     }
                 )
@@ -312,28 +296,18 @@ def _refresh_artifacts(
         records,
     )
     for artifact in manifest["datasets"]:
-        artifact_records_path = manifest_path.parent / artifact["selected_records"][
-            "path"
-        ]
+        artifact_records_path = manifest_path.parent / artifact["selected_records"]["path"]
         artifact_records = (
-            records
-            if artifact["id"] == "mvbench_test"
-            else _read_jsonl(artifact_records_path)
+            records if artifact["id"] == "mvbench_test" else _read_jsonl(artifact_records_path)
         )
-        artifact["selected_records"]["sha256"] = sha256_file(
-            artifact_records_path
-        )
+        artifact["selected_records"]["sha256"] = sha256_file(artifact_records_path)
         artifact["media_identity"] = media_identity_record(artifact_records)
         subset = evaluation_subset_record(artifact_records)
         artifact["evaluation_subset"] = subset
         if subset["status"] == "pending":
-            artifact["materialization_status"] = (
-                "media_materialization_in_progress"
-            )
+            artifact["materialization_status"] = "media_materialization_in_progress"
         elif subset["excluded_samples"]:
-            artifact["materialization_status"] = (
-                "complete_with_protocol_exclusions"
-            )
+            artifact["materialization_status"] = "complete_with_protocol_exclusions"
         else:
             artifact["materialization_status"] = "complete"
 
@@ -488,15 +462,9 @@ def main() -> None:
     if args.inventory_only:
         summary = {
             "archives": len(inventory),
-            "selected_samples": sum(
-                row["selected_samples"] for row in inventory.values()
-            ),
-            "unique_members": sum(
-                row["unique_members"] for row in inventory.values()
-            ),
-            "missing_members": sum(
-                len(row["missing_members"]) for row in inventory.values()
-            ),
+            "selected_samples": sum(row["selected_samples"] for row in inventory.values()),
+            "unique_members": sum(row["unique_members"] for row in inventory.values()),
+            "missing_members": sum(len(row["missing_members"]) for row in inventory.values()),
             "selected_compressed_bytes": sum(
                 row["selected_compressed_bytes"] for row in inventory.values()
             ),

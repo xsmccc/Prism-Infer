@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
@@ -14,6 +15,12 @@ from prism_infer.analysis.p9_quality_comparison import (
     validate_quality_samples,
 )
 from prism_infer.analysis.p9_quality_materialization import selected_ids_sha256
+from prism_infer.analysis.schema_constants import (
+    COMPUTE_CAPABILITY_COMPONENT_COUNT,
+    GIT_SHA1_HEX_LENGTH,
+    LOWERCASE_HEX_DIGITS,
+    SHA256_HEX_LENGTH,
+)
 
 EXTERNAL_QUALITY_SCHEMA_VERSION = 1
 EXTERNAL_QUALITY_COMPARISON_SCHEMA_VERSION = 1
@@ -150,8 +157,8 @@ def _integer(value: object, path: str, *, minimum: int = 0) -> int:
 
 def _sha256(value: object, path: str) -> str:
     digest = _string(value, path)
-    if len(digest) != 64 or any(
-        character not in "0123456789abcdef" for character in digest
+    if len(digest) != SHA256_HEX_LENGTH or any(
+        character not in LOWERCASE_HEX_DIGITS for character in digest
     ):
         raise ValueError(f"{path} must be a lowercase SHA256 digest")
     return digest
@@ -243,11 +250,7 @@ def expected_vllm_kv_cache(
     block_size = VLLM_KV_BLOCK_SIZE
     slots = num_blocks * block_size
     payload_elements = (
-        2
-        * dimensions["num_layers"]
-        * slots
-        * dimensions["num_kv_heads"]
-        * dimensions["head_size"]
+        2 * dimensions["num_layers"] * slots * dimensions["num_kv_heads"] * dimensions["head_size"]
     )
     payload_bytes = payload_elements * mode_spec["payload_element_bytes"]
     scale_elements = (
@@ -310,6 +313,14 @@ def validate_vllm_kv_cache(
                 f"external KV cache {key} differs from frozen vLLM layout: "
                 f"{cache.get(key)!r} != {value!r}"
             )
+    _validate_reported_vllm_kv_tensors(cache, expected)
+    _validate_vllm_kv_metadata_accounting(cache)
+
+
+def _validate_reported_vllm_kv_tensors(
+    cache: Mapping[str, Any],
+    expected: Mapping[str, Any],
+) -> None:
     if cache.get("accounting_scope") != (
         "allocated_gpu_kv_tensors_including_inline_per_token_head_scales"
     ):
@@ -318,10 +329,7 @@ def validate_vllm_kv_cache(
         cache.get("reported_tensor_sizes"),
         "artifact.kv_cache.reported_tensor_sizes",
     )
-    if (
-        tensor_sizes
-        != [expected["raw_tensor_bytes_per_layer"]] * expected["num_layers"]
-    ):
+    if tensor_sizes != [expected["raw_tensor_bytes_per_layer"]] * expected["num_layers"]:
         raise ValueError("external KV tensor sizes differ from the expected layout")
     if cache.get("reported_tensor_count") != len(tensor_sizes):
         raise ValueError("external KV tensor count is inconsistent")
@@ -330,6 +338,8 @@ def validate_vllm_kv_cache(
     if cache.get("reported_total_bytes") != expected["total_bytes"]:
         raise ValueError("external reported KV bytes differ from formula accounting")
 
+
+def _validate_vllm_kv_metadata_accounting(cache: Mapping[str, Any]) -> None:
     metadata = _mapping(
         cache.get("metadata_accounting"),
         "artifact.kv_cache.metadata_accounting",
@@ -338,9 +348,7 @@ def validate_vllm_kv_cache(
         _integer(metadata.get(key), f"artifact.kv_cache.metadata_accounting.{key}")
     complete = metadata.get("complete_for_cross_framework_physical_claim")
     if not isinstance(complete, bool):
-        raise ValueError(
-            "artifact.kv_cache.metadata_accounting completion flag must be bool"
-        )
+        raise ValueError("artifact.kv_cache.metadata_accounting completion flag must be bool")
     allocator_bytes = metadata.get("allocator_structural_bytes")
     if complete:
         _integer(
@@ -349,8 +357,7 @@ def validate_vllm_kv_cache(
         )
     elif allocator_bytes is not None:
         raise ValueError(
-            "incomplete external allocator accounting must be null, not a "
-            "measured byte value"
+            "incomplete external allocator accounting must be null, not a measured byte value"
         )
     _string(
         metadata.get("scope"),
@@ -417,9 +424,7 @@ def _max_media_for_samples(
     for sample in samples:
         record = references.get(sample["sample_id"])
         if record is None:
-            raise ValueError(
-                f"external sample {sample['sample_id']!r} has no reference record"
-            )
+            raise ValueError(f"external sample {sample['sample_id']!r} has no reference record")
         media = record.get("media")
         if not isinstance(media, list) or not media:
             raise ValueError("external reference record has no media list")
@@ -438,11 +443,74 @@ def validate_external_quality_artifact(
 ) -> None:
     """Validate one completed vLLM artifact without trusting stored scores."""
 
-    validate_p9_quality_protocol(protocol)
-    protocol_sha256 = canonical_json_sha256(protocol)
-    if evaluator.get("quality_protocol_sha256") != protocol_sha256:
-        raise ValueError("evaluator references a different quality protocol")
+    _validate_external_protocol_binding(evaluator, protocol)
     artifact = _mapping(artifact, "artifact")
+    _validate_external_artifact_header(artifact)
+    context = _validate_external_run_contract(
+        artifact,
+        evaluator=evaluator,
+        model_config=model_config,
+        require_headline=require_headline,
+    )
+    _validate_external_harness_identity(context.contract, context.headline)
+    _validate_external_environment(artifact, context.contract)
+    _validate_external_execution_evidence(
+        artifact,
+        contract=context.contract,
+        model_config=model_config,
+    )
+    samples = _validate_external_framework_runtime(
+        artifact,
+        contract=context.contract,
+        evaluator=evaluator,
+        dataset_id=context.dataset_id,
+        mode=context.mode,
+        reference_records=reference_records,
+    )
+
+    validate_vllm_kv_cache(
+        _mapping(artifact.get("kv_cache"), "artifact.kv_cache"),
+        mode=context.mode,
+        evaluator=evaluator,
+        model_config=model_config,
+    )
+    sample_validation = validate_quality_samples(
+        samples,
+        dataset_id=context.dataset_id,
+        runtime=evaluator["runtime"],
+        dataset_evaluator=context.dataset_evaluator,
+        reference_records=reference_records,
+        path_prefix="external.samples",
+    )
+    _validate_external_sample_inputs(samples, context.dataset_id)
+    _validate_external_selection(
+        artifact,
+        contract=context.contract,
+        samples=samples,
+        sample_validation=sample_validation,
+    )
+    _validate_external_materialization(artifact, context.contract)
+
+
+@dataclass(frozen=True, slots=True)
+class _ExternalRunContext:
+    contract: Mapping[str, Any]
+    dataset_id: str
+    mode: str
+    headline: bool
+    dataset_evaluator: Mapping[str, Any]
+
+
+def _validate_external_protocol_binding(
+    evaluator: Mapping[str, Any],
+    protocol: Mapping[str, Any],
+) -> None:
+    validate_p9_quality_protocol(protocol)
+    if evaluator.get("quality_protocol_sha256") != canonical_json_sha256(protocol):
+        raise ValueError("evaluator references a different quality protocol")
+
+
+def _validate_external_artifact_header(artifact: Mapping[str, Any]) -> None:
     if artifact.get("schema_version") != EXTERNAL_QUALITY_SCHEMA_VERSION:
         raise ValueError("external artifact has unsupported schema_version")
     if artifact.get("record_type") != EXTERNAL_QUALITY_RECORD_TYPE:
@@ -450,14 +518,54 @@ def validate_external_quality_artifact(
     if artifact.get("status") != "complete":
         raise ValueError("external quality artifact must be complete")
 
+
+def _validate_external_run_contract(
+    artifact: Mapping[str, Any],
+    *,
+    evaluator: Mapping[str, Any],
+    model_config: Mapping[str, Any],
+    require_headline: bool,
+) -> _ExternalRunContext:
     contract = _mapping(artifact.get("run_contract"), "artifact.run_contract")
-    if _sha256(
+    _validate_external_contract_hashes(artifact, contract, evaluator)
+    dataset_id, headline = _validate_external_scope(
+        artifact,
+        contract,
+        require_headline=require_headline,
+    )
+    mode = _string(contract.get("framework_mode"), "artifact.run_contract.framework_mode")
+    if mode not in VLLM_QUALITY_MODES:
+        raise ValueError(f"unsupported external framework mode: {mode!r}")
+    dataset_evaluator = _validate_external_model_contract(
+        contract,
+        evaluator=evaluator,
+        model_config=model_config,
+        dataset_id=dataset_id,
+    )
+    return _ExternalRunContext(contract, dataset_id, mode, headline, dataset_evaluator)
+
+
+def _validate_external_contract_hashes(
+    artifact: Mapping[str, Any],
+    contract: Mapping[str, Any],
+    evaluator: Mapping[str, Any],
+) -> None:
+    identity = _sha256(
         artifact.get("run_identity_sha256"),
         "artifact.run_identity_sha256",
-    ) != canonical_json_sha256(contract):
+    )
+    if identity != canonical_json_sha256(contract):
         raise ValueError("external run identity does not match its contract")
     if contract.get("evaluator_sha256") != canonical_json_sha256(evaluator):
         raise ValueError("external artifact references a different evaluator")
+
+
+def _validate_external_scope(
+    artifact: Mapping[str, Any],
+    contract: Mapping[str, Any],
+    *,
+    require_headline: bool,
+) -> tuple[str, bool]:
     dataset_id = _string(contract.get("dataset"), "artifact.run_contract.dataset")
     if dataset_id not in QUALITY_DATASETS:
         raise ValueError(f"unsupported external quality dataset: {dataset_id!r}")
@@ -473,31 +581,43 @@ def validate_external_quality_artifact(
         raise ValueError("external headline eligibility is inconsistent with scope")
     if require_headline and not headline:
         raise ValueError("external comparison requires formal headline evidence")
+    return dataset_id, headline
 
-    mode = _string(
-        contract.get("framework_mode"), "artifact.run_contract.framework_mode"
-    )
-    if mode not in VLLM_QUALITY_MODES:
-        raise ValueError(f"unsupported external framework mode: {mode!r}")
+
+def _validate_external_model_contract(
+    contract: Mapping[str, Any],
+    *,
+    evaluator: Mapping[str, Any],
+    model_config: Mapping[str, Any],
+    dataset_id: str,
+) -> Mapping[str, Any]:
     if contract.get("framework") != VLLM_FRAMEWORK:
         raise ValueError("external run contract framework must be vLLM")
     model = _string(contract.get("model"), "artifact.run_contract.model")
     if not model.startswith("/"):
         raise ValueError("external model path must be absolute")
-    if contract.get("model_revision") != evaluator["model"]["revision"]:
+    model_revision = evaluator["model"]["revision"]
+    if contract.get("model_revision") != model_revision:
         raise ValueError("external model revision differs from evaluator")
-    if contract.get("processor_revision") != evaluator["model"]["revision"]:
+    if contract.get("processor_revision") != model_revision:
         raise ValueError("external processor revision differs from evaluator")
-    if contract.get("model_config_canonical_sha256") != canonical_json_sha256(
-        model_config
-    ):
+    if contract.get("model_config_canonical_sha256") != canonical_json_sha256(model_config):
         raise ValueError("external model config identity is inconsistent")
     if contract.get("semantic_runtime") != frozen_semantic_runtime(evaluator):
         raise ValueError("external semantic runtime differs from evaluator")
-    dataset_evaluator = evaluator["datasets"][dataset_id]
+    dataset_evaluator = _mapping(
+        evaluator["datasets"][dataset_id],
+        f"evaluator.datasets.{dataset_id}",
+    )
     if contract.get("dataset_evaluator") != dataset_evaluator:
         raise ValueError("external dataset evaluator differs from frozen evaluator")
+    return dataset_evaluator
 
+
+def _validate_external_harness_identity(
+    contract: Mapping[str, Any],
+    headline: bool,
+) -> None:
     harness_git = _mapping(
         contract.get("harness_git"),
         "artifact.run_contract.harness_git",
@@ -506,13 +626,36 @@ def validate_external_quality_artifact(
         harness_git.get("commit"),
         "artifact.run_contract.harness_git.commit",
     )
-    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
+    if len(commit) != GIT_SHA1_HEX_LENGTH or any(
+        char not in LOWERCASE_HEX_DIGITS for char in commit
+    ):
         raise ValueError("external harness commit must be a full Git revision")
     dirty = harness_git.get("dirty")
     if not isinstance(dirty, bool) or (headline and dirty):
         raise ValueError("formal external evidence requires a clean harness")
 
+
+def _validate_external_environment(
+    artifact: Mapping[str, Any],
+    contract: Mapping[str, Any],
+) -> None:
     environment = _mapping(artifact.get("environment"), "artifact.environment")
+    _validate_external_software_identity(environment)
+    _validate_external_hardware_identity(environment)
+    _sha256(
+        environment.get("framework_distribution_record_sha256"),
+        "artifact.environment.framework_distribution_record_sha256",
+    )
+    _validate_external_implementation_files(environment)
+    contract_environment = _mapping(
+        contract.get("environment"),
+        "artifact.run_contract.environment",
+    )
+    if environment != contract_environment:
+        raise ValueError("external environment differs from its frozen run contract")
+
+
+def _validate_external_software_identity(environment: Mapping[str, Any]) -> None:
     if environment.get("framework") != VLLM_FRAMEWORK:
         raise ValueError("external artifact framework must be vllm")
     if environment.get("framework_version") != VLLM_FRAMEWORK_VERSION:
@@ -531,10 +674,10 @@ def validate_external_quality_artifact(
         "gpu",
     ):
         _string(environment.get(key), f"artifact.environment.{key}")
-    gpu_uuid = _string(
-        environment.get("gpu_uuid"),
-        "artifact.environment.gpu_uuid",
-    )
+
+
+def _validate_external_hardware_identity(environment: Mapping[str, Any]) -> None:
+    gpu_uuid = _string(environment.get("gpu_uuid"), "artifact.environment.gpu_uuid")
     if gpu_uuid == "unknown" or not gpu_uuid.startswith("GPU-"):
         raise ValueError("external GPU UUID is unavailable or malformed")
     driver = _string(environment.get("driver"), "artifact.environment.driver")
@@ -545,7 +688,7 @@ def validate_external_quality_artifact(
         "artifact.environment.compute_capability",
     )
     capability_parts = compute_capability.split(".")
-    if len(capability_parts) != 2 or not all(
+    if len(capability_parts) != COMPUTE_CAPABILITY_COMPONENT_COUNT or not all(
         part.isdigit() for part in capability_parts
     ):
         raise ValueError("external GPU compute capability is malformed")
@@ -554,50 +697,73 @@ def validate_external_quality_artifact(
         "artifact.environment.total_memory_bytes",
         minimum=1,
     )
-    _sha256(
-        environment.get("framework_distribution_record_sha256"),
-        "artifact.environment.framework_distribution_record_sha256",
-    )
+
+
+def _validate_external_implementation_files(environment: Mapping[str, Any]) -> None:
     implementation_files = _mapping(
         environment.get("framework_implementation_files"),
         "artifact.environment.framework_implementation_files",
     )
     if not implementation_files:
         raise ValueError("external framework implementation identity is empty")
-    if set(implementation_files) != set(VLLM_IMPLEMENTATION_FILES):
-        raise ValueError("external vLLM implementation file set is incomplete")
-    for path, digest in implementation_files.items():
-        _string(path, "artifact.environment.framework_implementation_files.path")
-        _sha256(digest, f"artifact.environment.framework_implementation_files[{path}]")
+    _validate_digest_file_set(
+        implementation_files,
+        expected_paths=VLLM_IMPLEMENTATION_FILES,
+        path="artifact.environment.framework_implementation_files",
+        mismatch_message="external vLLM implementation file set is incomplete",
+    )
     processor_files = _mapping(
         environment.get("transformers_processor_implementation_files"),
         "artifact.environment.transformers_processor_implementation_files",
     )
-    if set(processor_files) != set(TRANSFORMERS_PROCESSOR_IMPLEMENTATION_FILES):
-        raise ValueError("external Transformers processor file set is incomplete")
-    for path, digest in processor_files.items():
-        _string(
-            path,
-            "artifact.environment.transformers_processor_implementation_files.path",
-        )
-        _sha256(
-            digest,
-            "artifact.environment."
-            f"transformers_processor_implementation_files[{path}]",
-        )
-    contract_environment = _mapping(
-        contract.get("environment"),
-        "artifact.run_contract.environment",
+    _validate_digest_file_set(
+        processor_files,
+        expected_paths=TRANSFORMERS_PROCESSOR_IMPLEMENTATION_FILES,
+        path="artifact.environment.transformers_processor_implementation_files",
+        mismatch_message="external Transformers processor file set is incomplete",
     )
-    if environment != contract_environment:
-        raise ValueError("external environment differs from its frozen run contract")
 
+
+def _validate_digest_file_set(
+    files: Mapping[str, Any],
+    *,
+    expected_paths: Sequence[str],
+    path: str,
+    mismatch_message: str,
+) -> None:
+    if set(files) != set(expected_paths):
+        raise ValueError(mismatch_message)
+    for file_path, digest in files.items():
+        _string(file_path, f"{path}.path")
+        _sha256(digest, f"{path}[{file_path}]")
+
+
+def _validate_external_execution_evidence(
+    artifact: Mapping[str, Any],
+    *,
+    contract: Mapping[str, Any],
+    model_config: Mapping[str, Any],
+) -> None:
     execution = _mapping(
         artifact.get("execution_evidence"),
         "artifact.execution_evidence",
     )
     if execution.get("required_environment") != dict(VLLM_REQUIRED_ENVIRONMENT):
         raise ValueError("external required environment evidence is inconsistent")
+    _validate_external_language_backends(execution, model_config)
+    _validate_external_vision_backend(execution, model_config)
+    framework_runtime = _mapping(
+        contract.get("framework_runtime"),
+        "artifact.run_contract.framework_runtime",
+    )
+    if framework_runtime.get("attention_backend") != VLLM_ATTENTION_BACKEND:
+        raise ValueError("external requested and effective language backends differ")
+
+
+def _validate_external_language_backends(
+    execution: Mapping[str, Any],
+    model_config: Mapping[str, Any],
+) -> None:
     language_backends = _list(
         execution.get("language_attention_backends"),
         "artifact.execution_evidence.language_attention_backends",
@@ -606,116 +772,99 @@ def validate_external_quality_artifact(
         raise ValueError("external language attention backend evidence is empty")
     language_layers: list[str] = []
     for index, raw_backend in enumerate(language_backends):
-        backend = _mapping(
-            raw_backend,
-            f"artifact.execution_evidence.language_attention_backends[{index}]",
-        )
-        if backend.get("name") != VLLM_ATTENTION_BACKEND:
-            raise ValueError(
-                "external effective language attention backend is unsupported"
-            )
-        _string(
-            backend.get("backend_class"),
-            f"artifact.execution_evidence.language_attention_backends[{index}].backend_class",
-        )
-        _integer(
-            backend.get("kv_cache_group_id"),
-            f"artifact.execution_evidence.language_attention_backends[{index}].kv_cache_group_id",
-        )
-        layer_names = _list(
-            backend.get("layer_names"),
-            f"artifact.execution_evidence.language_attention_backends[{index}].layer_names",
-        )
-        if not layer_names:
-            raise ValueError("external language attention group has no layers")
-        language_layers.extend(
-            _string(
-                layer,
-                f"artifact.execution_evidence.language_attention_backends[{index}].layer_names",
-            )
-            for layer in layer_names
-        )
-    expected_language_layers = _text_model_dimensions(model_config)["num_layers"]
-    if len(language_layers) != expected_language_layers:
+        language_layers.extend(_validate_external_language_backend(raw_backend, index))
+    expected_layers = _text_model_dimensions(model_config)["num_layers"]
+    if len(language_layers) != expected_layers:
         raise ValueError("external language attention layer count is inconsistent")
     if len(language_layers) != len(set(language_layers)):
-        raise ValueError(
-            "external language attention layer evidence contains duplicates"
-        )
+        raise ValueError("external language attention layer evidence contains duplicates")
 
-    vision_backend = _mapping(
-        execution.get("vision_attention_backend"),
-        "artifact.execution_evidence.vision_attention_backend",
-    )
+
+def _validate_external_language_backend(raw_backend: object, index: int) -> list[str]:
+    path = f"artifact.execution_evidence.language_attention_backends[{index}]"
+    backend = _mapping(raw_backend, path)
+    if backend.get("name") != VLLM_ATTENTION_BACKEND:
+        raise ValueError("external effective language attention backend is unsupported")
+    _string(backend.get("backend_class"), f"{path}.backend_class")
+    _integer(backend.get("kv_cache_group_id"), f"{path}.kv_cache_group_id")
+    layer_names = _list(backend.get("layer_names"), f"{path}.layer_names")
+    if not layer_names:
+        raise ValueError("external language attention group has no layers")
+    return [_string(layer, f"{path}.layer_names") for layer in layer_names]
+
+
+def _validate_external_vision_backend(
+    execution: Mapping[str, Any],
+    model_config: Mapping[str, Any],
+) -> None:
+    path = "artifact.execution_evidence.vision_attention_backend"
+    vision_backend = _mapping(execution.get("vision_attention_backend"), path)
     if vision_backend.get("name") != VLLM_VISION_ATTENTION_BACKEND:
         raise ValueError("external effective vision attention backend is unsupported")
-    _string(
-        vision_backend.get("selector_class"),
-        "artifact.execution_evidence.vision_attention_backend.selector_class",
-    )
+    _string(vision_backend.get("selector_class"), f"{path}.selector_class")
     if vision_backend.get("layer_count") != _vision_model_depth(model_config):
         raise ValueError("external vision attention layer count is inconsistent")
 
-    framework_runtime = _mapping(
-        contract.get("framework_runtime"),
-        "artifact.run_contract.framework_runtime",
-    )
-    if framework_runtime.get("attention_backend") != VLLM_ATTENTION_BACKEND:
-        raise ValueError("external requested and effective language backends differ")
 
+def _validate_external_framework_runtime(
+    artifact: Mapping[str, Any],
+    *,
+    contract: Mapping[str, Any],
+    evaluator: Mapping[str, Any],
+    dataset_id: str,
+    mode: str,
+    reference_records: Sequence[Mapping[str, Any]],
+) -> list[Any]:
     samples = _list(artifact.get("samples"), "artifact.samples")
     if not samples:
         raise ValueError("external artifact samples must not be empty")
-    max_media = _max_media_for_samples(samples, reference_records)
     expected_runtime = vllm_framework_runtime(
         evaluator=evaluator,
         dataset_id=dataset_id,
         mode=mode,
-        max_media_per_prompt=max_media,
+        max_media_per_prompt=_max_media_for_samples(samples, reference_records),
     )
     if contract.get("framework_runtime") != expected_runtime:
         raise ValueError("external framework runtime differs from frozen vLLM cell")
+    return samples
 
-    validate_vllm_kv_cache(
-        _mapping(artifact.get("kv_cache"), "artifact.kv_cache"),
-        mode=mode,
-        evaluator=evaluator,
-        model_config=model_config,
-    )
-    sample_validation = validate_quality_samples(
-        samples,
-        dataset_id=dataset_id,
-        runtime=evaluator["runtime"],
-        dataset_evaluator=dataset_evaluator,
-        reference_records=reference_records,
-        path_prefix="external.samples",
-    )
+
+def _validate_external_sample_inputs(samples: list[Any], dataset_id: str) -> None:
     for index, sample in enumerate(samples):
-        framework_input = _mapping(
-            sample.get("framework_input"),
-            f"external.samples[{index}].framework_input",
-        )
-        identity = sample["input"]
-        if framework_input.get("prompt_token_count") != identity["prompt_token_count"]:
-            raise ValueError("vLLM request prompt token count differs from preflight")
-        if (
-            framework_input.get("prompt_token_ids_sha256")
-            != identity["prompt_token_ids_sha256"]
-        ):
-            raise ValueError("vLLM request prompt token IDs differ from preflight")
-        if framework_input.get("matches_prepared_semantic_identity") is not True:
-            raise ValueError("vLLM request did not prove exact prepared input identity")
+        sample_mapping = _mapping(sample, f"external.samples[{index}]")
+        _validate_external_sample_input(sample_mapping, index)
         if dataset_id == "mvbench_test":
-            bridge = _mapping(
-                sample.get("video_frame_bridge"),
-                f"external.samples[{index}].video_frame_bridge",
-            )
-            for key in ("helper_bundle_sha256", "bundle_content_sha256"):
-                _sha256(
-                    bridge.get(key),
-                    f"external.samples[{index}].video_frame_bridge.{key}",
-                )
+            _validate_video_frame_bridge(sample_mapping, index)
 
+
+def _validate_external_sample_input(sample: Mapping[str, Any], index: int) -> None:
+    framework_input = _mapping(
+        sample.get("framework_input"),
+        f"external.samples[{index}].framework_input",
+    )
+    identity = _mapping(sample.get("input"), f"external.samples[{index}].input")
+    if framework_input.get("prompt_token_count") != identity.get("prompt_token_count"):
+        raise ValueError("vLLM request prompt token count differs from preflight")
+    if framework_input.get("prompt_token_ids_sha256") != identity.get("prompt_token_ids_sha256"):
+        raise ValueError("vLLM request prompt token IDs differ from preflight")
+    if framework_input.get("matches_prepared_semantic_identity") is not True:
+        raise ValueError("vLLM request did not prove exact prepared input identity")
+
+
+def _validate_video_frame_bridge(sample: Mapping[str, Any], index: int) -> None:
+    path = f"external.samples[{index}].video_frame_bridge"
+    bridge = _mapping(sample.get("video_frame_bridge"), path)
+    for key in ("helper_bundle_sha256", "bundle_content_sha256"):
+        _sha256(bridge.get(key), f"{path}.{key}")
+
+
+def _validate_external_selection(
+    artifact: Mapping[str, Any],
+    *,
+    contract: Mapping[str, Any],
+    samples: list[Any],
+    sample_validation: Mapping[str, Any],
+) -> None:
     selection = _mapping(artifact.get("selection"), "artifact.selection")
     sample_ids = sample_validation["sample_ids"]
     if selection.get("eligible_run_samples") != len(samples):
@@ -734,16 +883,17 @@ def validate_external_quality_artifact(
         selection.get("selected_contract_ids_sha256"),
         "artifact.selection.selected_contract_ids_sha256",
     )
-    _list(
-        selection.get("protocol_exclusions"), "artifact.selection.protocol_exclusions"
-    )
+    _list(selection.get("protocol_exclusions"), "artifact.selection.protocol_exclusions")
     if artifact.get("completed_samples") != len(samples):
         raise ValueError("external completed sample count is inconsistent")
     if artifact.get("aggregate") != sample_validation["aggregate"]:
-        raise ValueError(
-            "external aggregate differs from independently recomputed scores"
-        )
+        raise ValueError("external aggregate differs from independently recomputed scores")
 
+
+def _validate_external_materialization(
+    artifact: Mapping[str, Any],
+    contract: Mapping[str, Any],
+) -> None:
     materialization = _mapping(
         artifact.get("materialization_verification"),
         "artifact.materialization_verification",
@@ -817,9 +967,7 @@ def compare_prism_external_quality(
     if prism_capacity != external_cache["logical_token_capacity"]:
         raise ValueError("Prism/vLLM logical KV capacities differ")
     metadata_complete = bool(
-        external_cache["metadata_accounting"][
-            "complete_for_cross_framework_physical_claim"
-        ]
+        external_cache["metadata_accounting"]["complete_for_cross_framework_physical_claim"]
     )
     full_physical_comparable = False
     physical_limitations = []
@@ -845,9 +993,7 @@ def compare_prism_external_quality(
         "evaluator_sha256": canonical_json_sha256(evaluator),
         "prism_artifact_sha256": canonical_json_sha256(prism),
         "external_artifact_sha256": canonical_json_sha256(external),
-        "paired_input_identity_sha256": sample_comparison[
-            "paired_input_identity_sha256"
-        ],
+        "paired_input_identity_sha256": sample_comparison["paired_input_identity_sha256"],
         "semantic_input_exact": True,
         "reference_scores_recomputed": True,
         "metrics": sample_comparison["metrics"],

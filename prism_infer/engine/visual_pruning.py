@@ -21,14 +21,23 @@ import torch
 import torch.distributed as dist
 
 
+DEFAULT_VISUAL_PRUNING_KEEP_RATIO = 0.6
+DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS = 32
+DEFAULT_VISUAL_PRUNING_STRATEGY = "uniform"
+DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS = 1
+ATTENTION_TOKEN_HEAD_TENSOR_RANK = 3
+IMAGE_MODALITY = "image"
+VIDEO_MODALITY = "video"
+
+
 @dataclass(frozen=True)
 class VisualPruningConfig:
     """Visual-token pruning decision configuration."""
 
-    keep_ratio: float = 0.6
-    min_keep_tokens: int = 32
-    strategy: str = "uniform"
-    attention_last_n_layers: int = 1
+    keep_ratio: float = DEFAULT_VISUAL_PRUNING_KEEP_RATIO
+    min_keep_tokens: int = DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS
+    strategy: str = DEFAULT_VISUAL_PRUNING_STRATEGY
+    attention_last_n_layers: int = DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS
 
     def __post_init__(self) -> None:
         if not 0.0 < self.keep_ratio <= 1.0:
@@ -39,8 +48,7 @@ class VisualPruningConfig:
             raise ValueError(f"unsupported strategy: {self.strategy!r}")
         if self.attention_last_n_layers < 1:
             raise ValueError(
-                "attention_last_n_layers must be >= 1, got "
-                f"{self.attention_last_n_layers}"
+                f"attention_last_n_layers must be >= 1, got {self.attention_last_n_layers}"
             )
 
 
@@ -111,7 +119,7 @@ class RuntimeVisualTokenScorer:
             return
         if layer_id in self._observed_layers:
             raise RuntimeError(f"runtime visual scorer observed layer {layer_id} twice")
-        if q.ndim != 3 or k.ndim != 3:
+        if q.ndim != ATTENTION_TOKEN_HEAD_TENSOR_RANK or k.ndim != ATTENTION_TOKEN_HEAD_TENSOR_RANK:
             raise ValueError(
                 "runtime visual scorer expects q/k [tokens, heads, dim], got "
                 f"{list(q.shape)} and {list(k.shape)}"
@@ -134,7 +142,7 @@ class RuntimeVisualTokenScorer:
             # q_last: [local_q_heads, head_dim]
             q_last = q[spec.token_end - 1].detach().float()
             # keys: [seq_tokens, local_q_heads, head_dim]
-            keys = k[spec.token_start:spec.token_end].detach().float()
+            keys = k[spec.token_start : spec.token_end].detach().float()
             keys = keys.repeat_interleave(groups, dim=1)
             # probs: [local_q_heads, seq_tokens]
             logits = torch.einsum("hd,thd->ht", q_last, keys) * float(scale)
@@ -166,9 +174,7 @@ class RuntimeVisualTokenScorer:
                 continue
             scores = self._score_sums.get(spec.seq_id)
             if scores is None:
-                raise RuntimeError(
-                    f"runtime visual scorer has no scores for seq_id={spec.seq_id}"
-                )
+                raise RuntimeError(f"runtime visual scorer has no scores for seq_id={spec.seq_id}")
             scores = scores / observation_count
             if world_size > 1:
                 dist.all_reduce(scores, op=dist.ReduceOp.SUM)
@@ -241,8 +247,7 @@ class PruningDecision:
                     "modality": span.modality,
                     "span_index": span.index,
                     "kept_tokens": sum(
-                        token_index in kept_set
-                        for token_index in range(span.start, span.end)
+                        token_index in kept_set for token_index in range(span.start, span.end)
                     ),
                 }
                 for span in self.visual_token_spans
@@ -255,6 +260,17 @@ class PruningDecision:
 def find_visual_token_spans(seq) -> tuple[VisualTokenSpan, ...]:
     """Scan one sequence and return contiguous image/video token spans."""
 
+    token_ids, image_token_id, video_token_id, image_token_count, video_token_count = (
+        _visual_token_metadata(seq)
+    )
+    spans = _scan_visual_token_spans(token_ids, image_token_id, video_token_id)
+    _validate_visual_span_counts(spans, image_token_count, video_token_count)
+    return spans
+
+
+def _visual_token_metadata(
+    seq,
+) -> tuple[list[int], int | None, int | None, int, int]:
     token_ids = getattr(seq, "token_ids", None)
     if token_ids is None:
         raise ValueError("visual pruning requires full seq.token_ids")
@@ -264,44 +280,78 @@ def find_visual_token_spans(seq) -> tuple[VisualTokenSpan, ...]:
     video_token_id = getattr(seq, "video_token_id", None)
     image_token_count = int(getattr(seq, "image_token_count", 0))
     video_token_count = int(getattr(seq, "video_token_count", 0))
+    if image_token_count < 0 or video_token_count < 0:
+        raise ValueError("visual token counts must be non-negative")
     if image_token_count and image_token_id is None:
         raise ValueError("image_token_count is set but image_token_id is missing")
     if video_token_count and video_token_id is None:
         raise ValueError("video_token_count is set but video_token_id is missing")
-    if (
-        image_token_id is not None
-        and video_token_id is not None
-        and int(image_token_id) == int(video_token_id)
-    ):
+    image_token_id = None if image_token_id is None else int(image_token_id)
+    video_token_id = None if video_token_id is None else int(video_token_id)
+    if image_token_id is not None and image_token_id == video_token_id:
         raise ValueError("image_token_id and video_token_id must be different")
+    return token_ids, image_token_id, video_token_id, image_token_count, video_token_count
 
-    def modality(token_id: int) -> str | None:
-        if image_token_id is not None and token_id == int(image_token_id):
-            return "image"
-        if video_token_id is not None and token_id == int(video_token_id):
-            return "video"
-        return None
 
+def _scan_visual_token_spans(
+    token_ids: list[int],
+    image_token_id: int | None,
+    video_token_id: int | None,
+) -> tuple[VisualTokenSpan, ...]:
     spans: list[VisualTokenSpan] = []
-    span_counts = {"image": 0, "video": 0}
+    span_counts = {IMAGE_MODALITY: 0, VIDEO_MODALITY: 0}
     active_modality: str | None = None
     active_start = 0
     for idx, token_id in enumerate(token_ids):
-        current_modality = modality(token_id)
+        current_modality = _visual_modality(token_id, image_token_id, video_token_id)
         if current_modality == active_modality:
             continue
         if active_modality is not None:
-            span_index = span_counts[active_modality]
-            span_counts[active_modality] += 1
-            spans.append(VisualTokenSpan(active_modality, active_start, idx, span_index))
+            _append_visual_span(spans, span_counts, active_modality, active_start, idx)
         active_modality = current_modality
         active_start = idx
     if active_modality is not None:
-        span_index = span_counts[active_modality]
-        spans.append(VisualTokenSpan(active_modality, active_start, len(token_ids), span_index))
+        _append_visual_span(
+            spans,
+            span_counts,
+            active_modality,
+            active_start,
+            len(token_ids),
+        )
+    return tuple(spans)
 
-    actual_image_tokens = sum(span.token_count for span in spans if span.modality == "image")
-    actual_video_tokens = sum(span.token_count for span in spans if span.modality == "video")
+
+def _visual_modality(
+    token_id: int,
+    image_token_id: int | None,
+    video_token_id: int | None,
+) -> str | None:
+    if image_token_id is not None and token_id == image_token_id:
+        return IMAGE_MODALITY
+    if video_token_id is not None and token_id == video_token_id:
+        return VIDEO_MODALITY
+    return None
+
+
+def _append_visual_span(
+    spans: list[VisualTokenSpan],
+    span_counts: dict[str, int],
+    modality: str,
+    start: int,
+    end: int,
+) -> None:
+    span_index = span_counts[modality]
+    span_counts[modality] += 1
+    spans.append(VisualTokenSpan(modality, start, end, span_index))
+
+
+def _validate_visual_span_counts(
+    spans: tuple[VisualTokenSpan, ...],
+    image_token_count: int,
+    video_token_count: int,
+) -> None:
+    actual_image_tokens = sum(span.token_count for span in spans if span.modality == IMAGE_MODALITY)
+    actual_video_tokens = sum(span.token_count for span in spans if span.modality == VIDEO_MODALITY)
     if actual_image_tokens != image_token_count:
         raise ValueError(
             "image token count mismatch for pruning decision: "
@@ -312,7 +362,6 @@ def find_visual_token_spans(seq) -> tuple[VisualTokenSpan, ...]:
             "video token count mismatch for pruning decision: "
             f"metadata={video_token_count}, token_ids={actual_video_tokens}"
         )
-    return tuple(spans)
 
 
 def _visual_token_indices(spans: tuple[VisualTokenSpan, ...]) -> tuple[int, ...]:
@@ -366,9 +415,7 @@ def _score_keep_indices(
     token_scores: Mapping[int, float] | None,
 ) -> tuple[int, ...]:
     if token_scores is None:
-        raise ValueError(
-            "score-based pruning requires token_scores keyed by sequence token index"
-        )
+        raise ValueError("score-based pruning requires token_scores keyed by sequence token index")
 
     scored_indices: list[tuple[float, int]] = []
     for token_index in visual_token_indices:
@@ -425,7 +472,9 @@ def compute_pruning_decision(
 
     return PruningDecision(
         seq_id=seq.seq_id,
-        prompt_token_count=int(getattr(seq, "num_prompt_tokens", len(getattr(seq, "token_ids", [])))),
+        prompt_token_count=int(
+            getattr(seq, "num_prompt_tokens", len(getattr(seq, "token_ids", [])))
+        ),
         total_visual_tokens=total_visual_tokens,
         kept_visual_tokens=kept_count,
         dropped_visual_tokens=dropped_count,
@@ -469,8 +518,7 @@ def finalize_attention_pruning_decisions(
 
     if config.strategy != "attention":
         raise ValueError(
-            "runtime attention finalization requires strategy='attention', got "
-            f"{config.strategy!r}"
+            f"runtime attention finalization requires strategy='attention', got {config.strategy!r}"
         )
     score_maps = scorer.finalize()
     records: list[dict[str, object] | None] = []
@@ -498,8 +546,11 @@ def finalize_attention_pruning_decisions(
                 "score_mean": sum(values) / len(values),
             }
         )
-        seq.visual_pruning_decision_record = record
         records.append(record)
+    # Commit only after every sequence has produced a valid record.  A late
+    # score/schema failure must not leave an earlier request partially mutated.
+    for seq, record in zip(seqs, records):
+        seq.visual_pruning_decision_record = record
     return tuple(records)
 
 
@@ -566,6 +617,17 @@ def build_retained_context_indices(
             "physical visual KV compaction is not supported by logical pruning"
         )
 
+    prompt_token_count = _validate_pruning_prompt_length(decision_record, context_len)
+    visual_token_indices = _visual_indices_from_record(decision_record, prompt_token_count)
+    kept_indices, dropped_indices = _pruning_partition_from_record(decision_record)
+    _validate_pruning_partition(kept_indices, dropped_indices, visual_token_indices)
+    return tuple(idx for idx in range(context_len) if idx not in dropped_indices)
+
+
+def _validate_pruning_prompt_length(
+    decision_record: dict[str, object],
+    context_len: int,
+) -> int:
     prompt_token_count = int(decision_record.get("prompt_token_count", -1))
     if prompt_token_count < 0:
         raise ValueError("visual pruning record missing prompt_token_count")
@@ -574,7 +636,13 @@ def build_retained_context_indices(
             "decode context shorter than pruning prompt: "
             f"context_len={context_len}, prompt_token_count={prompt_token_count}"
         )
+    return prompt_token_count
 
+
+def _visual_indices_from_record(
+    decision_record: dict[str, object],
+    prompt_token_count: int,
+) -> set[int]:
     visual_token_indices: set[int] = set()
     for span in decision_record.get("visual_token_spans", []):
         if not isinstance(span, dict):
@@ -587,17 +655,26 @@ def build_retained_context_indices(
                 f"start={start}, end={end}, prompt_token_count={prompt_token_count}"
             )
         visual_token_indices.update(range(start, end))
+    return visual_token_indices
 
+
+def _pruning_partition_from_record(
+    decision_record: dict[str, object],
+) -> tuple[set[int], set[int]]:
     kept_indices = {int(idx) for idx in decision_record.get("kept_token_indices", [])}
     dropped_indices = {int(idx) for idx in decision_record.get("dropped_token_indices", [])}
+    return kept_indices, dropped_indices
+
+
+def _validate_pruning_partition(
+    kept_indices: set[int],
+    dropped_indices: set[int],
+    visual_token_indices: set[int],
+) -> None:
     if kept_indices & dropped_indices:
         raise ValueError("kept and dropped visual token indices overlap")
     if kept_indices | dropped_indices != visual_token_indices:
-        raise ValueError(
-            "visual pruning record does not cover exactly the visual prompt tokens"
-        )
-
-    return tuple(idx for idx in range(context_len) if idx not in dropped_indices)
+        raise ValueError("visual pruning record does not cover exactly the visual prompt tokens")
 
 
 def build_retained_slot_mapping(

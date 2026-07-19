@@ -1,7 +1,7 @@
 # Prism-Infer 性能报告
 
-> 更新日期: 2026-07-17
-> 当前阶段: P9-A architecture/performance baseline
+> 更新日期: 2026-07-19
+> 当前阶段: P9-C scaled-FP8 quality complete；P9-D runtime optimization pending
 > 报告性质: 包含 dirty validation 与 clean formal evidence；每节单独标注结论边界
 
 ## 1. 结论边界
@@ -1263,3 +1263,58 @@ benchmark schema、Paged Attention、Qwen attention、P9 protocol 与 benchmark 
 57 个本地 Markdown 链接、artifact/hash 复核和 `git diff --check` 均 PASS。结束时
 已分配 GPU0 回到 `1 MiB / 0%`；其他可见设备不纳入 release gate。P9-A 判定 PASS；下一阶段先做架构硬化，不把 scaled FP8
 或 split-GQA kernel 混入同一迁移 diff。
+
+## 8. P9-C scaled FP8 质量与物理 KV pool
+
+### 8.1 存储合同
+
+`scaled_fp8_kv` 使用 E4M3FN payload 与 per-token/per-KV-head K/V FP32 scales。
+同 10,240 logical-token capacity 下，Prism 与 vLLM 的已分配 KV tensor 字节均为：
+
+```text
+BF16 payload:             1,509,949,440 B
+FP8 payload:                754,974,720 B
+K/V FP32 scales:             23,592,960 B
+scaled-FP8 total:           778,567,680 B
+scaled/BF16 ratio:             0.515625
+saving:                       48.4375%
+```
+
+这个口径只包含实际 KV payload 与 scales。vLLM worker block-table tensor有独立记录，
+但 Prism schema-v1 formal artifact和跨框架Python allocator对象图没有统一字节合同，
+因此正式 artifact设置`full_physical_comparable=false`。不能把本节写成整卡显存减半或
+完整物理Pareto胜出。
+
+### 8.2 标准多模态质量
+
+clean `5ada892` 的 Prism BF16→scaled-FP8 paired matrix：
+
+| Dataset | Development | Final |
+|---|:---:|:---:|
+| DocVQA | PASS | PASS |
+| MuirBench official + strict | PASS | PASS |
+| MVBench | PASS | PASS |
+
+六个 cell 都按冻结 evaluator、selection、media hash、seed `20260717` 和 10,000 次
+paired bootstrap重算；MVBench final为`190/190` token exact。该结论是 formal
+non-inferiority，不是任意模型/数据/上下文的无损保证。
+
+clean `3ec90a5` 的 vLLM 0.24.0 external per-token-head FP8 matrix：
+
+| Dataset | Development | Final |
+|---|:---:|:---:|
+| DocVQA | PASS | PASS |
+| MuirBench official + strict | PASS | PASS |
+| MVBench | FAIL | FAIL |
+
+vLLM MVBench accuracy点估计高于Prism BF16 baseline，但paired CI下界略低于预注册
+margin，所以不能事后改判。对外结论必须是external quality `MIXED`，不能写成Prism
+accuracy显著领先。完整逐项指标、fallback解释和artifact SHA256见
+`VERIFICATION.md` P9-C.1/P9-C.2。
+
+### 8.3 尚未形成的性能结论
+
+P9-C证明了scale lifecycle、质量和allocated-KV-pool收益，不自动证明TPOT、TTFT、
+E2E或online goodput改善。scaled-FP8正式runtime matrix、full-physical Gate A、细页
+allocator和`visual_compact_scaled_fp8`组合质量仍是独立门禁；在P9-D正式重复实验前，
+不得从kernel microbenchmark或单次smoke生成runtime speedup claim。

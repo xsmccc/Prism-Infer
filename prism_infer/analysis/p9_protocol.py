@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import math
+
+from prism_infer.analysis.schema_constants import PERCENTAGE_POINTS_SCALE
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -81,9 +83,7 @@ def _git_revision(container: Mapping[str, Any], key: str, path: str) -> str:
     return revision
 
 
-def _positive_number_list(
-    container: Mapping[str, Any], key: str, path: str
-) -> tuple[float, ...]:
+def _positive_number_list(container: Mapping[str, Any], key: str, path: str) -> tuple[float, ...]:
     values = _list(container, key, path)
     numeric = []
     for index, value in enumerate(values):
@@ -130,12 +130,22 @@ def validate_p9_runtime_manifest(manifest: Mapping[str, Any]) -> None:
         raise ValueError("unsupported manifest.p9_protocol.schema_version")
 
     case_ids = {str(case["id"]) for case in manifest["cases"]}
+    _validate_runtime_model(protocol)
+    _validate_runtime_sampling(protocol)
+    _validate_runtime_memory_contract(protocol)
+    _validate_runtime_headlines(protocol, case_ids)
+    _validate_runtime_measurement(protocol)
+
+
+def _validate_runtime_model(protocol: Mapping[str, Any]) -> None:
     model = _mapping(protocol, "model", "manifest.p9_protocol")
     _string(model, "name", "manifest.p9_protocol.model")
     _git_revision(model, "revision", "manifest.p9_protocol.model")
     _string(model, "weight_dtype", "manifest.p9_protocol.model")
     _positive_int(model, "tensor_parallel_size", "manifest.p9_protocol.model")
 
+
+def _validate_runtime_sampling(protocol: Mapping[str, Any]) -> None:
     sampling = _mapping(protocol, "sampling", "manifest.p9_protocol")
     temperature = sampling.get("temperature")
     if isinstance(temperature, bool) or not isinstance(temperature, (int, float)):
@@ -145,6 +155,8 @@ def validate_p9_runtime_manifest(manifest: Mapping[str, Any]) -> None:
     _bool(sampling, "ignore_eos", "manifest.p9_protocol.sampling")
     _positive_int(sampling, "seed", "manifest.p9_protocol.sampling")
 
+
+def _validate_runtime_memory_contract(protocol: Mapping[str, Any]) -> None:
     memory = _mapping(protocol, "memory_contract", "manifest.p9_protocol")
     _string(memory, "gpu_class", "manifest.p9_protocol.memory_contract")
     _positive_int(
@@ -159,37 +171,33 @@ def validate_p9_runtime_manifest(manifest: Mapping[str, Any]) -> None:
         "manifest.p9_protocol.memory_contract",
     )
 
+
+def _validate_runtime_headlines(
+    protocol: Mapping[str, Any],
+    case_ids: set[str],
+) -> None:
     headline = _mapping(protocol, "headline", "manifest.p9_protocol")
     for headline_id in ("H1", "H2"):
-        spec = _mapping(headline, headline_id, "manifest.p9_protocol.headline")
-        case_id = _string(
-            spec,
-            "case_id",
-            f"manifest.p9_protocol.headline.{headline_id}",
-        )
-        if case_id not in case_ids:
-            raise ValueError(f"headline {headline_id} references unknown case {case_id!r}")
-        _positive_int(
-            spec,
-            "max_tokens",
-            f"manifest.p9_protocol.headline.{headline_id}",
-        )
-        _positive_int(
-            spec,
-            "max_model_len",
-            f"manifest.p9_protocol.headline.{headline_id}",
-        )
-        _positive_int(
-            spec,
-            "fresh_process_repeats",
-            f"manifest.p9_protocol.headline.{headline_id}",
-        )
-        _bool(
-            spec,
-            "required_cross_framework_prompt_token_identity",
-            f"manifest.p9_protocol.headline.{headline_id}",
-        )
+        _validate_latency_headline(headline, headline_id, case_ids)
+    _validate_online_headline(headline, case_ids)
 
+
+def _validate_latency_headline(
+    headline: Mapping[str, Any],
+    headline_id: str,
+    case_ids: set[str],
+) -> None:
+    spec = _mapping(headline, headline_id, "manifest.p9_protocol.headline")
+    path = f"manifest.p9_protocol.headline.{headline_id}"
+    case_id = _string(spec, "case_id", path)
+    if case_id not in case_ids:
+        raise ValueError(f"headline {headline_id} references unknown case {case_id!r}")
+    for key in ("max_tokens", "max_model_len", "fresh_process_repeats"):
+        _positive_int(spec, key, path)
+    _bool(spec, "required_cross_framework_prompt_token_identity", path)
+
+
+def _validate_online_headline(headline: Mapping[str, Any], case_ids: set[str]) -> None:
     h3 = _mapping(headline, "H3", "manifest.p9_protocol.headline")
     _validate_weighted_classes(
         _list(h3, "primary_classes", "manifest.p9_protocol.headline.H3"),
@@ -201,20 +209,20 @@ def validate_p9_runtime_manifest(manifest: Mapping[str, Any]) -> None:
         case_ids=case_ids,
         path="manifest.p9_protocol.headline.H3.conditional_video_classes",
     )
-    _positive_number_list(
-        h3, "request_rates_per_second", "manifest.p9_protocol.headline.H3"
-    )
-    _positive_int(
-        h3, "completed_requests_per_run", "manifest.p9_protocol.headline.H3"
-    )
+    _positive_number_list(h3, "request_rates_per_second", "manifest.p9_protocol.headline.H3")
+    _positive_int(h3, "completed_requests_per_run", "manifest.p9_protocol.headline.H3")
     arrival_seeds = _list(h3, "arrival_seeds", "manifest.p9_protocol.headline.H3")
-    if any(isinstance(seed, bool) or not isinstance(seed, int) or seed <= 0 for seed in arrival_seeds):
+    if any(
+        isinstance(seed, bool) or not isinstance(seed, int) or seed <= 0 for seed in arrival_seeds
+    ):
         raise ValueError("manifest.p9_protocol.headline.H3.arrival_seeds must be positive ints")
     if len(set(arrival_seeds)) != len(arrival_seeds):
         raise ValueError("manifest.p9_protocol.headline.H3.arrival_seeds must be unique")
     _string(h3, "ttft_slo_formula", "manifest.p9_protocol.headline.H3")
     _string(h3, "tpot_slo_formula", "manifest.p9_protocol.headline.H3")
 
+
+def _validate_runtime_measurement(protocol: Mapping[str, Any]) -> None:
     measurement = _mapping(protocol, "measurement", "manifest.p9_protocol")
     improvement = _positive_number(
         measurement,
@@ -240,14 +248,20 @@ def validate_p9_quality_protocol(protocol: Mapping[str, Any]) -> None:
     model = _mapping(protocol, "model", "protocol")
     _git_revision(model, "revision", "protocol.model")
     _git_revision(model, "processor_revision", "protocol.model")
+    _validate_quality_non_inferiority(protocol)
+    _validate_quality_selection(protocol)
+    _validate_quality_datasets(protocol)
+    _validate_quality_artifact_contract(protocol)
 
+
+def _validate_quality_non_inferiority(protocol: Mapping[str, Any]) -> None:
     non_inferiority = _mapping(protocol, "non_inferiority", "protocol")
     accuracy_margin = _positive_number(
         non_inferiority,
         "bounded_accuracy_margin_percentage_points",
         "protocol.non_inferiority",
     )
-    if accuracy_margin >= 100.0:
+    if accuracy_margin >= PERCENTAGE_POINTS_SCALE:
         raise ValueError("bounded accuracy margin must be < 100 percentage points")
     normalized_margin = _positive_number(
         non_inferiority,
@@ -285,6 +299,8 @@ def validate_p9_quality_protocol(protocol: Mapping[str, Any]) -> None:
     ):
         raise ValueError("quality eligibility rule is unsupported")
 
+
+def _validate_quality_selection(protocol: Mapping[str, Any]) -> None:
     selection = _mapping(protocol, "selection", "protocol")
     _string(selection, "algorithm", "protocol.selection")
     _positive_int(selection, "seed", "protocol.selection")
@@ -300,30 +316,16 @@ def validate_p9_quality_protocol(protocol: Mapping[str, Any]) -> None:
         )
     _bool(selection, "materialization_requires_media_sha256", "protocol.selection")
 
+
+def _validate_quality_datasets(protocol: Mapping[str, Any]) -> None:
     dataset_ids = set()
     categories = set()
     for index, dataset in enumerate(_list(protocol, "datasets", "protocol")):
-        path = f"protocol.datasets[{index}]"
-        if not isinstance(dataset, Mapping):
-            raise ValueError(f"{path} must be an object")
-        dataset_id = _string(dataset, "id", path)
+        dataset_id, category = _validate_quality_dataset(dataset, index)
         if dataset_id in dataset_ids:
             raise ValueError(f"duplicate quality dataset id {dataset_id!r}")
         dataset_ids.add(dataset_id)
-        categories.add(_string(dataset, "category", path))
-        _string(dataset, "source", path)
-        _string(dataset, "repository", path)
-        _git_revision(dataset, "revision", path)
-        _string(dataset, "split", path)
-        _string(dataset, "sample_id_field", path)
-        development_samples = _positive_int(dataset, "development_samples", path)
-        final_samples = _positive_int(dataset, "final_samples", path)
-        if development_samples > final_samples:
-            raise ValueError(f"{path}.development_samples exceeds final_samples")
-        _string(dataset, "metric", path)
-        status = _string(dataset, "materialization_status", path)
-        if status not in QUALITY_MATERIALIZATION_STATUSES:
-            raise ValueError(f"{path}.materialization_status is unsupported: {status!r}")
+        categories.add(category)
     required_categories = {
         "single_image_document_ocr",
         "multi_image_reasoning",
@@ -331,10 +333,30 @@ def validate_p9_quality_protocol(protocol: Mapping[str, Any]) -> None:
     }
     if categories != required_categories:
         raise ValueError(
-            "quality datasets must cover exactly the frozen categories, got "
-            f"{sorted(categories)}"
+            f"quality datasets must cover exactly the frozen categories, got {sorted(categories)}"
         )
 
+
+def _validate_quality_dataset(dataset: object, index: int) -> tuple[str, str]:
+    path = f"protocol.datasets[{index}]"
+    if not isinstance(dataset, Mapping):
+        raise ValueError(f"{path} must be an object")
+    dataset_id = _string(dataset, "id", path)
+    category = _string(dataset, "category", path)
+    for key in ("source", "repository", "split", "sample_id_field", "metric"):
+        _string(dataset, key, path)
+    _git_revision(dataset, "revision", path)
+    development_samples = _positive_int(dataset, "development_samples", path)
+    final_samples = _positive_int(dataset, "final_samples", path)
+    if development_samples > final_samples:
+        raise ValueError(f"{path}.development_samples exceeds final_samples")
+    status = _string(dataset, "materialization_status", path)
+    if status not in QUALITY_MATERIALIZATION_STATUSES:
+        raise ValueError(f"{path}.materialization_status is unsupported: {status!r}")
+    return dataset_id, category
+
+
+def _validate_quality_artifact_contract(protocol: Mapping[str, Any]) -> None:
     artifact = _mapping(protocol, "artifact_contract", "protocol")
     for key in (
         "selected_sample_ids_sha256",

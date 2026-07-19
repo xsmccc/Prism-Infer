@@ -39,9 +39,7 @@ def _external_record(prompt_tokens: int = 10) -> dict[str, Any]:
             "engine_ttft": stats,
             "decode_tpot": {"count": 3, "median": 1.0},
         },
-        "throughput": {
-            "e2e_output_tokens_per_s": {"count": 3, "median": 20.0}
-        },
+        "throughput": {"e2e_output_tokens_per_s": {"count": 3, "median": 20.0}},
         "memory_mb": {"peak_allocated": {"count": 3, "median": 80.0}},
     }
 

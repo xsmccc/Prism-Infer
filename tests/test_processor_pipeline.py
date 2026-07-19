@@ -14,6 +14,9 @@ from prism_infer.engine.vl_inputs import (
 )
 
 
+pytestmark = [pytest.mark.model, pytest.mark.integration]
+
+
 def _load_processor():
     transformers = require_transformers()
     return transformers.AutoProcessor.from_pretrained(

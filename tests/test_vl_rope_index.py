@@ -1,5 +1,6 @@
 """P2.3 Qwen3-VL 单图 3D position ids 验证。"""
 
+import pytest
 import torch
 from PIL import Image
 
@@ -9,6 +10,9 @@ from prism_infer.models.qwen3_vl_position import (
     get_qwen3_vl_rope_index,
     get_qwen3_vl_rope_index_from_config,
 )
+
+
+pytestmark = [pytest.mark.model, pytest.mark.integration]
 
 
 def _load_processor_and_config():
@@ -21,6 +25,7 @@ def _load_processor_and_config():
     )
     config = transformers.AutoConfig.from_pretrained(model_path, local_files_only=True)
     return transformers, processor, config
+
 
 def test_single_image_rope_index_matches_hf():
     """单图 position_ids/rope_delta 必须与 HF get_rope_index 完全一致。"""

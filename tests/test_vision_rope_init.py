@@ -14,7 +14,7 @@ from prism_infer.vision.vision_encoder import VisionEncoder
 def test_vision_rotary_embedding_matches_hf_when_default_device_is_cuda():
     """默认 device 为 CUDA 时，Vision RoPE 频率仍与 HF 初始化路径 exact match。"""
 
-    transformers = require_transformers()
+    require_transformers()
     from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionRotaryEmbedding
 
     device = "cuda" if torch.cuda.is_available() else "cpu"

@@ -32,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from benchmarks.harness import collect_gpu_metadata
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
 from prism_infer.analysis.p9_external_quality import (
     EXTERNAL_QUALITY_RECORD_TYPE,
@@ -105,8 +106,7 @@ def _source_file_hashes(
         source = package_root / relative
         if not source.is_file():
             raise RuntimeError(
-                f"installed {distribution_name} implementation file is missing: "
-                f"{source}"
+                f"installed {distribution_name} implementation file is missing: {source}"
             )
         identities[relative] = sha256_file(source)
     return identities
@@ -138,9 +138,7 @@ def _distribution_identity() -> dict[str, Any]:
         "framework": "vllm",
         "framework_version": framework_version,
         "framework_distribution_commit": distribution_commit,
-        "framework_distribution_record_sha256": hashlib.sha256(
-            record.encode("utf-8")
-        ).hexdigest(),
+        "framework_distribution_record_sha256": hashlib.sha256(record.encode("utf-8")).hexdigest(),
         "framework_implementation_files": _source_file_hashes(
             package_root,
             VLLM_IMPLEMENTATION_FILES,
@@ -153,35 +151,6 @@ def _distribution_identity() -> dict[str, Any]:
         ),
         "transformers": transformers_version,
     }
-
-
-def _gpu_metadata() -> dict[str, Any]:
-    properties = torch.cuda.get_device_properties(0)
-    metadata: dict[str, Any] = {
-        "gpu": properties.name,
-        "compute_capability": f"{properties.major}.{properties.minor}",
-        "total_memory_bytes": properties.total_memory,
-    }
-    try:
-        lines = subprocess.check_output(
-            [
-                "nvidia-smi",
-                "--id=0",
-                "--query-gpu=uuid,driver_version",
-                "--format=csv,noheader,nounits",
-            ],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).splitlines()
-        if len(lines) != 1:
-            raise RuntimeError("nvidia-smi did not identify exactly physical GPU0")
-        uuid, driver = (part.strip() for part in lines[0].split(",", maxsplit=1))
-        if not uuid.startswith("GPU-") or not driver:
-            raise RuntimeError("nvidia-smi returned incomplete GPU identity")
-        metadata.update({"gpu_uuid": uuid, "driver": driver})
-    except (OSError, subprocess.SubprocessError, IndexError, ValueError) as exc:
-        raise RuntimeError("cannot establish the frozen GPU0 identity") from exc
-    return metadata
 
 
 def _load_model_config(model: str | Path) -> dict[str, Any]:
@@ -305,9 +274,7 @@ def _execution_evidence(llm: Any) -> dict[str, Any]:
         raise RuntimeError("vLLM effective vision backend differs from frozen cell")
     selector_class = vision_backend.get_class()
     return {
-        "required_environment": {
-            name: os.environ[name] for name, _ in VLLM_REQUIRED_ENVIRONMENT
-        },
+        "required_environment": {name: os.environ[name] for name, _ in VLLM_REQUIRED_ENVIRONMENT},
         "language_attention_backends": language_backends,
         "vision_attention_backend": {
             "name": vision_name,
@@ -351,9 +318,7 @@ def _vllm_prompt_text(
     modality = "video" if dataset_id == "mvbench_test" else "image"
     token_names = ("vision_start_token", "video_token", "vision_end_token")
     tokens = [getattr(processor, name, None) for name in token_names]
-    if modality == "video" and not all(
-        isinstance(token, str) and token for token in tokens
-    ):
+    if modality == "video" and not all(isinstance(token, str) and token for token in tokens):
         raise RuntimeError("Qwen3-VL processor has no stable video marker tokens")
     return adapt_vllm_prompt_text(
         prepared_prompt_text,
@@ -387,9 +352,7 @@ def _kv_cache_record(
     gpu_table_bytes, cpu_table_bytes = _block_table_bytes(llm)
     return {
         **expected,
-        "accounting_scope": (
-            "allocated_gpu_kv_tensors_including_inline_per_token_head_scales"
-        ),
+        "accounting_scope": ("allocated_gpu_kv_tensors_including_inline_per_token_head_scales"),
         "reported_tensor_count": len(tensor_sizes),
         "reported_tensor_sizes": tensor_sizes,
         "reported_total_bytes": sum(tensor_sizes),
@@ -445,8 +408,7 @@ def _prepare_video_bridge(
             stdout = completed.stdout.strip()
             details = stderr or stdout or "no helper diagnostics"
             raise RuntimeError(
-                "video bridge helper failed with exit code "
-                f"{completed.returncode}: {details}"
+                f"video bridge helper failed with exit code {completed.returncode}: {details}"
             )
         helper_evidence = json.loads(completed.stdout)
         images, metadata, load_evidence = load_video_bundle(
@@ -457,10 +419,7 @@ def _prepare_video_bridge(
         if helper_evidence["sha256"] != load_evidence["sha256"]:
             close_images(images)
             raise RuntimeError("video helper and consumer bundle identities differ")
-        if (
-            helper_evidence["bundle_content_sha256"]
-            != metadata["bundle_content_sha256"]
-        ):
+        if helper_evidence["bundle_content_sha256"] != metadata["bundle_content_sha256"]:
             close_images(images)
             raise RuntimeError("video helper and consumer content identities differ")
         bridge_evidence = {
@@ -599,9 +558,7 @@ def _run_sample(
             video_helper=video_helper,
         )
         if len(prepared.token_ids) + sampling.max_tokens > runtime["max_model_len"]:
-            raise ValueError(
-                f"sample {record['sample_id']} exceeds frozen model length"
-            )
+            raise ValueError(f"sample {record['sample_id']} exceeds frozen model length")
         outputs = llm.generate([prompt], sampling, use_tqdm=False)
         if len(outputs) != 1 or len(outputs[0].outputs) != 1:
             raise RuntimeError("vLLM quality runner expected one completion")
@@ -715,7 +672,7 @@ def main() -> None:
         "python": sys.version.split()[0],
         "torch": torch.__version__,
         "cuda": str(torch.version.cuda),
-        **_gpu_metadata(),
+        **collect_gpu_metadata(strict_identity=True).environment_dict(),
     }
     materialized_root = args.materialized_root.resolve()
     verification = verify_materialization(
@@ -747,11 +704,7 @@ def main() -> None:
     max_media = max(len(record["media"]) for record in records)
 
     harness_git = git_metadata(REPO_ROOT)
-    scope = (
-        "smoke_not_quality_gate"
-        if args.max_samples is not None
-        else f"formal_{args.subset}"
-    )
+    scope = "smoke_not_quality_gate" if args.max_samples is not None else f"formal_{args.subset}"
     if scope.startswith("formal_") and harness_git["dirty"]:
         raise SystemExit("formal external quality runs require a clean harness commit")
     runtime = evaluator["runtime"]
@@ -813,9 +766,7 @@ def main() -> None:
             "run_contract": run_contract,
             "selection": {
                 "selected_contract_samples": len(selected_contract_ids),
-                "selected_contract_ids_sha256": selected_ids_sha256(
-                    selected_contract_ids
-                ),
+                "selected_contract_ids_sha256": selected_ids_sha256(selected_contract_ids),
                 "eligible_run_samples": len(expected_ids),
                 "eligible_run_ids_sha256": selected_ids_sha256(expected_ids),
                 "protocol_exclusions": exclusions,
@@ -836,9 +787,7 @@ def main() -> None:
                 muirbench_random=muirbench_random,
             )
             if replayed != sample["score"]:
-                raise ValueError(
-                    "resume MuirBench parser state differs from checkpoint"
-                )
+                raise ValueError("resume MuirBench parser state differs from checkpoint")
 
     processor = load_vl_processor(
         args.model,

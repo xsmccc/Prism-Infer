@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import json
 import random
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,9 +21,12 @@ if str(REPO_ROOT) not in sys.path:
 from benchmarks.bench_system import (
     DEFAULT_MANIFEST,
     MODE_SPECS,
-    _find_case,
-    _gpu_metadata,
-    _materialize_requests,
+)
+from benchmarks.harness import (
+    collect_git_metadata,
+    collect_gpu_metadata,
+    find_workload_case,
+    materialize_requests,
 )
 from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import load_workload_manifest
@@ -34,22 +36,6 @@ from prism_infer.analysis.online_serving import (
     validate_online_benchmark_record,
 )
 from prism_infer.engine.online import OnlineRequest, OnlineServingSession
-
-
-def _git_metadata() -> tuple[str, bool]:
-    commit = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=REPO_ROOT,
-        text=True,
-    ).strip()
-    dirty = bool(
-        subprocess.check_output(
-            ["git", "status", "--porcelain"],
-            cwd=REPO_ROOT,
-            text=True,
-        ).strip()
-    )
-    return commit, dirty
 
 
 def _arrival_offsets(
@@ -120,15 +106,11 @@ def _build_engine(args: argparse.Namespace):
         max_chunk_size=args.max_chunk_size,
         enable_prefix_caching=args.enable_prefix_caching,
         max_queue_size=args.max_queue_size,
-        max_consecutive_prefill_batches=(
-            args.max_consecutive_prefill_batches
-        ),
+        max_consecutive_prefill_batches=(args.max_consecutive_prefill_batches),
         visual_pruning_keep_ratio=args.visual_pruning_keep_ratio,
         visual_pruning_min_keep_tokens=args.visual_pruning_min_keep_tokens,
         visual_pruning_strategy=args.visual_pruning_strategy,
-        visual_pruning_attention_last_n_layers=(
-            args.visual_pruning_attention_last_n_layers
-        ),
+        visual_pruning_attention_last_n_layers=(args.visual_pruning_attention_last_n_layers),
         logits_precision=args.logits_precision,
         mlp_projection_mode=args.mlp_projection_mode,
     )
@@ -189,9 +171,7 @@ def main() -> None:
         type=int,
         default=1,
     )
-    parser.add_argument(
-        "--logits-precision", choices=("model", "fp32"), default="model"
-    )
+    parser.add_argument("--logits-precision", choices=("model", "fp32"), default="model")
     parser.add_argument(
         "--mlp-projection-mode",
         choices=("legacy", "packed"),
@@ -210,8 +190,8 @@ def main() -> None:
         raise SystemExit("--request-rate must be positive")
 
     manifest = load_workload_manifest(args.manifest)
-    case = _find_case(manifest, args.case)
-    payloads = _materialize_requests(case)
+    case = find_workload_case(manifest, args.case)
+    payloads = materialize_requests(case, repo_root=REPO_ROOT)
     sampling = SamplingParams(
         temperature=0.0,
         max_tokens=args.max_tokens,
@@ -251,20 +231,20 @@ def main() -> None:
             ttft_slo_ms=args.ttft_slo_ms,
             tpot_slo_ms=args.tpot_slo_ms,
         )
-        commit, dirty = _git_metadata()
+        git = collect_git_metadata(REPO_ROOT, strict=True)
         config_path = Path(args.model) / "config.json"
         record = {
             "schema_version": ONLINE_BENCHMARK_SCHEMA_VERSION,
             "record_type": "prism_online_run",
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-            "git_commit": commit,
-            "git_dirty": dirty,
+            "git_commit": git.commit,
+            "git_dirty": git.dirty,
             "framework": {
                 "name": "prism-infer",
                 "torch": torch.__version__,
                 "transformers": transformers.__version__,
             },
-            "hardware": _gpu_metadata(),
+            "hardware": collect_gpu_metadata().environment_dict(),
             "model": {
                 "path": str(Path(args.model).resolve()),
                 "config_sha256": (
@@ -276,9 +256,7 @@ def main() -> None:
             "workload": {
                 "manifest": manifest["name"],
                 "case": args.case,
-                "source_request_types": [
-                    request["type"] for request in case["requests"]
-                ],
+                "source_request_types": [request["type"] for request in case["requests"]],
                 "requests": args.requests,
                 "max_tokens": args.max_tokens,
             },
@@ -286,9 +264,7 @@ def main() -> None:
                 "process": args.arrival_process,
                 "request_rate_per_s": args.request_rate,
                 "seed": args.seed,
-                "offsets_s": [
-                    request.arrival_offset_s for request in requests
-                ],
+                "offsets_s": [request.arrival_offset_s for request in requests],
             },
             "engine": {
                 "mode": args.mode,
@@ -297,9 +273,7 @@ def main() -> None:
                 "max_num_seqs": args.max_num_seqs,
                 "max_chunk_size": args.max_chunk_size,
                 "max_queue_size": args.max_queue_size,
-                "max_consecutive_prefill_batches": (
-                    args.max_consecutive_prefill_batches
-                ),
+                "max_consecutive_prefill_batches": (args.max_consecutive_prefill_batches),
                 "num_kvcache_blocks": args.num_kvcache_blocks,
                 "kvcache_block_size": args.kvcache_block_size,
                 "enable_prefix_caching": args.enable_prefix_caching,
@@ -307,11 +281,9 @@ def main() -> None:
                 "mlp_projection_mode": args.mlp_projection_mode,
             },
             "memory": {
-                "allocated_mib": torch.cuda.memory_allocated() / (1024 ** 2),
-                "reserved_mib": torch.cuda.memory_reserved() / (1024 ** 2),
-                "peak_allocated_mib": (
-                    torch.cuda.max_memory_allocated() / (1024 ** 2)
-                ),
+                "allocated_mib": torch.cuda.memory_allocated() / (1024**2),
+                "reserved_mib": torch.cuda.memory_reserved() / (1024**2),
+                "peak_allocated_mib": (torch.cuda.max_memory_allocated() / (1024**2)),
             },
             "run": run_record,
             "summary": summary,

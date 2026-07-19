@@ -59,10 +59,7 @@ def main() -> None:
         render_external_markdown(rows),
         encoding="utf-8",
     )
-    print(
-        f"compared {len(rows)} P7.1 cells under "
-        f"{args.comparison_profile}"
-    )
+    print(f"compared {len(rows)} P7.1 cells under {args.comparison_profile}")
 
 
 if __name__ == "__main__":

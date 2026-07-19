@@ -136,7 +136,7 @@ def test_runtime_attention_scorer_matches_independent_reference():
     torch.manual_seed(20260714)
     seq = _mixed_visual_sequence()
     scorer = RuntimeVisualTokenScorer([seq], layer_ids=(1, 2))
-    scale = 2 ** -0.5
+    scale = 2**-0.5
     reference_layers = []
     for layer_id in (1, 2):
         # q: [tokens=8, q_heads=4, dim=2], k: [tokens=8, kv_heads=2, dim=2]
@@ -158,8 +158,12 @@ def test_runtime_attention_scorer_matches_independent_reference():
     print(f"runtime attention q shape: {list(q.shape)}")
     print(f"runtime attention k shape: {list(k.shape)}")
     print(f"runtime attention score shape: {list(actual.shape)}")
-    print(f"runtime attention actual mean/std: {actual.mean().item():.6e}/{actual.std(unbiased=False).item():.6e}")
-    print(f"runtime attention ref mean/std: {reference.mean().item():.6e}/{reference.std(unbiased=False).item():.6e}")
+    print(
+        f"runtime attention actual mean/std: {actual.mean().item():.6e}/{actual.std(unbiased=False).item():.6e}"
+    )
+    print(
+        f"runtime attention ref mean/std: {reference.mean().item():.6e}/{reference.std(unbiased=False).item():.6e}"
+    )
     print(f"runtime attention max diff: {max_diff:.6e}")
     assert max_diff < 1e-5
     print("P6.12 runtime attention score reference: PASS")
@@ -195,7 +199,7 @@ def test_runtime_attention_finalize_persists_auditable_decision():
             layer_id=layer_id,
             q=torch.randn(8, 4, 2),
             k=torch.randn(8, 2, 2),
-            scale=2 ** -0.5,
+            scale=2**-0.5,
         )
     config = VisualPruningConfig(
         keep_ratio=0.4,
@@ -214,18 +218,56 @@ def test_runtime_attention_finalize_persists_auditable_decision():
     assert record["kept_visual_tokens"] == 2
     assert record["dropped_visual_tokens"] == 3
     kept_by_span = record["kept_visual_tokens_by_span"]
-    assert [
-        (str(item["modality"]), int(item["span_index"]))
-        for item in kept_by_span
-    ] == [("image", 0), ("video", 0), ("image", 1)]
-    assert sum(
-        int(item["kept_tokens"])
-        for item in kept_by_span
-    ) == 2
+    assert [(str(item["modality"]), int(item["span_index"])) for item in kept_by_span] == [
+        ("image", 0),
+        ("video", 0),
+        ("image", 1),
+    ]
+    assert sum(int(item["kept_tokens"]) for item in kept_by_span) == 2
     assert float(record["score_min"]) <= float(record["score_mean"])
     assert float(record["score_mean"]) <= float(record["score_max"])
     print(f"runtime attention decision: {record}")
     print("P6.12 runtime attention decision audit: PASS")
+
+
+def test_runtime_attention_finalize_is_atomic_across_batch():
+    """A late score-map failure must not commit earlier request decisions."""
+
+    first = _mixed_visual_sequence()
+    second = Sequence(
+        list(first.token_ids),
+        block_size=first.block_size,
+        request_id=1,
+        image_token_id=first.image_token_id,
+        image_token_count=first.image_token_count,
+        video_token_id=first.video_token_id,
+        video_token_count=first.video_token_count,
+    )
+    first.visual_pruning_decision_record = {"sentinel": "first"}
+    second.visual_pruning_decision_record = {"sentinel": "second"}
+    token_scores = {index: float(index) for index in (1, 2, 4, 5, 7)}
+
+    class IncompleteBatchScorer:
+        layer_ids = (3,)
+
+        @staticmethod
+        def finalize():
+            return {first.seq_id: token_scores}
+
+    config = VisualPruningConfig(
+        keep_ratio=0.4,
+        min_keep_tokens=1,
+        strategy="attention",
+    )
+    with pytest.raises(RuntimeError, match="missing runtime score map"):
+        finalize_attention_pruning_decisions(
+            [first, second],
+            config,
+            IncompleteBatchScorer(),
+        )
+
+    assert first.visual_pruning_decision_record == {"sentinel": "first"}
+    assert second.visual_pruning_decision_record == {"sentinel": "second"}
 
 
 def test_runtime_attention_scorer_rejects_missing_layer():
@@ -237,7 +279,7 @@ def test_runtime_attention_scorer_rejects_missing_layer():
         layer_id=1,
         q=torch.randn(8, 4, 2),
         k=torch.randn(8, 2, 2),
-        scale=2 ** -0.5,
+        scale=2**-0.5,
     )
     with pytest.raises(RuntimeError, match=r"missing layers: \[2\]"):
         scorer.finalize()

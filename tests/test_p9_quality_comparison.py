@@ -22,14 +22,10 @@ from prism_infer.analysis.p9_quality_metrics import aggregate_quality_prediction
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EVALUATOR = json.loads(
-    (REPO_ROOT / "benchmarks/workloads/p9_quality_evaluator.json").read_text(
-        encoding="utf-8"
-    )
+    (REPO_ROOT / "benchmarks/workloads/p9_quality_evaluator.json").read_text(encoding="utf-8")
 )
 PROTOCOL = json.loads(
-    (REPO_ROOT / "benchmarks/workloads/p9_quality_protocol.json").read_text(
-        encoding="utf-8"
-    )
+    (REPO_ROOT / "benchmarks/workloads/p9_quality_protocol.json").read_text(encoding="utf-8")
 )
 
 

@@ -7,6 +7,8 @@ import torch
 
 from prism_infer.config import Config
 from prism_infer.models.qwen3_vl import Qwen3VLTextAttention
+from prism_infer.ops.kv_cache_store import HAS_TRITON as HAS_STORE_TRITON
+from prism_infer.ops.paged_decode import HAS_TRITON as HAS_PAGED_DECODE_TRITON
 from prism_infer.utils.context import reset_context, set_context
 
 
@@ -184,9 +186,13 @@ def test_attention_compile_dispatch_is_decode_only() -> None:
         head_dim=4,
         dtype=torch.float32,
     )
-    attention._compiled_decode_forward = (
-        lambda hidden, _positions: hidden + 1
+    attention._compiled_decode_qkv_forward = lambda hidden, _positions: (
+        hidden + 1,
+        hidden,
+        hidden,
     )
+    attention.engine_attn.forward_decode_explicit = lambda query, *_args: query
+    attention._project_engine_output = lambda output: output
     attention._forward_engine = lambda hidden, _positions: hidden + 2
     hidden_states = torch.zeros(1, 8)
     slot_mapping = torch.tensor([0], dtype=torch.int32)
@@ -197,6 +203,7 @@ def test_attention_compile_dispatch_is_decode_only() -> None:
             slot_mapping=slot_mapping,
             context_lens=torch.tensor([1], dtype=torch.int32),
             block_tables=torch.tensor([[0]], dtype=torch.int32),
+            decode_max_context_len=torch.tensor(1, dtype=torch.int32),
         )
         decode_output = attention(hidden_states)
         reset_context()
@@ -252,3 +259,77 @@ def test_attention_compile_merges_mode_and_precision_options(
         "force_same_precision": True,
     }
     print(f"P6.3 merged compile options: {captured['options']} PASS")
+
+
+@pytest.mark.gpu
+def test_compile_qkv_split_handles_nonzero_offset_cache_views() -> None:
+    """A compiled pure region must not functionalize aliased KV-cache views."""
+
+    if not torch.cuda.is_available() or not HAS_STORE_TRITON or not HAS_PAGED_DECODE_TRITON:
+        pytest.skip("CUDA and Triton are required for compile primitive coverage")
+
+    torch.manual_seed(20260719)
+    device = torch.device("cuda:0")
+    hidden_size = 64
+    batch = 2
+    num_heads = 4
+    num_kv_heads = 2
+    head_dim = 16
+    page_size = 8
+    num_blocks = 2
+    attention = Qwen3VLTextAttention(
+        hidden_size=hidden_size,
+        num_heads=num_heads,
+        num_kv_heads=num_kv_heads,
+        head_dim=head_dim,
+        dtype=torch.bfloat16,
+    )
+    attention = attention.to(device)
+    hidden_states = torch.randn(batch, hidden_size, device=device, dtype=torch.bfloat16)
+    cos = torch.randn(1, batch, head_dim, device=device, dtype=torch.bfloat16)
+    sin = torch.randn_like(cos)
+    initial_cache = torch.randn(
+        2,
+        2,
+        num_blocks,
+        page_size,
+        num_kv_heads,
+        head_dim,
+        device=device,
+        dtype=torch.bfloat16,
+    )
+    slot_mapping = torch.tensor([4, 13], device=device, dtype=torch.int32)
+    context_lens = torch.tensor([5, 6], device=device, dtype=torch.int32)
+    block_tables = torch.tensor([[0, -1], [1, -1]], device=device, dtype=torch.int32)
+    max_context_len = torch.tensor(6, device=device, dtype=torch.int32)
+
+    try:
+        set_context(
+            False,
+            slot_mapping=slot_mapping,
+            context_lens=context_lens,
+            block_tables=block_tables,
+            decode_max_context_len=max_context_len,
+        )
+        reference_cache = initial_cache.clone()
+        attention.engine_attn.k_cache = reference_cache[0, 1]
+        attention.engine_attn.v_cache = reference_cache[1, 1]
+        reference = attention(hidden_states, (cos, sin))
+
+        actual_cache = initial_cache.clone()
+        attention.engine_attn.k_cache = actual_cache[0, 1]
+        attention.engine_attn.v_cache = actual_cache[1, 1]
+        attention.enable_decode_compile(
+            mode="default",
+            emulate_precision_casts=True,
+            force_same_precision=True,
+        )
+        actual = attention(hidden_states, (cos, sin))
+        torch.cuda.synchronize()
+    finally:
+        reset_context()
+
+    assert attention.engine_attn.k_cache.storage_offset() > 0
+    assert attention.engine_attn.v_cache.storage_offset() > 0
+    torch.testing.assert_close(actual_cache, reference_cache, rtol=0.0, atol=0.0)
+    torch.testing.assert_close(actual, reference, rtol=0.0, atol=0.0)

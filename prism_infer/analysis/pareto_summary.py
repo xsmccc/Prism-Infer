@@ -45,8 +45,7 @@ def stable_prefix_lengths(
 
     if len(baseline) != len(candidate):
         raise ValueError(
-            "baseline and candidate request counts differ: "
-            f"{len(baseline)} != {len(candidate)}"
+            f"baseline and candidate request counts differ: {len(baseline)} != {len(candidate)}"
         )
     lengths: list[int] = []
     for baseline_tokens, candidate_tokens in zip(baseline, candidate, strict=True):
@@ -137,9 +136,7 @@ def summarize_pareto_records(
                 "stable_prefix_min": min(prefix_lengths),
                 "token_exact": candidate_tokens == baseline_tokens,
                 "tpot_median_ms": record["timing_ms"]["decode_step"]["median"],
-                "tpot_ratio": (
-                    record["timing_ms"]["decode_step"]["median"] / baseline_tpot
-                ),
+                "tpot_ratio": (record["timing_ms"]["decode_step"]["median"] / baseline_tpot),
                 "git_commit": record["environment"]["git_commit"],
                 "git_dirty": record["environment"]["git_dirty"],
             }

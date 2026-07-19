@@ -14,16 +14,25 @@ from prism_infer.utils.context import get_context
 #   GPU 0 存 token 0~76031 的嵌入
 #   GPU 1 存 token 76032~152063 的嵌入
 class VocabParallelEmbedding(nn.Module):
-
     def __init__(
         self,
-        num_embeddings: int,    # 总词表大小 (如 152064)
-        embedding_dim: int,     # 嵌入维度 (如 3584)
+        num_embeddings: int,  # 总词表大小 (如 152064)
+        embedding_dim: int,  # 嵌入维度 (如 3584)
     ):
         super().__init__()
-        self.tp_rank = dist.get_rank()       # 当前 GPU 编号
+        self.tp_rank = dist.get_rank()  # 当前 GPU 编号
         self.tp_size = dist.get_world_size()  # GPU 总数
-        assert num_embeddings % self.tp_size == 0  # 词表必须能整除 GPU 数
+        if (
+            isinstance(num_embeddings, bool)
+            or not isinstance(num_embeddings, int)
+            or num_embeddings <= 0
+        ):
+            raise ValueError(f"num_embeddings must be a positive integer, got {num_embeddings!r}")
+        if num_embeddings % self.tp_size != 0:
+            raise ValueError(
+                "vocabulary size must be divisible by tensor parallel size: "
+                f"num_embeddings={num_embeddings}, tp_size={self.tp_size}"
+            )
         self.num_embeddings = num_embeddings
         # 每个 GPU 负责的词表大小
         self.num_embeddings_per_partition = self.num_embeddings // self.tp_size
@@ -49,7 +58,7 @@ class VocabParallelEmbedding(nn.Module):
     def forward(self, x: torch.Tensor):
         """
         x: token id 序列, 形状 [num_tokens]
-        
+
         TP 时的处理:
         1. mask 标记哪些 token 属于本 GPU    (在范围内=True)
         2. 偏移 id 到本地索引               (减去 start_idx)
@@ -81,21 +90,21 @@ class VocabParallelEmbedding(nn.Module):
 # 继承 VocabParallelEmbedding，复用其权重和 weight_loader
 # 但 forward 完全不同: 做线性映射而不是查表
 class ParallelLMHead(VocabParallelEmbedding):
-
     def __init__(
         self,
-        num_embeddings: int,   # vocab_size
-        embedding_dim: int,    # hidden_size
+        num_embeddings: int,  # vocab_size
+        embedding_dim: int,  # hidden_size
         bias: bool = False,
     ):
-        assert not bias  # LM head 通常无偏置
+        if bias:
+            raise ValueError("ParallelLMHead does not support bias")
         super().__init__(num_embeddings, embedding_dim)
 
     def forward(self, x: torch.Tensor):
         """
         x: 隐藏状态, 形状 [num_tokens, hidden_size]
         输出: logits, 形状 [num_seqs, vocab_size] (仅 rank=0)
-        
+
         步骤:
         1. Prefill 时只取每个序列的最后一个 token
         2. 用 embedding 权重做线性映射 → logits (本地词表部分)
@@ -115,7 +124,11 @@ class ParallelLMHead(VocabParallelEmbedding):
         if self.tp_size > 1:
             # Gather: 所有 GPU 把各自的 logits 片段发给 rank 0
             # rank 0 收集到 all_logits 列表, 其他 rank 传 None
-            all_logits = [torch.empty_like(logits) for _ in range(self.tp_size)] if self.tp_rank == 0 else None
+            all_logits = (
+                [torch.empty_like(logits) for _ in range(self.tp_size)]
+                if self.tp_rank == 0
+                else None
+            )
             dist.gather(logits, all_logits, 0)
             # rank 0 沿最后一维拼接 → [num_seqs, vocab_size] 完整 logits
             logits = torch.cat(all_logits, -1) if self.tp_rank == 0 else None

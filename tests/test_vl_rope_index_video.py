@@ -1,11 +1,14 @@
 """P3.2 Qwen3-VL 视频 3D position ids 验证。"""
 
-import torch
+import pytest
 
 from conftest import get_model_path, hf_qwen3_vl_rope_index, require_transformers
 from prism_infer.engine.vl_inputs import prepare_video_inputs
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 from test_processor_pipeline_video import demo_video_frames
+
+
+pytestmark = [pytest.mark.model, pytest.mark.integration]
 
 
 def _load_processor_and_config():
@@ -18,6 +21,7 @@ def _load_processor_and_config():
     )
     config = transformers.AutoConfig.from_pretrained(model_path, local_files_only=True)
     return transformers, processor, config
+
 
 def test_video_rope_index_matches_hf():
     """视频 position_ids/rope_delta 必须与 HF get_rope_index 完全一致。"""

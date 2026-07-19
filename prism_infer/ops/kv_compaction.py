@@ -11,6 +11,12 @@ import math
 
 import torch
 
+
+SUPPORTED_COMPACTION_CACHE_RANKS = (4, 5)
+SLOT_INDEX_TENSOR_RANK = 1
+TRITON_MAX_BLOCK_VECTOR_ELEMENTS = 65_536
+TRITON_COMPACTION_NUM_WARPS = 8
+
 try:
     import triton
     import triton.language as tl
@@ -42,18 +48,12 @@ if HAS_TRITON:
         mask = offsets < VECTOR_SIZE
         source_slot = tl.load(source_slots_ptr + token)
         values = tl.load(
-            cache_ptr
-            + row * cache_stride_row
-            + source_slot * cache_stride_slot
-            + offsets,
+            cache_ptr + row * cache_stride_row + source_slot * cache_stride_slot + offsets,
             mask=mask,
             other=0.0,
         )
         tl.store(
-            temporary_ptr
-            + row * temporary_stride_row
-            + token * temporary_stride_token
-            + offsets,
+            temporary_ptr + row * temporary_stride_row + token * temporary_stride_token + offsets,
             values,
             mask=mask,
         )
@@ -76,18 +76,12 @@ if HAS_TRITON:
         mask = offsets < VECTOR_SIZE
         destination_slot = tl.load(destination_slots_ptr + token)
         values = tl.load(
-            temporary_ptr
-            + row * temporary_stride_row
-            + token * temporary_stride_token
-            + offsets,
+            temporary_ptr + row * temporary_stride_row + token * temporary_stride_token + offsets,
             mask=mask,
             other=0.0,
         )
         tl.store(
-            cache_ptr
-            + row * cache_stride_row
-            + destination_slot * cache_stride_slot
-            + offsets,
+            cache_ptr + row * cache_stride_row + destination_slot * cache_stride_slot + offsets,
             values,
             mask=mask,
         )
@@ -109,13 +103,31 @@ def compact_kv_slots(
     source_slots/destination_slots: [retained_tokens]
     """
 
-    if cache.ndim not in (4, 5):
+    _validate_compaction_inputs(cache, source_slots, destination_slots)
+    if cache.is_cuda and cache.dtype == getattr(torch, "float8_e4m3fn", None):
+        _compact_fp8_kv_slots(cache, source_slots, destination_slots)
+        return
+
+    # PyTorch path covers CPU reference and CUDA BF16/FP16/FP32 caches.
+    retained = cache.index_select(2, source_slots).clone()
+    cache.index_copy_(2, destination_slots, retained)
+
+
+def _validate_compaction_inputs(
+    cache: torch.Tensor,
+    source_slots: torch.Tensor,
+    destination_slots: torch.Tensor,
+) -> None:
+    if cache.ndim not in SUPPORTED_COMPACTION_CACHE_RANKS:
         raise ValueError(
             "cache must be [kv, layers, slots, kv_heads] or "
             "[kv, layers, slots, kv_heads, head_dim], "
             f"got {list(cache.shape)}"
         )
-    if source_slots.ndim != 1 or destination_slots.ndim != 1:
+    if (
+        source_slots.ndim != SLOT_INDEX_TENSOR_RANK
+        or destination_slots.ndim != SLOT_INDEX_TENSOR_RANK
+    ):
         raise ValueError("source/destination slots must be 1D")
     if source_slots.numel() == 0:
         raise ValueError("KV compaction requires at least one retained slot")
@@ -129,54 +141,52 @@ def compact_kv_slots(
     if source_slots.device != cache.device or destination_slots.device != cache.device:
         raise RuntimeError("cache and slot tensors must share one device")
 
-    if cache.is_cuda and cache.dtype == getattr(torch, "float8_e4m3fn", None):
-        if not HAS_TRITON:
-            raise RuntimeError("CUDA FP8 KV compaction requires Triton")
-        if not cache.is_contiguous():
-            raise RuntimeError("CUDA FP8 KV compaction requires contiguous cache")
-        rows = cache.shape[0] * cache.shape[1]
-        slots = cache.shape[2]
-        vector_size = math.prod(cache.shape[3:])
-        flat_cache = cache.view(rows, slots, vector_size)
-        temporary = torch.empty(
-            rows,
-            source_slots.numel(),
-            vector_size,
-            device=cache.device,
-            dtype=cache.dtype,
-        )
-        block_vector = _next_power_of_2(vector_size)
-        if block_vector > 65536:
-            raise ValueError(
-                f"FP8 KV compaction vector is too large: {vector_size}"
-            )
-        grid = (rows, source_slots.numel())
-        _gather_kv_slots_kernel[grid](
-            flat_cache,
-            source_slots,
-            temporary,
-            flat_cache.stride(0),
-            flat_cache.stride(1),
-            temporary.stride(0),
-            temporary.stride(1),
-            VECTOR_SIZE=vector_size,
-            BLOCK_VECTOR=block_vector,
-            num_warps=8,
-        )
-        _scatter_kv_slots_kernel[grid](
-            temporary,
-            destination_slots,
-            flat_cache,
-            temporary.stride(0),
-            temporary.stride(1),
-            flat_cache.stride(0),
-            flat_cache.stride(1),
-            VECTOR_SIZE=vector_size,
-            BLOCK_VECTOR=block_vector,
-            num_warps=8,
-        )
-        return
 
-    # PyTorch path covers CPU reference and CUDA BF16/FP16/FP32 caches.
-    retained = cache.index_select(2, source_slots).clone()
-    cache.index_copy_(2, destination_slots, retained)
+def _compact_fp8_kv_slots(
+    cache: torch.Tensor,
+    source_slots: torch.Tensor,
+    destination_slots: torch.Tensor,
+) -> None:
+    if not HAS_TRITON:
+        raise RuntimeError("CUDA FP8 KV compaction requires Triton")
+    if not cache.is_contiguous():
+        raise RuntimeError("CUDA FP8 KV compaction requires contiguous cache")
+    rows = cache.shape[0] * cache.shape[1]
+    slots = cache.shape[2]
+    vector_size = math.prod(cache.shape[3:])
+    flat_cache = cache.view(rows, slots, vector_size)
+    temporary = torch.empty(
+        rows,
+        source_slots.numel(),
+        vector_size,
+        device=cache.device,
+        dtype=cache.dtype,
+    )
+    block_vector = _next_power_of_2(vector_size)
+    if block_vector > TRITON_MAX_BLOCK_VECTOR_ELEMENTS:
+        raise ValueError(f"FP8 KV compaction vector is too large: {vector_size}")
+    grid = (rows, source_slots.numel())
+    _gather_kv_slots_kernel[grid](
+        flat_cache,
+        source_slots,
+        temporary,
+        flat_cache.stride(0),
+        flat_cache.stride(1),
+        temporary.stride(0),
+        temporary.stride(1),
+        VECTOR_SIZE=vector_size,
+        BLOCK_VECTOR=block_vector,
+        num_warps=TRITON_COMPACTION_NUM_WARPS,
+    )
+    _scatter_kv_slots_kernel[grid](
+        temporary,
+        destination_slots,
+        flat_cache,
+        temporary.stride(0),
+        temporary.stride(1),
+        flat_cache.stride(0),
+        flat_cache.stride(1),
+        VECTOR_SIZE=vector_size,
+        BLOCK_VECTOR=block_vector,
+        num_warps=TRITON_COMPACTION_NUM_WARPS,
+    )

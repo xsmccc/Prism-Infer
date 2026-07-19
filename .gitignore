@@ -9,9 +9,9 @@ debug_*.py
 trace_*.py
 .venv/
 .venv-local/
-data/
-models/           # 排除下载的模型权重
-!prism_infer/models/  # 但保留项目源码
+/data/
+# Local model checkpoints; source code under prism_infer/models remains tracked.
+/models/
 *.safetensors
 *.bin
 .agents/

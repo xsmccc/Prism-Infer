@@ -2,20 +2,26 @@
 
 验证 ViT Attention 完整 forward 与 HF Qwen3VLVisionAttention 一致。
 """
+
 import os
 
+import pytest
 import torch
 import torch.nn.functional as F
 
 import importlib.util
+
 spec = importlib.util.spec_from_file_location(
-    "vision_encoder", os.path.join(os.path.dirname(__file__),
-    "../prism_infer/vision/vision_encoder.py"))
+    "vision_encoder",
+    os.path.join(os.path.dirname(__file__), "../prism_infer/vision/vision_encoder.py"),
+)
 ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 ViTAttention = ve.ViTAttention
 
 from conftest import get_model_path, hf_qwen3_vl_visual, require_transformers
+
+pytestmark = [pytest.mark.model, pytest.mark.integration]
 
 THRESHOLD = 1e-5
 
@@ -27,12 +33,12 @@ def test_attention_full():
     from transformers.models.qwen3_vl.modeling_qwen3_vl import apply_rotary_pos_emb_vision
 
     hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
-        cache, dtype=torch.bfloat16, device_map='cpu',
-        trust_remote_code=True, local_files_only=True)
+        cache, dtype=torch.bfloat16, device_map="cpu", trust_remote_code=True, local_files_only=True
+    )
     hf_attn = hf_qwen3_vl_visual(hf).blocks[0].attn
 
     our = ViTAttention(1152, 16, torch.bfloat16)
-    for k in ['qkv.weight', 'qkv.bias', 'proj.weight', 'proj.bias']:
+    for k in ["qkv.weight", "qkv.bias", "proj.weight", "proj.bias"]:
         our.state_dict()[k].copy_(hf_attn.state_dict()[k])
 
     # 随机输入
@@ -44,14 +50,15 @@ def test_attention_full():
     with torch.no_grad():
         # HF: QKV → RoPE → SDPA → proj
         hf_qkv = hf_attn.qkv(hs)
-        hf_q, hf_k, hf_v = hf_qkv.reshape(N, 3, 16, 72).permute(1,0,2,3).unbind(0)
+        hf_q, hf_k, hf_v = hf_qkv.reshape(N, 3, 16, 72).permute(1, 0, 2, 3).unbind(0)
         hf_qr, hf_kr = apply_rotary_pos_emb_vision(hf_q, hf_k, cos, sin)
-        hf_qs = hf_qr.transpose(0,1).unsqueeze(0)
-        hf_ks = hf_kr.transpose(0,1).unsqueeze(0)
-        hf_vs = hf_v.transpose(0,1).unsqueeze(0)
+        hf_qs = hf_qr.transpose(0, 1).unsqueeze(0)
+        hf_ks = hf_kr.transpose(0, 1).unsqueeze(0)
+        hf_vs = hf_v.transpose(0, 1).unsqueeze(0)
         hf_sdpa = F.scaled_dot_product_attention(
-            hf_qs, hf_ks, hf_vs, is_causal=False, scale=72**-0.5)
-        hf_out = hf_attn.proj(hf_sdpa.transpose(1,2).reshape(1, N, 1152))
+            hf_qs, hf_ks, hf_vs, is_causal=False, scale=72**-0.5
+        )
+        hf_out = hf_attn.proj(hf_sdpa.transpose(1, 2).reshape(1, N, 1152))
 
         # Ours: same path
         our_qkv = our.qkv(hs)
@@ -62,8 +69,9 @@ def test_attention_full():
         our_qr = our.apply_rotary_emb(our_q, cos, sin)
         our_kr = our.apply_rotary_emb(our_k, cos, sin)
         our_sdpa = F.scaled_dot_product_attention(
-            our_qr, our_kr, our_v, is_causal=False, scale=72**-0.5)
-        our_out = our.proj(our_sdpa.transpose(1,2).reshape(1, N, 1152))
+            our_qr, our_kr, our_v, is_causal=False, scale=72**-0.5
+        )
+        our_out = our.proj(our_sdpa.transpose(1, 2).reshape(1, N, 1152))
 
     diff = (our_out.float() - hf_out.float()).abs().max().item()
     print(f"  max diff: {diff:.10f}")
@@ -82,7 +90,7 @@ def test_attention_shape():
     print("  shape: PASS")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print("=== ViTAttention Tests ===")
     test_attention_shape()
     test_attention_full()

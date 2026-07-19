@@ -75,9 +75,7 @@ def main() -> None:
                 "decision": result["decision"],
                 "semantic_input_exact": result["semantic_input_exact"],
                 "all_required_metrics_pass": result["all_required_metrics_pass"],
-                "full_physical_comparable": result["kv_cache"][
-                    "full_physical_comparable"
-                ],
+                "full_physical_comparable": result["kv_cache"]["full_physical_comparable"],
             },
             indent=2,
             sort_keys=True,

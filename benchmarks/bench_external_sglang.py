@@ -45,9 +45,9 @@ def _stats(values: list[float]) -> dict[str, int | float]:
 
 
 def _sha256(value: object) -> str:
-    payload = json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -83,18 +83,14 @@ def _materialize(case: dict[str, Any]) -> list[dict[str, Any]]:
                 "SGLang P6 adapter currently supports image/image_file/images only; "
                 f"got {request_type!r}"
             )
-        requests.append(
-            {"type": request_type, "prompt": request["prompt"], "images": images}
-        )
+        requests.append({"type": request_type, "prompt": request["prompt"], "images": images})
     return requests
 
 
 def _prompts(processor: Any, requests: list[dict[str, Any]]) -> list[str]:
     result: list[str] = []
     for request in requests:
-        content = [
-            {"type": "image", "image": image} for image in request["images"]
-        ]
+        content = [{"type": "image", "image": image} for image in request["images"]]
         content.append({"type": "text", "text": request["prompt"]})
         result.append(
             processor.apply_chat_template(
@@ -165,9 +161,7 @@ def main() -> None:
         started = perf_counter()
         stream = engine.generate(
             prompt=prompts[0],
-            image_data=(
-                image_data[0][0] if len(image_data[0]) == 1 else image_data[0]
-            ),
+            image_data=(image_data[0][0] if len(image_data[0]) == 1 else image_data[0]),
             sampling_params=sampling,
             stream=True,
         )
@@ -278,9 +272,7 @@ def main() -> None:
                 "process_used": _stats(process_memory),
             },
         }
-        Path(args.output).write_text(
-            json.dumps(record, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        Path(args.output).write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps(record, indent=2, sort_keys=True))
     finally:
         engine.shutdown()

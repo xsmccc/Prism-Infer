@@ -10,6 +10,8 @@ import pytest
 import torch
 
 from prism_infer.engine.block_manager import BlockManager
+from prism_infer.engine.block_pool import CpuBlockPool, GpuBlockPool
+from prism_infer.engine.input_preparation import ModelInputPreparer
 from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.engine.sequence import Sequence
 from prism_infer.layers.attention import store_kvcache
@@ -232,6 +234,51 @@ def test_block_manager_swap_in_restores_hash_from_metadata_after_decode_pickle()
         print("BlockManager swap hash metadata restore: PASS")
 
 
+def test_block_manager_capacity_failures_are_atomic() -> None:
+    """Allocation and swap preflight must not publish partial ownership."""
+
+    block_size = 4
+    with _page_contract(block_size) as sequence:
+        allocation_manager = BlockManager(num_blocks=1, block_size=block_size)
+        oversized = sequence([1, 2, 3, 4, 5])
+        with pytest.raises(RuntimeError, match="atomic allocation"):
+            allocation_manager.allocate(oversized)
+        assert oversized.block_table == []
+        assert allocation_manager.used_block_ids == set()
+        assert allocation_manager.free_block_id_set == {0}
+
+        swap_out_manager = BlockManager(
+            num_blocks=2,
+            block_size=block_size,
+            num_cpu_blocks=1,
+        )
+        resident = sequence([10, 11, 12, 13, 14])
+        swap_out_manager.allocate(resident)
+        original_gpu_table = list(resident.block_table)
+        with pytest.raises(RuntimeError, match="insufficient free CPU"):
+            swap_out_manager.swap_out(resident)
+        assert resident.block_table == original_gpu_table
+        assert resident.cpu_block_table == []
+        assert len(swap_out_manager.cpu_free_block_ids) == 1
+
+        swap_in_manager = BlockManager(
+            num_blocks=2,
+            block_size=block_size,
+            num_cpu_blocks=2,
+        )
+        swapped = sequence([20, 21, 22, 23, 24])
+        swap_in_manager.allocate(swapped)
+        swap_in_manager.swap_out(swapped)
+        cpu_table = list(swapped.cpu_block_table)
+        blocker = sequence([90, 91, 92, 93])
+        swap_in_manager.allocate(blocker)
+        with pytest.raises(RuntimeError, match="atomic swap-in"):
+            swap_in_manager.swap_in(swapped)
+        assert swapped.block_table == []
+        assert swapped.cpu_block_table == cpu_table
+        assert len(swap_in_manager.cpu_free_block_ids) == 0
+
+
 def test_prepare_prefill_builds_paged_prefix_context() -> None:
     """Prefix-hit Q<K prefill must expose exact paged history metadata."""
 
@@ -256,3 +303,58 @@ def test_prepare_prefill_builds_paged_prefix_context() -> None:
         finally:
             reset_context()
         print("prefix-cache paged prefill context: PASS")
+
+
+def test_input_preparer_fails_before_device_transfer_on_invalid_runtime_state() -> None:
+    """Malformed multimodal/page state must fail before launching CUDA work."""
+
+    preparer = ModelInputPreparer(SimpleNamespace(), block_size=4)
+    missing_positions = Sequence(
+        [1, 99, 2],
+        block_size=4,
+        request_id=40,
+        pixel_values=torch.zeros(1, 2),
+        image_grid_thw=torch.tensor([[1, 1, 1]]),
+        image_token_id=99,
+        image_token_count=1,
+    )
+    missing_positions.block_table = [0]
+    with pytest.raises(RuntimeError, match="requires model-specific position_ids"):
+        preparer.prepare_prefill([missing_positions])
+
+    malformed_positions = Sequence(
+        [1, 2, 3],
+        block_size=4,
+        request_id=41,
+        position_ids=torch.arange(3).view(1, 1, 3),
+    )
+    malformed_positions.block_table = [0]
+    with pytest.raises(ValueError, match="multimodal position_ids must have shape"):
+        preparer.prepare_prefill([malformed_positions])
+
+    uncovered_tokens = Sequence(
+        [1, 2, 3, 4, 5],
+        block_size=4,
+        request_id=42,
+    )
+    uncovered_tokens.block_table = [0]
+    with pytest.raises(RuntimeError, match="does not cover scheduled tokens"):
+        preparer.prepare_prefill([uncovered_tokens])
+
+
+def test_block_pools_reject_invalid_ids_and_roll_back_partial_cpu_allocation() -> None:
+    """Allocator corruption must fail closed without leaking earlier pages."""
+
+    gpu_pool = GpuBlockPool(2)
+    with pytest.raises(TypeError, match="GPU block id must be an integer"):
+        gpu_pool.validate_owned([False])
+    with pytest.raises(IndexError, match=r"outside \[0, 2\)"):
+        gpu_pool.validate_owned([2])
+
+    cpu_pool = CpuBlockPool(3)
+    cpu_pool.free_block_ids.insert(1, 0)  # synthetic duplicate free-list entry
+    with pytest.raises(RuntimeError, match="free-list corruption"):
+        cpu_pool.allocate_many(2)
+    assert cpu_pool.used_block_ids == set()
+    assert cpu_pool._free_block_id_set == {0, 1, 2}
+    assert list(cpu_pool.free_block_ids) == [0, 1, 2]

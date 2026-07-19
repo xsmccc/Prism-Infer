@@ -1,9 +1,10 @@
 # Prism-Infer 技术报告
 
-> 版本：P8 delivery draft，2026-07-17  
-> 目标模型：Qwen3-VL-8B-Instruct  
-> 冻结质量基线：`p6.12-content-aware-kv` / `c970c61`  
+> 版本：P9-C architecture/quality update，2026-07-19
+> 目标模型：Qwen3-VL-8B-Instruct
+> 冻结质量基线：`p6.12-content-aware-kv` / `c970c61`
 > 当前完整性能验证点：P7.4-B / `72f85ba`
+> 当前 scaled-FP8 质量点：Prism `5ada892` / vLLM external `3ec90a5`
 
 ## 摘要
 
@@ -13,12 +14,14 @@ encoder、Qwen3 decoder、M-RoPE、DeepStack 注入、Paged KV、scheduler、CUD
 decode、trace、visual-token scoring 和 physical KV compaction，并逐层与独立 reference
 对齐。
 
-项目形成了三类结果：
+项目形成了四类结果：
 
 1. 自实现 Qwen3-VL 多模态 forward 与单机推理 engine 的 correctness 基线。
 2. 从 KV trace 到 content-aware physical compaction 的质量—显存—性能闭环。
 3. 从 node-level Systems trace 到 logits projection 修复、Graph replay 分解和下一轮
    projection packing 的性能归因闭环。
+4. 从失败的 unit-scale FP8 到 per-token/per-KV-head scaled FP8、标准多模态质量集和
+   external fail-closed comparator 的量化证据闭环。
 
 当前结论并非“全面超过 vLLM”。在同条件 best-stable CUDA Graph 对比中，Prism 的
 quality-qualified compact TPOT 仍为 vLLM 的 `1.34x–1.40x`。项目价值主要在可解释的
@@ -34,8 +37,8 @@ quality-qualified compact TPOT 仍为 vLLM 的 `1.34x–1.40x`。项目价值主
 4. 压缩和执行优化在质量、显存、TPOT、E2E 与 online SLO 上分别有什么效果？
 
 明确排除或尚未完成的范围：网络 server、跨机 PD/EP、投机解码、真实 megakernel、
-TP2 动态矩阵、标准 COCO CIDEr/SPICE、大规模 VQA，以及 FP8 KV 质量通过。详见
-[Known Issues](KNOWN_ISSUES.md)。
+TP2 动态矩阵、NVFP4、权重/激活量化、scaled-FP8 正式 runtime speedup，以及跨框架
+page-table/allocator 全口径物理显存 Pareto。详见 [Known Issues](KNOWN_ISSUES.md)。
 
 ## 2. 系统总览
 
@@ -236,9 +239,24 @@ clean `e51c16d`，7 张 COCO val2017 图片、35 captions、output32：
 ### 6.4 FP8 边界
 
 FP8 storage和 paged decode kernel完成 32-case independent SDPA correctness matrix，
-固定 block pool bytes可到 BF16 的 `0.5x`。但 unit-scale FP8 在长输出真实 workload
-没有通过最终质量门禁；uniform+FP8 的 `4.016x` observed peak running capacity也
-伴随质量 FAIL，不能成为默认能力或线上吞吐 claim。
+旧 `fp8_kv` 固定 block pool payload bytes可到 BF16 的 `0.5x`，但它没有 scale；
+unit-scale FP8 在长输出真实 workload 没有通过最终质量门禁。uniform+FP8 的 `4.016x`
+observed peak running capacity也伴随质量 FAIL，只能作为 rejected baseline。
+
+P9-C 新增独立的 `scaled_fp8_kv`：每个 token、每个 KV head 分别保存 K/V FP32 scale，
+并让 scales 与 payload 一同经历 Triton store、paged decode、COW、swap、physical
+compaction 和 CUDA Graph replay。clean `5ada892` 的冻结标准质量矩阵结果为：
+
+- DocVQA、MuirBench、MVBench development/final 六项相对 Prism BF16 全部
+  non-inferiority PASS；
+- allocated KV pool 为 `778,567,680 / 1,509,949,440 = 0.515625x`，节省
+  `48.4375%`；
+- clean `3ec90a5` 的同容量 vLLM per-token-head FP8 external matrix中，
+  DocVQA/MuirBench PASS，MVBench development/final FAIL。
+
+最后一项的正确表述是“预注册外部质量稳定性结果为 MIXED”。vLLM 的 MVBench
+accuracy 点估计实际更高，不能声称 Prism accuracy 显著领先；双方 page-table/Python
+allocator 没有统一字节合同，也不能据此宣称完整物理显存 Pareto 胜出。
 
 ## 7. 系统性能优化
 
@@ -337,13 +355,15 @@ Plan → Implement → Verify → Teach → Document → Gate Review
 
 最高优先级：
 
-1. 在两卡机器完成 TP2 logits/greedy、NCCL、per-GPU memory和 latency。
-2. 在可用 NCU counter 的平台采集真实 SM utilization；kernel busy不能替代。
-3. 扩大 visual compaction质量集到标准 caption/VQA指标和长上下文。
-4. 建立真实网络 server后再做 arrival/SLO external online goodput。
+1. 建立跨框架 page-table/allocator metadata 的统一字节合同，完成或诚实否决
+   full-physical Gate A。
+2. 用已恢复的 NCU/NSYS 进入 P9-D，验证 full-step Graph 和 split-GQA/context kernel
+   是否有 full-engine收益。
+3. 建立 thin network server后再做 arrival/SLO external online goodput。
+4. 只有获得明确双卡资源后，才运行 TP2 logits/greedy、NCCL、per-GPU memory和 latency。
 
-P8 fresh venv、完整8B demo与full regression已完成；上述剩余条件项仍只能由对应
-两卡、counter、标准数据集或网络环境的真实证据关闭。
+P8 fresh venv、完整8B demo与full regression，以及 P9 标准质量矩阵均已完成；上述
+剩余条件项仍只能由对应物理字节合同、runtime profiling、网络环境或合法双卡证据关闭。
 
 ## 结论
 
@@ -352,4 +372,6 @@ Prism-Infer 已形成一套可运行、可追踪、可压缩和可解释的 Qwen
 门禁、CUDA Graph执行和系统 profiling放进同一证据链。当前压缩主线在受限 lexical
 gate下减少约一半 active visual KV，但短 workload性能收益有限；trace-driven logits
 修复显著降低了无效转换成本，packed gate/up又以36个更少的linear带来不足1%的decode
-TPOT改善，而 external TPOT仍落后。剩余工作边界清楚，未验证能力没有被包装成完成结论。
+TPOT改善。scaled FP8 在冻结标准质量协议下把 allocated KV pool 降低 `48.4375%`，
+但 external TPOT仍落后，full-physical Pareto也尚未建立。剩余工作边界清楚，未验证
+能力没有被包装成完成结论。

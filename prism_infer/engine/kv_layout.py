@@ -39,14 +39,25 @@ class KVCacheLayoutDescriptor:
     ) -> None:
         """校验 descriptor 与当前物理页表的一致性。"""
 
+        self._validate_header(block_size)
+        self._validate_lengths()
+        self._validate_retained_positions()
+        self._validate_block_table(
+            block_size,
+            block_table,
+            allow_pending_append=allow_pending_append,
+        )
+        self._validate_evidence()
+
+    def _validate_header(self, block_size: int) -> None:
         if self.schema_version != KV_LAYOUT_SCHEMA_VERSION:
-            raise ValueError(
-                f"unsupported KV layout schema_version: {self.schema_version}"
-            )
+            raise ValueError(f"unsupported KV layout schema_version: {self.schema_version}")
         if self.mode != KV_LAYOUT_VISUAL_COMPACT:
             raise ValueError(f"unsupported active KV layout mode: {self.mode!r}")
         if block_size <= 0:
             raise ValueError(f"block_size must be positive, got {block_size}")
+
+    def _validate_lengths(self) -> None:
         if self.prompt_logical_len < 1:
             raise ValueError("prompt_logical_len must be positive")
         if self.logical_context_len < self.prompt_logical_len:
@@ -60,15 +71,23 @@ class KVCacheLayoutDescriptor:
                 "physical KV length must equal compact prompt + generated tokens: "
                 f"physical={self.physical_kv_len}, expected={expected_physical_len}"
             )
+
+    def _validate_retained_positions(self) -> None:
         retained = self.retained_original_positions
         if len(retained) != self.compressed_prompt_kv_len:
-            raise ValueError(
-                "retained position count must equal compressed prompt KV length"
-            )
+            raise ValueError("retained position count must equal compressed prompt KV length")
         if tuple(sorted(set(retained))) != retained:
             raise ValueError("retained original positions must be sorted and unique")
         if retained and (retained[0] < 0 or retained[-1] >= self.prompt_logical_len):
             raise ValueError("retained original positions are outside prompt")
+
+    def _validate_block_table(
+        self,
+        block_size: int,
+        block_table: list[int],
+        *,
+        allow_pending_append: bool,
+    ) -> None:
         required_blocks = (self.physical_kv_len + block_size - 1) // block_size
         pending_append = (
             allow_pending_append
@@ -82,6 +101,8 @@ class KVCacheLayoutDescriptor:
             )
         if any(block_id < 0 for block_id in block_table):
             raise ValueError("compact block table contains a negative block id")
+
+    def _validate_evidence(self) -> None:
         if not self.kv_dtype:
             raise ValueError("compact KV dtype must be recorded")
         if not bool(self.compression_record.get("physical_compaction", False)):
@@ -121,8 +142,7 @@ class KVCacheLayoutDescriptor:
             prompt_logical_len=int(record["prompt_logical_len"]),
             compressed_prompt_kv_len=int(record["compressed_prompt_kv_len"]),
             retained_original_positions=tuple(
-                int(position)
-                for position in record["retained_original_positions"]
+                int(position) for position in record["retained_original_positions"]
             ),
             kv_dtype=str(record["kv_dtype"]),
             compression_record=dict(record["compression_record"]),
@@ -148,6 +168,13 @@ class KVCompactionPlan:
     def validate(self, *, block_size: int) -> None:
         """校验 copy mapping、页表缩减和 decision record。"""
 
+        self._validate_lengths(block_size)
+        self._validate_retained_positions()
+        self._validate_block_tables(block_size)
+        self._validate_destinations(block_size)
+        self._validate_evidence()
+
+    def _validate_lengths(self, block_size: int) -> None:
         if block_size <= 0:
             raise ValueError(f"block_size must be positive, got {block_size}")
         if self.logical_prompt_len < 1:
@@ -158,10 +185,14 @@ class KVCompactionPlan:
             raise ValueError("physical prompt length must equal source slots")
         if self.physical_prompt_len != len(self.destination_slots):
             raise ValueError("physical prompt length must equal destination slots")
+
+    def _validate_retained_positions(self) -> None:
         if tuple(sorted(set(self.retained_original_positions))) != (
             self.retained_original_positions
         ):
             raise ValueError("plan retained positions must be sorted and unique")
+
+    def _validate_block_tables(self, block_size: int) -> None:
         expected_blocks = (self.physical_prompt_len + block_size - 1) // block_size
         if len(self.new_block_table) != expected_blocks:
             raise ValueError("plan compact block count is inconsistent")
@@ -169,13 +200,16 @@ class KVCompactionPlan:
             raise ValueError("plan must compact into the existing page-table prefix")
         if self.old_block_table[expected_blocks:] != self.released_block_ids:
             raise ValueError("plan released blocks must be the old page-table suffix")
+
+    def _validate_destinations(self, block_size: int) -> None:
         expected_destinations = tuple(
-            self.new_block_table[index // block_size] * block_size
-            + index % block_size
+            self.new_block_table[index // block_size] * block_size + index % block_size
             for index in range(self.physical_prompt_len)
         )
         if self.destination_slots != expected_destinations:
             raise ValueError("plan destination slots are not a dense physical tail")
+
+    def _validate_evidence(self) -> None:
         if not self.kv_dtype:
             raise ValueError("plan KV dtype must be recorded")
         if bool(self.compression_record.get("physical_compaction", False)):

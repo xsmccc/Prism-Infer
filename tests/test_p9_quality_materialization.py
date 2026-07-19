@@ -164,9 +164,7 @@ def test_mvbench_metadata_stays_pending_until_media_has_content_hash() -> None:
     )
 
     assert row["sample_id"] == "fixture_task|clip.mp4|3"
-    assert row["media"][0]["archive_member_path"] == (
-        "fixture/videos/clip.mp4"
-    )
+    assert row["media"][0]["archive_member_path"] == ("fixture/videos/clip.mp4")
     assert row["media"][0]["sha256"] is None
     assert media_identity_record([row])["status"] == "pending"
 
@@ -204,13 +202,9 @@ def test_frozen_mvbench_map_covers_all_official_tasks_and_archives() -> None:
     media_map = json.loads(MVBENCH_MAP.read_text(encoding="utf-8"))
 
     assert len(media_map["tasks"]) == 20
-    assert media_map["dataset_revision"] == (
-        "230a2d4fac8900333c61754641c7a13e069ac9c6"
-    )
+    assert media_map["dataset_revision"] == ("230a2d4fac8900333c61754641c7a13e069ac9c6")
     assert media_map["tasks"]["fine_grained_pose"]["archive"] is None
     referenced_archives = {
-        task["archive"]
-        for task in media_map["tasks"].values()
-        if task["archive"] is not None
+        task["archive"] for task in media_map["tasks"].values() if task["archive"] is not None
     }
     assert referenced_archives == set(media_map["archives"])

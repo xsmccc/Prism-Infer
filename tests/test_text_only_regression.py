@@ -1,8 +1,17 @@
 """P2.7 纯文本路径回归验证。"""
 
+import pytest
+
 from prism_infer import LLM, SamplingParams
 
 from conftest import get_model_path
+
+
+pytestmark = [
+    pytest.mark.model,
+    pytest.mark.gpu,
+    pytest.mark.integration,
+]
 
 
 def test_text_only_generate_greedy_smoke():

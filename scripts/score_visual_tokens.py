@@ -26,11 +26,17 @@ from prism_infer.analysis.visual_importance import (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Score visual token importance from Prism-Infer KV trace")
+    parser = argparse.ArgumentParser(
+        description="Score visual token importance from Prism-Infer KV trace"
+    )
     parser.add_argument("trace", type=Path, help="P4 KV trace JSONL path")
-    parser.add_argument("--output-json", type=Path, default=None, help="optional report JSON output")
+    parser.add_argument(
+        "--output-json", type=Path, default=None, help="optional report JSON output"
+    )
     parser.add_argument("--markdown", type=Path, default=None, help="optional Markdown output")
-    parser.add_argument("--top-k", type=int, default=20, help="number of top/bottom tokens to include")
+    parser.add_argument(
+        "--top-k", type=int, default=20, help="number of top/bottom tokens to include"
+    )
     parser.add_argument(
         "--keep-ratio",
         type=float,

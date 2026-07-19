@@ -409,7 +409,7 @@ def _run_prefill_attention(compression_metadata: CompressionMetadata | None) -> 
         num_heads=num_heads,
         num_kv_heads=num_kv_heads,
         head_dim=head_dim,
-        scale=head_dim ** -0.5,
+        scale=head_dim**-0.5,
     )
     cu_seqlens = torch.tensor([0, seqlen], dtype=torch.int32)
 

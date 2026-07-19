@@ -17,8 +17,7 @@ def test_locate_token_spans_groups_text_image_video_tokens():
     token_ids = [10, 11, 100, 100, 12, 200, 200, 200, 13]
     spans = locate_token_spans(token_ids, image_token_id=100, video_token_id=200)
     compact = [
-        (span.modality, span.start, span.end, span.index, span.token_count)
-        for span in spans
+        (span.modality, span.start, span.end, span.index, span.token_count) for span in spans
     ]
 
     print(f"token ids length: {len(token_ids)}")

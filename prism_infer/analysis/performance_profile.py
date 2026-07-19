@@ -19,6 +19,7 @@ import torch
 from torch.autograd.profiler import record_function
 
 from prism_infer.analysis.benchmark_schema import summarize_values
+from prism_infer.observability.performance import install_performance_provider
 
 
 PERFORMANCE_PROFILE_SCHEMA_VERSION = 1
@@ -34,9 +35,7 @@ def _summarize_profile_regions(
         matching = [region for region in regions if region["name"] == name]
         cpu_values = [float(region["cpu_ms"]) for region in matching]
         cuda_values = [
-            float(region["cuda_ms"])
-            for region in matching
-            if region["cuda_ms"] is not None
+            float(region["cuda_ms"]) for region in matching if region["cuda_ms"] is not None
         ]
         summary[name] = {
             "calls": len(matching),
@@ -57,12 +56,16 @@ def validate_performance_profile_record(record: Mapping[str, Any]) -> None:
         raise ValueError("performance profile metadata must be an object")
     if not isinstance(record.get("cuda_timing"), bool):
         raise ValueError("performance profile cuda_timing must be a bool")
+    steps = _validate_profile_steps(record.get("steps"))
+    regions = _validate_profile_regions(record.get("regions"), steps)
+    _validate_profile_summaries(record, regions)
 
-    steps = record.get("steps")
-    if not isinstance(steps, list):
+
+def _validate_profile_steps(raw_steps: object) -> set[int]:
+    if not isinstance(raw_steps, list):
         raise ValueError("performance profile steps must be a list")
     step_ids: set[int] = set()
-    for step in steps:
+    for step in raw_steps:
         if not isinstance(step, Mapping):
             raise ValueError("performance profile step must be an object")
         step_id = step.get("step_id")
@@ -73,45 +76,59 @@ def validate_performance_profile_record(record: Mapping[str, Any]) -> None:
         step_ids.add(step_id)
         if step.get("status") not in ("ok", "error"):
             raise ValueError("performance profile step status must be ok or error")
+    return step_ids
 
-    regions = record.get("regions")
-    if not isinstance(regions, list) or not regions:
+
+def _validate_profile_regions(
+    raw_regions: object,
+    step_ids: set[int],
+) -> list[Mapping[str, Any]]:
+    if not isinstance(raw_regions, list) or not raw_regions:
         raise ValueError("performance profile regions must be a non-empty list")
-    grouped: dict[str, list[Mapping[str, Any]]] = {}
-    for region in regions:
+    regions = []
+    for region in raw_regions:
         if not isinstance(region, Mapping):
             raise ValueError("performance profile region must be an object")
-        name = region.get("name")
-        if not isinstance(name, str) or not name:
-            raise ValueError("performance profile region name must be non-empty")
-        step_id = region.get("step_id")
-        if step_id is not None and step_id not in step_ids:
-            raise ValueError(f"performance profile region has unknown step_id: {step_id}")
-        cpu_ms = region.get("cpu_ms")
-        if (
-            isinstance(cpu_ms, bool)
-            or not isinstance(cpu_ms, (int, float))
-            or not math.isfinite(float(cpu_ms))
-            or float(cpu_ms) < 0.0
-        ):
-            raise ValueError("performance profile region cpu_ms must be non-negative")
-        cuda_ms = region.get("cuda_ms")
-        if cuda_ms is not None and (
-            isinstance(cuda_ms, bool)
-            or not isinstance(cuda_ms, (int, float))
-            or not math.isfinite(float(cuda_ms))
-            or float(cuda_ms) < 0.0
-        ):
-            raise ValueError("performance profile region cuda_ms must be non-negative")
-        if not isinstance(region.get("metadata"), Mapping):
-            raise ValueError("performance profile region metadata must be an object")
-        phase = region.get("phase")
-        if not isinstance(phase, str) or not phase:
-            raise ValueError("performance profile region phase must be non-empty")
-        grouped.setdefault(name, []).append(region)
+        _validate_profile_region(region, step_ids)
+        regions.append(region)
+    return regions
 
+
+def _validate_profile_region(region: Mapping[str, Any], step_ids: set[int]) -> None:
+    name = region.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("performance profile region name must be non-empty")
+    step_id = region.get("step_id")
+    if step_id is not None and step_id not in step_ids:
+        raise ValueError(f"performance profile region has unknown step_id: {step_id}")
+    _validate_profile_duration(region.get("cpu_ms"), "cpu_ms", allow_none=False)
+    _validate_profile_duration(region.get("cuda_ms"), "cuda_ms", allow_none=True)
+    if not isinstance(region.get("metadata"), Mapping):
+        raise ValueError("performance profile region metadata must be an object")
+    phase = region.get("phase")
+    if not isinstance(phase, str) or not phase:
+        raise ValueError("performance profile region phase must be non-empty")
+
+
+def _validate_profile_duration(value: object, name: str, *, allow_none: bool) -> None:
+    if value is None and allow_none:
+        return
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) < 0.0
+    ):
+        raise ValueError(f"performance profile region {name} must be non-negative")
+
+
+def _validate_profile_summaries(
+    record: Mapping[str, Any],
+    regions: list[Mapping[str, Any]],
+) -> None:
+    region_names = {str(region["name"]) for region in regions}
     summary = record.get("summary")
-    if not isinstance(summary, Mapping) or set(summary) != set(grouped):
+    if not isinstance(summary, Mapping) or set(summary) != region_names:
         raise ValueError("performance profile summary names must match regions")
     expected_summary = _summarize_profile_regions(regions)
     if summary != expected_summary:
@@ -244,8 +261,7 @@ class PerformanceProfileSession:
             torch.cuda.synchronize()
 
         step_phases = {
-            step.step_id: str(step.metadata.get("phase", "unknown"))
-            for step in self._steps
+            step.step_id: str(step.metadata.get("phase", "unknown")) for step in self._steps
         }
         regions: list[dict[str, Any]] = []
         for pending in self._regions:
@@ -257,9 +273,7 @@ class PerformanceProfileSession:
                     "name": pending.name,
                     "step_id": pending.step_id,
                     "phase": (
-                        "preprocess"
-                        if pending.step_id is None
-                        else step_phases[pending.step_id]
+                        "preprocess" if pending.step_id is None else step_phases[pending.step_id]
                     ),
                     "cpu_ms": pending.cpu_ms,
                     "cuda_ms": cuda_ms,
@@ -281,10 +295,7 @@ class PerformanceProfileSession:
             "record_type": "performance_profile",
             "metadata": self.metadata,
             "cuda_timing": self.cuda_timing,
-            "steps": [
-                {"step_id": step.step_id, **step.metadata}
-                for step in self._steps
-            ],
+            "steps": [{"step_id": step.step_id, **step.metadata} for step in self._steps],
             "regions": regions,
             "summary": summary,
             "summary_by_phase": summary_by_phase,
@@ -409,3 +420,9 @@ def profile_region(
         cuda=cuda,
         metadata=dict(metadata or {}),
     )
+
+
+install_performance_provider(
+    profile_region_provider=profile_region,
+    profile_session_provider=get_performance_profile_session,
+)

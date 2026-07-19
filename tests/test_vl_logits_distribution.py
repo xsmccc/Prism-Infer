@@ -3,6 +3,7 @@
 import gc
 from inspect import signature
 
+import pytest
 import torch
 from PIL import Image
 from transformers import Qwen3VLForConditionalGeneration
@@ -13,6 +14,13 @@ from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 from test_processor_pipeline_video import demo_video_frames
 
+
+pytestmark = [
+    pytest.mark.model,
+    pytest.mark.gpu,
+    pytest.mark.integration,
+    pytest.mark.slow,
+]
 
 DTYPE = torch.bfloat16
 DEVICE = "cuda"
@@ -160,7 +168,9 @@ def _teacher_forced_hf_logits(hf_model, hf_kwargs: dict, generated_ids: list[int
     hf_full = _with_mm_token_type_ids(hf_model, hf_full)
 
     with torch.inference_mode():
-        return hf_model(**_to_cuda_kwargs(hf_full)).logits[:, -MAX_TOKENS - 1:-1, :].detach().cpu()
+        return (
+            hf_model(**_to_cuda_kwargs(hf_full)).logits[:, -MAX_TOKENS - 1 : -1, :].detach().cpu()
+        )
 
 
 def _teacher_forced_our_logits(
@@ -189,14 +199,14 @@ def _teacher_forced_our_logits(
         for precision in ("fp32", "model"):
             our_model.logits_precision = precision
             results[precision] = (
-                our_model.compute_logits(hidden)[:, -MAX_TOKENS - 1:-1, :]
-                .detach()
-                .cpu()
+                our_model.compute_logits(hidden)[:, -MAX_TOKENS - 1 : -1, :].detach().cpu()
             )
         return results
 
 
-def _compare_distribution(case_name: str, hf_logits: torch.Tensor, our_logits: torch.Tensor, generated_ids: list[int]) -> None:
+def _compare_distribution(
+    case_name: str, hf_logits: torch.Tensor, our_logits: torch.Tensor, generated_ids: list[int]
+) -> None:
     hf_f = hf_logits.float()
     our_f = our_logits.float()
     diff = (hf_f - our_f).abs()
@@ -255,14 +265,16 @@ def test_vl_teacher_forced_logits_distribution_and_ppl_match_hf() -> None:
     try:
         hf_config = hf_model.config
         for case in _cases():
-            inputs, hf_kwargs, our_kwargs, visual_token_count = _prepare_case(processor, hf_config, case)
+            inputs, hf_kwargs, our_kwargs, visual_token_count = _prepare_case(
+                processor, hf_config, case
+            )
             with torch.inference_mode():
                 hf_generated = hf_model.generate(
                     **_to_cuda_kwargs(_with_mm_token_type_ids(hf_model, hf_kwargs)),
                     max_new_tokens=MAX_TOKENS,
                     do_sample=False,
-            )
-            generated_ids = hf_generated[0, inputs.input_ids.shape[1]:].tolist()
+                )
+            generated_ids = hf_generated[0, inputs.input_ids.shape[1] :].tolist()
             for checkpoint in CHECKPOINTS:
                 print(f"{case['name']} prefix@{checkpoint}: {generated_ids[:checkpoint]}")
             print(f"{case['name']} prompt tokens: {inputs.input_ids.shape[1]}")

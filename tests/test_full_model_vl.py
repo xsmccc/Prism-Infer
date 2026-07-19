@@ -7,6 +7,7 @@
 import gc
 import sys
 
+import pytest
 import torch
 from PIL import Image
 
@@ -14,6 +15,14 @@ sys.path.insert(0, "/data/Prism-Infer")
 from conftest import get_model_path, require_transformers
 from prism_infer.engine.vl_inputs import prepare_single_image_inputs
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
+
+
+pytestmark = [
+    pytest.mark.model,
+    pytest.mark.gpu,
+    pytest.mark.integration,
+    pytest.mark.slow,
+]
 
 
 MODEL_PATH = get_model_path()
@@ -50,12 +59,16 @@ def run_hf_vl_forward(inputs) -> torch.Tensor:
     from transformers import Qwen3VLForConditionalGeneration
 
     print(f"  加载 HF VL 模型到 GPU... (当前显存: {_gpu_mem():.1f} GB)")
-    model = Qwen3VLForConditionalGeneration.from_pretrained(
-        MODEL_PATH,
-        dtype=DTYPE,
-        trust_remote_code=True,
-        local_files_only=True,
-    ).cuda().eval()
+    model = (
+        Qwen3VLForConditionalGeneration.from_pretrained(
+            MODEL_PATH,
+            dtype=DTYPE,
+            trust_remote_code=True,
+            local_files_only=True,
+        )
+        .cuda()
+        .eval()
+    )
     with torch.no_grad():
         out = model(
             input_ids=inputs.input_ids.to(DEVICE),

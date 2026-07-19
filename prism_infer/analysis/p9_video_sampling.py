@@ -171,9 +171,7 @@ def _decode_sequential_frames(
         for index in range(max(targets) + 1):
             ok, frame = capture.read()
             if not ok or frame is None:
-                raise ValueError(
-                    f"sequential decode ended at video {video_path} frame {index}"
-                )
+                raise ValueError(f"sequential decode ended at video {video_path} frame {index}")
             if index in targets:
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 decoded[index] = Image.fromarray(rgb)
@@ -200,9 +198,7 @@ def sample_video_file(
     try:
         import cv2
     except ImportError as exc:
-        raise RuntimeError(
-            "MVBench video sampling requires optional dependency cv2"
-        ) from exc
+        raise RuntimeError("MVBench video sampling requires optional dependency cv2") from exc
     try:
         distribution_version = version(VIDEO_DECODER_DISTRIBUTION)
     except PackageNotFoundError as exc:
@@ -271,8 +267,7 @@ def sample_video_file(
             capture.release()
         _close_decoded_frames(decoded)
     frame_identity = [
-        _rgb_frame_identity(image, index=index)
-        for image, index in zip(sampled, indices)
+        _rgb_frame_identity(image, index=index) for image, index in zip(sampled, indices)
     ]
     return sampled, {
         "source_kind": "video_file",
@@ -313,9 +308,7 @@ def sample_frame_manifest(
     expected = set(range(1, max_index + 1))
     if set(by_index) != expected:
         missing = sorted(expected - set(by_index))
-        raise ValueError(
-            f"MVBench frame directory is not contiguous: missing={missing}"
-        )
+        raise ValueError(f"MVBench frame directory is not contiguous: missing={missing}")
     indices = uniform_segment_center_indices(
         first_index=1,
         max_index=max_index,
@@ -330,8 +323,7 @@ def sample_frame_manifest(
         with Image.open(path) as image:
             sampled.append(image.convert("RGB").copy())
     frame_identity = [
-        _rgb_frame_identity(image, index=index)
-        for image, index in zip(sampled, indices)
+        _rgb_frame_identity(image, index=index) for image, index in zip(sampled, indices)
     ]
     return sampled, {
         "source_kind": "frame_directory",

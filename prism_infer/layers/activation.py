@@ -12,11 +12,10 @@ import torch.nn.functional as F
 #
 # SiLU(x) = x * sigmoid(x) = x / (1 + e^(-x))
 class SiluAndMul(nn.Module):
-
     def __init__(self):
         super().__init__()
 
-    @torch.compile    # 融合 chunk + silu + mul 为一个 kernel
+    @torch.compile  # 融合 chunk + silu + mul 为一个 kernel
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x 形状: [N, 2 * intermediate_size]  (gate 和 up 拼在一起)
         # chunk(2, -1): 沿最后一维切成两等份

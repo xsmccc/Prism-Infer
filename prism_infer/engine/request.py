@@ -18,9 +18,7 @@ def validate_request_id(value: object, *, name: str = "request_id") -> int:
     """Return one exact non-negative integer request identity."""
 
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(
-            f"{name} must be a non-negative integer, got {value!r}"
-        )
+        raise ValueError(f"{name} must be a non-negative integer, got {value!r}")
     return value
 
 
@@ -134,8 +132,7 @@ class RequestLifecycle:
         validate_request_id(self.request_id)
         if not isinstance(self.state, RequestState):
             raise TypeError(
-                "request lifecycle state must be RequestState, "
-                f"got {type(self.state).__name__}"
+                f"request lifecycle state must be RequestState, got {type(self.state).__name__}"
             )
 
     def transition(
@@ -162,9 +159,7 @@ class RequestLifecycle:
                 source=source,
                 target=target,
                 reason=reason,
-                timestamp_ns=(
-                    perf_counter_ns() if timestamp_ns is None else timestamp_ns
-                ),
+                timestamp_ns=(perf_counter_ns() if timestamp_ns is None else timestamp_ns),
             )
         )
 

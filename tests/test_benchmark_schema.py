@@ -8,12 +8,14 @@ import pytest
 from benchmarks.bench_system import (
     MODE_SPECS,
     _annotate_comparisons,
-    _describe_case_inputs,
-    _expand_case_batch,
-    _materialize_requests,
     _parse_keep_ratios,
     _parse_positive_ints,
     _resolve_engine_max_num_seqs,
+)
+from benchmarks.harness import (
+    describe_case_inputs,
+    expand_case_batch,
+    materialize_requests,
 )
 from prism_infer.analysis.benchmark_schema import (
     BENCHMARK_SCHEMA_VERSION,
@@ -82,9 +84,7 @@ def _complete_record() -> dict[str, object]:
             "manifest_sha256": "0" * 64,
             "case_id": "single_image_448",
             "request_types": ["image"],
-            "input_shapes": [
-                {"type": "image", "visual_shapes": [[448, 448, 3]]}
-            ],
+            "input_shapes": [{"type": "image", "visual_shapes": [[448, 448, 3]]}],
             "num_requests": 1,
             "source_num_requests": 1,
             "request_replication_factor": 1,
@@ -298,11 +298,7 @@ def test_default_workload_manifest_is_valid_and_unique() -> None:
     manifest = load_workload_manifest(DEFAULT_MANIFEST)
     case_ids = [case["id"] for case in manifest["cases"]]
     request_types = sorted(
-        {
-            request["type"]
-            for case in manifest["cases"]
-            for request in case["requests"]
-        }
+        {request["type"] for case in manifest["cases"] for request in case["requests"]}
     )
 
     print(f"benchmark workload cases: {case_ids}")
@@ -325,19 +321,14 @@ def test_real_workload_manifest_has_auditable_asset_identity() -> None:
 
     print(f"P6 real workload image metadata: {image}")
     print(
-        "P6.12 fidelity asset ids: "
-        f"{[request['image']['path'] for request in fidelity_requests]}"
+        f"P6.12 fidelity asset ids: {[request['image']['path'] for request in fidelity_requests]}"
     )
     assert request["type"] == "image_file"
     assert image["path"] == "data/p6_real_samples/000000039769.jpg"
-    assert image["sha256"] == (
-        "dea9e7ef97386345f7cff32f9055da4982da5471c48d575146c796ab4563b04e"
-    )
+    assert image["sha256"] == ("dea9e7ef97386345f7cff32f9055da4982da5471c48d575146c796ab4563b04e")
     assert (image["width"], image["height"]) == (640, 480)
     assert len(fidelity_requests) == 7
-    assert {
-        request["image"]["path"] for request in fidelity_requests
-    } == {
+    assert {request["image"]["path"] for request in fidelity_requests} == {
         "data/p6_real_samples/000000039769.jpg",
         "data/p6_real_samples/000000037777.jpg",
         "data/p6_real_samples/000000087038.jpg",
@@ -347,33 +338,30 @@ def test_real_workload_manifest_has_auditable_asset_identity() -> None:
         "data/p6_real_samples/000000403385.jpg",
     }
     assert all(
-        request["image"]["source_url"].startswith(
-            "http://images.cocodataset.org/val2017/"
-        )
+        request["image"]["source_url"].startswith("http://images.cocodataset.org/val2017/")
         for request in fidelity_requests
     )
     reference_source = manifest["reference_sources"]["coco_captions_val2017"]
     assert reference_source["content_sha256"] == (
         "afe3b30e403dd7f228e2373023abbd60042a6e10ec6874d3652df034d289ebb9"
     )
-    assert reference_source["mirror_revision"] == (
-        "50967f6f3616db2bf261e42b80377ab8cd8d4214"
-    )
+    assert reference_source["mirror_revision"] == ("50967f6f3616db2bf261e42b80377ab8cd8d4214")
     assert all(
         request["evaluation"]["task"] == "caption"
         and len(request["evaluation"]["references"]) == 5
-        and len(
-            {
-                reference["annotation_id"]
-                for reference in request["evaluation"]["references"]
-            }
-        )
+        and len({reference["annotation_id"] for reference in request["evaluation"]["references"]})
         == 5
         for request in fidelity_requests
     )
-    assert {
-        request["evaluation"]["image_id"] for request in fidelity_requests
-    } == {39769, 37777, 87038, 174482, 252219, 397133, 403385}
+    assert {request["evaluation"]["image_id"] for request in fidelity_requests} == {
+        39769,
+        37777,
+        87038,
+        174482,
+        252219,
+        397133,
+        403385,
+    }
     print("P6 real workload manifest contract: PASS")
 
 
@@ -384,8 +372,8 @@ def test_real_workload_materialization_checks_file_identity() -> None:
     if not image_path.is_file():
         pytest.skip("run scripts/download_p6_real_samples.sh to install the sample")
 
-    requests = _materialize_requests(case)
-    input_shapes, image_count, video_count, frame_count = _describe_case_inputs(case)
+    requests = materialize_requests(case)
+    input_shapes, image_count, video_count, frame_count = describe_case_inputs(case)
 
     print(
         "P6 real workload materialized: "
@@ -395,15 +383,13 @@ def test_real_workload_materialization_checks_file_identity() -> None:
     assert requests[0]["type"] == "image"
     assert requests[0]["image"].mode == "RGB"
     assert requests[0]["image"].size == (640, 480)
-    assert input_shapes == [
-        {"type": "image_file", "visual_shapes": [[480, 640, 3]]}
-    ]
+    assert input_shapes == [{"type": "image_file", "visual_shapes": [[480, 640, 3]]}]
     assert (image_count, video_count, frame_count) == (1, 0, 0)
 
     invalid_case = deepcopy(case)
     invalid_case["requests"][0]["image"]["sha256"] = "0" * 64
     with pytest.raises(ValueError, match="SHA256 mismatch"):
-        _materialize_requests(invalid_case)
+        materialize_requests(invalid_case)
     print("P6 real workload file identity: PASS")
 
 
@@ -422,14 +408,8 @@ def test_real_fidelity_batches_materialize_all_fixed_assets() -> None:
     if not all(path.is_file() for path in asset_paths):
         pytest.skip("run scripts/download_p6_real_samples.sh to install fidelity assets")
 
-    materialized_batches = [
-        _materialize_requests(case) for case in fidelity_cases
-    ]
-    sizes = [
-        request["image"].size
-        for batch in materialized_batches
-        for request in batch
-    ]
+    materialized_batches = [materialize_requests(case) for case in fidelity_cases]
+    sizes = [request["image"].size for batch in materialized_batches for request in batch]
 
     print(f"P6.12 real fidelity image sizes: {sizes}")
     assert [len(batch) for batch in materialized_batches] == [4, 3]
@@ -443,8 +423,7 @@ def test_real_fidelity_batches_materialize_all_fixed_assets() -> None:
         (640, 511),
     ]
     assert all(
-        request["type"] == "image"
-        and request["image"].mode == "RGB"
+        request["type"] == "image" and request["image"].mode == "RGB"
         for batch in materialized_batches
         for request in batch
     )
@@ -467,7 +446,7 @@ def test_execution_matrix_expands_single_request_batch_explicitly() -> None:
         "requests": [{"type": "text", "prompt": "hello"}],
     }
 
-    expanded, source_size, replication = _expand_case_batch(case, 4)
+    expanded, source_size, replication = expand_case_batch(case, 4)
 
     print(f"expanded execution batch: {expanded}")
     assert len(expanded["requests"]) == 4
@@ -488,7 +467,7 @@ def test_execution_matrix_rejects_partial_request_group() -> None:
     }
 
     with pytest.raises(ValueError, match="positive multiple"):
-        _expand_case_batch(case, 3)
+        expand_case_batch(case, 3)
     print("P6 execution matrix partial-group guard: PASS")
 
 
@@ -789,9 +768,7 @@ def test_benchmark_record_rejects_inconsistent_offline_traffic() -> None:
 def test_workload_manifest_rejects_unknown_reference_source() -> None:
     manifest = load_workload_manifest(REAL_MANIFEST)
     invalid = deepcopy(manifest)
-    invalid["cases"][0]["requests"][0]["evaluation"][
-        "reference_source"
-    ] = "missing"
+    invalid["cases"][0]["requests"][0]["evaluation"]["reference_source"] = "missing"
 
     with pytest.raises(ValueError, match="unknown source"):
         validate_workload_manifest(invalid)
@@ -801,9 +778,7 @@ def test_workload_manifest_rejects_unknown_reference_source() -> None:
 def test_workload_manifest_rejects_reference_task_mismatch() -> None:
     manifest = load_workload_manifest(REAL_MANIFEST)
     invalid = deepcopy(manifest)
-    invalid["reference_sources"]["coco_captions_val2017"]["task"] = (
-        "free_text_qa"
-    )
+    invalid["reference_sources"]["coco_captions_val2017"]["task"] = "free_text_qa"
 
     with pytest.raises(ValueError, match="does not match reference source"):
         validate_workload_manifest(invalid)
@@ -813,9 +788,7 @@ def test_workload_manifest_rejects_reference_task_mismatch() -> None:
 def test_workload_manifest_rejects_reference_without_normalized_tokens() -> None:
     manifest = load_workload_manifest(REAL_MANIFEST)
     invalid = deepcopy(manifest)
-    invalid["cases"][0]["requests"][0]["evaluation"]["references"][0][
-        "text"
-    ] = "!!!"
+    invalid["cases"][0]["requests"][0]["evaluation"]["references"][0]["text"] = "!!!"
 
     with pytest.raises(ValueError, match="no normalized tokens"):
         validate_workload_manifest(invalid)

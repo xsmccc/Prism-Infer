@@ -12,7 +12,6 @@ import gc
 import math
 import sys
 import statistics
-import subprocess
 from pathlib import Path
 from time import perf_counter
 
@@ -23,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from benchmarks.harness import collect_git_metadata
 from prism_infer import LLM
 from prism_infer.sampling_params import SamplingParams
 
@@ -35,38 +35,35 @@ def _p90(values: list[float]) -> float:
     return ordered[index]
 
 
-def _commit() -> str:
-    try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            text=True,
-        ).strip()
-    except Exception:
-        return "unknown"
-
-
 def _image(color: tuple[int, int, int]) -> Image.Image:
     return Image.new("RGB", (448, 448), color=color)
 
 
 def _video_frames() -> list[Image.Image]:
-    return [
-        Image.new("RGB", (448, 448), color=(80 + i * 30, 120, 180))
-        for i in range(4)
-    ]
+    return [Image.new("RGB", (448, 448), color=(80 + i * 30, 120, 180)) for i in range(4)]
 
 
 def _make_requests(case: str, suffix: str) -> list[dict]:
     if case == "single-image":
-        return [{"type": "image", "prompt": f"Describe this image. {suffix}", "image": _image((100, 150, 200))}]
+        return [
+            {
+                "type": "image",
+                "prompt": f"Describe this image. {suffix}",
+                "image": _image((100, 150, 200)),
+            }
+        ]
     if case == "multi-image":
-        return [{
-            "type": "images",
-            "prompt": f"Compare these images. {suffix}",
-            "images": [_image((100, 150, 200)), _image((200, 120, 80))],
-        }]
+        return [
+            {
+                "type": "images",
+                "prompt": f"Compare these images. {suffix}",
+                "images": [_image((100, 150, 200)), _image((200, 120, 80))],
+            }
+        ]
     if case == "video":
-        return [{"type": "video", "prompt": f"Describe this video. {suffix}", "video": _video_frames()}]
+        return [
+            {"type": "video", "prompt": f"Describe this video. {suffix}", "video": _video_frames()}
+        ]
     if case == "mixed":
         return [
             {"type": "text", "prompt": f"Hello {suffix}"},
@@ -138,7 +135,9 @@ def _new_llm(args, *, enforce_eager: bool) -> LLM:
     )
 
 
-def _summarize(label: str, decode_times: list[float], decode_tokens: int, prefill_times: list[float]) -> None:
+def _summarize(
+    label: str, decode_times: list[float], decode_tokens: int, prefill_times: list[float]
+) -> None:
     total_decode_s = sum(decode_times) / 1000.0
     token_s = decode_tokens / total_decode_s if total_decode_s > 0 else 0.0
     print(
@@ -154,7 +153,9 @@ def _summarize(label: str, decode_times: list[float], decode_tokens: int, prefil
     )
 
 
-def _bench_mode(args, *, enforce_eager: bool) -> tuple[list[list[int]], list[float], int, list[float]]:
+def _bench_mode(
+    args, *, enforce_eager: bool
+) -> tuple[list[list[int]], list[float], int, list[float]]:
     llm = _new_llm(args, enforce_eager=enforce_eager)
     try:
         sampling = SamplingParams(temperature=0.0, max_tokens=args.max_tokens)
@@ -185,7 +186,9 @@ def _bench_mode(args, *, enforce_eager: bool) -> tuple[list[list[int]], list[flo
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
-    parser.add_argument("--case", choices=["single-image", "multi-image", "video", "mixed"], default="mixed")
+    parser.add_argument(
+        "--case", choices=["single-image", "multi-image", "video", "mixed"], default="mixed"
+    )
     parser.add_argument("--max-tokens", type=int, default=8)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeat", type=int, default=5)
@@ -198,15 +201,20 @@ def main() -> None:
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required")
 
-    print(f"commit: {_commit()}")
+    git = collect_git_metadata(REPO_ROOT)
+    print(f"commit: {git.commit[:12]} dirty={git.dirty}")
     print(f"gpu: {torch.cuda.get_device_name(0)}")
     print(f"torch: {torch.__version__}")
     print(
         f"case={args.case}, max_tokens={args.max_tokens}, warmup={args.warmup}, "
         f"repeat={args.repeat}, kvcache_block_size={args.kvcache_block_size}"
     )
-    eager_tokens, eager_decode, eager_decode_tokens, eager_prefill = _bench_mode(args, enforce_eager=True)
-    graph_tokens, graph_decode, graph_decode_tokens, graph_prefill = _bench_mode(args, enforce_eager=False)
+    eager_tokens, eager_decode, eager_decode_tokens, eager_prefill = _bench_mode(
+        args, enforce_eager=True
+    )
+    graph_tokens, graph_decode, graph_decode_tokens, graph_prefill = _bench_mode(
+        args, enforce_eager=False
+    )
 
     print(f"last eager token_ids: {eager_tokens}")
     print(f"last graph token_ids: {graph_tokens}")

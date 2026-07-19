@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 from PIL import Image
 from transformers import Qwen3VLForConditionalGeneration
@@ -11,6 +12,9 @@ from prism_infer import LLM
 from prism_infer.engine.llm_engine import LLMEngine
 from prism_infer.engine.scheduler import Scheduler
 from prism_infer.sampling_params import SamplingParams
+
+
+pytestmark = [pytest.mark.model, pytest.mark.integration]
 
 
 def _make_minimal_engine() -> LLMEngine:
@@ -106,10 +110,7 @@ def test_add_vl_request_builds_multi_image_sequence():
 
 
 def _demo_video_frames() -> list[Image.Image]:
-    return [
-        Image.new("RGB", (448, 448), color=(80 + i * 30, 120, 180))
-        for i in range(4)
-    ]
+    return [Image.new("RGB", (448, 448), color=(80 + i * 30, 120, 180)) for i in range(4)]
 
 
 def test_add_video_request_builds_video_sequence():
@@ -210,7 +211,7 @@ def test_generate_vl_one_token_matches_hf_greedy():
             max_new_tokens=1,
             do_sample=False,
         )
-    hf_token_ids = hf_output[0, hf_inputs["input_ids"].shape[1]:].tolist()
+    hf_token_ids = hf_output[0, hf_inputs["input_ids"].shape[1] :].tolist()
     del hf_model, hf_output, hf_inputs
     torch.cuda.empty_cache()
 
@@ -238,7 +239,6 @@ def test_generate_vl_one_token_matches_hf_greedy():
 
     assert our_output["token_ids"] == hf_token_ids
     print("LLM.generate_vl one-token greedy HF alignment: PASS")
-
 
 
 def test_generate_vl_multi_image_one_token_matches_hf_greedy():
@@ -290,7 +290,7 @@ def test_generate_vl_multi_image_one_token_matches_hf_greedy():
             max_new_tokens=1,
             do_sample=False,
         )
-    hf_token_ids = hf_output[0, hf_inputs["input_ids"].shape[1]:].tolist()
+    hf_token_ids = hf_output[0, hf_inputs["input_ids"].shape[1] :].tolist()
     del hf_model, hf_output, hf_inputs
     torch.cuda.empty_cache()
 
@@ -365,7 +365,7 @@ def test_generate_video_one_token_matches_hf_greedy():
             max_new_tokens=1,
             do_sample=False,
         )
-    hf_token_ids = hf_output[0, hf_inputs["input_ids"].shape[1]:].tolist()
+    hf_token_ids = hf_output[0, hf_inputs["input_ids"].shape[1] :].tolist()
     del hf_model, hf_output, hf_inputs
     torch.cuda.empty_cache()
 

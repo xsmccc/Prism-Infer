@@ -1,4 +1,4 @@
-from copy import copy              # copy模块: 浅拷贝(复制列表本身, 不复制元素)
+from copy import copy  # copy模块: 浅拷贝(复制列表本身, 不复制元素)
 
 import torch
 
@@ -14,7 +14,6 @@ from prism_infer.sampling_params import SamplingParams
 
 
 class Sequence:
-
     def __init__(
         self,
         token_ids: list[int],
@@ -38,9 +37,7 @@ class Sequence:
         if sampling_params is None:
             sampling_params = SamplingParams()
         if isinstance(block_size, bool) or not isinstance(block_size, int) or block_size <= 0:
-            raise ValueError(
-                f"block_size must be a positive integer, got {block_size!r}"
-            )
+            raise ValueError(f"block_size must be a positive integer, got {block_size!r}")
         validate_request_id(request_id)
         if (pixel_values is None) != (image_grid_thw is None):
             raise ValueError("pixel_values and image_grid_thw must be provided together")
@@ -50,20 +47,20 @@ class Sequence:
         self.seq_id = request_id
         self.block_size = block_size
         self.lifecycle = RequestLifecycle(self.seq_id)
-        self.token_ids = copy(token_ids)               # 浅拷贝prompt的token列表(值语义, 类似C++ vector拷贝)
-        self.last_token = token_ids[-1]                # 最后一个token(序列化优化用)
-        self.num_tokens = len(self.token_ids)           # 当前总token数(prompt+生成)
-        self.num_prompt_tokens = len(token_ids)         # prompt token数(固定不变)
-        self.num_cached_tokens = 0                      # 已在KV Cache中缓存的token数 (Prefix Cache)
-        self.num_computed_tokens = 0                      # 已Prefill计算的token数 (Chunked Prefill)
-        self.block_table = []                           # GPU 物理块映射表: [gpu_block_id_0, gpu_block_id_1, ...]
-        self.cpu_block_table = []                       # Swap 后的 CPU 物理块映射表，不能污染 GPU block_table
-        self.cpu_block_hashes = []                      # Swap 后每个 CPU block 对应的 prefix hash
-        self.cpu_block_token_ids = []                   # Swap 后满块 token 副本，用于恢复 prefix-cache 索引
+        self.token_ids = copy(token_ids)  # 浅拷贝prompt的token列表(值语义, 类似C++ vector拷贝)
+        self.last_token = token_ids[-1]  # 最后一个token(序列化优化用)
+        self.num_tokens = len(self.token_ids)  # 当前总token数(prompt+生成)
+        self.num_prompt_tokens = len(token_ids)  # prompt token数(固定不变)
+        self.num_cached_tokens = 0  # 已在KV Cache中缓存的token数 (Prefix Cache)
+        self.num_computed_tokens = 0  # 已Prefill计算的token数 (Chunked Prefill)
+        self.block_table = []  # GPU 物理块映射表: [gpu_block_id_0, gpu_block_id_1, ...]
+        self.cpu_block_table = []  # Swap 后的 CPU 物理块映射表，不能污染 GPU block_table
+        self.cpu_block_hashes = []  # Swap 后每个 CPU block 对应的 prefix hash
+        self.cpu_block_token_ids = []  # Swap 后满块 token 副本，用于恢复 prefix-cache 索引
         # 从SamplingParams展开存储(避免序列化时携带整个SamplingParams对象)
         self.temperature = sampling_params.temperature  # 采样温度
-        self.max_tokens = sampling_params.max_tokens    # 最大生成token数
-        self.ignore_eos = sampling_params.ignore_eos    # 是否忽略EOS
+        self.max_tokens = sampling_params.max_tokens  # 最大生成token数
+        self.ignore_eos = sampling_params.ignore_eos  # 是否忽略EOS
         # VL 请求元数据。Prefill 需要 visual payload/position_ids；
         # Decode 只需要 rope_delta 延续 3D position_ids。
         self.pixel_values = pixel_values
@@ -153,14 +150,14 @@ class Sequence:
             video_token_count=inputs.video_token_count,
         )
 
-    def __len__(self):           # len(seq) → 总token数
+    def __len__(self):  # len(seq) → 总token数
         return self.num_tokens
 
     def __getitem__(self, key):  # seq[0], seq[5:10] → 访问token_ids
         return self.token_ids[key]
 
     @property
-    def is_finished(self):       # seq.is_finished → bool
+    def is_finished(self):  # seq.is_finished → bool
         return self.status == SequenceStatus.FINISHED
 
     @property
@@ -188,12 +185,12 @@ class Sequence:
         return self.num_tokens - self.num_prompt_tokens
 
     @property
-    def prompt_token_ids(self):      # 切片取prompt部分: token_ids[:num_prompt]
-        return self.token_ids[:self.num_prompt_tokens]
+    def prompt_token_ids(self):  # 切片取prompt部分: token_ids[:num_prompt]
+        return self.token_ids[: self.num_prompt_tokens]
 
     @property
     def completion_token_ids(self):  # 切片取生成部分: token_ids[num_prompt:]
-        return self.token_ids[self.num_prompt_tokens:]
+        return self.token_ids[self.num_prompt_tokens :]
 
     @property
     def is_multimodal(self) -> bool:
@@ -208,11 +205,66 @@ class Sequence:
         )
 
     @property
-    def num_cached_blocks(self):     # 已缓存的完整块数(整除)
+    def vision_patch_count(self) -> int:
+        """Raw vision-encoder patch rows owned by this request."""
+
+        return sum(
+            int(payload.shape[0])
+            for payload in (self.pixel_values, self.pixel_values_videos)
+            if payload is not None
+        )
+
+    def vision_patch_count_for_prefill_range(self, start: int, end: int) -> int:
+        """Return payload patches materialized by one atomic prefill range."""
+
+        if (
+            isinstance(start, bool)
+            or isinstance(end, bool)
+            or not isinstance(start, int)
+            or not isinstance(end, int)
+            or not 0 <= start < end <= self.num_prompt_tokens
+        ):
+            raise ValueError(
+                "invalid prefill range for vision patch accounting: "
+                f"[{start}, {end}) prompt_tokens={self.num_prompt_tokens}"
+            )
+        current_tokens = self.token_ids[start:end]
+        patches = 0
+        for modality, payload, token_id, expected_tokens in (
+            (
+                "image",
+                self.pixel_values,
+                self.image_token_id,
+                self.image_token_count,
+            ),
+            (
+                "video",
+                self.pixel_values_videos,
+                self.video_token_id,
+                self.video_token_count,
+            ),
+        ):
+            if payload is None:
+                continue
+            if token_id is None or expected_tokens <= 0:
+                raise RuntimeError(f"{modality} payload is missing token identity metadata")
+            observed_tokens = current_tokens.count(token_id)
+            if observed_tokens not in (0, expected_tokens):
+                raise ValueError(
+                    f"prefill range splits {modality} token payload: "
+                    f"seq={self.seq_id} range=[{start}, {end}) "
+                    f"tokens={observed_tokens} expected={expected_tokens}"
+                )
+            if observed_tokens:
+                patches += int(payload.shape[0])
+        return patches
+
+    @property
+    def num_cached_blocks(self):  # 已缓存的完整块数(整除)
         return self.num_cached_tokens // self.block_size
 
     @property
-    def num_blocks(self):            # 总共需要的块数(向上取整: (n+BS-1)//BS)
+    def num_blocks(self):  # 总共需要的块数(向上取整: (n+BS-1)//BS)
         return (self.num_tokens + self.block_size - 1) // self.block_size
 
     @property
@@ -223,11 +275,7 @@ class Sequence:
     def physical_kv_len(self) -> int:
         """当前 attention 实际可见的 KV token 数。"""
 
-        return (
-            self.num_tokens
-            if self.kv_layout is None
-            else self.kv_layout.physical_kv_len
-        )
+        return self.num_tokens if self.kv_layout is None else self.kv_layout.physical_kv_len
 
     @property
     def physical_num_blocks(self) -> int:
@@ -239,9 +287,7 @@ class Sequence:
     def physical_last_block_num_tokens(self) -> int:
         """当前 physical KV 最后一页的有效 token 数。"""
 
-        return self.physical_kv_len - (
-            self.physical_num_blocks - 1
-        ) * self.block_size
+        return self.physical_kv_len - (self.physical_num_blocks - 1) * self.block_size
 
     @property
     def has_compact_kv_layout(self) -> bool:
@@ -254,23 +300,20 @@ class Sequence:
 
         if self.kv_layout is not None:
             raise RuntimeError("sequence KV layout is already compacted")
-        expected_blocks = (
-            layout.physical_kv_len + self.block_size - 1
-        ) // self.block_size
+        expected_blocks = (layout.physical_kv_len + self.block_size - 1) // self.block_size
         if len(self.block_table) != expected_blocks:
-            raise ValueError(
-                "layout install requires the final compact block table"
-            )
+            raise ValueError("layout install requires the final compact block table")
         layout.validate(block_size=self.block_size, block_table=self.block_table)
         if layout.logical_context_len != self.num_tokens:
-            raise ValueError(
-                "layout logical length must match sequence length at install"
-            )
+            raise ValueError("layout logical length must match sequence length at install")
         self.kv_layout = layout
 
-    def block(self, i):              # 取第i个块对应的token子列表(用于hash匹配KV复用)
-        assert 0 <= i < self.num_blocks
-        return self.token_ids[i*self.block_size: (i+1)*self.block_size]
+    def block(self, i):  # 取第i个块对应的token子列表(用于hash匹配KV复用)
+        if isinstance(i, bool) or not isinstance(i, int):
+            raise TypeError(f"block index must be an integer, got {i!r}")
+        if not 0 <= i < self.num_blocks:
+            raise IndexError(f"block index {i} outside [0, {self.num_blocks})")
+        return self.token_ids[i * self.block_size : (i + 1) * self.block_size]
 
     @property
     def is_prefill_finished(self) -> bool:
@@ -331,9 +374,7 @@ class Sequence:
             "kv_layout": (
                 None
                 if self.kv_layout is None
-                else self.kv_layout.to_record(
-                    block_table=self.block_table or self.cpu_block_table
-                )
+                else self.kv_layout.to_record(block_table=self.block_table or self.cpu_block_table)
             ),
         }
 
@@ -342,14 +383,12 @@ class Sequence:
 
         if not isinstance(state, dict):
             raise TypeError(
-                "legacy Sequence payloads without explicit request/page state "
-                "are not supported"
+                "legacy Sequence payloads without explicit request/page state are not supported"
             )
         missing = {"seq_id", "block_size", "num_tokens", "payload"} - set(state)
         if missing:
             raise ValueError(
-                "serialized Sequence is missing explicit fields: "
-                + ", ".join(sorted(missing))
+                "serialized Sequence is missing explicit fields: " + ", ".join(sorted(missing))
             )
         self.seq_id = validate_request_id(
             state["seq_id"],
@@ -364,8 +403,7 @@ class Sequence:
             or serialized_block_size <= 0
         ):
             raise ValueError(
-                "serialized block_size must be a positive integer, "
-                f"got {serialized_block_size!r}"
+                f"serialized block_size must be a positive integer, got {serialized_block_size!r}"
             )
         self.block_size = serialized_block_size
         self.temperature = state.get("temperature", 1.0)
@@ -399,14 +437,10 @@ class Sequence:
         self.image_token_count = state.get("image_token_count", 0)
         self.video_token_id = state.get("video_token_id")
         self.video_token_count = state.get("video_token_count", 0)
-        self.visual_pruning_decision_record = state.get(
-            "visual_pruning_decision_record"
-        )
+        self.visual_pruning_decision_record = state.get("visual_pruning_decision_record")
         layout_record = state.get("kv_layout")
         self.kv_layout = (
-            None
-            if layout_record is None
-            else KVCacheLayoutDescriptor.from_record(layout_record)
+            None if layout_record is None else KVCacheLayoutDescriptor.from_record(layout_record)
         )
         if self.kv_layout is not None:
             self.kv_layout.validate(

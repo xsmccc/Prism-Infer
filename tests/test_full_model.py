@@ -3,14 +3,25 @@
 
 策略: 两个模型永不同时占用 GPU, 各自加载→跑 forward→释放。
 """
-import gc, torch
+
+import gc
+import pytest
 import sys
-sys.path.insert(0, '/data/Prism-Infer')
+import torch
+
+sys.path.insert(0, "/data/Prism-Infer")
 from conftest import get_model_path
+
+pytestmark = [
+    pytest.mark.model,
+    pytest.mark.gpu,
+    pytest.mark.integration,
+    pytest.mark.slow,
+]
 
 MODEL_PATH = get_model_path()
 DTYPE = torch.bfloat16
-DEVICE = 'cuda'
+DEVICE = "cuda"
 VOCAB_SIZE = 151936
 
 
@@ -21,16 +32,20 @@ def _gpu_mem():
 def run_hf_forward(input_ids):
     """加载 HF 模型到 GPU, 跑 forward, 释放, 返回 logits."""
     from transformers import Qwen3VLForConditionalGeneration
+
     print(f"  加载 HF 模型到 GPU... (当前显存: {_gpu_mem():.1f} GB)")
     model = Qwen3VLForConditionalGeneration.from_pretrained(
-        MODEL_PATH, dtype=DTYPE, trust_remote_code=True, local_files_only=True)
+        MODEL_PATH, dtype=DTYPE, trust_remote_code=True, local_files_only=True
+    )
     model = model.cuda().eval()
     print(f"  HF 加载完成 (显存: {_gpu_mem():.1f} GB)")
 
     with torch.no_grad():
         out = model(input_ids=input_ids)
     logits = out.logits.clone()
-    del model, out; gc.collect(); torch.cuda.empty_cache()
+    del model, out
+    gc.collect()
+    torch.cuda.empty_cache()
     print(f"  HF 已释放 (显存: {_gpu_mem():.1f} GB)")
     return logits
 
@@ -43,12 +58,13 @@ def run_our_forward(input_ids):
     # 1. 加载 HF 到 CPU (仅用于提取权重)
     print(f"  加载 HF 到 CPU 提取权重... (显存: {_gpu_mem():.1f} GB)")
     hf_cpu = Qwen3VLForConditionalGeneration.from_pretrained(
-        MODEL_PATH, dtype=DTYPE, trust_remote_code=True, local_files_only=True)
+        MODEL_PATH, dtype=DTYPE, trust_remote_code=True, local_files_only=True
+    )
     # 放在 CPU 上, 不占 GPU
     hf_cpu.eval()
 
     # 2. 直接在 GPU 上创建我们的模型，避免 CPU 同时持有两份 8B 权重。
-    print(f"  创建 Prism-Infer 模型到 GPU...")
+    print("  创建 Prism-Infer 模型到 GPU...")
     default_device = torch.get_default_device()
     torch.set_default_device(DEVICE)
     try:
@@ -69,17 +85,20 @@ def run_our_forward(input_ids):
     unexpected = [k for k in hf_sd if k not in our_sd]
 
     # 4. 释放 HF CPU 模型
-    del hf_cpu, hf_sd; gc.collect()
+    del hf_cpu, hf_sd
+    gc.collect()
     print(f"  权重: {loaded}/{len(our_sd)} loaded")
-    print(f"  Missing: {missing[:5]}{'...' if len(missing)>5 else ''}")
-    print(f"  Unexpected: {unexpected[:5]}{'...' if len(unexpected)>5 else ''}")
+    print(f"  Missing: {missing[:5]}{'...' if len(missing) > 5 else ''}")
+    print(f"  Unexpected: {unexpected[:5]}{'...' if len(unexpected) > 5 else ''}")
     print(f"  加载完成 (显存: {_gpu_mem():.1f} GB)")
 
     # 5. 跑 forward
     with torch.no_grad():
         hidden = our(input_ids=input_ids)
     logits = our.compute_logits(hidden).clone()
-    del our, hidden; gc.collect(); torch.cuda.empty_cache()
+    del our, hidden
+    gc.collect()
+    torch.cuda.empty_cache()
     print(f"  Our 已释放 (显存: {_gpu_mem():.1f} GB)")
     return logits
 
@@ -93,35 +112,35 @@ def compare_logits(hf_logits, our_logits):
     hf_nan = torch.isnan(hf_f).sum().item()
     our_nan = torch.isnan(our_f).sum().item()
 
-    print(f"\n=== Logits 对比 ===")
+    print("\n=== Logits 对比 ===")
     print(f"  Shape: HF={list(hf_logits.shape)}, Our={list(our_logits.shape)}")
     print(f"  NaN: HF={hf_nan}, Our={our_nan}")
     print(f"  Max diff:  {max_diff:.6e}")
     print(f"  Mean diff: {mean_diff:.6e}")
 
     if max_diff > 1.0:
-        print(f"  ❌ FAIL: max diff 过大")
+        print("  ❌ FAIL: max diff 过大")
         return "FAIL"
     elif hf_nan > 0 or our_nan > 0:
-        print(f"  ❌ FAIL: NaN detected")
+        print("  ❌ FAIL: NaN detected")
         return "FAIL"
     elif max_diff < 0.01:
-        print(f"  ✅ PASS (max diff < 0.01)")
+        print("  ✅ PASS (max diff < 0.01)")
         return "PASS"
     else:
-        print(f"  ⚠️  MARGINAL (0.01 <= max diff < 1.0)")
+        print("  ⚠️  MARGINAL (0.01 <= max diff < 1.0)")
         return "MARGINAL"
 
 
 # ══════════════════════════════════════════════════════════
-if __name__ == '__main__':
+if __name__ == "__main__":
     print("=" * 60)
     print("Prism-Infer Full Model Verification")
     gpu_name = torch.cuda.get_device_name(0)
     gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
     print(f"GPU: {gpu_name} ({gpu_mem:.1f} GB)")
     print(f"Dtype: {DTYPE}")
-    print(f"策略: 两个模型各自独立加载/释放, 永不同时占用 GPU")
+    print("策略: 两个模型各自独立加载/释放, 永不同时占用 GPU")
     print("=" * 60)
 
     torch.manual_seed(42)

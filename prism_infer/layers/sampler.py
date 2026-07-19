@@ -2,6 +2,9 @@ import torch
 from torch import nn
 
 
+SAMPLING_NUMERICAL_EPSILON = 1.0e-10
+
+
 # ============================================================
 # Sampler — 从 logits 采样下一个 token
 # ============================================================
@@ -10,7 +13,6 @@ from torch import nn
 #
 # 采样策略: Gumbel-Max trick (等价于 multinomial 采样, 但更适合 GPU 并行)
 class Sampler(nn.Module):
-
     def __init__(self):
         super().__init__()
 
@@ -21,7 +23,7 @@ class Sampler(nn.Module):
         temperatures: [num_seqs]，temperature <= 1e-10 时走 greedy argmax。
         """
 
-        greedy_mask = temperatures <= 1e-10
+        greedy_mask = temperatures <= SAMPLING_NUMERICAL_EPSILON
         if bool(greedy_mask.all().item()):
             return logits.argmax(dim=-1)
         if bool((~greedy_mask).all().item()):
@@ -35,7 +37,7 @@ class Sampler(nn.Module):
         )
         return sample_tokens
 
-    @torch.compile    # 融合随机采样流程为一个 kernel
+    @torch.compile  # 融合随机采样流程为一个 kernel
     def _sample_random(self, logits: torch.Tensor, temperatures: torch.Tensor):
         # 1. Temperature scaling: logits / temperature
         #    temperature 越高 → 分布越平 (更随机)
@@ -52,5 +54,7 @@ class Sampler(nn.Module):
         #    - clamp_min_(1e-10): 防止除零
         #    - probs / exp_random: 概率高的位置更可能是最大值
         #    - argmax: 取最大值的索引 = 采样结果
-        sample_tokens = probs.div_(torch.empty_like(probs).exponential_(1).clamp_min_(1e-10)).argmax(dim=-1)
+        sample_tokens = probs.div_(
+            torch.empty_like(probs).exponential_(1).clamp_min_(SAMPLING_NUMERICAL_EPSILON)
+        ).argmax(dim=-1)
         return sample_tokens

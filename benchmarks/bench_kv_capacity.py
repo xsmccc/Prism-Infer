@@ -24,10 +24,12 @@ from benchmarks.bench_system import (
     MODE_SPECS,
     _add_requests,
     _build_llm,
-    _expand_case_batch,
-    _find_case,
-    _git_metadata,
-    _materialize_requests,
+)
+from benchmarks.harness import (
+    collect_git_metadata,
+    expand_case_batch,
+    find_workload_case,
+    materialize_requests,
 )
 from prism_infer.analysis.benchmark_schema import load_workload_manifest
 from prism_infer.sampling_params import SamplingParams
@@ -59,8 +61,8 @@ def main() -> None:
         raise SystemExit("--requests must be positive and --max-tokens must be >= 2")
 
     manifest = load_workload_manifest(args.manifest)
-    source_case = _find_case(manifest, args.case)
-    case, source_requests, replication = _expand_case_batch(
+    source_case = find_workload_case(manifest, args.case)
+    case, source_requests, replication = expand_case_batch(
         source_case,
         args.requests,
     )
@@ -73,7 +75,7 @@ def main() -> None:
     )
 
     try:
-        requests = _materialize_requests(case)
+        requests = materialize_requests(case, repo_root=REPO_ROOT)
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
         start = perf_counter()
@@ -104,19 +106,17 @@ def main() -> None:
         torch.cuda.synchronize()
         elapsed_ms = (perf_counter() - start) * 1000.0
         if len(completed) != len(seq_ids):
-            raise RuntimeError(
-                f"capacity run completed {len(completed)}/{len(seq_ids)} requests"
-            )
+            raise RuntimeError(f"capacity run completed {len(completed)}/{len(seq_ids)} requests")
 
-        commit, dirty = _git_metadata()
+        git = collect_git_metadata(REPO_ROOT, strict=True)
         cache = llm.model_runner.kv_cache
         config = llm.config
         record = {
             "record_type": "kv_capacity_benchmark",
             "schema_version": 1,
             "environment": {
-                "git_commit": commit,
-                "git_dirty": dirty,
+                "git_commit": git.commit,
+                "git_dirty": git.dirty,
                 "gpu": torch.cuda.get_device_name(0),
                 "cuda": torch.version.cuda,
                 "torch": torch.__version__,

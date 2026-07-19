@@ -7,6 +7,9 @@ import pytest
 from prism_infer.ops.paged_decode import HAS_TRITON, paged_decode_attention
 
 
+pytestmark = pytest.mark.gpu
+
+
 def _require_kernel() -> None:
     if torch.cuda.is_available() and HAS_TRITON:
         return
@@ -84,7 +87,9 @@ def _run_case(
     num_blocks = batch * max_blocks
 
     q = torch.randn(batch, num_heads, head_dim, device=device, dtype=dtype)
-    k_cache = torch.randn(num_blocks, block_size, num_kv_heads, head_dim, device=device, dtype=dtype)
+    k_cache = torch.randn(
+        num_blocks, block_size, num_kv_heads, head_dim, device=device, dtype=dtype
+    )
     v_cache = torch.randn_like(k_cache)
 
     rows = []
@@ -97,7 +102,7 @@ def _run_case(
         next_block += blocks
     block_tables = torch.tensor(rows, device=device, dtype=torch.int32)
     context_lens = torch.tensor(context_lens_list, device=device, dtype=torch.int32)
-    scale = head_dim ** -0.5
+    scale = head_dim**-0.5
 
     with torch.inference_mode():
         kernel_out = paged_decode_attention(
@@ -126,8 +131,12 @@ def _run_case(
     print(f"paged kernel context_lens: {context_lens_list}")
     print(f"paged kernel output shape: {list(kernel_out.shape)}")
     print(f"paged reference output shape: {list(ref_out.shape)}")
-    print(f"paged kernel mean/std: {kernel_out.float().mean().item():.6e} / {kernel_out.float().std().item():.6e}")
-    print(f"paged reference mean/std: {ref_out.float().mean().item():.6e} / {ref_out.float().std().item():.6e}")
+    print(
+        f"paged kernel mean/std: {kernel_out.float().mean().item():.6e} / {kernel_out.float().std().item():.6e}"
+    )
+    print(
+        f"paged reference mean/std: {ref_out.float().mean().item():.6e} / {ref_out.float().std().item():.6e}"
+    )
     print(f"paged kernel max diff: {diff.max().item():.6e}")
     print(f"paged kernel mean diff: {diff.float().mean().item():.6e}")
 
@@ -165,6 +174,86 @@ def test_paged_decode_kernel_matches_sdpa_reference_qwen_shape() -> None:
     )
 
 
+def test_paged_decode_cuda_graph_replay_reads_runtime_context_bound() -> None:
+    """同一张 Graph replay 必须读取更新后的 device-side context 上界。"""
+
+    _require_kernel()
+    torch.manual_seed(20260722)
+    num_heads = 4
+    num_kv_heads = 2
+    head_dim = 16
+    block_size = 4
+    capacity_blocks = 8
+    q = torch.randn(
+        1,
+        num_heads,
+        head_dim,
+        device="cuda",
+        dtype=torch.bfloat16,
+    )
+    k_cache = torch.randn(
+        capacity_blocks,
+        block_size,
+        num_kv_heads,
+        head_dim,
+        device="cuda",
+        dtype=torch.bfloat16,
+    )
+    v_cache = torch.randn_like(k_cache)
+    block_tables = torch.arange(
+        capacity_blocks,
+        device="cuda",
+        dtype=torch.int32,
+    ).unsqueeze(0)
+    context_lens = torch.tensor([4], device="cuda", dtype=torch.int32)
+    max_context_len = torch.tensor(4, device="cuda", dtype=torch.int32)
+    scale = head_dim**-0.5
+
+    # Compile before stream capture, then capture the stable scalar address.
+    paged_decode_attention(
+        q,
+        k_cache,
+        v_cache,
+        block_tables,
+        context_lens,
+        scale,
+        max_context_len=max_context_len,
+    )
+    torch.cuda.synchronize()
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        captured_output = paged_decode_attention(
+            q,
+            k_cache,
+            v_cache,
+            block_tables,
+            context_lens,
+            scale,
+            max_context_len=max_context_len,
+        )
+
+    replay_context_len = 25
+    context_lens.fill_(replay_context_len)
+    max_context_len.fill_(replay_context_len)
+    graph.replay()
+    torch.cuda.synchronize()
+    expected = _reference_decode(
+        q,
+        k_cache,
+        v_cache,
+        block_tables,
+        context_lens,
+        scale,
+    )
+
+    torch.testing.assert_close(
+        captured_output,
+        expected,
+        rtol=1e-2,
+        atol=1e-2,
+    )
+
+
 @pytest.mark.parametrize("cache_dtype_name", ["bf16", "fp8"])
 def test_paged_decode_qwen_batch_context_matrix(cache_dtype_name: str) -> None:
     """P6.5 Qwen GQA BF16/FP8 paged kernel matrix 应对齐独立 SDPA。"""
@@ -174,16 +263,12 @@ def test_paged_decode_qwen_batch_context_matrix(cache_dtype_name: str) -> None:
         pytest.skip("torch.float8_e4m3fn is required")
     torch.manual_seed(20260711)
     query_dtype = torch.bfloat16
-    cache_dtype = (
-        query_dtype
-        if cache_dtype_name == "bf16"
-        else torch.float8_e4m3fn
-    )
+    cache_dtype = query_dtype if cache_dtype_name == "bf16" else torch.float8_e4m3fn
     num_heads = 32
     num_kv_heads = 8
     head_dim = 128
     block_size = 256
-    scale = head_dim ** -0.5
+    scale = head_dim**-0.5
 
     for batch in (1, 2, 4, 8):
         for context_len in (128, 256, 1024, 4096):
@@ -251,10 +336,7 @@ def test_paged_decode_qwen_batch_context_matrix(cache_dtype_name: str) -> None:
                 f"{reference.float().mean().item():.6e}/"
                 f"{reference.float().std().item():.6e}"
             )
-            print(
-                f"P6.5 max/mean diff: {diff.max().item():.6e}/"
-                f"{diff.float().mean().item():.6e}"
-            )
+            print(f"P6.5 max/mean diff: {diff.max().item():.6e}/{diff.float().mean().item():.6e}")
             assert actual.shape == reference.shape == q.shape
             assert diff.max().item() < 1e-2
             assert diff.float().mean().item() < 1e-3
@@ -278,6 +360,6 @@ def test_paged_decode_rejects_mismatched_cache_dtype() -> None:
             v_cache,
             block_tables,
             context_lens,
-            8 ** -0.5,
+            8**-0.5,
         )
     print("P6.5 mixed cache dtype guard: PASS")

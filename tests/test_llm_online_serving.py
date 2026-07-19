@@ -7,12 +7,23 @@ try:
 except ImportError:
     pytest = None
 
-from benchmarks.bench_system import _materialize_requests
+from benchmarks.harness import materialize_requests
 from conftest import get_model_path
 from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import load_workload_manifest
 from prism_infer.engine.online import OnlineRequest, OnlineServingSession
 
+
+pytestmark = (
+    []
+    if pytest is None
+    else [
+        pytest.mark.model,
+        pytest.mark.gpu,
+        pytest.mark.integration,
+        pytest.mark.slow,
+    ]
+)
 
 MANIFEST = "benchmarks/workloads/p7_online_smoke.json"
 
@@ -111,7 +122,7 @@ def test_online_long_text_chunked_matches_single_prefill() -> None:
 
 def test_online_mixed_vl_matches_same_shape_offline_batch() -> None:
     _require_cuda()
-    requests = _materialize_requests(_case("mixed_text_image_video_online"))
+    requests = materialize_requests(_case("mixed_text_image_video_online"))
     sampling = SamplingParams(
         temperature=0.0,
         max_tokens=2,

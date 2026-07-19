@@ -30,9 +30,7 @@ def test_evaluator_protocol_is_frozen_and_references_quality_protocol() -> None:
     assert evaluator["runtime"]["enable_chunked_prefill"] is False
     assert evaluator["runtime"]["image_max_pixels"] == 602112
     assert evaluator["runtime"]["video_frames"] == 16
-    assert evaluator["datasets"]["mvbench_test"]["video_sampling"][
-        "video_file_decoder"
-    ] == {
+    assert evaluator["datasets"]["mvbench_test"]["video_sampling"]["video_file_decoder"] == {
         "distribution": "opencv-python-headless",
         "distribution_version": "4.10.0.84",
         "api_version": "4.10.0",

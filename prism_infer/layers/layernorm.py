@@ -10,11 +10,10 @@ from torch import nn
 # 比标准 LayerNorm 少算一次 mean (减均值), 更快且效果相近
 # Qwen3, LLaMA 等现代 LLM 都用 RMSNorm
 class RMSNorm(nn.Module):
-
     def __init__(
         self,
-        hidden_size: int,    # 隐藏维度 (如 3584)
-        eps: float = 1e-6,   # 防除零的小常数
+        hidden_size: int,  # 隐藏维度 (如 3584)
+        eps: float = 1e-6,  # 防除零的小常数
     ) -> None:
         super().__init__()
         self.eps = eps
@@ -22,13 +21,13 @@ class RMSNorm(nn.Module):
         # 每个维度一个缩放因子
         self.weight = nn.Parameter(torch.ones(hidden_size))
 
-    @torch.compile    # JIT 编译, 融合多个小算子为一个 kernel
+    @torch.compile  # JIT 编译, 融合多个小算子为一个 kernel
     def rms_forward(
         self,
-        x: torch.Tensor,    # [N, hidden_size]
+        x: torch.Tensor,  # [N, hidden_size]
     ) -> torch.Tensor:
-        orig_dtype = x.dtype            # 记录原始精度 (如 bfloat16)
-        x = x.float()                   # 转 float32 提高精度
+        orig_dtype = x.dtype  # 记录原始精度 (如 bfloat16)
+        x = x.float()  # 转 float32 提高精度
         # x.pow(2): 每个元素平方
         # .mean(dim=-1, keepdim=True): 沿最后一维求均值, 保持维度
         #   [N, 3584] → [N, 1]  (keepdim=True 保留该维度为1)
@@ -43,8 +42,8 @@ class RMSNorm(nn.Module):
     @torch.compile
     def add_rms_forward(
         self,
-        x: torch.Tensor,          # 当前层的输出
-        residual: torch.Tensor,    # 残差 (上一层传下来的)
+        x: torch.Tensor,  # 当前层的输出
+        residual: torch.Tensor,  # 残差 (上一层传下来的)
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """先做残差加法, 再做 RMSNorm — 融合版"""
         orig_dtype = x.dtype
@@ -57,7 +56,7 @@ class RMSNorm(nn.Module):
         var = x.pow(2).mean(dim=-1, keepdim=True)
         x.mul_(torch.rsqrt(var + self.eps))
         x = x.to(orig_dtype).mul_(self.weight)
-        return x, residual    # 返回归一化结果 + 新的 residual
+        return x, residual  # 返回归一化结果 + 新的 residual
 
     def forward(
         self,
@@ -66,6 +65,6 @@ class RMSNorm(nn.Module):
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         # 根据是否有 residual 选择对应的方法
         if residual is None:
-            return self.rms_forward(x)        # 第一层, 无残差
+            return self.rms_forward(x)  # 第一层, 无残差
         else:
             return self.add_rms_forward(x, residual)  # 其他层, 有残差

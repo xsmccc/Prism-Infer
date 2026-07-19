@@ -41,9 +41,7 @@ def scale_cache_shape(payload_shape: torch.Size | tuple[int, ...]) -> tuple[int,
             f"[blocks, page, heads, dim], got {list(shape)}"
         )
     if any(
-        isinstance(dimension, bool)
-        or not isinstance(dimension, int)
-        or dimension <= 0
+        isinstance(dimension, bool) or not isinstance(dimension, int) or dimension <= 0
         for dimension in shape
     ):
         raise ValueError(f"KV payload dimensions must be positive, got {list(shape)}")
@@ -74,24 +72,12 @@ def kv_block_storage_bytes(
     if not isinstance(token_head_scales, bool):
         raise TypeError("token_head_scales must be bool")
 
-    payload_elements = (
-        KV_COMPONENT_COUNT
-        * num_layers
-        * page_size
-        * num_kv_heads
-        * head_dim
-    )
-    payload_bytes = payload_elements * torch.empty(
-        (), dtype=payload_dtype
-    ).element_size()
+    payload_elements = KV_COMPONENT_COUNT * num_layers * page_size * num_kv_heads * head_dim
+    payload_bytes = payload_elements * torch.empty((), dtype=payload_dtype).element_size()
     scale_elements = (
-        KV_COMPONENT_COUNT * num_layers * page_size * num_kv_heads
-        if token_head_scales
-        else 0
+        KV_COMPONENT_COUNT * num_layers * page_size * num_kv_heads if token_head_scales else 0
     )
-    scale_bytes = scale_elements * torch.empty(
-        (), dtype=KV_SCALE_DTYPE
-    ).element_size()
+    scale_bytes = scale_elements * torch.empty((), dtype=KV_SCALE_DTYPE).element_size()
     return KVStorageBytes(payload=payload_bytes, scales=scale_bytes)
 
 
@@ -101,9 +87,7 @@ def tensor_storage_bytes(tensor: torch.Tensor | None) -> int:
     if tensor is None:
         return 0
     if not isinstance(tensor, torch.Tensor):
-        raise TypeError(
-            f"storage object must be a tensor or None, got {type(tensor).__name__}"
-        )
+        raise TypeError(f"storage object must be a tensor or None, got {type(tensor).__name__}")
     return tensor.numel() * tensor.element_size()
 
 

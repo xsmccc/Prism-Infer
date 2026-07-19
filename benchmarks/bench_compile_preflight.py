@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,9 +26,12 @@ if str(REPO_ROOT) not in sys.path:
 from benchmarks.bench_system import (
     DEFAULT_MANIFEST,
     _add_requests,
-    _expand_case_batch,
-    _find_case,
-    _materialize_requests,
+)
+from benchmarks.harness import (
+    collect_git_metadata,
+    expand_case_batch,
+    find_workload_case,
+    materialize_requests,
 )
 from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import load_workload_manifest
@@ -55,24 +57,6 @@ class RegionWorkload:
     invocations: list[tuple[Any, ...]]
     benchmark_args: tuple[Any, ...]
     boundary: str
-
-
-def _git_metadata() -> tuple[str, bool]:
-    """返回当前 commit 和 dirty 状态。"""
-
-    commit = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=REPO_ROOT,
-        text=True,
-    ).strip()
-    dirty = bool(
-        subprocess.check_output(
-            ["git", "status", "--porcelain"],
-            cwd=REPO_ROOT,
-            text=True,
-        ).strip()
-    )
-    return commit, dirty
 
 
 def _sync_measure(
@@ -120,12 +104,10 @@ def _benchmark_inductor_configured(
         for _ in range(warmup):
             _sync_measure(compiled, workload.benchmark_args)
         compiled_latencies = [
-            _sync_measure(compiled, workload.benchmark_args)[1]
-            for _ in range(repeat)
+            _sync_measure(compiled, workload.benchmark_args)[1] for _ in range(repeat)
         ]
         eager_latencies = [
-            _sync_measure(workload.function, workload.benchmark_args)[1]
-            for _ in range(repeat)
+            _sync_measure(workload.function, workload.benchmark_args)[1] for _ in range(repeat)
         ]
         compiled_stats = build_latency_stats(compiled_latencies)
         record = {
@@ -209,8 +191,8 @@ def _prepare_engine(
     """运行一次真实 single-image prefill，并保留下一步 decode 输入/context。"""
 
     manifest = load_workload_manifest(args.manifest)
-    source_case = _find_case(manifest, "single_image_448")
-    case, _, _ = _expand_case_batch(source_case, args.max_batch_size)
+    source_case = find_workload_case(manifest, "single_image_448")
+    case, _, _ = expand_case_batch(source_case, args.max_batch_size)
     llm = LLM(
         args.model,
         enforce_eager=True,
@@ -225,7 +207,7 @@ def _prepare_engine(
         enable_chunked_prefill=False,
     )
     sampling = SamplingParams(temperature=0.0, max_tokens=8, ignore_eos=True)
-    requests = _materialize_requests(case)
+    requests = materialize_requests(case, repo_root=REPO_ROOT)
     _add_requests(llm, requests, sampling)
 
     prefill_seqs, is_prefill, _, _, _ = llm.scheduler.schedule()
@@ -261,9 +243,7 @@ def _build_decoder_workload(
     language_model = llm.model_runner.model.model.language_model
     layer = language_model.layers[0]
     input_ids = decode_inputs.input_ids
-    position_ids = llm.model_runner._as_mrope_decode_positions(
-        decode_inputs.position_ids
-    )
+    position_ids = llm.model_runner._as_mrope_decode_positions(decode_inputs.position_ids)
     hidden_states = language_model.embed_tokens(input_ids)
     rope_position_ids = position_ids[:, None, :]
     cos, sin = language_model.rotary_emb(hidden_states, rope_position_ids)
@@ -274,6 +254,23 @@ def _build_decoder_workload(
         rotary_sin: torch.Tensor,
     ) -> torch.Tensor:
         return layer(hidden, (rotary_cos, rotary_sin))
+
+    def attention(
+        hidden: torch.Tensor,
+        rotary_cos: torch.Tensor,
+        rotary_sin: torch.Tensor,
+    ) -> torch.Tensor:
+        return layer.self_attn(hidden, (rotary_cos, rotary_sin))
+
+    def qkv_prep(
+        hidden: torch.Tensor,
+        rotary_cos: torch.Tensor,
+        rotary_sin: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return layer.self_attn._forward_engine_qkv(
+            hidden,
+            (rotary_cos, rotary_sin),
+        )
 
     full_invocations = [
         (
@@ -287,11 +284,14 @@ def _build_decoder_workload(
         function = full_layer
         invocations = full_invocations
     elif boundary == "attention":
-        function = lambda hidden, rotary_cos, rotary_sin: layer.self_attn(
-            hidden,
-            (rotary_cos, rotary_sin),
-        )
+        function = attention
         invocations = full_invocations
+    elif boundary == "qkv_prep":
+        function = qkv_prep
+        invocations = [
+            (hidden, rotary_cos.squeeze(0), rotary_sin.squeeze(0))
+            for hidden, rotary_cos, rotary_sin in full_invocations
+        ]
     elif boundary == "rmsnorm":
         function = layer.input_layernorm
         invocations = [(values[0],) for values in full_invocations]
@@ -431,9 +431,7 @@ def _run_preflight(
     """执行 explain、recompile probe 和可选 Inductor benchmark。"""
 
     with torch.inference_mode():
-        explain_output = torch._dynamo.explain(workload.function)(
-            *workload.explain_args
-        )
+        explain_output = torch._dynamo.explain(workload.function)(*workload.explain_args)
         dynamo = summarize_explain_output(explain_output)
         _, recompile = run_recompile_probe(
             workload.function,
@@ -479,7 +477,7 @@ def main() -> None:
     parser.add_argument("--region", choices=COMPILE_PREFLIGHT_REGIONS, required=True)
     parser.add_argument(
         "--decoder-boundary",
-        choices=("full_layer", "attention", "rmsnorm", "mlp"),
+        choices=("full_layer", "attention", "qkv_prep", "rmsnorm", "mlp"),
         default="full_layer",
     )
     parser.add_argument(
@@ -522,7 +520,7 @@ def main() -> None:
     if benchmark_batch_size not in batch_sizes:
         raise SystemExit("--benchmark-batch-size must be present in --batch-sizes")
 
-    commit, dirty = _git_metadata()
+    git = collect_git_metadata(REPO_ROOT, strict=True)
     llm = None
     try:
         llm, decode_seqs, decode_inputs = _prepare_engine(args)
@@ -545,8 +543,8 @@ def main() -> None:
                 "torch_version": torch.__version__,
                 "cuda_version": str(torch.version.cuda),
                 "gpu": torch.cuda.get_device_name(0),
-                "git_commit": commit,
-                "git_dirty": dirty,
+                "git_commit": git.commit,
+                "git_dirty": git.dirty,
             },
             "config": {
                 "model": args.model,

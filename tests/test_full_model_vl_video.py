@@ -8,6 +8,7 @@
 import gc
 import sys
 
+import pytest
 import torch
 
 sys.path.insert(0, "/data/Prism-Infer")
@@ -15,6 +16,14 @@ from conftest import get_model_path, require_transformers
 from prism_infer.engine.vl_inputs import prepare_video_inputs
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 from test_processor_pipeline_video import demo_video_frames
+
+
+pytestmark = [
+    pytest.mark.model,
+    pytest.mark.gpu,
+    pytest.mark.integration,
+    pytest.mark.slow,
+]
 
 
 MODEL_PATH = get_model_path()
@@ -50,12 +59,16 @@ def run_hf_vl_forward(inputs) -> torch.Tensor:
     from transformers import Qwen3VLForConditionalGeneration
 
     print(f"  加载 HF VL 模型到 GPU... (当前显存: {_gpu_mem():.1f} GB)")
-    model = Qwen3VLForConditionalGeneration.from_pretrained(
-        MODEL_PATH,
-        dtype=DTYPE,
-        trust_remote_code=True,
-        local_files_only=True,
-    ).cuda().eval()
+    model = (
+        Qwen3VLForConditionalGeneration.from_pretrained(
+            MODEL_PATH,
+            dtype=DTYPE,
+            trust_remote_code=True,
+            local_files_only=True,
+        )
+        .cuda()
+        .eval()
+    )
     with torch.no_grad():
         out = model(
             input_ids=inputs.input_ids.to(DEVICE),
@@ -170,7 +183,9 @@ if __name__ == "__main__":
     print(f"input_ids shape: {list(vl_inputs.input_ids.shape)}")
     print(f"pixel_values_videos shape: {list(vl_inputs.pixel_values_videos.shape)}")
     print(f"video_grid_thw shape: {list(vl_inputs.video_grid_thw.shape)}")
-    print(f"video tokens: {vl_inputs.video_token_count} / expected {vl_inputs.expected_video_tokens}")
+    print(
+        f"video tokens: {vl_inputs.video_token_count} / expected {vl_inputs.expected_video_tokens}"
+    )
     print(f"position_ids shape: {list(vl_position_ids.shape)}")
 
     print("\n[1/2] HF video VL forward...")

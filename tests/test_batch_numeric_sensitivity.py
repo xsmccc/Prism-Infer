@@ -9,11 +9,20 @@ Qwen3-VL bf16 full forward 在 batch=1 与 batch=4 duplicate 输入上会选择
 
 import gc
 
+import pytest
 import torch
 from transformers import AutoTokenizer, Qwen3VLForConditionalGeneration
 
 from conftest import get_model_path, require_transformers
 from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
+
+
+pytestmark = [
+    pytest.mark.model,
+    pytest.mark.gpu,
+    pytest.mark.integration,
+    pytest.mark.slow,
+]
 
 
 def _require_cuda() -> None:
@@ -37,14 +46,18 @@ def _load_our_from_hf(hf_model) -> Qwen3VLForCausalLM:
     return our
 
 
-def _compare_duplicate_batch(model, input_ids: torch.Tensor, *, is_hf: bool) -> tuple[float, float, int, int]:
+def _compare_duplicate_batch(
+    model, input_ids: torch.Tensor, *, is_hf: bool
+) -> tuple[float, float, int, int]:
     single_ids = input_ids[:1]
     batch_ids = input_ids.expand(4, -1).contiguous()
     attention_mask = torch.ones_like(single_ids)
     batch_mask = torch.ones_like(batch_ids)
     with torch.inference_mode():
         if is_hf:
-            single_logits = model(input_ids=single_ids, attention_mask=attention_mask).logits[:, -1, :]
+            single_logits = model(input_ids=single_ids, attention_mask=attention_mask).logits[
+                :, -1, :
+            ]
             batch_logits = model(input_ids=batch_ids, attention_mask=batch_mask).logits[:, -1, :]
         else:
             single_hidden = model(input_ids=single_ids)
@@ -102,12 +115,10 @@ def test_hf_and_prism_share_text_duplicate_batch_numeric_sensitivity() -> None:
         is_hf=False,
     )
     our_model.logits_precision = "model"
-    model_max, model_mean, model_single_arg, model_batch_arg = (
-        _compare_duplicate_batch(
-            our_model,
-            input_ids,
-            is_hf=False,
-        )
+    model_max, model_mean, model_single_arg, model_batch_arg = _compare_duplicate_batch(
+        our_model,
+        input_ids,
+        is_hf=False,
     )
     del our_model
     gc.collect()

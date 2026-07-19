@@ -34,9 +34,7 @@ def token_f1(prediction: str, reference: str) -> float:
     reference_tokens = normalize_reference_text(reference)
     if not prediction_tokens or not reference_tokens:
         return float(prediction_tokens == reference_tokens)
-    overlap = sum(
-        (Counter(prediction_tokens) & Counter(reference_tokens)).values()
-    )
+    overlap = sum((Counter(prediction_tokens) & Counter(reference_tokens)).values())
     if overlap == 0:
         return 0.0
     precision = overlap / len(prediction_tokens)
@@ -85,6 +83,26 @@ def score_reference_text(
 ) -> dict[str, Any]:
     """对一个输出计算多参考 token-F1/ROUGE-L 的独立 best-match 分数。"""
 
+    task, reference_source, image_id, references = _validate_task_reference_header(task_reference)
+    scored = _score_reference_entries(prediction, references)
+    best_token_f1 = max(scored, key=lambda row: row["token_f1"])
+    best_rouge_l = max(scored, key=lambda row: row["rouge_l_f1"])
+    return {
+        "schema_version": REFERENCE_QUALITY_SCHEMA_VERSION,
+        "task": task,
+        "reference_source": reference_source,
+        "image_id": image_id,
+        "reference_count": len(scored),
+        "token_f1": best_token_f1["token_f1"],
+        "rouge_l_f1": best_rouge_l["rouge_l_f1"],
+        "best_token_f1_annotation_id": best_token_f1["annotation_id"],
+        "best_rouge_l_annotation_id": best_rouge_l["annotation_id"],
+    }
+
+
+def _validate_task_reference_header(
+    task_reference: Mapping[str, Any],
+) -> tuple[str, str, int, list[Any]]:
     task = task_reference.get("task")
     reference_source = task_reference.get("reference_source")
     image_id = task_reference.get("image_id")
@@ -97,7 +115,13 @@ def score_reference_text(
     references = task_reference.get("references")
     if not isinstance(references, list) or not references:
         raise ValueError("task reference requires a non-empty references list")
+    return task, reference_source, image_id, references
 
+
+def _score_reference_entries(
+    prediction: str,
+    references: list[Any],
+) -> list[dict[str, Any]]:
     scored: list[dict[str, Any]] = []
     seen_annotation_ids: set[int] = set()
     for index, reference in enumerate(references):
@@ -117,9 +141,7 @@ def score_reference_text(
         if not isinstance(text, str) or not text:
             raise ValueError(f"task reference {index} has invalid text")
         if not normalize_reference_text(text):
-            raise ValueError(
-                f"task reference {index} text has no normalized tokens"
-            )
+            raise ValueError(f"task reference {index} text has no normalized tokens")
         scored.append(
             {
                 "annotation_id": annotation_id,
@@ -127,20 +149,7 @@ def score_reference_text(
                 "rouge_l_f1": rouge_l_f1(prediction, text),
             }
         )
-
-    best_token_f1 = max(scored, key=lambda row: row["token_f1"])
-    best_rouge_l = max(scored, key=lambda row: row["rouge_l_f1"])
-    return {
-        "schema_version": REFERENCE_QUALITY_SCHEMA_VERSION,
-        "task": task_reference["task"],
-        "reference_source": task_reference["reference_source"],
-        "image_id": task_reference["image_id"],
-        "reference_count": len(scored),
-        "token_f1": best_token_f1["token_f1"],
-        "rouge_l_f1": best_rouge_l["rouge_l_f1"],
-        "best_token_f1_annotation_id": best_token_f1["annotation_id"],
-        "best_rouge_l_annotation_id": best_rouge_l["annotation_id"],
-    }
+    return scored
 
 
 def score_reference_batch(
@@ -157,15 +166,11 @@ def score_reference_batch(
             "scores": [],
         }
     if len(decoded_texts) != len(task_references):
-        raise ValueError(
-            "decoded_texts and task_references must have the same request count"
-        )
+        raise ValueError("decoded_texts and task_references must have the same request count")
     if not decoded_texts:
         raise ValueError("reference quality batch must not be empty")
     missing = [
-        index
-        for index, task_reference in enumerate(task_references)
-        if task_reference is None
+        index for index, task_reference in enumerate(task_references) if task_reference is None
     ]
     if missing:
         return {

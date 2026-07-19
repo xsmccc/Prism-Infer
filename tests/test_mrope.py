@@ -1,17 +1,21 @@
 """Test MRope: cos/sin 生成 + apply_mrope 应用."""
+
+import pytest
 import torch
 from prism_infer.vision.mrope import MRope, apply_mrope, rotate_half
 
 from conftest import get_model_path, require_transformers
 
 
+@pytest.mark.model
+@pytest.mark.integration
 def test_cos_sin_generation():
     """cos/sin 与 HF 一致"""
     transformers = require_transformers()
     cache = get_model_path()
     hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
-        cache, dtype=torch.bfloat16, device_map='cpu',
-        trust_remote_code=True, local_files_only=True)
+        cache, dtype=torch.bfloat16, device_map="cpu", trust_remote_code=True, local_files_only=True
+    )
     hf_rope = hf.model.language_model.rotary_emb
     our = MRope(128, 5000000.0, [24, 20, 20])
 
@@ -37,7 +41,9 @@ def test_apply_mrope():
     """apply_mrope applies the full-head RoPE formula to q/k."""
     mrope = MRope(128, 5000000.0, [24, 20, 20])
     pos_ids = torch.zeros(3, 1, 1, dtype=torch.long)
-    pos_ids[0, 0] = 5; pos_ids[1, 0] = 10; pos_ids[2, 0] = 15
+    pos_ids[0, 0] = 5
+    pos_ids[1, 0] = 10
+    pos_ids[2, 0] = 15
     hs = torch.randn(1, 1, 4096, dtype=torch.bfloat16)
     with torch.no_grad():
         cos, sin = mrope(hs, pos_ids)
@@ -57,7 +63,7 @@ def test_apply_mrope():
     print("  apply_mrope: PASS")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print("=== MRope Tests ===")
     test_cos_sin_generation()
     test_apply_mrope()

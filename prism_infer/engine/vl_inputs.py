@@ -23,6 +23,14 @@ from typing import Any
 
 import torch
 
+from prism_infer.models.qwen3_vl_architecture import VISION_GRID_DIMENSIONS
+
+
+PROCESSOR_TOKEN_MATRIX_RANK = 2
+PROCESSOR_PATCH_MATRIX_RANK = 2
+VISION_GRID_MATRIX_RANK = 2
+SUPPORTED_PROCESSOR_BATCH_SIZE = 1
+
 
 @dataclass(frozen=True)
 class ImageInputs:
@@ -100,9 +108,7 @@ def load_vl_processor(
     try:
         from transformers import AutoProcessor
     except ImportError as exc:
-        raise ImportError(
-            "transformers is required for Qwen3-VL processor preprocessing"
-        ) from exc
+        raise ImportError("transformers is required for Qwen3-VL processor preprocessing") from exc
 
     processor = AutoProcessor.from_pretrained(
         model_path,
@@ -120,9 +126,7 @@ def load_vl_processor(
         component = getattr(processor, component_name, None)
         size = getattr(component, "size", None)
         if size is None or not hasattr(size, "longest_edge"):
-            raise ValueError(
-                f"processor.{component_name}.size has no longest_edge budget"
-            )
+            raise ValueError(f"processor.{component_name}.size has no longest_edge budget")
         size.longest_edge = value
     return processor
 
@@ -186,7 +190,7 @@ def _processor_video_metadata(
         isinstance(index, bool)
         or not isinstance(index, int)
         or index < 0
-        or index > source_frame_count
+        or index >= source_frame_count
         for index in sampled_indices
     ):
         raise ValueError("video_metadata.sampled_indices are outside the source video")
@@ -223,9 +227,7 @@ def build_image_prompt(
     像素处理在 prepare_image_inputs 中完成。
     """
 
-    image_items = [
-        {"type": "image", "image": image} for image in _normalize_images(images)
-    ]
+    image_items = [{"type": "image", "image": image} for image in _normalize_images(images)]
     messages = [
         {
             "role": "user",
@@ -520,18 +522,26 @@ def validate_image_inputs(
 
     if merge_size <= 0:
         raise ValueError(f"merge_size must be positive, got {merge_size}")
-    if inputs.input_ids.ndim != 2 or inputs.input_ids.shape[0] != 1:
-        raise ValueError(f"input_ids must have shape [1, seqlen], got {list(inputs.input_ids.shape)}")
+    if (
+        inputs.input_ids.ndim != PROCESSOR_TOKEN_MATRIX_RANK
+        or inputs.input_ids.shape[0] != SUPPORTED_PROCESSOR_BATCH_SIZE
+    ):
+        raise ValueError(
+            f"input_ids must have shape [1, seqlen], got {list(inputs.input_ids.shape)}"
+        )
     if inputs.attention_mask.shape != inputs.input_ids.shape:
         raise ValueError(
             "attention_mask shape must match input_ids, "
             f"got {list(inputs.attention_mask.shape)} vs {list(inputs.input_ids.shape)}"
         )
-    if inputs.pixel_values.ndim != 2:
+    if inputs.pixel_values.ndim != PROCESSOR_PATCH_MATRIX_RANK:
         raise ValueError(
             f"pixel_values must have shape [num_patches, patch_dim], got {list(inputs.pixel_values.shape)}"
         )
-    if inputs.image_grid_thw.ndim != 2 or inputs.image_grid_thw.shape[1] != 3:
+    if (
+        inputs.image_grid_thw.ndim != VISION_GRID_MATRIX_RANK
+        or inputs.image_grid_thw.shape[1] != VISION_GRID_DIMENSIONS
+    ):
         raise ValueError(
             "image_grid_thw must have shape [num_images, 3], "
             f"got {list(inputs.image_grid_thw.shape)}"
@@ -586,7 +596,10 @@ def validate_video_inputs(
 
     if merge_size <= 0:
         raise ValueError(f"merge_size must be positive, got {merge_size}")
-    if inputs.input_ids.ndim != 2 or inputs.input_ids.shape[0] != 1:
+    if (
+        inputs.input_ids.ndim != PROCESSOR_TOKEN_MATRIX_RANK
+        or inputs.input_ids.shape[0] != SUPPORTED_PROCESSOR_BATCH_SIZE
+    ):
         raise ValueError(
             f"input_ids must have shape [1, seqlen], got {list(inputs.input_ids.shape)}"
         )
@@ -595,12 +608,15 @@ def validate_video_inputs(
             "attention_mask shape must match input_ids, "
             f"got {list(inputs.attention_mask.shape)} vs {list(inputs.input_ids.shape)}"
         )
-    if inputs.pixel_values_videos.ndim != 2:
+    if inputs.pixel_values_videos.ndim != PROCESSOR_PATCH_MATRIX_RANK:
         raise ValueError(
             "pixel_values_videos must have shape [num_patches, patch_dim], "
             f"got {list(inputs.pixel_values_videos.shape)}"
         )
-    if inputs.video_grid_thw.ndim != 2 or inputs.video_grid_thw.shape[1] != 3:
+    if (
+        inputs.video_grid_thw.ndim != VISION_GRID_MATRIX_RANK
+        or inputs.video_grid_thw.shape[1] != VISION_GRID_DIMENSIONS
+    ):
         raise ValueError(
             "video_grid_thw must have shape [num_videos, 3], "
             f"got {list(inputs.video_grid_thw.shape)}"

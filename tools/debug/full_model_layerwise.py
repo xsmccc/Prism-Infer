@@ -1,36 +1,33 @@
-"""图文 full-model layerwise debug。
+"""Full-model layerwise debug for Qwen3-VL logits alignment.
 
-直接运行本脚本定位 HF 与 Prism-Infer 单图输入 logits 差异。pytest 收集时跳过。
+手动 GPU 定位脚本。直接运行时会:
+1. 运行 HF full forward 并记录关键激活到 CPU。
+2. 释放 HF GPU 模型。
+3. 加载 Prism-Infer 模型、复制 HF 权重、运行 forward 并记录同名激活。
+4. 按层打印 max diff / mean diff / mean / std，用于定位误差开始放大的位置。
 """
-
 import gc
-import sys
 from collections.abc import Callable
 
-if "pytest" in sys.modules:
-    import pytest
-
-    pytest.skip("manual GPU debug script", allow_module_level=True)
-
 import torch
-from PIL import Image
 
-sys.path.insert(0, "/data/Prism-Infer")
-from conftest import get_model_path, require_transformers
-from prism_infer.engine.vl_inputs import prepare_single_image_inputs
-from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
+from _common import get_model_path
 
 
 MODEL_PATH = get_model_path()
 DTYPE = torch.bfloat16
 DEVICE = "cuda"
+VOCAB_SIZE = 151936
+SEQ_LEN = 64
 
 
 def _gpu_mem() -> float:
+    """返回当前 CUDA allocated 显存，单位 GiB。"""
     return torch.cuda.memory_allocated() / 1024**3
 
 
 def _first_tensor(value):
+    """从 module output 中提取第一个 tensor。"""
     if isinstance(value, torch.Tensor):
         return value
     if hasattr(value, "logits"):
@@ -46,6 +43,7 @@ def _first_tensor(value):
 
 
 def _record_tensor(store: dict[str, torch.Tensor], name: str, value) -> None:
+    """记录 tensor 到 CPU float32，避免保留 GPU 引用。"""
     tensor = _first_tensor(value)
     if tensor is None:
         return
@@ -53,6 +51,7 @@ def _record_tensor(store: dict[str, torch.Tensor], name: str, value) -> None:
 
 
 def _register_common_hooks(model, store: dict[str, torch.Tensor], prefix: str) -> list:
+    """在 HF/Prism-Infer 的同构模块上注册 hook。"""
     handles = []
     lm = model.model.language_model
 
@@ -62,7 +61,6 @@ def _register_common_hooks(model, store: dict[str, torch.Tensor], prefix: str) -
     def save_input(name: str) -> Callable:
         return lambda _module, args: _record_tensor(store, name, args[0])
 
-    handles.append(model.model.visual.register_forward_hook(save(f"{prefix}.visual")))
     handles.append(lm.embed_tokens.register_forward_hook(save(f"{prefix}.embed")))
     handles.append(lm.rotary_emb.register_forward_hook(save(f"{prefix}.rope")))
     handles.append(lm.norm.register_forward_hook(save(f"{prefix}.final_norm")))
@@ -85,29 +83,11 @@ def _remove_hooks(handles: list) -> None:
         handle.remove()
 
 
-def _prepare_inputs():
-    transformers = require_transformers()
-    processor = transformers.AutoProcessor.from_pretrained(
-        MODEL_PATH,
-        trust_remote_code=True,
-        local_files_only=True,
-    )
-    config = transformers.AutoConfig.from_pretrained(MODEL_PATH, local_files_only=True)
-    image = Image.new("RGB", (448, 448), color=(100, 150, 200))
-    inputs = prepare_single_image_inputs(processor, "Describe this image.", image)
-    position_ids, _ = get_qwen3_vl_rope_index_from_config(
-        inputs.input_ids,
-        config=config,
-        image_grid_thw=inputs.image_grid_thw,
-        attention_mask=inputs.attention_mask,
-    )
-    return inputs, position_ids
-
-
-def run_hf_trace(inputs) -> dict[str, torch.Tensor]:
+def run_hf_trace(input_ids: torch.Tensor) -> dict[str, torch.Tensor]:
+    """运行 HF forward 并返回激活 trace。"""
     from transformers import Qwen3VLForConditionalGeneration
 
-    print(f"[HF] loading VL model on GPU... mem={_gpu_mem():.1f} GiB")
+    print(f"[HF] loading model on GPU... mem={_gpu_mem():.1f} GiB")
     model = Qwen3VLForConditionalGeneration.from_pretrained(
         MODEL_PATH,
         dtype=DTYPE,
@@ -118,22 +98,18 @@ def run_hf_trace(inputs) -> dict[str, torch.Tensor]:
     store: dict[str, torch.Tensor] = {}
     handles = _register_common_hooks(model, store, "hf")
     with torch.no_grad():
-        _ = model(
-            input_ids=inputs.input_ids.to(DEVICE),
-            attention_mask=inputs.attention_mask.to(DEVICE),
-            pixel_values=inputs.pixel_values.to(DEVICE),
-            image_grid_thw=inputs.image_grid_thw.to(DEVICE),
-        )
+        _ = model(input_ids=input_ids)
     _remove_hooks(handles)
 
     del model
     gc.collect()
     torch.cuda.empty_cache()
-    print(f"[HF] done. mem={_gpu_mem():.1f} GiB, tensors={len(store)}")
+    print(f"[HF] done and released. mem={_gpu_mem():.1f} GiB, tensors={len(store)}")
     return store
 
 
-def run_our_trace(inputs, position_ids: torch.Tensor) -> dict[str, torch.Tensor]:
+def run_our_trace(input_ids: torch.Tensor) -> dict[str, torch.Tensor]:
+    """运行 Prism-Infer forward 并返回激活 trace。"""
     from transformers import Qwen3VLForConditionalGeneration
     from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 
@@ -145,7 +121,7 @@ def run_our_trace(inputs, position_ids: torch.Tensor) -> dict[str, torch.Tensor]
         local_files_only=True,
     ).eval()
 
-    print("[Our] building Prism-Infer VL model on GPU...")
+    print("[Our] building Prism-Infer model on GPU...")
     default_device = torch.get_default_device()
     torch.set_default_device(DEVICE)
     try:
@@ -170,23 +146,19 @@ def run_our_trace(inputs, position_ids: torch.Tensor) -> dict[str, torch.Tensor]
     print(f"[Our] weights: {loaded}/{len(our_sd)} loaded")
     print(f"[Our] missing: {missing[:5]}{'...' if len(missing) > 5 else ''}")
     print(f"[Our] unexpected: {unexpected[:5]}{'...' if len(unexpected) > 5 else ''}")
+    print(f"[Our] model ready. mem={_gpu_mem():.1f} GiB")
 
     store: dict[str, torch.Tensor] = {}
     handles = _register_common_hooks(model, store, "our")
     with torch.no_grad():
-        hidden = model(
-            input_ids=inputs.input_ids.to(DEVICE),
-            pixel_values=inputs.pixel_values.to(DEVICE),
-            image_grid_thw=inputs.image_grid_thw.to(DEVICE),
-            position_ids=position_ids.to(DEVICE),
-        )
-        _ = model.compute_logits(hidden)
+        hidden_states = model(input_ids=input_ids)
+        _ = model.compute_logits(hidden_states)
     _remove_hooks(handles)
 
-    del model, hidden
+    del model, hidden_states
     gc.collect()
     torch.cuda.empty_cache()
-    print(f"[Our] done. mem={_gpu_mem():.1f} GiB, tensors={len(store)}")
+    print(f"[Our] done and released. mem={_gpu_mem():.1f} GiB, tensors={len(store)}")
     return store
 
 
@@ -195,11 +167,12 @@ def _stats(tensor: torch.Tensor) -> tuple[float, float]:
 
 
 def compare_traces(hf: dict[str, torch.Tensor], ours: dict[str, torch.Tensor]) -> None:
-    print("\n=== VL Layerwise Diff ===")
+    """比较 HF 与 Prism-Infer 同名 trace。"""
+    print("\n=== Layerwise Diff ===")
     print("name                         max_diff     mean_diff    hf_mean      hf_std       our_mean     our_std")
     print("-" * 104)
 
-    ordered_names = ["visual", "embed", "rope"]
+    ordered_names = ["embed", "rope"]
     for idx in range(36):
         base = f"layer_{idx:02d}"
         ordered_names.extend([
@@ -244,20 +217,18 @@ def compare_traces(hf: dict[str, torch.Tensor], ours: dict[str, torch.Tensor]) -
 
 if __name__ == "__main__":
     if not torch.cuda.is_available():
-        raise RuntimeError("需要 CUDA 才能运行 VL layerwise debug")
+        raise RuntimeError("需要 CUDA 才能运行 full-model layerwise debug")
 
     print("=" * 80)
-    print("Prism-Infer VL Full Model Layerwise Debug")
+    print("Prism-Infer Full Model Layerwise Debug")
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(f"Dtype: {DTYPE}")
+    print(f"Seq len: {SEQ_LEN}")
     print("=" * 80)
 
-    vl_inputs, vl_position_ids = _prepare_inputs()
-    print(f"input_ids shape: {list(vl_inputs.input_ids.shape)}")
-    print(f"pixel_values shape: {list(vl_inputs.pixel_values.shape)}")
-    print(f"image_grid_thw shape: {list(vl_inputs.image_grid_thw.shape)}")
-    print(f"position_ids shape: {list(vl_position_ids.shape)}")
+    torch.manual_seed(42)
+    input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN), device=DEVICE)
 
-    hf_trace = run_hf_trace(vl_inputs)
-    our_trace = run_our_trace(vl_inputs, vl_position_ids)
+    hf_trace = run_hf_trace(input_ids)
+    our_trace = run_our_trace(input_ids)
     compare_traces(hf_trace, our_trace)

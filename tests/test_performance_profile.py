@@ -74,9 +74,7 @@ def test_cpu_profile_builds_steps_regions_and_summary() -> None:
 
     assert record["metadata"] == {"case": "cpu_unit"}
     assert record["cuda_timing"] is False
-    assert record["steps"] == [
-        {"step_id": 0, "phase": "decode", "batch_size": 1, "status": "ok"}
-    ]
+    assert record["steps"] == [{"step_id": 0, "phase": "decode", "batch_size": 1, "status": "ok"}]
     assert [region["name"] for region in record["regions"]] == [
         "preprocess.unit",
         "runner.unit",

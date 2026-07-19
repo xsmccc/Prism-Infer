@@ -41,7 +41,9 @@ def _visual_pruning_record(
     }
 
 
-def _make_decode_tensors() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+def _make_decode_tensors() -> tuple[
+    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
+]:
     torch.manual_seed(20260709)
     dtype = torch.float32
     # k_cache/v_cache: [num_blocks, block_size, num_kv_heads, head_dim]
@@ -64,7 +66,7 @@ def _run_decode_attention(
     *,
     include_slot_mapping: bool = True,
 ) -> torch.Tensor:
-    attn = Attention(num_heads=4, num_kv_heads=2, head_dim=8, scale=8 ** -0.5)
+    attn = Attention(num_heads=4, num_kv_heads=2, head_dim=8, scale=8**-0.5)
     attn.k_cache = k_cache.clone()
     attn.v_cache = v_cache.clone()
     slot_mappings: tuple[torch.Tensor, ...] = ()
@@ -124,13 +126,18 @@ def _reference_decode_output(
     q_i = q[0].unsqueeze(0).unsqueeze(2)
     k_i = keys.transpose(0, 1).unsqueeze(0)
     v_i = values.transpose(0, 1).unsqueeze(0)
-    return F.scaled_dot_product_attention(
-        q_i,
-        k_i,
-        v_i,
-        is_causal=False,
-        scale=8 ** -0.5,
-    ).squeeze(0).squeeze(1).unsqueeze(0)
+    return (
+        F.scaled_dot_product_attention(
+            q_i,
+            k_i,
+            v_i,
+            is_causal=False,
+            scale=8**-0.5,
+        )
+        .squeeze(0)
+        .squeeze(1)
+        .unsqueeze(0)
+    )
 
 
 def _visual_prune_metadata(record: dict[str, object] | None) -> CompressionMetadata:
@@ -295,7 +302,7 @@ def test_visual_prune_text_only_decode_uses_standard_paged_path(monkeypatch) -> 
         block_size=4,
         visual_pruning_records_by_batch=(None,),
     )
-    attn = Attention(num_heads=4, num_kv_heads=2, head_dim=8, scale=8 ** -0.5)
+    attn = Attention(num_heads=4, num_kv_heads=2, head_dim=8, scale=8**-0.5)
     attn.k_cache = k_cache.clone()
     attn.v_cache = v_cache.clone()
 

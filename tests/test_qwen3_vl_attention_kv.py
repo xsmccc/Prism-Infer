@@ -21,6 +21,7 @@ def _skip_if_needed() -> None:
     raise SystemExit(f"SKIP: {message}")
 
 
+@pytest.mark.gpu
 def test_engine_attention_prefill_matches_full_sequence_and_writes_kv():
     """flatten prefill attention 应对齐 full-sequence 路径并写入 paged KV cache。"""
 
@@ -34,13 +35,17 @@ def test_engine_attention_prefill_matches_full_sequence_and_writes_kv():
     num_kv_heads = 2
     head_dim = 16
 
-    attn = Qwen3VLTextAttention(
-        hidden_size=hidden_size,
-        num_heads=num_heads,
-        num_kv_heads=num_kv_heads,
-        head_dim=head_dim,
-        dtype=dtype,
-    ).to(device).eval()
+    attn = (
+        Qwen3VLTextAttention(
+            hidden_size=hidden_size,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            dtype=dtype,
+        )
+        .to(device)
+        .eval()
+    )
     hidden = torch.randn(1, seqlen, hidden_size, device=device, dtype=dtype)
 
     with torch.inference_mode():
@@ -99,17 +104,21 @@ def test_engine_mrope_position_ids_three_token_ambiguity():
     seqlen = 3
     hidden_size = 64
 
-    model = Qwen3VLTextModel(
-        vocab_size=128,
-        hidden_size=hidden_size,
-        num_heads=4,
-        num_kv_heads=2,
-        num_layers=0,
-        intermediate_size=128,
-        dtype=dtype,
-        head_dim=16,
-        mrope_section=[2, 3, 3],
-    ).to(device).eval()
+    model = (
+        Qwen3VLTextModel(
+            vocab_size=128,
+            hidden_size=hidden_size,
+            num_heads=4,
+            num_kv_heads=2,
+            num_layers=0,
+            intermediate_size=128,
+            dtype=dtype,
+            head_dim=16,
+            mrope_section=[2, 3, 3],
+        )
+        .to(device)
+        .eval()
+    )
     hidden = torch.randn(seqlen, hidden_size, device=device, dtype=dtype)
     position_ids = torch.tensor(
         [[0, 1, 2], [0, 2, 4], [0, 3, 6]],
@@ -124,7 +133,9 @@ def test_engine_mrope_position_ids_three_token_ambiguity():
 
         def forward(self, x: torch.Tensor, pos: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
             self.seen_shape = list(pos.shape)
-            return torch.zeros(1, seqlen, 16, device=device, dtype=dtype), torch.zeros(1, seqlen, 16, device=device, dtype=dtype)
+            return torch.zeros(1, seqlen, 16, device=device, dtype=dtype), torch.zeros(
+                1, seqlen, 16, device=device, dtype=dtype
+            )
 
     capture = CaptureRope()
     model.rotary_emb = capture
@@ -152,13 +163,17 @@ def test_engine_attention_decode_reads_paged_kv_cache():
     head_dim = 16
     context_len = 6
 
-    attn = Qwen3VLTextAttention(
-        hidden_size=hidden_size,
-        num_heads=num_heads,
-        num_kv_heads=num_kv_heads,
-        head_dim=head_dim,
-        dtype=dtype,
-    ).to(device).eval()
+    attn = (
+        Qwen3VLTextAttention(
+            hidden_size=hidden_size,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            dtype=dtype,
+        )
+        .to(device)
+        .eval()
+    )
     hidden = torch.randn(context_len, hidden_size, device=device, dtype=dtype)
 
     with torch.inference_mode():
@@ -187,21 +202,29 @@ def test_engine_attention_decode_reads_paged_kv_cache():
         q_ref = q_last.unsqueeze(0).transpose(1, 2)
         k_ref = keys.unsqueeze(0).transpose(1, 2)
         v_ref = values.unsqueeze(0).transpose(1, 2)
-        ref_o = torch.nn.functional.scaled_dot_product_attention(
-            q_ref,
-            k_ref,
-            v_ref,
-            is_causal=False,
-            scale=attn.scale,
-        ).transpose(1, 2).squeeze(0)
+        ref_o = (
+            torch.nn.functional.scaled_dot_product_attention(
+                q_ref,
+                k_ref,
+                v_ref,
+                is_causal=False,
+                scale=attn.scale,
+            )
+            .transpose(1, 2)
+            .squeeze(0)
+        )
 
     reset_context()
     diff = (engine_o - ref_o).abs()
     print(f"decode q shape: {list(q_last.shape)}")
     print(f"decode engine output shape: {list(engine_o.shape)}")
     print(f"decode reference output shape: {list(ref_o.shape)}")
-    print(f"decode engine mean/std: {engine_o.float().mean().item():.6e} / {engine_o.float().std().item():.6e}")
-    print(f"decode reference mean/std: {ref_o.float().mean().item():.6e} / {ref_o.float().std().item():.6e}")
+    print(
+        f"decode engine mean/std: {engine_o.float().mean().item():.6e} / {engine_o.float().std().item():.6e}"
+    )
+    print(
+        f"decode reference mean/std: {ref_o.float().mean().item():.6e} / {ref_o.float().std().item():.6e}"
+    )
     print(f"decode output max diff: {diff.max().item():.6e}")
     print(f"decode output mean diff: {diff.float().mean().item():.6e}")
 
@@ -223,13 +246,17 @@ def test_engine_attention_chunked_prefill_reads_paged_history():
     context_len = 6
     block_size = 4
 
-    attn = Qwen3VLTextAttention(
-        hidden_size=num_heads * head_dim,
-        num_heads=num_heads,
-        num_kv_heads=num_kv_heads,
-        head_dim=head_dim,
-        dtype=dtype,
-    ).to(device).eval()
+    attn = (
+        Qwen3VLTextAttention(
+            hidden_size=num_heads * head_dim,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            dtype=dtype,
+        )
+        .to(device)
+        .eval()
+    )
     engine_attn = attn.engine_attn
     k_cache = torch.zeros(
         2,
@@ -250,30 +277,20 @@ def test_engine_attention_chunked_prefill_reads_paged_history():
     historical_v = torch.randn_like(historical_k)
     k_cache[0] = historical_k
     v_cache[0] = historical_v
-    current_q = torch.randn(
-        query_len, num_heads, head_dim, device=device, dtype=dtype
-    )
-    current_k = torch.randn(
-        query_len, num_kv_heads, head_dim, device=device, dtype=dtype
-    )
+    current_q = torch.randn(query_len, num_heads, head_dim, device=device, dtype=dtype)
+    current_k = torch.randn(query_len, num_kv_heads, head_dim, device=device, dtype=dtype)
     current_v = torch.randn_like(current_k)
     engine_attn.k_cache = k_cache
     engine_attn.v_cache = v_cache
 
     set_context(
         True,
-        cu_seqlens_q=torch.tensor(
-            [0, query_len], device=device, dtype=torch.int32
-        ),
-        cu_seqlens_k=torch.tensor(
-            [0, context_len], device=device, dtype=torch.int32
-        ),
+        cu_seqlens_q=torch.tensor([0, query_len], device=device, dtype=torch.int32),
+        cu_seqlens_k=torch.tensor([0, context_len], device=device, dtype=torch.int32),
         max_seqlen_q=query_len,
         max_seqlen_k=context_len,
         slot_mapping=torch.tensor([4, 5], device=device, dtype=torch.int32),
-        context_lens=torch.tensor(
-            [context_len], device=device, dtype=torch.int32
-        ),
+        context_lens=torch.tensor([context_len], device=device, dtype=torch.int32),
         block_tables=torch.tensor([[0, 1]], device=device, dtype=torch.int32),
     )
     try:
@@ -289,16 +306,20 @@ def test_engine_attention_chunked_prefill_reads_paged_history():
         query_positions = torch.arange(4, 6, device=device)
         key_positions = torch.arange(6, device=device)
         mask = (
-            key_positions.unsqueeze(0) <= query_positions.unsqueeze(1)
-        ).unsqueeze(0).unsqueeze(0)
-        reference = torch.nn.functional.scaled_dot_product_attention(
-            queries,
-            keys,
-            values,
-            attn_mask=mask,
-            is_causal=False,
-            scale=engine_attn.scale,
-        ).squeeze(0).transpose(0, 1)
+            (key_positions.unsqueeze(0) <= query_positions.unsqueeze(1)).unsqueeze(0).unsqueeze(0)
+        )
+        reference = (
+            torch.nn.functional.scaled_dot_product_attention(
+                queries,
+                keys,
+                values,
+                attn_mask=mask,
+                is_causal=False,
+                scale=engine_attn.scale,
+            )
+            .squeeze(0)
+            .transpose(0, 1)
+        )
     finally:
         reset_context()
 

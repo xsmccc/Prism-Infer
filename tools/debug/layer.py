@@ -1,12 +1,7 @@
-"""Single-layer debug: isolate which submodule causes the 27 max diff."""
-import sys
-
-if "pytest" in sys.modules:
-    import pytest
-    pytest.skip("manual GPU debug script", allow_module_level=True)
+"""Single-layer diagnostic for locating the first divergent submodule."""
 
 import torch, gc
-from conftest import get_model_path
+from _common import get_model_path
 
 torch.manual_seed(42)
 torch.cuda.empty_cache()
@@ -24,7 +19,6 @@ hf = Qwen3VLForConditionalGeneration.from_pretrained(
 hf_sd = hf.state_dict()
 
 # Build our model on GPU
-import sys; sys.path.insert(0, '/data/Prism-Infer')
 from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 
 print("Building our model (GPU)...")

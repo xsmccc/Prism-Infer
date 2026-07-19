@@ -373,14 +373,14 @@ PASS:
 
 - `prism_infer/vision/vision_encoder.py`。
 - `tests/test_full_model_vl.py`。
-- `tests/test_full_model_vl_layerwise_debug.py`。
+- `tools/debug/full_model_vl_layerwise.py`（从 tests 迁出的手工诊断）。
 - `tests/test_vision_rope_init.py`。
 - `docs/ISSUE_LOG.md`。
 
 PASS:
 
 - `tests/test_full_model_vl.py` 的图文 last logits max diff `< 1e-2`，当前 strict 结果为 `0.000000e+00`。
-- `tests/test_full_model_vl_layerwise_debug.py` 中 `visual/embed/rope/layer_00...layer_35/final_norm/logits` 全部 max diff `0.000000e+00`。
+- `tools/debug/full_model_vl_layerwise.py` 中 `visual/embed/rope/layer_00...layer_35/final_norm/logits` 全部 max diff `0.000000e+00`。
 - Vision RoPE 初始化在默认 device 为 CUDA 时仍与 HF `Qwen3VLVisionRotaryEmbedding` exact match。
 - PatchMerger main/deepstack LayerNorm eps 与 HF 一致，均为 `1e-6`。
 
@@ -393,7 +393,7 @@ PASS:
   - `PatchMerger` 显式设置 `LayerNorm(eps=1e-6)`。
 - 验证结果:
   - `tests/test_full_model_vl.py`: PASS，HF/Prism shape `[1, 151936]`，max diff `0.000000e+00`，mean diff `0.000000e+00`。
-  - `tests/test_full_model_vl_layerwise_debug.py`: 从 visual 到 logits 全部 max diff 和 mean diff 为 `0.000000e+00`。
+  - `tools/debug/full_model_vl_layerwise.py`: 从 visual 到 logits 全部 max diff 和 mean diff 为 `0.000000e+00`。
   - `tests/test_vision_rope_init.py`: `2 passed in 8.71s`。
 - 问题记录: `docs/ISSUE_LOG.md` 的 P2-005。
 

@@ -24,6 +24,17 @@ from prism_infer.utils.context import get_context, reset_context
 from test_processor_pipeline_video import demo_video_frames
 
 
+pytestmark = (
+    []
+    if pytest is None
+    else [
+        pytest.mark.model,
+        pytest.mark.gpu,
+        pytest.mark.integration,
+    ]
+)
+
+
 def _require_cuda() -> None:
     if not torch.cuda.is_available():
         message = "ModelRunner mixed VL prepare tests require CUDA"
@@ -165,7 +176,7 @@ def test_prepare_prefill_mixed_text_image_video_batch():
 
     assert list(model_inputs.input_ids.shape) == [expected_total]
     assert list(model_inputs.position_ids.shape) == [3, expected_total]
-    assert model_inputs.position_ids[:, :len(text_seq)].tolist() == [
+    assert model_inputs.position_ids[:, : len(text_seq)].tolist() == [
         list(range(len(text_seq))),
         list(range(len(text_seq))),
         list(range(len(text_seq))),

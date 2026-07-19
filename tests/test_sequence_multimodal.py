@@ -2,6 +2,7 @@
 
 import pickle
 
+import pytest
 import torch
 from PIL import Image
 
@@ -10,6 +11,9 @@ from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.vl_inputs import prepare_single_image_inputs
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 from prism_infer.sampling_params import SamplingParams
+
+
+pytestmark = [pytest.mark.model, pytest.mark.integration]
 
 
 def _single_image_sequence() -> Sequence:

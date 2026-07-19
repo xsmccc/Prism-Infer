@@ -28,12 +28,8 @@ from prism_infer.analysis.p9_quality_metrics import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EVALUATOR = json.loads(
-    (REPO_ROOT / "benchmarks/workloads/p9_quality_evaluator.json").read_text()
-)
-PROTOCOL = json.loads(
-    (REPO_ROOT / "benchmarks/workloads/p9_quality_protocol.json").read_text()
-)
+EVALUATOR = json.loads((REPO_ROOT / "benchmarks/workloads/p9_quality_evaluator.json").read_text())
+PROTOCOL = json.loads((REPO_ROOT / "benchmarks/workloads/p9_quality_protocol.json").read_text())
 MODEL_CONFIG = {
     "model_type": "qwen3_vl",
     "text_config": {
@@ -83,9 +79,7 @@ def _reference_records() -> list[dict[str, object]]:
     ]
 
 
-def _mvbench_artifact_and_records() -> (
-    tuple[dict[str, object], list[dict[str, object]]]
-):
+def _mvbench_artifact_and_records() -> tuple[dict[str, object], list[dict[str, object]]]:
     artifact = _external_artifact()
     sample = artifact["samples"][0]
     sample_id = "mv-1"
@@ -116,9 +110,7 @@ def _mvbench_artifact_and_records() -> (
             "video_sampling": {
                 "source_kind": "video_file",
                 "decoder": deepcopy(
-                    EVALUATOR["datasets"]["mvbench_test"]["video_sampling"][
-                        "video_file_decoder"
-                    ]
+                    EVALUATOR["datasets"]["mvbench_test"]["video_sampling"]["video_file_decoder"]
                 ),
                 "fps": 3.0,
                 "source_frame_count": 32,
@@ -173,12 +165,9 @@ def _external_artifact(mode: str = "fp8_per_token_head") -> dict[str, object]:
     )
     cache.update(
         {
-            "accounting_scope": (
-                "allocated_gpu_kv_tensors_including_inline_per_token_head_scales"
-            ),
+            "accounting_scope": ("allocated_gpu_kv_tensors_including_inline_per_token_head_scales"),
             "reported_tensor_count": cache["num_layers"],
-            "reported_tensor_sizes": [cache["raw_tensor_bytes_per_layer"]]
-            * cache["num_layers"],
+            "reported_tensor_sizes": [cache["raw_tensor_bytes_per_layer"]] * cache["num_layers"],
             "reported_total_bytes": cache["total_bytes"],
             "metadata_accounting": {
                 "scope": "test block table tensors; allocator graph pending",
@@ -194,9 +183,7 @@ def _external_artifact(mode: str = "fp8_per_token_head") -> dict[str, object]:
         "framework_version": "0.24.0",
         "framework_distribution_commit": "gee0da84ab",
         "framework_distribution_record_sha256": "6" * 64,
-        "framework_implementation_files": {
-            path: "7" * 64 for path in VLLM_IMPLEMENTATION_FILES
-        },
+        "framework_implementation_files": {path: "7" * 64 for path in VLLM_IMPLEMENTATION_FILES},
         "transformers_processor_implementation_files": {
             path: "8" * 64 for path in TRANSFORMERS_PROCESSOR_IMPLEMENTATION_FILES
         },
@@ -268,20 +255,15 @@ def _external_artifact(mode: str = "fp8_per_token_head") -> dict[str, object]:
                 {
                     "name": "TRITON_ATTN",
                     "backend_class": (
-                        "vllm.v1.attention.backends.triton_attn."
-                        "TritonAttentionBackend"
+                        "vllm.v1.attention.backends.triton_attn.TritonAttentionBackend"
                     ),
                     "kv_cache_group_id": 0,
-                    "layer_names": [
-                        f"model.layers.{index}.self_attn" for index in range(36)
-                    ],
+                    "layer_names": [f"model.layers.{index}.self_attn" for index in range(36)],
                 }
             ],
             "vision_attention_backend": {
                 "name": "FLASH_ATTN",
-                "selector_class": (
-                    "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
-                ),
+                "selector_class": ("vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"),
                 "layer_count": 32,
             },
         },
@@ -360,9 +342,7 @@ def _rehash(artifact: dict[str, object]) -> None:
 
 
 def test_vllm_cache_formulas_match_equal_capacity_reference_bytes() -> None:
-    bf16 = expected_vllm_kv_cache(
-        mode="bf16", evaluator=EVALUATOR, model_config=MODEL_CONFIG
-    )
+    bf16 = expected_vllm_kv_cache(mode="bf16", evaluator=EVALUATOR, model_config=MODEL_CONFIG)
     fp8 = expected_vllm_kv_cache(
         mode="fp8_per_token_head",
         evaluator=EVALUATOR,
@@ -532,9 +512,7 @@ def test_incomplete_allocator_accounting_must_be_explicitly_unmeasured() -> None
             "environment.gpu_uuid",
         ),
         (
-            lambda artifact: artifact["environment"].update(
-                compute_capability="sm_120"
-            ),
+            lambda artifact: artifact["environment"].update(compute_capability="sm_120"),
             "compute capability",
         ),
         (
@@ -542,9 +520,9 @@ def test_incomplete_allocator_accounting_must_be_explicitly_unmeasured() -> None
             "total_memory_bytes",
         ),
         (
-            lambda artifact: artifact["environment"][
-                "framework_implementation_files"
-            ].pop(VLLM_IMPLEMENTATION_FILES[0]),
+            lambda artifact: artifact["environment"]["framework_implementation_files"].pop(
+                VLLM_IMPLEMENTATION_FILES[0]
+            ),
             "vLLM implementation file set",
         ),
         (
@@ -590,9 +568,9 @@ def test_external_artifact_requires_hardware_and_source_identity(
             "independently recomputed score",
         ),
         (
-            lambda artifact: artifact["execution_evidence"][
-                "vision_attention_backend"
-            ].update(name="TORCH_SDPA"),
+            lambda artifact: artifact["execution_evidence"]["vision_attention_backend"].update(
+                name="TORCH_SDPA"
+            ),
             "vision attention backend",
         ),
     ],

@@ -10,7 +10,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 import os
-from glob import glob           # 文件名模式匹配: glob("*.safetensors") → 列出所有 .safetensors 文件
+from glob import glob  # 文件名模式匹配: glob("*.safetensors") → 列出所有 .safetensors 文件
 import torch
 from torch import nn
 from safetensors import safe_open  # safetensors 库: 安全(不执行代码)的权重加载

@@ -20,26 +20,30 @@ import torch.distributed as dist
 
 
 # ─── 工具函数: 检查整除 ──────────────────────────────────────
-def divide(numerator, denominator):
-    assert numerator % denominator == 0       # 必须整除 (不能把 28 个 head 分给 3 张 GPU)
-    return numerator // denominator            # 整数除法
+def divide(numerator: int, denominator: int) -> int:
+    if isinstance(numerator, bool) or not isinstance(numerator, int) or numerator < 0:
+        raise ValueError(f"numerator must be a non-negative integer, got {numerator!r}")
+    if isinstance(denominator, bool) or not isinstance(denominator, int) or denominator <= 0:
+        raise ValueError(f"denominator must be a positive integer, got {denominator!r}")
+    if numerator % denominator != 0:
+        raise ValueError(f"tensor-parallel dimension {numerator} is not divisible by {denominator}")
+    return numerator // denominator  # 整数除法
 
 
 # ─── LinearBase: 所有 TP 线性层的基类 ─────────────────────────
 # 负责: 创建权重张量, 绑定 weight_loader
 class LinearBase(nn.Module):
-
     def __init__(
         self,
-        input_size: int,           # 输入维度
-        output_size: int,          # 输出维度 (已经是 TP 切分后的大小)
-        bias: bool = False,        # 是否有偏置
-        tp_dim: int | None = None, # 权重在哪个维度上切分 (0=列, 1=行)
+        input_size: int,  # 输入维度
+        output_size: int,  # 输出维度 (已经是 TP 切分后的大小)
+        bias: bool = False,  # 是否有偏置
+        tp_dim: int | None = None,  # 权重在哪个维度上切分 (0=列, 1=行)
     ):
         super().__init__()
-        self.tp_dim = tp_dim                    # 切分维度 (列并行=0, 行并行=1)
-        self.tp_rank = dist.get_rank()          # 当前 GPU 的编号 (0, 1, ...)
-        self.tp_size = dist.get_world_size()    # 总 GPU 数
+        self.tp_dim = tp_dim  # 切分维度 (列并行=0, 行并行=1)
+        self.tp_rank = dist.get_rank()  # 当前 GPU 的编号 (0, 1, ...)
+        self.tp_size = dist.get_world_size()  # 总 GPU 数
         # 创建空权重 (output_size × input_size)
         # nn.Parameter: 标记为可训练参数, PyTorch 会自动管理
         # torch.empty: 只分配内存, 不初始化 (之后 weight_loader 会填入真正的值)
@@ -56,24 +60,23 @@ class LinearBase(nn.Module):
             self.register_parameter("bias", None)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError               # 子类必须实现
+        raise NotImplementedError  # 子类必须实现
 
 
 # ─── ReplicatedLinear: 不切分, 每个 GPU 有完整权重 ─────────────
 # 用在: 不需要 TP 的层 (如 q_norm, k_norm 的权重)
 class ReplicatedLinear(LinearBase):
-
     def __init__(
         self,
         input_size: int,
         output_size: int,
         bias: bool = False,
     ):
-        super().__init__(input_size, output_size, bias)   # tp_dim=None, 不切
+        super().__init__(input_size, output_size, bias)  # tp_dim=None, 不切
 
     # 权重加载: 直接拷贝, 不切分
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
-        param.data.copy_(loaded_weight)         # 每个 GPU 拿到完整权重
+        param.data.copy_(loaded_weight)  # 每个 GPU 拿到完整权重
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(x, self.weight, self.bias)
@@ -86,11 +89,10 @@ class ReplicatedLinear(LinearBase):
 # 输出是完整输出的一段, 不需要 AllReduce
 # 用在: qkv_proj (每 GPU 负责一部分 head), gate_up_proj
 class ColumnParallelLinear(LinearBase):
-
     def __init__(
         self,
         input_size: int,
-        output_size: int,           # 这里传入的是完整的 output_size
+        output_size: int,  # 这里传入的是完整的 output_size
         bias: bool = False,
     ):
         tp_size = dist.get_world_size()
@@ -102,7 +104,7 @@ class ColumnParallelLinear(LinearBase):
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
         param_data = param.data
         shard_size = param_data.size(self.tp_dim)  # 每个 GPU 负责的大小
-        start_idx = self.tp_rank * shard_size      # 本 GPU 从哪里开始切
+        start_idx = self.tp_rank * shard_size  # 本 GPU 从哪里开始切
         # narrow(dim, start, length): 在 dim 维度上取 [start, start+length) 的切片
         # 类似 C++: loaded_weight[start_idx : start_idx + shard_size] (在某个维度)
         loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
@@ -116,20 +118,30 @@ class ColumnParallelLinear(LinearBase):
 # 用在: gate_up_proj (把 gate 和 up 两个独立权重合并成一个大矩阵)
 # 继承 ColumnParallelLinear, output_size = sum(output_sizes)
 class MergedColumnParallelLinear(ColumnParallelLinear):
-
     def __init__(
         self,
         input_size: int,
-        output_sizes: list[int],   # [gate_size, up_size] 如 [18944, 18944]
+        output_sizes: list[int],  # [gate_size, up_size] 如 [18944, 18944]
         bias: bool = False,
     ):
         self.output_sizes = output_sizes
+        tp_size = dist.get_world_size()
+        if not output_sizes:
+            raise ValueError("MergedColumnParallelLinear requires at least one output shard")
+        for output_size in output_sizes:
+            divide(output_size, tp_size)
         # sum(output_sizes) = 37888, 传给父类做列并行切分
         super().__init__(input_size, sum(output_sizes), bias)
 
     # 权重加载: loaded_shard_id = 0 表示 gate, 1 表示 up
     # 要把两个独立权重放到合并矩阵的正确位置
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor, loaded_shard_id: int):
+        if (
+            isinstance(loaded_shard_id, bool)
+            or not isinstance(loaded_shard_id, int)
+            or not 0 <= loaded_shard_id < len(self.output_sizes)
+        ):
+            raise ValueError(f"invalid merged projection shard id: {loaded_shard_id!r}")
         param_data = param.data
         # 算这个 shard 在合并矩阵中的偏移量
         # 例: output_sizes = [18944, 18944], tp_size=2
@@ -149,19 +161,18 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
 # 用在: Attention 的 qkv_proj
 # 特殊之处: Q 有 28 个 head, K/V 只有 4 个 (GQA), 切分比例不同
 class QKVParallelLinear(ColumnParallelLinear):
-
     def __init__(
         self,
-        hidden_size: int,           # 输入维度 (3584)
-        head_size: int,             # 每个 head 的维度 (128)
-        total_num_heads: int,       # Q 的总 head 数 (28)
+        hidden_size: int,  # 输入维度 (3584)
+        head_size: int,  # 每个 head 的维度 (128)
+        total_num_heads: int,  # Q 的总 head 数 (28)
         total_num_kv_heads: int | None = None,  # KV 的总 head 数 (4)
         bias: bool = False,
     ):
         tp_size = dist.get_world_size()
         total_num_kv_heads = total_num_kv_heads or total_num_heads  # None → 用 Q 的头数
-        self.head_size = head_size                          # 128
-        self.num_heads = divide(total_num_heads, tp_size)   # 每 GPU 的 Q head 数
+        self.head_size = head_size  # 128
+        self.num_heads = divide(total_num_heads, tp_size)  # 每 GPU 的 Q head 数
         self.num_kv_heads = divide(total_num_kv_heads, tp_size)  # 每 GPU 的 KV head 数
         # 总输出 = (Q_heads + K_heads + V_heads) × head_size
         # 例: (28 + 4 + 4) × 128 = 4608, TP=2 时每 GPU: 2304
@@ -172,15 +183,16 @@ class QKVParallelLinear(ColumnParallelLinear):
     # 要把 HuggingFace 的独立 q/k/v 权重放到合并矩阵的正确偏移
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor, loaded_shard_id: str):
         param_data = param.data
-        assert loaded_shard_id in ["q", "k", "v"]
+        if loaded_shard_id not in ("q", "k", "v"):
+            raise ValueError(f"invalid QKV projection shard id: {loaded_shard_id!r}")
         if loaded_shard_id == "q":
-            shard_size = self.num_heads * self.head_size       # 14 × 128 = 1792 (TP=2)
-            shard_offset = 0                                   # Q 在最前面
+            shard_size = self.num_heads * self.head_size  # 14 × 128 = 1792 (TP=2)
+            shard_offset = 0  # Q 在最前面
         elif loaded_shard_id == "k":
-            shard_size = self.num_kv_heads * self.head_size    # 2 × 128 = 256
-            shard_offset = self.num_heads * self.head_size     # K 在 Q 后面
+            shard_size = self.num_kv_heads * self.head_size  # 2 × 128 = 256
+            shard_offset = self.num_heads * self.head_size  # K 在 Q 后面
         else:  # v
-            shard_size = self.num_kv_heads * self.head_size    # 2 × 128 = 256
+            shard_size = self.num_kv_heads * self.head_size  # 2 × 128 = 256
             shard_offset = self.num_heads * self.head_size + self.num_kv_heads * self.head_size
             # V 在 K 后面
         # 在合并矩阵中定位
@@ -195,7 +207,6 @@ class QKVParallelLinear(ColumnParallelLinear):
 # 输出是部分和, 需要 AllReduce
 # 用在: o_proj, down_proj
 class RowParallelLinear(LinearBase):
-
     def __init__(
         self,
         input_size: int,
@@ -209,7 +220,7 @@ class RowParallelLinear(LinearBase):
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
         param_data = param.data
-        shard_size = param_data.size(self.tp_dim)   # 每 GPU 的行数
+        shard_size = param_data.size(self.tp_dim)  # 每 GPU 的行数
         start_idx = self.tp_rank * shard_size
         loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
         param_data.copy_(loaded_weight)
@@ -218,6 +229,6 @@ class RowParallelLinear(LinearBase):
         # bias 只在 rank 0 加, 避免 AllReduce 后 bias 被加了 tp_size 次
         y = F.linear(x, self.weight, self.bias if self.tp_rank == 0 else None)
         if self.tp_size > 1:
-            dist.all_reduce(y)                      # AllReduce: 所有 GPU 的 y 相加
+            dist.all_reduce(y)  # AllReduce: 所有 GPU 的 y 相加
             # 这一行就是 TP 的核心通信!
         return y

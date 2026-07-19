@@ -46,9 +46,7 @@ DEFAULT_PROTOCOL = REPO_ROOT / "benchmarks/workloads/p9_quality_protocol.json"
 DEFAULT_MVBENCH_MAP = REPO_ROOT / "benchmarks/workloads/p9_mvbench_media_map.json"
 DEFAULT_RAW_ROOT = REPO_ROOT / "data/p9_quality/raw"
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data/p9_quality/materialized"
-SHARD_PATTERN = re.compile(
-    r"^(?P<split>[a-z]+)-(?P<index>\d{5})-of-(?P<total>\d{5})\.parquet$"
-)
+SHARD_PATTERN = re.compile(r"^(?P<split>[a-z]+)-(?P<index>\d{5})-of-(?P<total>\d{5})\.parquet$")
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -73,9 +71,7 @@ def _discover_complete_shards(directory: Path, *, split: str) -> list[Path]:
         match = SHARD_PATTERN.fullmatch(path.name)
         if match is None or match.group("split") != split:
             raise ValueError(f"invalid parquet shard name: {path}")
-        matches.append(
-            (int(match.group("index")), int(match.group("total")), path)
-        )
+        matches.append((int(match.group("index")), int(match.group("total")), path))
     if not matches:
         raise FileNotFoundError(f"no {split} parquet shards in {directory}")
     totals = {total for _, total, _ in matches}
@@ -488,8 +484,7 @@ def main() -> None:
                 "manifest": str(manifest_path),
                 "manifest_sha256": manifest_sha256,
                 "datasets": {
-                    artifact["id"]: artifact["materialization_status"]
-                    for artifact in artifacts
+                    artifact["id"]: artifact["materialization_status"] for artifact in artifacts
                 },
             },
             ensure_ascii=False,

@@ -17,7 +17,8 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 | Paged KV、chunked prefill、continuous batching | 已验证 | engine-level arrival/SLO harness，不是网络 server |
 | KV trace 与视觉 token 分析 | 已验证 | trace 默认关闭，JSONL 可离线分析 |
 | content-aware visual KV physical compaction | 已验证 | BF16、keep=0.5 的 7-image lexical preflight 通过 |
-| FP8 KV | 已实现、质量未通过 | 不能作为默认质量合格策略 |
+| unit-scale FP8 KV (`fp8_kv`) | 已实现、已拒绝 | direct cast 长输出质量未通过，只保留为失败基线 |
+| scaled FP8 KV (`scaled_fp8_kv`) | 正式质量门禁通过 | per-token/per-KV-head scale；allocated KV pool 为 BF16 的 `0.515625x` |
 | packed MLP gate/up | 已验证、默认启用 | RTX 5090 TP1；8 个 clean offline cell 的 decode TPOT 改善 `0.483%–0.762%`，不声称稳定 E2E 加速 |
 | TP2 | 静态与 IPC preflight 完成 | 动态 correctness/performance 尚无两卡证据 |
 
@@ -48,6 +49,14 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
   总 kernels 从 `2,000` 降到 `1,964`；text、单/多图、视频、mixed 与 7-image COCO
   共 8 个 clean cell 均 token exact，unprofiled decode TPOT 改善 `0.483%–0.762%`。
   vision prefill仍有双峰，因此不把该结果扩写成稳定 E2E latency speedup。
+- P9-C 的 `scaled_fp8_kv` 在冻结的 DocVQA、MuirBench、MVBench
+  development/final 六个正式 cell 中，相对 Prism BF16 均通过 non-inferiority gate；
+  allocated KV pool 从 `1,509,949,440` B 降到 `778,567,680` B，节省
+  `48.4375%`。这不包含跨框架统一的 page-table/Python allocator 字节。
+- 同 logical capacity、同 `0.515625x` allocated-KV-pool 比例下，vLLM 0.24.0
+  per-token-head FP8 在 DocVQA/MuirBench 通过、MVBench development/final 未通过
+  预注册稳定性门禁；其 MVBench accuracy 点估计反而更高。因此当前外部质量矩阵结论是
+  **MIXED**，不是“Prism accuracy 显著高于 vLLM”，也不是完整物理显存 Pareto 胜出。
 
 完整口径、环境和 raw evidence 路径见 [PERFORMANCE_REPORT](docs/PERFORMANCE_REPORT.md)。
 
@@ -234,6 +243,26 @@ llm = LLM(
 保存 token/任务指标和 physical KV 字段。完整成对命令见
 [REPRODUCIBILITY](docs/REPRODUCIBILITY.md)。
 
+## 运行质量合格的 scaled FP8 KV 路径
+
+`scaled_fp8_kv` 与旧 `fp8_kv` 是两个独立模式。前者为每个 token、每个 KV head
+分别保存 K/V FP32 scale，并把 scale 与 payload 一起纳入 store、paged decode、
+copy-on-write、swap、physical compaction 和 CUDA Graph 生命周期：
+
+```python
+llm = LLM(
+    os.environ["PRISM_MODEL_PATH"],
+    compression_mode="scaled_fp8_kv",
+    enforce_eager=False,
+    max_model_len=1024,
+    max_num_batched_tokens=1024,
+    max_num_seqs=1,
+)
+```
+
+正式 PASS 只覆盖冻结的 Qwen3-VL-8B、单卡环境和 P9 质量协议。它不自动证明
+`visual_compact_scaled_fp8` 组合、任意模型、任意长上下文或吞吐性能合格。
+
 ## KV Trace 与离线分析
 
 KV trace 默认关闭。显式运行三类 deterministic 样例：
@@ -305,10 +334,14 @@ python -m pytest -q tests -s
 
 - 不声称 Prism 全面超过 vLLM/SGLang。
 - 不声称 visual compaction 让整张 GPU 或整个模型显存减半。
-- 不声称 FP8 KV 已通过质量门禁。
+- 不声称 unit-scale `fp8_kv` 已通过质量门禁，也不把 scaled-FP8 的限定结果泛化为
+  “所有 FP8 都质量无损”。
+- 不声称已完成跨框架 page-table/allocator 全口径物理显存 Pareto，或 scaled-FP8
+  已带来正式 runtime speedup。
 - 不把 offline output tok/s 当作 online serving goodput。
 - 不把 packed MLP 的小幅 decode TPOT 收益写成 online goodput或稳定 E2E 加速。
 - 不声称已经验证 TP2、HTTP/gRPC、megakernel、PD 分离或投机解码。
+- 不声称 NVFP4 或权重/激活量化已经实现、验证或优于 BF16。
 
 ## Acknowledgements
 

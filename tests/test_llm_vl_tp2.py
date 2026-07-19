@@ -12,6 +12,15 @@ from prism_infer import LLM
 from prism_infer.sampling_params import SamplingParams
 
 
+pytestmark = [
+    pytest.mark.model,
+    pytest.mark.gpu,
+    pytest.mark.integration,
+    pytest.mark.slow,
+    pytest.mark.distributed,
+]
+
+
 def _require_tp2_environment() -> None:
     """只在显式请求且至少两张 GPU 可见时运行重型 TP2 测试。"""
 

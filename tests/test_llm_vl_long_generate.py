@@ -2,6 +2,7 @@
 
 import gc
 
+import pytest
 import torch
 from PIL import Image
 from transformers import Qwen3VLForConditionalGeneration
@@ -11,6 +12,13 @@ from prism_infer import LLM
 from prism_infer.sampling_params import SamplingParams
 from test_processor_pipeline_video import demo_video_frames
 
+
+pytestmark = [
+    pytest.mark.model,
+    pytest.mark.gpu,
+    pytest.mark.integration,
+    pytest.mark.slow,
+]
 
 MAX_TOKENS = 32
 PREFIX_CHECKPOINTS_BY_CASE = {
@@ -95,7 +103,7 @@ def _hf_generate_tokens(model, processor, case: dict) -> tuple[list[int], int]:
             max_new_tokens=MAX_TOKENS,
             do_sample=False,
         )
-    token_ids = hf_output[0, hf_inputs["input_ids"].shape[1]:].tolist()
+    token_ids = hf_output[0, hf_inputs["input_ids"].shape[1] :].tolist()
     prompt_len = int(hf_inputs["input_ids"].shape[1])
     del hf_output, hf_inputs
     torch.cuda.empty_cache()

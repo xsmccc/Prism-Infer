@@ -56,11 +56,7 @@ def main() -> None:
 
     records = load_benchmark_jsonl(args.inputs)
     if selected_cases is not None:
-        records = [
-            record
-            for record in records
-            if record["workload"]["case_id"] in selected_cases
-        ]
+        records = [record for record in records if record["workload"]["case_id"] in selected_cases]
     if selected_strategies is not None:
         records = [
             record
@@ -85,8 +81,7 @@ def main() -> None:
     if not args.json_output and not args.markdown_output:
         print(markdown, end="")
     print(
-        f"summarized {len(records)} records into "
-        f"{len(summary['aggregates'])} aggregate rows",
+        f"summarized {len(records)} records into {len(summary['aggregates'])} aggregate rows",
         file=sys.stderr,
     )
 

@@ -34,26 +34,16 @@ class RequestMetrics:
             else (self.first_scheduled_ns - self.submitted_ns) / 1e6
         )
         ttft_ms = (
-            None
-            if self.first_token_ns is None
-            else (self.first_token_ns - self.submitted_ns) / 1e6
+            None if self.first_token_ns is None else (self.first_token_ns - self.submitted_ns) / 1e6
         )
         latency_ms = (
-            None
-            if self.finished_ns is None
-            else (self.finished_ns - self.submitted_ns) / 1e6
+            None if self.finished_ns is None else (self.finished_ns - self.submitted_ns) / 1e6
         )
         inter_token_ms = [
             (current - previous) / 1e6
-            for previous, current in zip(
-                self.token_timestamps_ns, self.token_timestamps_ns[1:]
-            )
+            for previous, current in zip(self.token_timestamps_ns, self.token_timestamps_ns[1:])
         ]
-        tpot_ms = (
-            None
-            if not inter_token_ms
-            else sum(inter_token_ms) / len(inter_token_ms)
-        )
+        tpot_ms = None if not inter_token_ms else sum(inter_token_ms) / len(inter_token_ms)
         return {
             "request_id": self.request_id,
             "prompt_tokens": self.prompt_tokens,
@@ -77,6 +67,7 @@ class BatchMetrics:
     phase: str
     batch_size: int
     scheduled_tokens: int
+    vision_patches: int
     sequence_ids: tuple[int, ...]
     policy_name: str
     started_ns: int
@@ -88,6 +79,7 @@ class BatchMetrics:
             "phase": self.phase,
             "batch_size": self.batch_size,
             "scheduled_tokens": self.scheduled_tokens,
+            "vision_patches": self.vision_patches,
             "sequence_ids": list(self.sequence_ids),
             "policy_name": self.policy_name,
             "started_ns": self.started_ns,
@@ -113,9 +105,7 @@ class EngineMetrics:
     ) -> None:
         with self._lock:
             if seq.seq_id in self._requests:
-                raise RuntimeError(
-                    f"duplicate metrics request id: {seq.seq_id}"
-                )
+                raise RuntimeError(f"duplicate metrics request id: {seq.seq_id}")
             self._requests[seq.seq_id] = RequestMetrics(
                 request_id=seq.seq_id,
                 submitted_ns=timestamp_ns,
@@ -144,6 +134,7 @@ class EngineMetrics:
                     phase=plan.phase.value,
                     batch_size=plan.batch_size,
                     scheduled_tokens=plan.num_scheduled_tokens,
+                    vision_patches=plan.num_scheduled_vision_patches,
                     sequence_ids=plan.sequence_ids,
                     policy_name=plan.policy_name,
                     started_ns=started_ns,
@@ -193,8 +184,7 @@ class EngineMetrics:
         with self._lock:
             return {
                 "requests": [
-                    self._requests[request_id].to_record()
-                    for request_id in sorted(self._requests)
+                    self._requests[request_id].to_record() for request_id in sorted(self._requests)
                 ],
                 "batches": [batch.to_record() for batch in self._batches],
             }
@@ -210,6 +200,7 @@ class NullMetrics:
 
     def on_request_submitted(self, seq: Sequence, *, timestamp_ns: int) -> None:
         return None
+
     def on_batch_planned(self, plan: BatchPlan) -> None:
         return None
 

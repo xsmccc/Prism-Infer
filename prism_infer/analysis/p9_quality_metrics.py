@@ -21,11 +21,9 @@ from typing import Any, Mapping, Sequence
 
 DOCVQA_ANLS_THRESHOLD = 0.5
 MUIRBENCH_RANDOM_FALLBACK_SEED = 42
+MUIRBENCH_BARE_LABEL_MAX_WORDS = 5
 DOCVQA_POST_PROMPT = "\nAnswer the question using a single word or phrase."
-MUIRBENCH_HINT = (
-    "Hint: Please provide the correct option letter, such as A, B, C, D, "
-    "directly."
-)
+MUIRBENCH_HINT = "Hint: Please provide the correct option letter, such as A, B, C, D, directly."
 MVBENCH_POST_PROMPT = "Only give the best option.\n"
 MVBENCH_PUNCTUATION = (
     ";",
@@ -65,9 +63,7 @@ def levenshtein_distance(left: str, right: str) -> int:
     for left_index, left_character in enumerate(left, start=1):
         current = [left_index]
         for right_index, right_character in enumerate(right, start=1):
-            substitution = distances[right_index - 1] + (
-                left_character != right_character
-            )
+            substitution = distances[right_index - 1] + (left_character != right_character)
             current.append(
                 min(
                     current[-1] + 1,
@@ -137,9 +133,7 @@ def build_muirbench_prompt(question: str, options: Sequence[str]) -> str:
     labels = choice_labels(len(options))
     if not all(isinstance(option, str) for option in options):
         raise ValueError("MuirBench options must be strings")
-    choices = ["Choices:"] + [
-        f"({label}) {option}" for label, option in zip(labels, options)
-    ]
+    choices = ["Choices:"] + [f"({label}) {option}" for label, option in zip(labels, options)]
     return "\n".join(
         (
             f"Question: {question}",
@@ -180,11 +174,9 @@ def parse_muirbench_response(
     if not candidates:
         candidates = [label for label in labels if f" {label} " in cleaned]
         method = "bare_label"
-    if not candidates and len(cleaned.split()) > 5:
+    if not candidates and len(cleaned.split()) > MUIRBENCH_BARE_LABEL_MAX_WORDS:
         candidates = [
-            label
-            for label, answer in index_to_answer.items()
-            if answer.lower() in cleaned.lower()
+            label for label, answer in index_to_answer.items() if answer.lower() in cleaned.lower()
         ]
         method = "option_text"
         answer_is_label = False
@@ -200,14 +192,10 @@ def parse_muirbench_response(
         return ParsedChoice(candidates[0], method, tuple(candidates))
     if answer_is_label:
         indexes = [
-            cleaned.rfind(f"({label})" if bracketed else f" {label} ")
-            for label in candidates
+            cleaned.rfind(f"({label})" if bracketed else f" {label} ") for label in candidates
         ]
     else:
-        indexes = [
-            cleaned.lower().rfind(index_to_answer[label].lower())
-            for label in candidates
-        ]
+        indexes = [cleaned.lower().rfind(index_to_answer[label].lower()) for label in candidates]
     winner = max(range(len(candidates)), key=indexes.__getitem__)
     return ParsedChoice(candidates[winner], f"{method}_last_mention", tuple(candidates))
 
@@ -220,10 +208,7 @@ def build_mvbench_prompt(question: str, candidates: Sequence[str]) -> str:
     labels = choice_labels(len(candidates))
     if not all(isinstance(candidate, str) for candidate in candidates):
         raise ValueError("MVBench candidates must be strings")
-    options = "".join(
-        f"({label}) {candidate}\n"
-        for label, candidate in zip(labels, candidates)
-    )
+    options = "".join(f"({label}) {candidate}\n" for label, candidate in zip(labels, candidates))
     return f"Question:{question}\nOption:\n{options}{MVBENCH_POST_PROMPT}"
 
 
@@ -289,9 +274,7 @@ def score_quality_prediction(
         }
     if dataset_id == "mvbench_test":
         parsed = parse_mvbench_response(prediction)
-        target = choice_labels(len(record["candidates"]))[
-            record["answer_index"]
-        ]
+        target = choice_labels(len(record["candidates"]))[record["answer_index"]]
         return {
             "target": target,
             "prediction": parsed.label,
@@ -317,8 +300,7 @@ def aggregate_quality_predictions(
         strict = [int(sample["score"]["strict_score"]) for sample in samples]
         official = [int(sample["score"]["official_score"]) for sample in samples]
         fallback = sum(
-            sample["score"]["official_parse_method"]
-            == "official_random_fallback"
+            sample["score"]["official_parse_method"] == "official_random_fallback"
             for sample in samples
         )
         return {
@@ -332,16 +314,13 @@ def aggregate_quality_predictions(
         answered = [sample for sample in samples if sample["score"]["answered"]]
         by_task: dict[str, list[int]] = {}
         for sample in samples:
-            by_task.setdefault(sample["task"], []).append(
-                int(sample["score"]["score"])
-            )
+            by_task.setdefault(sample["task"], []).append(int(sample["score"]["score"]))
         return {
             "samples": len(samples),
             "selected_denominator_accuracy": sum(scores) / len(scores),
             "answered_samples": len(answered),
             "lmms_answered_denominator_accuracy": (
-                sum(int(sample["score"]["score"]) for sample in answered)
-                / len(answered)
+                sum(int(sample["score"]["score"]) for sample in answered) / len(answered)
                 if answered
                 else 0.0
             ),

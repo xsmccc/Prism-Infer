@@ -3,14 +3,17 @@
 Ref: prism_infer/vision/vision_encoder.py
 Ground truth: HF Qwen3VLForConditionalGeneration.model.visual.patch_embed
 """
+
 import os
+import pytest
 import torch
 import importlib.util
 
 # 直接导入避免触发 flash_attn
 spec = importlib.util.spec_from_file_location(
-    "vision_encoder", os.path.join(os.path.dirname(__file__),
-    "../prism_infer/vision/vision_encoder.py"))
+    "vision_encoder",
+    os.path.join(os.path.dirname(__file__), "../prism_infer/vision/vision_encoder.py"),
+)
 ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 PatchEmbed = ve.PatchEmbed
@@ -31,26 +34,34 @@ def test_patch_embed_shape():
     print("  shape: PASS")
 
 
+@pytest.mark.model
+@pytest.mark.integration
 def test_patch_embed_accuracy():
     """验证输出值与 HF 一致"""
     transformers = require_transformers()
     cache = get_model_path()
     hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
-        cache, dtype=torch.bfloat16, device_map='cpu',
-        trust_remote_code=True, local_files_only=True)
+        cache, dtype=torch.bfloat16, device_map="cpu", trust_remote_code=True, local_files_only=True
+    )
     hf_pe = hf_qwen3_vl_visual(hf).patch_embed
 
     our = PatchEmbed(3, 1152, 2, 16, torch.bfloat16)
     our.load_state_dict(hf_pe.state_dict())
 
     # 用真实图片输入
-    img = Image.new('RGB', (448, 448), color=(100, 150, 200))
+    img = Image.new("RGB", (448, 448), color=(100, 150, 200))
     p = transformers.AutoProcessor.from_pretrained(
-        cache, trust_remote_code=True, local_files_only=True)
-    pv = p(text=p.apply_chat_template(
-        [{'role': 'user', 'content': [{'type': 'image', 'image': img}]}],
-        tokenize=False, add_generation_prompt=True),
-        images=[img], return_tensors='pt')['pixel_values']
+        cache, trust_remote_code=True, local_files_only=True
+    )
+    pv = p(
+        text=p.apply_chat_template(
+            [{"role": "user", "content": [{"type": "image", "image": img}]}],
+            tokenize=False,
+            add_generation_prompt=True,
+        ),
+        images=[img],
+        return_tensors="pt",
+    )["pixel_values"]
 
     with torch.no_grad():
         hf_out = hf_pe(pv).float()
@@ -66,7 +77,7 @@ def test_patch_embed_accuracy():
     print("  accuracy: PASS")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print("=== PatchEmbed Tests ===")
     test_patch_embed_shape()
     test_patch_embed_accuracy()

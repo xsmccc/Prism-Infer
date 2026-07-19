@@ -87,9 +87,7 @@ def _require_trace_contract(trace: dict[str, Any]) -> None:
         for category in targets[REPLAY_RANGE]["kernel_categories"].values()
     )
     if not math.isclose(fraction, 1.0, rel_tol=0.0, abs_tol=1e-9):
-        raise ValueError(
-            f"replay kernel category fractions do not sum to 1: {fraction}"
-        )
+        raise ValueError(f"replay kernel category fractions do not sum to 1: {fraction}")
 
 
 def _require_padding_contract(records: list[dict[str, Any]]) -> None:
@@ -99,14 +97,11 @@ def _require_padding_contract(records: list[dict[str, Any]]) -> None:
     if sorted(batches) != list(range(1, 9)) or len(set(batches)) != len(batches):
         raise ValueError(f"padding matrix must cover unique batch 1..8: {batches}")
     commits = {str(record["environment"]["git_commit"]) for record in records}
-    if len(commits) != 1 or any(
-        record["environment"]["git_dirty"] for record in records
-    ):
+    if len(commits) != 1 or any(record["environment"]["git_dirty"] for record in records):
         raise ValueError("padding matrix must come from one clean commit")
     ceilings = {int(record["model"]["max_num_seqs"]) for record in records}
     bucket_sets = {
-        tuple(record["execution_backend"]["cuda_graph_batch_sizes"])
-        for record in records
+        tuple(record["execution_backend"]["cuda_graph_batch_sizes"]) for record in records
     }
     if ceilings != {8} or bucket_sets != {(1, 2, 4, 8)}:
         raise ValueError("padding matrix must use max_num_seqs=8 and buckets [1,2,4,8]")
@@ -124,9 +119,7 @@ def _require_padding_contract(records: list[dict[str, Any]]) -> None:
         if not record["correctness"]["outputs_identical_across_repeats"]:
             raise ValueError(f"repeat instability for batch={batch}")
         token_rows = record["correctness"]["token_ids"]
-        if len(token_rows) != batch or any(
-            row != baseline_tokens for row in token_rows
-        ):
+        if len(token_rows) != batch or any(row != baseline_tokens for row in token_rows):
             raise ValueError(f"replicated request output mismatch for batch={batch}")
 
 
@@ -162,9 +155,7 @@ def _summarize_validated(
                 "cpu_range_ms": _median(target["cpu_range_ms_per_range"]),
                 "direct_gpu_busy_ms": _median(target["gpu_busy_ms_per_range"]),
                 "direct_gpu_span_ms": _median(target["gpu_span_ms_per_range"]),
-                "gpu_tail_after_cpu_ms": _median(
-                    target["gpu_tail_after_cpu_ms_per_range"]
-                ),
+                "gpu_tail_after_cpu_ms": _median(target["gpu_tail_after_cpu_ms_per_range"]),
                 "semantic_cpu_ms": _median(semantic_region["cpu_ms"]),
                 "semantic_cuda_event_ms": (
                     _median(semantic_region["cuda_ms"])
@@ -191,9 +182,7 @@ def _summarize_validated(
                 ),
                 "decode_step_median_ms": _median(record["timing_ms"]["decode_step"]),
                 "decode_step_p90_ms": float(record["timing_ms"]["decode_step"]["p90"]),
-                "decode_tokens_per_s": _median(
-                    record["throughput"]["decode_tokens_per_s"]
-                ),
+                "decode_tokens_per_s": _median(record["throughput"]["decode_tokens_per_s"]),
                 "capture_ms": float(backend["cuda_graph_capture_ms"]),
             }
         )
@@ -213,19 +202,14 @@ def _summarize_validated(
             "gpu_busy_median_ms": _median(replay["gpu_busy_ms_per_range"]),
             "gpu_span_median_ms": _median(replay["gpu_span_ms_per_range"]),
             "gpu_span_minus_busy_ms": (
-                _median(replay["gpu_span_ms_per_range"])
-                - _median(replay["gpu_busy_ms_per_range"])
+                _median(replay["gpu_span_ms_per_range"]) - _median(replay["gpu_busy_ms_per_range"])
             ),
             "cpu_launch_range_median_ms": _median(replay["cpu_range_ms_per_range"]),
-            "cpu_gpu_busy_overlap_median_ms": _median(
-                replay["cpu_gpu_busy_overlap_ms_per_range"]
-            ),
+            "cpu_gpu_busy_overlap_median_ms": _median(replay["cpu_gpu_busy_overlap_ms_per_range"]),
             "cpu_gpu_busy_overlap_fraction_median": _median(
                 replay["cpu_gpu_busy_overlap_fraction_per_range"]
             ),
-            "gpu_tail_after_cpu_median_ms": _median(
-                replay["gpu_tail_after_cpu_ms_per_range"]
-            ),
+            "gpu_tail_after_cpu_median_ms": _median(replay["gpu_tail_after_cpu_ms_per_range"]),
             "engine_decode_kernel_busy_median_ms": engine_busy,
             "graph_external_kernel_busy_difference_ms": engine_busy - replay_busy,
             "categories": categories,

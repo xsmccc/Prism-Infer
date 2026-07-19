@@ -23,6 +23,8 @@ import math
 
 import torch
 
+from prism_infer.observability.kv_trace import install_kv_trace_provider
+
 
 SCHEMA_VERSION = 1
 _ACTIVE_SESSION: TraceSession | None = None
@@ -32,18 +34,20 @@ def _jsonable(value: Any) -> Any:
     """把 tensor/config 标量转换为 JSON 可序列化对象。"""
 
     if isinstance(value, torch.Tensor):
-        return value.detach().cpu().tolist()
-    if isinstance(value, torch.dtype):
-        return str(value).replace("torch.", "")
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    if isinstance(value, dict):
-        return {str(k): _jsonable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_jsonable(v) for v in value]
-    return str(value)
+        result = value.detach().cpu().tolist()
+    elif isinstance(value, torch.dtype):
+        result = str(value).replace("torch.", "")
+    elif isinstance(value, Path):
+        result = str(value)
+    elif isinstance(value, (str, int, float, bool)) or value is None:
+        result = value
+    elif isinstance(value, dict):
+        result = {str(k): _jsonable(v) for k, v in value.items()}
+    elif isinstance(value, (list, tuple)):
+        result = [_jsonable(v) for v in value]
+    else:
+        result = str(value)
+    return result
 
 
 def _shape(tensor: torch.Tensor | None) -> list[int] | None:
@@ -432,6 +436,7 @@ def build_trace_metadata(
     block_tables: torch.Tensor | None,
     context_lens: torch.Tensor | None,
     block_size: int,
+    query_ranges: list[tuple[int, int]] | None = None,
 ) -> TraceMetadata | None:
     """从 ModelRunner 当前 batch 构造 trace metadata。
 
@@ -446,6 +451,8 @@ def build_trace_metadata(
         return None
 
     phase = "prefill" if is_prefill else "decode"
+    if query_ranges is not None and len(query_ranges) != len(seqs):
+        raise ValueError("query_ranges must match traced sequences")
     flat_cursor = 0
     sequence_infos: list[SequenceTraceInfo] = []
     for seq_idx, seq in enumerate(seqs):
@@ -455,8 +462,19 @@ def build_trace_metadata(
         total_len = int(getattr(seq, "num_tokens", len(token_ids)))
         prompt_len = int(getattr(seq, "num_prompt_tokens", total_len))
         if is_prefill:
-            query_start = int(getattr(seq, "num_cached_tokens", 0))
-            query_end = total_len
+            if query_ranges is None:
+                query_start = int(getattr(seq, "num_cached_tokens", 0))
+                query_end = total_len
+            else:
+                query_start, query_end = query_ranges[seq_idx]
+                if not 0 <= query_start < query_end <= prompt_len:
+                    raise ValueError(
+                        "invalid trace prefill query range: "
+                        f"seq={getattr(seq, 'seq_id', seq_idx)} "
+                        f"range=[{query_start}, {query_end}) "
+                        f"prompt_len={prompt_len}"
+                    )
+                total_len = query_end
             seq_flat_start = flat_cursor
             seq_flat_end = flat_cursor + max(0, query_end - query_start)
             flat_cursor = seq_flat_end
@@ -623,8 +641,8 @@ def _span_kv_stats(
                 continue
             if span.flat_end <= span.flat_start:
                 continue
-            k_slice = k_norm[span.flat_start:span.flat_end]
-            v_slice = v_norm[span.flat_start:span.flat_end]
+            k_slice = k_norm[span.flat_start : span.flat_end]
+            v_slice = v_norm[span.flat_start : span.flat_end]
             if k_slice.numel() == 0 or v_slice.numel() == 0:
                 continue
             stats.append(
@@ -700,7 +718,7 @@ def _attention_for_prefill(
         if seq.flat_start is None or seq.flat_end is None or seq.flat_end <= seq.flat_start:
             continue
         q_last = q_data[seq.flat_end - 1]
-        keys = k_data[seq.flat_start:seq.flat_end]
+        keys = k_data[seq.flat_start : seq.flat_end]
         keys = _expand_kv_heads(keys, num_heads=num_heads, num_kv_heads=num_kv_heads)
         # q_last: [heads, dim], keys: [tokens, heads, dim] -> scores: [heads, tokens]
         scores = torch.einsum("hd,thd->ht", q_last, keys) * scale
@@ -837,11 +855,15 @@ def _attention_for_decode(
     sequence_stats = []
     for seq_order, seq in enumerate(metadata.sequences):
         context_len = int(context.context_lens[seq_order].item())
-        keys = _gather_paged_cache_tokens(
-            k_cache,
-            context.block_tables[seq_order],
-            context_len,
-        ).detach().float()
+        keys = (
+            _gather_paged_cache_tokens(
+                k_cache,
+                context.block_tables[seq_order],
+                context_len,
+            )
+            .detach()
+            .float()
+        )
         keys = _expand_kv_heads(keys, num_heads=num_heads, num_kv_heads=num_kv_heads)
         scores = torch.einsum("hd,thd->ht", q_data[seq_order], keys) * scale
         probs = torch.softmax(scores, dim=-1)
@@ -1042,87 +1064,13 @@ def summarize_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
     layer_records = [r for r in records if r.get("record_type") == "attention_layer"]
     phases = sorted({str(r.get("phase")) for r in layer_records})
     layers = sorted({int(r["layer_id"]) for r in layer_records if r.get("layer_id") is not None})
-    per_layer: dict[int, dict[str, Any]] = {}
-
-    for layer in layers:
-        records_l = [r for r in layer_records if r.get("layer_id") == layer]
-        visual_mass_values = []
-        text_mass_values = []
-        entropy_values = []
-        entropy_norm_values = []
-        visual_entropy_norm_values = []
-        visual_head_std_values = []
-        visual_k_norm = []
-        text_k_norm = []
-        visual_k_by_head: list[list[float]] = []
-        for record in records_l:
-            attention = record.get("attention", {})
-            for seq_stat in attention.get("sequence_stats", []):
-                if "visual_mass_mean" in seq_stat:
-                    visual_mass_values.append(float(seq_stat["visual_mass_mean"]))
-                if "text_mass_mean" in seq_stat:
-                    text_mass_values.append(float(seq_stat["text_mass_mean"]))
-                if "attention_entropy_mean" in seq_stat:
-                    entropy_values.append(float(seq_stat["attention_entropy_mean"]))
-                if "attention_entropy_normalized_mean" in seq_stat:
-                    entropy_norm_values.append(float(seq_stat["attention_entropy_normalized_mean"]))
-                if seq_stat.get("visual_attention_entropy_normalized_mean") is not None:
-                    visual_entropy_norm_values.append(
-                        float(seq_stat["visual_attention_entropy_normalized_mean"])
-                    )
-                if "head_visual_mass" in seq_stat and seq_stat["head_visual_mass"]:
-                    values = seq_stat["head_visual_mass"]
-                    mean_v = sum(values) / len(values)
-                    var = sum((x - mean_v) ** 2 for x in values) / len(values)
-                    visual_head_std_values.append(math.sqrt(var))
-            head_by_mod = record.get("head_stats", {}).get("by_modality", {})
-            if "image" in head_by_mod:
-                visual_k_norm.append(float(head_by_mod["image"]["k_norm_mean"]))
-                visual_k_by_head.append(head_by_mod["image"]["k_norm_mean_by_head"])
-            if "video" in head_by_mod:
-                visual_k_norm.append(float(head_by_mod["video"]["k_norm_mean"]))
-                visual_k_by_head.append(head_by_mod["video"]["k_norm_mean_by_head"])
-            if "text" in head_by_mod:
-                text_k_norm.append(float(head_by_mod["text"]["k_norm_mean"]))
-
-        visual_norm_mean = _mean(visual_k_norm)
-        text_norm_mean = _mean(text_k_norm)
-        ratio = None
-        if visual_norm_mean is not None and text_norm_mean not in (None, 0.0):
-            ratio = float(visual_norm_mean / text_norm_mean)
-        avg_visual_head_vector = None
-        if visual_k_by_head:
-            head_count = len(visual_k_by_head[0])
-            avg_visual_head_vector = [
-                float(sum(vec[idx] for vec in visual_k_by_head) / len(visual_k_by_head))
-                for idx in range(head_count)
-            ]
-        per_layer[layer] = {
-            "record_count": len(records_l),
-            "visual_attention_mass_mean": _mean(visual_mass_values),
-            "text_attention_mass_mean": _mean(text_mass_values),
-            "attention_entropy_mean": _mean(entropy_values),
-            "attention_entropy_normalized_mean": _mean(entropy_norm_values),
-            "visual_attention_entropy_normalized_mean": _mean(visual_entropy_norm_values),
-            "visual_head_mass_std_mean": _mean(visual_head_std_values),
-            "visual_k_norm_mean": visual_norm_mean,
-            "text_k_norm_mean": text_norm_mean,
-            "visual_text_k_norm_ratio": ratio,
-            "visual_k_norm_by_head_mean": avg_visual_head_vector,
-        }
-
-    adjacent_redundancy = []
-    for prev_layer, next_layer in zip(layers, layers[1:]):
-        prev_vec = per_layer[prev_layer].get("visual_k_norm_by_head_mean")
-        next_vec = per_layer[next_layer].get("visual_k_norm_by_head_mean")
-        similarity = _cosine(prev_vec, next_vec) if prev_vec and next_vec else None
-        adjacent_redundancy.append(
-            {
-                "prev_layer": prev_layer,
-                "next_layer": next_layer,
-                "visual_k_head_cosine": similarity,
-            }
+    per_layer = {
+        layer: _summarize_trace_layer(
+            [record for record in layer_records if record.get("layer_id") == layer]
         )
+        for layer in layers
+    }
+    adjacent_redundancy = _adjacent_layer_redundancy(layers, per_layer)
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1136,6 +1084,124 @@ def summarize_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
         "per_layer": {str(k): v for k, v in per_layer.items()},
         "adjacent_layer_redundancy": adjacent_redundancy,
     }
+
+
+def _new_layer_value_lists() -> dict[str, list[Any]]:
+    return {
+        "visual_mass": [],
+        "text_mass": [],
+        "entropy": [],
+        "entropy_norm": [],
+        "visual_entropy_norm": [],
+        "visual_head_std": [],
+        "visual_k_norm": [],
+        "text_k_norm": [],
+        "visual_k_by_head": [],
+    }
+
+
+def _collect_trace_layer_values(records: list[dict[str, Any]]) -> dict[str, list[Any]]:
+    values = _new_layer_value_lists()
+    for record in records:
+        attention = record.get("attention", {})
+        for sequence_stats in attention.get("sequence_stats", []):
+            _collect_attention_summary_values(values, sequence_stats)
+        _collect_norm_summary_values(values, record)
+    return values
+
+
+def _collect_attention_summary_values(
+    values: dict[str, list[Any]],
+    sequence_stats: dict[str, Any],
+) -> None:
+    field_targets = {
+        "visual_mass_mean": "visual_mass",
+        "text_mass_mean": "text_mass",
+        "attention_entropy_mean": "entropy",
+        "attention_entropy_normalized_mean": "entropy_norm",
+    }
+    for field_name, target in field_targets.items():
+        if field_name in sequence_stats:
+            values[target].append(float(sequence_stats[field_name]))
+    visual_entropy = sequence_stats.get("visual_attention_entropy_normalized_mean")
+    if visual_entropy is not None:
+        values["visual_entropy_norm"].append(float(visual_entropy))
+    head_visual_mass = sequence_stats.get("head_visual_mass")
+    if head_visual_mass:
+        mean_value = sum(head_visual_mass) / len(head_visual_mass)
+        variance = sum((item - mean_value) ** 2 for item in head_visual_mass) / len(
+            head_visual_mass
+        )
+        values["visual_head_std"].append(math.sqrt(variance))
+
+
+def _collect_norm_summary_values(
+    values: dict[str, list[Any]],
+    record: dict[str, Any],
+) -> None:
+    by_modality = record.get("head_stats", {}).get("by_modality", {})
+    for modality in ("image", "video"):
+        if modality in by_modality:
+            values["visual_k_norm"].append(float(by_modality[modality]["k_norm_mean"]))
+            values["visual_k_by_head"].append(by_modality[modality]["k_norm_mean_by_head"])
+    if "text" in by_modality:
+        values["text_k_norm"].append(float(by_modality["text"]["k_norm_mean"]))
+
+
+def _mean_vector(vectors: list[list[float]]) -> list[float] | None:
+    if not vectors:
+        return None
+    return [
+        float(sum(vector[index] for vector in vectors) / len(vectors))
+        for index in range(len(vectors[0]))
+    ]
+
+
+def _summarize_trace_layer(records: list[dict[str, Any]]) -> dict[str, Any]:
+    values = _collect_trace_layer_values(records)
+    visual_norm_mean = _mean(values["visual_k_norm"])
+    text_norm_mean = _mean(values["text_k_norm"])
+    ratio = (
+        None
+        if visual_norm_mean is None or text_norm_mean in (None, 0.0)
+        else float(visual_norm_mean / text_norm_mean)
+    )
+    return {
+        "record_count": len(records),
+        "visual_attention_mass_mean": _mean(values["visual_mass"]),
+        "text_attention_mass_mean": _mean(values["text_mass"]),
+        "attention_entropy_mean": _mean(values["entropy"]),
+        "attention_entropy_normalized_mean": _mean(values["entropy_norm"]),
+        "visual_attention_entropy_normalized_mean": _mean(values["visual_entropy_norm"]),
+        "visual_head_mass_std_mean": _mean(values["visual_head_std"]),
+        "visual_k_norm_mean": visual_norm_mean,
+        "text_k_norm_mean": text_norm_mean,
+        "visual_text_k_norm_ratio": ratio,
+        "visual_k_norm_by_head_mean": _mean_vector(values["visual_k_by_head"]),
+    }
+
+
+def _adjacent_layer_redundancy(
+    layers: list[int],
+    per_layer: dict[int, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    adjacent = []
+    for previous, following in zip(layers, layers[1:]):
+        previous_vector = per_layer[previous].get("visual_k_norm_by_head_mean")
+        following_vector = per_layer[following].get("visual_k_norm_by_head_mean")
+        similarity = (
+            _cosine(previous_vector, following_vector)
+            if previous_vector and following_vector
+            else None
+        )
+        adjacent.append(
+            {
+                "prev_layer": previous,
+                "next_layer": following,
+                "visual_k_head_cosine": similarity,
+            }
+        )
+    return adjacent
 
 
 def format_summary_markdown(summary: dict[str, Any]) -> str:
@@ -1244,15 +1310,13 @@ def render_summary_svg(summary: dict[str, Any], *, width: int = 960, height: int
             parts.append(
                 f'<text x="{x + bar_width * 0.1:.2f}" y="{height - 34}" '
                 'font-family="monospace" font-size="10" fill="#374151">'
-                f'{layer}</text>'
+                f"{layer}</text>"
             )
     points = " ".join(
         f"{x_pos(idx) + bar_width * 0.5:.2f},{y_ratio(value):.2f}"
         for idx, value in enumerate(ratios)
     )
-    parts.append(
-        f'<polyline points="{points}" fill="none" stroke="#dc2626" stroke-width="2"/>'
-    )
+    parts.append(f'<polyline points="{points}" fill="none" stroke="#dc2626" stroke-width="2"/>')
     for tick, label in [(0.0, "0"), (max_mass, f"{max_mass:.3f}")]:
         y = y_mass(tick)
         parts.append(
@@ -1268,3 +1332,11 @@ def render_summary_svg(summary: dict[str, Any], *, width: int = 960, height: int
         )
     parts.append("</svg>")
     return "\n".join(parts) + "\n"
+
+
+install_kv_trace_provider(
+    is_enabled_provider=is_trace_enabled,
+    register_model_provider=register_model_config,
+    build_metadata_provider=build_trace_metadata,
+    record_layer_provider=record_attention_layer,
+)

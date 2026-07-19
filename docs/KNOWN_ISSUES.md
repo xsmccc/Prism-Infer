@@ -1,6 +1,6 @@
 # Prism-Infer Known Issues
 
-> 更新日期：2026-07-17  
+> 更新日期：2026-07-19
 > 本表记录当前主线限制，并保留本轮关闭项作为审计轨迹。历史 root cause 见
 > `docs/issues/` 与 [ISSUE_LOG](ISSUE_LOG.md)。任何条目只能由可复现证据关闭。
 
@@ -12,7 +12,7 @@
 | KI-002 | CLOSED | packed MLP claim | HF/E2E/online/TPOT/Systems/full regression闭环；只声明小幅 decode TPOT收益 |
 | KI-003 | UNVERIFIED | TP2 | 当前租约仅分配 GPU0；额外可见设备不代表可用，TP2 尚无有效动态证据 |
 | KI-004 | CLOSED | GPU counter claim | NCU 2025.1 权限恢复，Paged Attention 的 occupancy/DRAM/compute counter 已实测 |
-| KI-005 | FAIL/REJECTED | FP8默认压缩 | FP8 KV最终质量门禁未通过 |
+| KI-005 | PARTIAL | FP8 模式边界 | unit-scale 已拒绝；scaled FP8 formal quality PASS；全物理外部 Pareto 待完成 |
 | KI-006 | NOT IMPLEMENTED | serving claim | 无 HTTP/gRPC server和 external online goodput |
 | KI-007 | LIMITATION | prefix cache | VL prefix hash禁用；无独立 persistent prefix store |
 | KI-008 | LIMITATION | video输入 | 支持 frame sequence，不含通用文件解码/采样策略 |
@@ -157,22 +157,36 @@ GQA 合并会把 grid 降到 64，不能进入计时。正式 raw report、page 
 上述 clean raw 数字取代权限恢复后的早期 diagnostic `445.60/550.46 us`，后者不再
 作为正式 counter evidence。
 
-## KI-005：unit-scale FP8 KV quality FAIL
+## KI-005：FP8 模式必须分开陈述（PARTIAL）
 
 已完成 FP8 physical storage、KV store、paged load/dequant和 kernel correctness；固定 pool
 payload bytes可为 BF16的 `0.5x`。但 unit-scale FP8在真实长输出上没有通过最终质量门禁，且
 uniform+FP8的 `4.016x` observed capacity伴随 uniform quality FAIL。
 
+该失败只属于旧 `fp8_kv`，不能覆盖新的 `scaled_fp8_kv`。P9-C 已实现
+per-token/per-KV-head K/V FP32 scale，并让 scale 与 payload 一同经历 Triton store、
+paged decode、copy-on-write、swap、physical compaction 和 CUDA Graph replay。clean
+`5ada892` 的 DocVQA、MuirBench、MVBench development/final 六项 formal
+non-inferiority 均 PASS；allocated KV pool 为 BF16 的 `0.515625x`，节省
+`48.4375%`。
+
+同容量 vLLM 0.24.0 per-token-head FP8 external quality matrix 在 clean `3ec90a5`
+完成：DocVQA/MuirBench PASS，MVBench development/final FAIL。vLLM 的 MVBench
+accuracy 点估计更高，但 paired CI 下界未过预注册稳定性 margin，因此不能事后改判。
+该矩阵的 `full_physical_comparable=false`：双方尚无统一的 page-table/Python allocator
+字节合同，所以不能声称完整物理显存 Pareto 已胜出。
+
 当前规则：
 
-- 默认质量合格主线只使用 BF16 content-aware physical compaction；
+- 默认仍是 compression-off/BF16；BF16 content-aware compaction 与 scaled FP8 是两个
+  分别验证的 opt-in 候选；
 - 不声称 unit-scale FP8已质量合格；
+- 可以在冻结 P9 协议范围内声明 `scaled_fp8_kv` formal quality PASS；
+- 不把该结论外推到 `visual_compact_scaled_fp8` 组合、任意模型或任意上下文；
 - 不把 capacity observation表述为 throughput或通用并发提升。
 
-当前 store 只是 BF16→FP8 direct cast，没有 K/V quant/dequant scale。P9 将另建
-per-token-per-KV-head scaled FP8 模式，并把 payload、scale、compaction、swap 和
-paged decode 放入同一生命周期；新模式必须重新通过长输出和标准任务质量，不能继承
-旧短输出 token-exact claim。
+剩余未闭环项是跨框架全物理字节 Pareto、正式 runtime speedup、细页 allocator，以及
+content compaction + scaled FP8 组合质量；这些项目不能从单独的 scaled-FP8 PASS 推导。
 
 ## KI-006：无生产网络 server与 external online 对比
 
@@ -211,10 +225,20 @@ processor marker或 placeholder数量改变，adapter会 fail closed，不能静
 
 - full decode cold compile在 32 GB上 OOM；
 - Vision/full-layer编译有数值失败；
-- attention-only虽然局部快于 eager，但 batch2/8长输出 token不符合当前合同，且仍慢于
-  CUDA Graph。
+- 历史 attention fullgraph 曾捕获 mutable KV store。每层 cache 是 monolithic allocation
+  的非零 `storage_offset` view；AOT functionalization 对 V view 生成的大 clone 会从 view
+  data pointer 越界读取，已定位为 token 异常和 `illegal memory access` 的 root cause；
+- 当前 fullgraph 已收缩为纯函数
+  `qkv_projection_qk_norm_mrope`；经过 contract validation 的 KV store 与 paged decode
+  留在图外，并由 schema 字段
+  `torch_compile_kv_cache_boundary=validated_runtime_store_and_paged_decode` 明确披露；
+- 非零 offset cache 的 GPU 回归、真实 8B batch1/output32 与最终 output4 smoke 均 token
+  exact，且不再出现非法访问；但是 batch2/output32 仍在第 29 个生成 token 分叉，历史
+  attention-only候选也仍慢于 CUDA Graph。
 
 `allow_unsafe_decode_compile=True` 只用于复现被拒绝的 benchmark，不能作为支持配置。
+这次修复的结论是 memory-safe/reviewable rejected candidate，不是 compile backend PASS；
+full-step Graph/compile+Graph 的正式 P9-D 候选仍需重新建立独立 correctness 与性能门禁。
 
 ## KI-010：Vision prefill/TTFT 双峰
 

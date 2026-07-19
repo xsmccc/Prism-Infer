@@ -25,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from benchmarks.harness import collect_git_metadata
 from prism_infer.models.qwen3_vl import Qwen3VLTextMLP
 
 
@@ -47,31 +48,19 @@ def _summarize(values: list[float]) -> dict[str, int | float]:
     }
 
 
-def _git_metadata() -> tuple[str, bool]:
-    commit = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=REPO_ROOT,
-        text=True,
-    ).strip()
-    dirty = bool(
-        subprocess.check_output(
-            ["git", "status", "--porcelain"],
-            cwd=REPO_ROOT,
-            text=True,
-        ).strip()
-    )
-    return commit, dirty
-
-
 def _gpu_baseline() -> dict[str, Any]:
-    fields = subprocess.check_output(
-        [
-            "nvidia-smi",
-            "--query-gpu=uuid,name,memory.used,memory.free,utilization.gpu,power.draw",
-            "--format=csv,noheader,nounits",
-        ],
-        text=True,
-    ).strip().split(", ")
+    fields = (
+        subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=uuid,name,memory.used,memory.free,utilization.gpu,power.draw",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+        )
+        .strip()
+        .split(", ")
+    )
     if len(fields) != 6:
         raise RuntimeError(f"unexpected nvidia-smi baseline: {fields}")
     return {
@@ -99,10 +88,7 @@ def _formal_environment_issues(
             "baseline GPU memory exceeds limit: "
             f"{gpu_baseline['memory_used_mb']} > {max_baseline_memory_mb} MiB"
         )
-    if (
-        gpu_baseline["utilization_gpu_percent"]
-        > max_baseline_utilization_percent
-    ):
+    if gpu_baseline["utilization_gpu_percent"] > max_baseline_utilization_percent:
         issues.append(
             "baseline GPU utilization exceeds limit: "
             f"{gpu_baseline['utilization_gpu_percent']} > "
@@ -116,8 +102,7 @@ def _legacy_forward(
     x: torch.Tensor,
 ) -> torch.Tensor:
     return F.linear(
-        F.silu(F.linear(x, mlp.gate_proj.weight))
-        * F.linear(x, mlp.up_proj.weight),
+        F.silu(F.linear(x, mlp.gate_proj.weight)) * F.linear(x, mlp.up_proj.weight),
         mlp.down_proj.weight,
     )
 
@@ -136,11 +121,7 @@ def _measure_alternating(
     values = {"packed": [], "legacy": []}
     functions = {"packed": packed, "legacy": legacy}
     for iteration in range(repeat):
-        order = (
-            ("packed", "legacy")
-            if iteration % 2 == 0
-            else ("legacy", "packed")
-        )
+        order = ("packed", "legacy") if iteration % 2 == 0 else ("legacy", "packed")
         for name in order:
             start = torch.cuda.Event(enable_timing=True)
             end = torch.cuda.Event(enable_timing=True)
@@ -177,8 +158,13 @@ def _case(
         device="cuda",
         dtype=torch.bfloat16,
     )
-    packed = lambda: mlp(x)
-    legacy = lambda: _legacy_forward(mlp, x)
+
+    def packed() -> torch.Tensor:
+        return mlp(x)
+
+    def legacy() -> torch.Tensor:
+        return _legacy_forward(mlp, x)
+
     with torch.inference_mode():
         packed_output = packed()
         legacy_output = legacy()
@@ -253,27 +239,27 @@ def main() -> None:
     if not batches or any(batch < 1 for batch in batches):
         raise SystemExit("batch sizes must be positive")
 
-    commit, dirty = _git_metadata()
+    git = collect_git_metadata(REPO_ROOT, strict=True)
     baseline = _gpu_baseline()
     environment_issues = _formal_environment_issues(
-        git_dirty=dirty,
+        git_dirty=git.dirty,
         gpu_baseline=baseline,
         max_baseline_memory_mb=args.max_baseline_memory_mb,
-        max_baseline_utilization_percent=(
-            args.max_baseline_utilization_percent
-        ),
+        max_baseline_utilization_percent=(args.max_baseline_utilization_percent),
     )
     if args.require_formal_environment and environment_issues:
-        raise SystemExit(
-            "formal environment gate failed: " + "; ".join(environment_issues)
-        )
+        raise SystemExit("formal environment gate failed: " + "; ".join(environment_issues))
 
     torch.manual_seed(20260717)
-    mlp = Qwen3VLTextMLP(
-        hidden_size=args.hidden_size,
-        intermediate_size=args.intermediate_size,
-        dtype=torch.bfloat16,
-    ).cuda().eval()
+    mlp = (
+        Qwen3VLTextMLP(
+            hidden_size=args.hidden_size,
+            intermediate_size=args.intermediate_size,
+            dtype=torch.bfloat16,
+        )
+        .cuda()
+        .eval()
+    )
     cases = []
     try:
         for batch in batches:
@@ -292,18 +278,14 @@ def main() -> None:
         torch.cuda.empty_cache()
 
     all_exact = all(case["packed_output_exact"] for case in cases)
-    formal_eligible = (
-        not args.correctness_only
-        and not environment_issues
-        and all_exact
-    )
+    formal_eligible = not args.correctness_only and not environment_issues and all_exact
     record = {
         "schema_version": 1,
         "record_type": "p75_packed_mlp_microbenchmark",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "environment": {
-            "git_commit": commit,
-            "git_dirty": dirty,
+            "git_commit": git.commit,
+            "git_dirty": git.dirty,
             "torch": torch.__version__,
             "cuda": torch.version.cuda,
             "gpu_baseline": baseline,

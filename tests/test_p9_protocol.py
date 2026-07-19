@@ -48,12 +48,8 @@ def test_p9_quality_protocol_freezes_sources_revisions_and_margins() -> None:
         "muirbench_test",
         "mvbench_test",
     }
-    assert datasets["docvqa_validation"]["revision"] == (
-        "539088ef8a8ada01ac8e2e6d4e372586748a265e"
-    )
-    assert protocol["non_inferiority"][
-        "bounded_accuracy_margin_percentage_points"
-    ] == 1.0
+    assert datasets["docvqa_validation"]["revision"] == ("539088ef8a8ada01ac8e2e6d4e372586748a265e")
+    assert protocol["non_inferiority"]["bounded_accuracy_margin_percentage_points"] == 1.0
     assert protocol["existing_preflight_only"]["headline_eligible"] is False
 
 
@@ -65,12 +61,8 @@ def test_p9_protocol_canonical_hashes_are_stable_and_distinct() -> None:
     runtime_hash = canonical_json_sha256(runtime)
     quality_hash = canonical_json_sha256(quality)
 
-    assert runtime_hash == (
-        "42d1387320b1b30c3b0afa0bf3113f0dd905a38b38bc583cfe6c6eb3ef4f8656"
-    )
-    assert quality_hash == (
-        "85adb4b246ab3fc55bc70e02ad75d97c5aa903e89387e499fc3aea1ac2edb25d"
-    )
+    assert runtime_hash == ("42d1387320b1b30c3b0afa0bf3113f0dd905a38b38bc583cfe6c6eb3ef4f8656")
+    assert quality_hash == ("85adb4b246ab3fc55bc70e02ad75d97c5aa903e89387e499fc3aea1ac2edb25d")
 
 
 def test_p9_runtime_manifest_rejects_unknown_case_or_invalid_weight_sum() -> None:
@@ -78,16 +70,12 @@ def test_p9_runtime_manifest_rejects_unknown_case_or_invalid_weight_sum() -> Non
 
     manifest = load_p9_runtime_manifest(RUNTIME_MANIFEST)
     unknown_case = deepcopy(manifest)
-    unknown_case["p9_protocol"]["headline"]["H3"]["primary_classes"][0][
-        "case_id"
-    ] = "missing"
+    unknown_case["p9_protocol"]["headline"]["H3"]["primary_classes"][0]["case_id"] = "missing"
     with pytest.raises(ValueError, match="unknown case"):
         validate_p9_runtime_manifest(unknown_case)
 
     invalid_sum = deepcopy(manifest)
-    invalid_sum["p9_protocol"]["headline"]["H3"]["primary_classes"][0][
-        "weight"
-    ] = 0.5
+    invalid_sum["p9_protocol"]["headline"]["H3"]["primary_classes"][0]["weight"] = 0.5
     with pytest.raises(ValueError, match="sum to 1.0"):
         validate_p9_runtime_manifest(invalid_sum)
 
@@ -97,9 +85,7 @@ def test_p9_quality_protocol_rejects_post_result_selection_or_bad_revision() -> 
 
     protocol = load_p9_quality_protocol(QUALITY_PROTOCOL)
     post_result = deepcopy(protocol)
-    post_result["selection"][
-        "selection_occurs_before_any_compression_candidate_result"
-    ] = False
+    post_result["selection"]["selection_occurs_before_any_compression_candidate_result"] = False
     # False is syntactically valid but violates the frozen selection policy.
     with pytest.raises(ValueError, match="must be true"):
         validate_p9_quality_protocol(post_result)

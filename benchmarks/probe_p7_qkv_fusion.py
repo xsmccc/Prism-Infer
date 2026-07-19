@@ -21,7 +21,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from benchmarks.bench_packed_mlp import _git_metadata, _gpu_baseline
+from benchmarks.bench_packed_mlp import _gpu_baseline
+from benchmarks.harness import collect_git_metadata
 
 
 def _difference(actual: torch.Tensor, expected: torch.Tensor) -> dict[str, float | bool]:
@@ -53,7 +54,7 @@ def main() -> None:
     if q_size != args.hidden_size:
         raise SystemExit("this Qwen probe expects num_heads * head_dim == hidden_size")
 
-    commit, dirty = _git_metadata()
+    git = collect_git_metadata(REPO_ROOT, strict=True)
     baseline = _gpu_baseline()
     torch.manual_seed(20260717)
     weights = [
@@ -91,10 +92,7 @@ def main() -> None:
             cases.append(
                 {
                     "batch_size": batch,
-                    "all_exact": all(
-                        component["exact"]
-                        for component in components.values()
-                    ),
+                    "all_exact": all(component["exact"] for component in components.values()),
                     "components": components,
                 }
             )
@@ -104,8 +102,8 @@ def main() -> None:
         "record_type": "p75_qkv_fusion_correctness_probe",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "environment": {
-            "git_commit": commit,
-            "git_dirty": dirty,
+            "git_commit": git.commit,
+            "git_dirty": git.dirty,
             "torch": torch.__version__,
             "cuda": torch.version.cuda,
             "gpu_baseline": baseline,

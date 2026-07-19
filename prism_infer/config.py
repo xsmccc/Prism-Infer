@@ -25,7 +25,14 @@ from prism_infer.engine.compression import (
     compression_mode_supports_cuda_graph,
     normalize_compression_mode,
 )
-from prism_infer.engine.visual_pruning import VisualPruningConfig
+from prism_infer.engine.tp_control import DEFAULT_TP_CONTROL_TIMEOUT_SECONDS
+from prism_infer.engine.visual_pruning import (
+    DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS,
+    DEFAULT_VISUAL_PRUNING_KEEP_RATIO,
+    DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
+    DEFAULT_VISUAL_PRUNING_STRATEGY,
+    VisualPruningConfig,
+)
 
 
 AUTO_KV_CACHE_BLOCKS = -1
@@ -34,6 +41,11 @@ DEFAULT_KV_CACHE_PAGE_SIZE = 256
 DEFAULT_CPU_KV_CACHE_RATIO = 0.5
 SUPPORTED_KV_CACHE_PAGE_SIZES = frozenset({16, 32, 64, 128, 256})
 MAX_CUDA_GRAPH_BATCH_SIZE = 512
+# Runtime policy defaults, kept separate from model architecture constants.
+# One scheduler batch may contain two bounded encoder microbatches; an
+# oversized single request is isolated and still processed incrementally.
+DEFAULT_VISION_ENCODER_MICROBATCH_PATCHES = 4096
+DEFAULT_MAX_VISION_PATCHES_PER_BATCH = 2 * DEFAULT_VISION_ENCODER_MICROBATCH_PATCHES
 
 
 class ExecutionBackendName(str, Enum):
@@ -83,6 +95,7 @@ class ModelConfig:
     model: str
     max_model_len: int = 4096
     tensor_parallel_size: int = 1
+    tensor_parallel_timeout_seconds: int = DEFAULT_TP_CONTROL_TIMEOUT_SECONDS
     logits_precision: str = "model"
     mlp_projection_mode: str = "packed"
 
@@ -93,10 +106,13 @@ class ModelConfig:
             raise ValueError(f"model must be an existing local directory: {self.model!r}")
         _positive_int(self.max_model_len, name="max_model_len")
         _positive_int(self.tensor_parallel_size, name="tensor_parallel_size")
+        _positive_int(
+            self.tensor_parallel_timeout_seconds,
+            name="tensor_parallel_timeout_seconds",
+        )
         if self.logits_precision not in ("fp32", "model"):
             raise ValueError(
-                "logits_precision must be 'fp32' or 'model', "
-                f"got {self.logits_precision!r}"
+                f"logits_precision must be 'fp32' or 'model', got {self.logits_precision!r}"
             )
         if self.mlp_projection_mode not in ("legacy", "packed"):
             raise ValueError(
@@ -114,10 +130,10 @@ class CacheConfig:
     enable_prefix_caching: bool = True
     compression_mode: str = COMPRESSION_OFF
     enable_visual_pruning_shadow: bool = False
-    visual_pruning_keep_ratio: float = 0.6
-    visual_pruning_min_keep_tokens: int = 32
-    visual_pruning_strategy: str = "uniform"
-    visual_pruning_attention_last_n_layers: int = 1
+    visual_pruning_keep_ratio: float = DEFAULT_VISUAL_PRUNING_KEEP_RATIO
+    visual_pruning_min_keep_tokens: int = DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS
+    visual_pruning_strategy: str = DEFAULT_VISUAL_PRUNING_STRATEGY
+    visual_pruning_attention_last_n_layers: int = DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS
 
     def __post_init__(self) -> None:
         if isinstance(self.gpu_memory_utilization, bool) or not isinstance(
@@ -129,8 +145,7 @@ class CacheConfig:
             )
         if not 0.0 < float(self.gpu_memory_utilization) <= 1.0:
             raise ValueError(
-                "gpu_memory_utilization must be in (0, 1], "
-                f"got {self.gpu_memory_utilization!r}"
+                f"gpu_memory_utilization must be in (0, 1], got {self.gpu_memory_utilization!r}"
             )
         object.__setattr__(
             self,
@@ -138,12 +153,9 @@ class CacheConfig:
             float(self.gpu_memory_utilization),
         )
         if self.page_size not in SUPPORTED_KV_CACHE_PAGE_SIZES:
-            supported = ", ".join(
-                str(value) for value in sorted(SUPPORTED_KV_CACHE_PAGE_SIZES)
-            )
+            supported = ", ".join(str(value) for value in sorted(SUPPORTED_KV_CACHE_PAGE_SIZES))
             raise ValueError(
-                f"kvcache_block_size must be one of {{{supported}}}, "
-                f"got {self.page_size!r}"
+                f"kvcache_block_size must be one of {{{supported}}}, got {self.page_size!r}"
             )
         if self.num_gpu_blocks != AUTO_KV_CACHE_BLOCKS:
             _positive_int(self.num_gpu_blocks, name="num_kvcache_blocks")
@@ -189,10 +201,7 @@ class CacheConfig:
             name="visual_pruning_attention_last_n_layers",
         )
         if not isinstance(self.compression_mode, str):
-            raise TypeError(
-                "compression_mode must be a string, "
-                f"got {self.compression_mode!r}"
-            )
+            raise TypeError(f"compression_mode must be a string, got {self.compression_mode!r}")
         normalized_mode = normalize_compression_mode(self.compression_mode)
         object.__setattr__(self, "compression_mode", normalized_mode)
         VisualPruningConfig(
@@ -230,8 +239,7 @@ class SchedulerConfig:
         )
         if self.scheduler_policy != "fcfs":
             raise ValueError(
-                "scheduler_policy currently supports only 'fcfs', "
-                f"got {self.scheduler_policy!r}"
+                f"scheduler_policy currently supports only 'fcfs', got {self.scheduler_policy!r}"
             )
         if self.max_queue_size is not None:
             _positive_int(self.max_queue_size, name="max_queue_size")
@@ -239,10 +247,12 @@ class SchedulerConfig:
 
 @dataclass(frozen=True, slots=True)
 class MultimodalConfig:
-    """HF processor 的显式视觉像素预算；``None`` 保留模型默认值。"""
+    """Processor limits and runtime vision-resource budgets."""
 
     image_max_pixels: int | None = None
     video_max_pixels: int | None = None
+    max_vision_patches_per_batch: int = DEFAULT_MAX_VISION_PATCHES_PER_BATCH
+    vision_encoder_microbatch_patches: int = DEFAULT_VISION_ENCODER_MICROBATCH_PATCHES
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -251,6 +261,18 @@ class MultimodalConfig:
         ):
             if value is not None:
                 _positive_int(value, name=name)
+        _positive_int(
+            self.max_vision_patches_per_batch,
+            name="max_vision_patches_per_batch",
+        )
+        _positive_int(
+            self.vision_encoder_microbatch_patches,
+            name="vision_encoder_microbatch_patches",
+        )
+        if self.max_vision_patches_per_batch < self.vision_encoder_microbatch_patches:
+            raise ValueError(
+                "max_vision_patches_per_batch must be >= vision_encoder_microbatch_patches"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,8 +307,7 @@ class ExecutionConfig:
         )
         if self.compile_region not in ("none", "attention"):
             raise ValueError(
-                "decode_compile_region must be 'none' or 'attention', "
-                f"got {self.compile_region!r}"
+                f"decode_compile_region must be 'none' or 'attention', got {self.compile_region!r}"
             )
         if self.compile_mode not in ("default", "reduce-overhead"):
             raise ValueError(
@@ -331,9 +352,7 @@ class QuantizationConfig:
         except (TypeError, ValueError) as exc:
             raise ValueError("unsupported KV quantization format or scale mode") from exc
         if self.weight_format != "model" or self.activation_format != "model":
-            raise ValueError(
-                "weight/activation quantization has no connected backend in P9-B"
-            )
+            raise ValueError("weight/activation quantization has no connected backend in P9-B")
         unit_scale_fp8_active = compression_mode in (
             COMPRESSION_FP8_KV,
             COMPRESSION_VISUAL_COMPACT_FP8,
@@ -343,9 +362,7 @@ class QuantizationConfig:
             COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
         )
         fp8_active = unit_scale_fp8_active or token_head_scale_active
-        expected_format = (
-            KVCacheFormat.FP8_E4M3FN if fp8_active else KVCacheFormat.MODEL
-        )
+        expected_format = KVCacheFormat.FP8_E4M3FN if fp8_active else KVCacheFormat.MODEL
         expected_scale = (
             KVScaleMode.PER_TOKEN_HEAD
             if token_head_scale_active
@@ -376,9 +393,7 @@ class ServingConfig:
     def __post_init__(self) -> None:
         _boolean(self.enabled, name="serving.enabled")
         if self.enabled:
-            raise ValueError(
-                "network serving is not implemented in P9-B; use the engine API"
-            )
+            raise ValueError("network serving is not implemented in P9-B; use the engine API")
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,9 +430,7 @@ class PrismConfig:
         object.__setattr__(self, "quantization", resolved_quantization)
         if (
             self.execution.backend is ExecutionBackendName.CUDA_GRAPH
-            and not compression_mode_supports_cuda_graph(
-                self.cache.compression_mode
-            )
+            and not compression_mode_supports_cuda_graph(self.cache.compression_mode)
         ):
             raise ValueError(
                 f"compression_mode={self.cache.compression_mode!r} requires "
@@ -437,9 +450,7 @@ class PrismConfig:
             self.execution.backend is ExecutionBackendName.COMPILE
             and self.cache.compression_mode != COMPRESSION_OFF
         ):
-            raise ValueError(
-                "P6.3 decode compile preflight requires compression_mode='off'"
-            )
+            raise ValueError("P6.3 decode compile preflight requires compression_mode='off'")
 
     @classmethod
     def from_flat_options(
@@ -452,12 +463,15 @@ class PrismConfig:
         model_fields = {
             "max_model_len": "max_model_len",
             "tensor_parallel_size": "tensor_parallel_size",
+            "tensor_parallel_timeout_seconds": ("tensor_parallel_timeout_seconds"),
             "logits_precision": "logits_precision",
             "mlp_projection_mode": "mlp_projection_mode",
         }
         multimodal_fields = {
             "image_max_pixels": "image_max_pixels",
             "video_max_pixels": "video_max_pixels",
+            "max_vision_patches_per_batch": "max_vision_patches_per_batch",
+            "vision_encoder_microbatch_patches": ("vision_encoder_microbatch_patches"),
         }
         cache_fields = {
             "gpu_memory_utilization": "gpu_memory_utilization",
@@ -470,9 +484,7 @@ class PrismConfig:
             "visual_pruning_keep_ratio": "visual_pruning_keep_ratio",
             "visual_pruning_min_keep_tokens": "visual_pruning_min_keep_tokens",
             "visual_pruning_strategy": "visual_pruning_strategy",
-            "visual_pruning_attention_last_n_layers": (
-                "visual_pruning_attention_last_n_layers"
-            ),
+            "visual_pruning_attention_last_n_layers": ("visual_pruning_attention_last_n_layers"),
         }
         scheduler_fields = {
             "max_num_batched_tokens": "max_num_batched_tokens",
@@ -481,19 +493,13 @@ class PrismConfig:
             "max_chunk_size": "max_chunk_size",
             "scheduler_policy": "scheduler_policy",
             "max_queue_size": "max_queue_size",
-            "max_consecutive_prefill_batches": (
-                "max_consecutive_prefill_batches"
-            ),
+            "max_consecutive_prefill_batches": ("max_consecutive_prefill_batches"),
         }
         execution_fields = {
             "decode_compile_region": "compile_region",
             "decode_compile_mode": "compile_mode",
-            "decode_compile_emulate_precision_casts": (
-                "compile_emulate_precision_casts"
-            ),
-            "decode_compile_force_same_precision": (
-                "compile_force_same_precision"
-            ),
+            "decode_compile_emulate_precision_casts": ("compile_emulate_precision_casts"),
+            "decode_compile_force_same_precision": ("compile_force_same_precision"),
             "allow_unsafe_decode_compile": "allow_unsafe_compile",
         }
         control_fields = {"enforce_eager", "execution_backend"}
@@ -512,17 +518,12 @@ class PrismConfig:
 
         def select(mapping: Mapping[str, str]) -> dict[str, object]:
             return {
-                target: options[source]
-                for source, target in mapping.items()
-                if source in options
+                target: options[source] for source, target in mapping.items() if source in options
             }
 
         compile_region = options.get("decode_compile_region", "none")
         if not isinstance(compile_region, str):
-            raise TypeError(
-                "decode_compile_region must be a string, "
-                f"got {compile_region!r}"
-            )
+            raise TypeError(f"decode_compile_region must be a string, got {compile_region!r}")
         enforce_eager = _boolean(
             options.get("enforce_eager", False),
             name="enforce_eager",
@@ -537,18 +538,14 @@ class PrismConfig:
                 ExecutionBackendName.COMPILE
                 if compile_region != "none"
                 else (
-                    ExecutionBackendName.EAGER
-                    if enforce_eager
-                    else ExecutionBackendName.CUDA_GRAPH
+                    ExecutionBackendName.EAGER if enforce_eager else ExecutionBackendName.CUDA_GRAPH
                 )
             )
         else:
             try:
                 backend = ExecutionBackendName(explicit_backend)
             except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"unsupported execution_backend: {explicit_backend!r}"
-                ) from exc
+                raise ValueError(f"unsupported execution_backend: {explicit_backend!r}") from exc
             if "enforce_eager" in options:
                 expected_eager = backend is not ExecutionBackendName.CUDA_GRAPH
                 if enforce_eager != expected_eager:
@@ -588,16 +585,14 @@ class Config:
             if flat_options:
                 unknown = ", ".join(repr(name) for name in sorted(flat_options))
                 raise TypeError(
-                    "nested PrismConfig cannot be combined with flat options: "
-                    f"{unknown}"
+                    f"nested PrismConfig cannot be combined with flat options: {unknown}"
                 )
             prism_config = model
         elif isinstance(model, str):
             prism_config = PrismConfig.from_flat_options(model, flat_options)
         else:
             raise TypeError(
-                "model must be a local path or PrismConfig, "
-                f"got {type(model).__name__}"
+                f"model must be a local path or PrismConfig, got {type(model).__name__}"
             )
 
         hf_config = AutoConfig.from_pretrained(prism_config.model.model)
@@ -611,10 +606,7 @@ class Config:
             prism_config.model.max_model_len,
             model_limit,
         )
-        if (
-            prism_config.scheduler.max_num_batched_tokens
-            < effective_max_model_len
-        ):
+        if prism_config.scheduler.max_num_batched_tokens < effective_max_model_len:
             raise ValueError(
                 "max_num_batched_tokens must be >= effective max_model_len: "
                 f"{prism_config.scheduler.max_num_batched_tokens} < "
@@ -625,9 +617,7 @@ class Config:
             hf_config=hf_config,
             effective_max_model_len=effective_max_model_len,
             eos=UNSET_EOS_TOKEN_ID,
-            resolved_num_kvcache_blocks=(
-                prism_config.cache.num_gpu_blocks
-            ),
+            resolved_num_kvcache_blocks=(prism_config.cache.num_gpu_blocks),
             num_cpu_blocks=0,
         )
 
@@ -752,6 +742,10 @@ class Config:
         return self.model_config.tensor_parallel_size
 
     @property
+    def tensor_parallel_timeout_seconds(self) -> int:
+        return self.model_config.tensor_parallel_timeout_seconds
+
+    @property
     def logits_precision(self) -> str:
         return self.model_config.logits_precision
 
@@ -766,6 +760,14 @@ class Config:
     @property
     def video_max_pixels(self) -> int | None:
         return self.multimodal_config.video_max_pixels
+
+    @property
+    def max_vision_patches_per_batch(self) -> int:
+        return self.multimodal_config.max_vision_patches_per_batch
+
+    @property
+    def vision_encoder_microbatch_patches(self) -> int:
+        return self.multimodal_config.vision_encoder_microbatch_patches
 
     @property
     def max_num_batched_tokens(self) -> int:

@@ -24,9 +24,16 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from prism_infer.analysis.schema_constants import (
+    RGB_CHANNEL_COUNT,
+    SHA256_HEX_LENGTH,
+)
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
 from prism_infer.analysis.p9_quality_materialization import sha256_file
 
+
+RGB_FRAME_TENSOR_RANK = 3
+RGB_VIDEO_TENSOR_RANK = 4
 VIDEO_BUNDLE_SCHEMA_VERSION = 1
 VIDEO_BUNDLE_RECORD_TYPE = "p9_lossless_sampled_rgb_bundle"
 
@@ -42,9 +49,7 @@ def rgb_frame_records(
     arrays = []
     records = []
     expected_shape: tuple[int, int, int] | None = None
-    for position, (frame, source_index) in enumerate(
-        zip(frames, sampled_indices, strict=True)
-    ):
+    for position, (frame, source_index) in enumerate(zip(frames, sampled_indices, strict=True)):
         if isinstance(source_index, bool) or not isinstance(source_index, int):
             raise ValueError(f"sampled_indices[{position}] must be an integer")
         if isinstance(frame, Image.Image):
@@ -53,7 +58,7 @@ def rgb_frame_records(
             array = np.asarray(frame)
             if array.dtype != np.uint8:
                 raise ValueError(f"frame {position} must have uint8 dtype")
-            if array.ndim != 3 or array.shape[2] != 3:
+            if array.ndim != RGB_FRAME_TENSOR_RANK or array.shape[-1] != RGB_CHANNEL_COUNT:
                 raise ValueError(f"frame {position} must have shape [H, W, 3]")
             array = np.ascontiguousarray(array)
         shape = tuple(int(value) for value in array.shape)
@@ -61,8 +66,7 @@ def rgb_frame_records(
             expected_shape = shape
         elif shape != expected_shape:
             raise ValueError(
-                "sampled video frames must share one shape: "
-                f"{shape} != {expected_shape}"
+                f"sampled video frames must share one shape: {shape} != {expected_shape}"
             )
         arrays.append(array)
         records.append(
@@ -83,6 +87,25 @@ def _validate_bundle_metadata(
     expected_sample_id: str | None,
     expected_source_media_sha256: str | None,
 ) -> None:
+    _validate_bundle_header(
+        metadata,
+        expected_sample_id=expected_sample_id,
+        expected_source_media_sha256=expected_source_media_sha256,
+    )
+    _validate_bundle_frames(frames)
+    _validate_bundle_sampling(metadata, frames)
+    metadata_without_identity = dict(metadata)
+    stored_identity = metadata_without_identity.pop("bundle_content_sha256", None)
+    if stored_identity != canonical_json_sha256(metadata_without_identity):
+        raise ValueError("video bundle content identity is inconsistent")
+
+
+def _validate_bundle_header(
+    metadata: Mapping[str, Any],
+    *,
+    expected_sample_id: str | None,
+    expected_source_media_sha256: str | None,
+) -> None:
     if metadata.get("schema_version") != VIDEO_BUNDLE_SCHEMA_VERSION:
         raise ValueError("video bundle has unsupported schema_version")
     if metadata.get("record_type") != VIDEO_BUNDLE_RECORD_TYPE:
@@ -93,16 +116,22 @@ def _validate_bundle_metadata(
     if expected_sample_id is not None and sample_id != expected_sample_id:
         raise ValueError("video bundle sample identity differs from request")
     source_sha256 = metadata.get("source_media_sha256")
-    if not isinstance(source_sha256, str) or len(source_sha256) != 64:
+    if not isinstance(source_sha256, str) or len(source_sha256) != SHA256_HEX_LENGTH:
         raise ValueError("video bundle source media identity is invalid")
-    if (
-        expected_source_media_sha256 is not None
-        and source_sha256 != expected_source_media_sha256
-    ):
+    if expected_source_media_sha256 is not None and source_sha256 != expected_source_media_sha256:
         raise ValueError("video bundle source media SHA256 differs from request")
-    if frames.dtype != np.uint8 or frames.ndim != 4 or frames.shape[-1] != 3:
+
+
+def _validate_bundle_frames(frames: np.ndarray) -> None:
+    if (
+        frames.dtype != np.uint8
+        or frames.ndim != RGB_VIDEO_TENSOR_RANK
+        or frames.shape[-1] != RGB_CHANNEL_COUNT
+    ):
         raise ValueError("video bundle frames must have uint8 [N, H, W, 3] shape")
 
+
+def _validate_bundle_sampling(metadata: Mapping[str, Any], frames: np.ndarray) -> None:
     video_sampling = metadata.get("video_sampling")
     if not isinstance(video_sampling, Mapping):
         raise ValueError("video bundle has no video_sampling object")
@@ -117,10 +146,6 @@ def _validate_bundle_metadata(
         raise ValueError("video bundle RGB identity differs from frame bytes")
     if metadata.get("frame_records") != frame_records:
         raise ValueError("video bundle frame records differ from frame bytes")
-    metadata_without_identity = dict(metadata)
-    stored_identity = metadata_without_identity.pop("bundle_content_sha256", None)
-    if stored_identity != canonical_json_sha256(metadata_without_identity):
-        raise ValueError("video bundle content identity is inconsistent")
 
 
 def write_video_bundle(
@@ -137,9 +162,7 @@ def write_video_bundle(
     if not isinstance(indices, list):
         raise ValueError("video_sampling.sampled_indices must be a list")
     arrays, frame_records = rgb_frame_records(frames, indices)
-    if video_sampling.get("sampled_rgb_identity_sha256") != canonical_json_sha256(
-        frame_records
-    ):
+    if video_sampling.get("sampled_rgb_identity_sha256") != canonical_json_sha256(frame_records):
         raise ValueError("video_sampling RGB identity differs from provided frames")
     metadata: dict[str, Any] = {
         "schema_version": VIDEO_BUNDLE_SCHEMA_VERSION,

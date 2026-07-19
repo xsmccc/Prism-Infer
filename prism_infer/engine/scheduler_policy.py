@@ -68,9 +68,7 @@ class FCFSSchedulerPolicy:
         if self.max_queue_size is not None and self.max_queue_size <= 0:
             raise ValueError("max_queue_size must be positive when set")
         if self.max_consecutive_prefill_batches <= 0:
-            raise ValueError(
-                "max_consecutive_prefill_batches must be positive"
-            )
+            raise ValueError("max_consecutive_prefill_batches must be positive")
 
     def admit(
         self,
@@ -86,10 +84,7 @@ class FCFSSchedulerPolicy:
                 f"prompt={seq.num_prompt_tokens} max_tokens={seq.max_tokens} "
                 f"limit={self.max_model_len}",
             )
-        if (
-            self.max_queue_size is not None
-            and queued_requests >= self.max_queue_size
-        ):
+        if self.max_queue_size is not None and queued_requests >= self.max_queue_size:
             return AdmissionDecision(
                 False,
                 f"request queue is full: limit={self.max_queue_size}",
@@ -113,9 +108,7 @@ class FCFSSchedulerPolicy:
             if token_id is not None
         }
         visual_positions = [
-            index
-            for index, token_id in enumerate(seq.prompt_token_ids)
-            if token_id in visual_ids
+            index for index, token_id in enumerate(seq.prompt_token_ids) if token_id in visual_ids
         ]
         if not visual_positions:
             return ()
@@ -148,10 +141,7 @@ class FCFSSchedulerPolicy:
                 return span_start - start
             if span_start <= start < span_end and end < span_end:
                 required = span_end - start
-                if (
-                    required > self.max_chunk_size
-                    or required > available_tokens
-                ):
+                if required > self.max_chunk_size or required > available_tokens:
                     return 0
                 end = span_end
         return end - start
@@ -175,7 +165,4 @@ class FCFSSchedulerPolicy:
             return False
         if not has_decode:
             return True
-        return (
-            consecutive_prefill_batches
-            < self.max_consecutive_prefill_batches
-        )
+        return consecutive_prefill_batches < self.max_consecutive_prefill_batches

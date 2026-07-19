@@ -9,6 +9,7 @@ from typing import Mapping, Sequence
 ONLINE_SUMMARY_SCHEMA_VERSION = 1
 ONLINE_BENCHMARK_SCHEMA_VERSION = 2
 SUPPORTED_ONLINE_BENCHMARK_SCHEMA_VERSIONS = (1, 2)
+ONLINE_PROJECTION_MODE_SCHEMA_VERSION = 2
 
 
 def percentile(values: Sequence[float], quantile: float) -> float:
@@ -68,9 +69,7 @@ def summarize_online_run(
     duration_s = float(run.get("duration_s", 0.0))
     if not isfinite(duration_s) or duration_s <= 0:
         raise ValueError("online run duration_s must be positive and finite")
-    engine_metrics = _require_mapping(
-        run.get("engine_metrics"), "engine_metrics"
-    )
+    engine_metrics = _require_mapping(run.get("engine_metrics"), "engine_metrics")
     request_records_raw = engine_metrics.get("requests")
     if not isinstance(request_records_raw, list) or not request_records_raw:
         raise ValueError("engine_metrics.requests must be a non-empty list")
@@ -79,51 +78,13 @@ def summarize_online_run(
         for index, record in enumerate(request_records_raw)
     ]
 
-    completed = [
-        record
-        for record in request_records
-        if record.get("finish_reason") in {"eos", "length"}
-    ]
-    rejected = [
-        record for record in request_records if record.get("finish_reason") == "rejected"
-    ]
-    cancelled = [
-        record for record in request_records if record.get("finish_reason") == "cancelled"
-    ]
+    completed, rejected, cancelled = _partition_terminal_requests(request_records)
     if len(completed) + len(rejected) + len(cancelled) != len(request_records):
         raise ValueError("every online request must have a terminal finish_reason")
-
-    def metric_values(name: str, *, allow_none: bool = False) -> list[float]:
-        values: list[float] = []
-        for record in completed:
-            value = record.get(name)
-            if value is None and allow_none:
-                continue
-            if value is None:
-                raise ValueError(f"completed request missing {name}")
-            number = float(value)
-            if not isfinite(number) or number < 0:
-                raise ValueError(f"invalid request metric {name}={value!r}")
-            values.append(number)
-        return values
-
-    good_requests = 0
-    for record in completed:
-        ttft = record.get("ttft_ms")
-        if ttft is None:
-            raise ValueError("completed request missing ttft_ms")
-        output_tokens = int(record.get("output_tokens", 0))
-        tpot = record.get("tpot_ms")
-        effective_tpot = 0.0 if output_tokens <= 1 and tpot is None else tpot
-        if effective_tpot is None:
-            raise ValueError("multi-token completed request missing tpot_ms")
-        if float(ttft) <= ttft_slo_ms and float(effective_tpot) <= tpot_slo_ms:
-            good_requests += 1
+    good_requests = _count_good_requests(completed, ttft_slo_ms, tpot_slo_ms)
 
     output_tokens = sum(int(record.get("output_tokens", 0)) for record in completed)
-    scheduler_metrics = _require_mapping(
-        run.get("scheduler_metrics", {}), "scheduler_metrics"
-    )
+    scheduler_metrics = _require_mapping(run.get("scheduler_metrics", {}), "scheduler_metrics")
     return {
         "schema_version": ONLINE_SUMMARY_SCHEMA_VERSION,
         "record_type": "prism_online_summary",
@@ -139,12 +100,12 @@ def summarize_online_run(
             "good": good_requests,
         },
         "latency_ms": {
-            "queue": summarize_distribution(metric_values("queue_ms")),
-            "ttft": summarize_distribution(metric_values("ttft_ms")),
+            "queue": summarize_distribution(_completed_metric_values(completed, "queue_ms")),
+            "ttft": summarize_distribution(_completed_metric_values(completed, "ttft_ms")),
             "tpot": summarize_distribution(
-                metric_values("tpot_ms", allow_none=True)
+                _completed_metric_values(completed, "tpot_ms", allow_none=True)
             ),
-            "request": summarize_distribution(metric_values("latency_ms")),
+            "request": summarize_distribution(_completed_metric_values(completed, "latency_ms")),
         },
         "throughput": {
             "requests_per_s": len(completed) / duration_s,
@@ -152,12 +113,65 @@ def summarize_online_run(
         },
         "goodput": {
             "requests_per_s": good_requests / duration_s,
-            "fraction_of_completed": (
-                0.0 if not completed else good_requests / len(completed)
-            ),
+            "fraction_of_completed": (0.0 if not completed else good_requests / len(completed)),
         },
         "scheduler": dict(scheduler_metrics),
     }
+
+
+def _partition_terminal_requests(
+    request_records: list[Mapping[str, object]],
+) -> tuple[
+    list[Mapping[str, object]],
+    list[Mapping[str, object]],
+    list[Mapping[str, object]],
+]:
+    completed = [
+        record for record in request_records if record.get("finish_reason") in {"eos", "length"}
+    ]
+    rejected = [record for record in request_records if record.get("finish_reason") == "rejected"]
+    cancelled = [record for record in request_records if record.get("finish_reason") == "cancelled"]
+    return completed, rejected, cancelled
+
+
+def _completed_metric_values(
+    completed: list[Mapping[str, object]],
+    name: str,
+    *,
+    allow_none: bool = False,
+) -> list[float]:
+    values: list[float] = []
+    for record in completed:
+        value = record.get(name)
+        if value is None and allow_none:
+            continue
+        if value is None:
+            raise ValueError(f"completed request missing {name}")
+        number = float(value)
+        if not isfinite(number) or number < 0:
+            raise ValueError(f"invalid request metric {name}={value!r}")
+        values.append(number)
+    return values
+
+
+def _count_good_requests(
+    completed: list[Mapping[str, object]],
+    ttft_slo_ms: float,
+    tpot_slo_ms: float,
+) -> int:
+    good_requests = 0
+    for record in completed:
+        ttft = record.get("ttft_ms")
+        if ttft is None:
+            raise ValueError("completed request missing ttft_ms")
+        output_tokens = int(record.get("output_tokens", 0))
+        tpot = record.get("tpot_ms")
+        effective_tpot = 0.0 if output_tokens <= 1 and tpot is None else tpot
+        if effective_tpot is None:
+            raise ValueError("multi-token completed request missing tpot_ms")
+        if float(ttft) <= ttft_slo_ms and float(effective_tpot) <= tpot_slo_ms:
+            good_requests += 1
+    return good_requests
 
 
 def validate_online_benchmark_record(record: Mapping[str, object]) -> None:
@@ -172,18 +186,25 @@ def validate_online_benchmark_record(record: Mapping[str, object]) -> None:
         raise ValueError("online benchmark requires git_commit")
     if not isinstance(record.get("git_dirty"), bool):
         raise ValueError("online benchmark requires boolean git_dirty")
+    request_count = _validate_online_workload(record)
+    _validate_online_arrival(record, request_count)
+    _validate_online_hardware_and_engine(record, schema_version)
+    run = _validate_online_run(record, request_count)
+    _validate_online_summary(record, run)
 
+
+def _validate_online_workload(record: Mapping[str, object]) -> int:
     workload = _require_mapping(record.get("workload"), "workload")
-    for key in ("manifest", "case", "max_tokens"):
-        if key not in workload:
-            raise ValueError(f"workload missing {key}")
+    _require_keys(workload, ("manifest", "case", "max_tokens"), "workload")
     request_count = int(workload.get("requests", 0))
     if request_count <= 0:
         raise ValueError("workload.requests must be positive")
+    return request_count
+
+
+def _validate_online_arrival(record: Mapping[str, object], request_count: int) -> None:
     arrival = _require_mapping(record.get("arrival"), "arrival")
-    for key in ("process", "request_rate_per_s", "seed"):
-        if key not in arrival:
-            raise ValueError(f"arrival missing {key}")
+    _require_keys(arrival, ("process", "request_rate_per_s", "seed"), "arrival")
     offsets = arrival.get("offsets_s")
     if not isinstance(offsets, list) or len(offsets) != request_count:
         raise ValueError("arrival offsets must match workload request count")
@@ -193,42 +214,66 @@ def validate_online_benchmark_record(record: Mapping[str, object]) -> None:
     ) or numeric_offsets != sorted(numeric_offsets):
         raise ValueError("arrival offsets must be finite, non-negative and sorted")
 
+
+def _validate_online_hardware_and_engine(
+    record: Mapping[str, object],
+    schema_version: object,
+) -> None:
     hardware = _require_mapping(record.get("hardware"), "hardware")
-    for key in ("gpu", "gpu_uuid", "total_memory_bytes"):
-        if key not in hardware:
-            raise ValueError(f"hardware missing {key}")
+    _require_keys(hardware, ("gpu", "gpu_uuid", "total_memory_bytes"), "hardware")
     engine = _require_mapping(record.get("engine"), "engine")
-    for key in (
-        "mode",
-        "max_model_len",
-        "max_num_batched_tokens",
-        "max_num_seqs",
-        "max_chunk_size",
-        "num_kvcache_blocks",
-        "kvcache_block_size",
-        "enable_prefix_caching",
-    ):
-        if key not in engine:
-            raise ValueError(f"engine missing {key}")
-    if schema_version >= 2:
+    _require_keys(
+        engine,
+        (
+            "mode",
+            "max_model_len",
+            "max_num_batched_tokens",
+            "max_num_seqs",
+            "max_chunk_size",
+            "num_kvcache_blocks",
+            "kvcache_block_size",
+            "enable_prefix_caching",
+        ),
+        "engine",
+    )
+    if int(schema_version) >= ONLINE_PROJECTION_MODE_SCHEMA_VERSION:
         projection_mode = engine.get("mlp_projection_mode")
         if projection_mode not in ("legacy", "packed"):
-            raise ValueError(
-                "engine.mlp_projection_mode must be 'legacy' or 'packed'"
-            )
+            raise ValueError("engine.mlp_projection_mode must be 'legacy' or 'packed'")
+
+
+def _require_keys(
+    mapping: Mapping[str, object],
+    keys: tuple[str, ...],
+    label: str,
+) -> None:
+    for key in keys:
+        if key not in mapping:
+            raise ValueError(f"{label} missing {key}")
+
+
+def _validate_online_run(
+    record: Mapping[str, object],
+    request_count: int,
+) -> Mapping[str, object]:
     run = _require_mapping(record.get("run"), "run")
     results = run.get("requests")
     if not isinstance(results, list) or len(results) != request_count:
         raise ValueError("run.requests must match workload request count")
     request_ids = [
-        int(_require_mapping(result, "run request").get("request_id", -1))
-        for result in results
+        int(_require_mapping(result, "run request").get("request_id", -1)) for result in results
     ]
-    if any(request_id < 0 for request_id in request_ids) or len(
-        set(request_ids)
-    ) != len(request_ids):
+    if any(request_id < 0 for request_id in request_ids) or len(set(request_ids)) != len(
+        request_ids
+    ):
         raise ValueError("run request ids must be unique non-negative integers")
+    return run
 
+
+def _validate_online_summary(
+    record: Mapping[str, object],
+    run: Mapping[str, object],
+) -> None:
     summary = _require_mapping(record.get("summary"), "summary")
     slo = _require_mapping(summary.get("slo"), "summary.slo")
     expected = summarize_online_run(

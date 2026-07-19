@@ -13,10 +13,7 @@ except ImportError:  # Allows running lightweight tests as plain python scripts.
 
 
 def _skip(message: str):
-    is_pytest = (
-        os.environ.get("PYTEST_CURRENT_TEST")
-        or "pytest" in Path(sys.argv[0]).name
-    )
+    is_pytest = os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in Path(sys.argv[0]).name
     if pytest is not None and is_pytest:
         pytest.skip(message, allow_module_level=True)
     print(f"SKIP: {message}")
@@ -29,10 +26,12 @@ def get_model_path() -> str:
     env_path = os.environ.get("PRISM_MODEL_PATH")
     if env_path:
         candidates.append(env_path)
-    candidates.extend([
-        "/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
-        "/data/models/Qwen3-VL-8B-Instruct",
-    ])
+    candidates.extend(
+        [
+            "/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+            "/data/models/Qwen3-VL-8B-Instruct",
+        ]
+    )
 
     for candidate in candidates:
         path = Path(candidate)
@@ -80,8 +79,8 @@ def hf_qwen3_vl_rope_index(
     hf_model_cls = transformers.models.qwen3_vl.modeling_qwen3_vl.Qwen3VLModel
     dummy_model = SimpleNamespace(config=config)
     if hasattr(hf_model_cls, "get_vision_position_ids"):
-        dummy_model.get_vision_position_ids = (
-            lambda *args, **kwargs: hf_model_cls.get_vision_position_ids(
+        dummy_model.get_vision_position_ids = lambda *args, **kwargs: (
+            hf_model_cls.get_vision_position_ids(
                 dummy_model,
                 *args,
                 **kwargs,

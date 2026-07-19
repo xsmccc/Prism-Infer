@@ -42,11 +42,7 @@ def test_quality_prompts_are_frozen_before_candidate_results() -> None:
         "Answer:"
     )
     assert build_mvbench_prompt("What happened?", ["Run", "Sit"]) == (
-        "Question:What happened?\n"
-        "Option:\n"
-        "(A) Run\n"
-        "(B) Sit\n"
-        "Only give the best option.\n"
+        "Question:What happened?\nOption:\n(A) Run\n(B) Sit\nOnly give the best option.\n"
     )
 
 

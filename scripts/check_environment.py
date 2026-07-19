@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 
-GIB = 1024 ** 3
+GIB = 1024**3
 CORE_DISTRIBUTIONS = (
     "prism-infer",
     "torch",
@@ -150,9 +150,7 @@ def build_report(args: argparse.Namespace) -> tuple[dict[str, Any], list[str], l
 
     errors: list[str] = []
     warnings: list[str] = []
-    distributions = {
-        name: _distribution_version(name) for name in CORE_DISTRIBUTIONS
-    }
+    distributions = {name: _distribution_version(name) for name in CORE_DISTRIBUTIONS}
     missing_distributions = [name for name, version in distributions.items() if version is None]
     if missing_distributions:
         errors.append(f"missing core distributions: {', '.join(missing_distributions)}")
@@ -169,13 +167,54 @@ def build_report(args: argparse.Namespace) -> tuple[dict[str, Any], list[str], l
             "path": str(Path(prism_infer.__file__).resolve()),
         }
 
+    torch_module = None
     try:
         import torch
     except Exception as exc:
         cuda = {"available": False, "error": f"{type(exc).__name__}: {exc}"}
         errors.append(f"cannot import torch: {type(exc).__name__}: {exc}")
     else:
+        torch_module = torch
         cuda = inspect_cuda(torch)
+
+    runtime_capabilities: dict[str, Any] = {
+        "status": "NOT_CHECKED",
+        "execution_backend": args.execution_backend,
+        "compression_mode": args.compression_mode,
+    }
+    if prism_module["importable"] and torch_module is not None:
+        try:
+            from prism_infer.runtime_capabilities import (
+                detect_runtime_capabilities,
+                runtime_capability_errors,
+            )
+
+            observed = detect_runtime_capabilities()
+            capability_errors = runtime_capability_errors(
+                observed,
+                execution_backend=args.execution_backend,
+                compression_mode=args.compression_mode,
+                require_cuda=(
+                    args.require_cuda
+                    or args.execution_backend != "eager"
+                    or args.compression_mode != "off"
+                ),
+            )
+        except Exception as exc:
+            runtime_capabilities = {
+                **runtime_capabilities,
+                "status": "FAIL",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            errors.append(f"cannot inspect runtime capabilities: {type(exc).__name__}: {exc}")
+        else:
+            runtime_capabilities = {
+                **runtime_capabilities,
+                "status": "PASS" if not capability_errors else "FAIL",
+                "observed": observed.as_dict(),
+                "errors": list(capability_errors),
+            }
+            errors.extend(capability_errors)
 
     if args.require_cuda and not cuda.get("available", False):
         errors.append("CUDA is required but torch.cuda.is_available() is false")
@@ -192,9 +231,7 @@ def build_report(args: argparse.Namespace) -> tuple[dict[str, Any], list[str], l
     backends = {name: _module_version(name) for name in OPTIONAL_BACKENDS}
     for name, backend in backends.items():
         if not backend["available"]:
-            warnings.append(
-                f"optional backend {name} is unavailable: {backend['error']}"
-            )
+            warnings.append(f"optional backend {name} is unavailable: {backend['error']}")
 
     model, model_errors = inspect_model(args.model)
     errors.extend(model_errors)
@@ -212,6 +249,7 @@ def build_report(args: argparse.Namespace) -> tuple[dict[str, Any], list[str], l
         "distributions": distributions,
         "prism_module": prism_module,
         "optional_backends": backends,
+        "runtime_capabilities": runtime_capabilities,
         "cuda": cuda,
         "model": model,
         "errors": errors,
@@ -237,6 +275,13 @@ def print_human(report: dict[str, Any]) -> None:
         for name, value in report["optional_backends"].items()
     )
     print(f"optional backends: {backend_text}")
+    capabilities = report["runtime_capabilities"]
+    print(
+        "runtime capabilities: "
+        f"status={capabilities['status']}, "
+        f"backend={capabilities['execution_backend']}, "
+        f"compression={capabilities['compression_mode']}"
+    )
     cuda = report["cuda"]
     print(
         f"cuda: available={cuda.get('available', False)}, "
@@ -280,6 +325,17 @@ def parse_args() -> argparse.Namespace:
         "--require-cuda",
         action="store_true",
         help="fail when PyTorch cannot see a CUDA device",
+    )
+    parser.add_argument(
+        "--execution-backend",
+        choices=("eager", "cuda_graph", "compile"),
+        default="eager",
+        help="validate capabilities for this startup-selected backend",
+    )
+    parser.add_argument(
+        "--compression-mode",
+        default="off",
+        help="validate capabilities for this Prism compression mode",
     )
     parser.add_argument(
         "--min-free-gib",

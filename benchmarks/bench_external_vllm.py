@@ -14,7 +14,6 @@ import json
 import math
 import os
 import statistics
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +28,11 @@ from vllm import LLM, SamplingParams
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
+
 EXTERNAL_SCHEMA_VERSION = 2
 COMPARISON_PROFILES = ("diagnostic_matched", "best_stable")
 
@@ -62,60 +66,6 @@ def _canonical_sha256(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _git_metadata() -> tuple[str, bool]:
-    """Return the benchmark harness commit and dirty state.
-
-    The external framework has its own source commit.  Keeping the harness
-    commit separately prevents a later script edit from being confused with a
-    framework change.
-    """
-
-    try:
-        commit = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=REPO_ROOT,
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        dirty = bool(
-            subprocess.check_output(
-                ["git", "status", "--porcelain"],
-                cwd=REPO_ROOT,
-                text=True,
-                stderr=subprocess.DEVNULL,
-            ).strip()
-        )
-        return commit, dirty
-    except (OSError, subprocess.SubprocessError):
-        return "unknown", True
-
-
-def _gpu_metadata() -> dict[str, Any]:
-    properties = torch.cuda.get_device_properties(0)
-    metadata: dict[str, Any] = {
-        "gpu": properties.name,
-        "compute_capability": f"{properties.major}.{properties.minor}",
-        "total_memory_bytes": properties.total_memory,
-    }
-    try:
-        raw = subprocess.check_output(
-            [
-                "nvidia-smi",
-                "--query-gpu=uuid,driver_version",
-                "--format=csv,noheader,nounits",
-            ],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).splitlines()[0]
-        uuid, driver = (part.strip() for part in raw.split(",", maxsplit=1))
-        metadata["gpu_uuid"] = uuid
-        metadata["driver"] = driver
-    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
-        metadata["gpu_uuid"] = "unknown"
-        metadata["driver"] = "unknown"
-    return metadata
-
-
 def _enum_name(value: Any) -> str:
     return str(getattr(value, "name", value))
 
@@ -128,21 +78,11 @@ def _effective_backend(llm: LLM, *, enforce_eager: bool) -> dict[str, Any]:
     return {
         "execution": "eager" if enforce_eager else "cuda_graph",
         "compilation_mode": _enum_name(getattr(compilation, "mode", "unknown")),
-        "compilation_backend": str(
-            getattr(compilation, "backend", "unknown")
-        ),
-        "cudagraph_mode": _enum_name(
-            getattr(compilation, "cudagraph_mode", "unknown")
-        ),
-        "cudagraph_capture_sizes": (
-            list(capture_sizes) if capture_sizes is not None else []
-        ),
-        "chunked_prefill": bool(
-            getattr(scheduler, "enable_chunked_prefill", False)
-        ),
-        "async_scheduling": bool(
-            getattr(scheduler, "async_scheduling", False)
-        ),
+        "compilation_backend": str(getattr(compilation, "backend", "unknown")),
+        "cudagraph_mode": _enum_name(getattr(compilation, "cudagraph_mode", "unknown")),
+        "cudagraph_capture_sizes": (list(capture_sizes) if capture_sizes is not None else []),
+        "chunked_prefill": bool(getattr(scheduler, "enable_chunked_prefill", False)),
+        "async_scheduling": bool(getattr(scheduler, "async_scheduling", False)),
     }
 
 
@@ -170,8 +110,7 @@ def _file_image(spec: dict[str, Any]) -> Image.Image:
     actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
     if actual_sha256 != spec["sha256"]:
         raise ValueError(
-            f"benchmark image SHA256 mismatch: expected {spec['sha256']}, "
-            f"got {actual_sha256}"
+            f"benchmark image SHA256 mismatch: expected {spec['sha256']}, got {actual_sha256}"
         )
     with Image.open(path) as source:
         image = source.convert("RGB")
@@ -331,13 +270,8 @@ def main() -> None:
             "vLLM eager baseline unexpectedly retained CUDA Graph mode: "
             f"{effective_backend['cudagraph_mode']}"
         )
-    if (
-        not args.enforce_eager
-        and effective_backend["cudagraph_mode"] in ("NONE", "unknown")
-    ):
-        raise RuntimeError(
-            "vLLM best-stable baseline did not enable an effective CUDA Graph mode"
-        )
+    if not args.enforce_eager and effective_backend["cudagraph_mode"] in ("NONE", "unknown"):
+        raise RuntimeError("vLLM best-stable baseline did not enable an effective CUDA Graph mode")
     sampling = SamplingParams(
         temperature=0.0,
         max_tokens=args.max_tokens,
@@ -407,8 +341,8 @@ def main() -> None:
     if any(tokens != token_runs[0] for tokens in token_runs[1:]):
         raise RuntimeError("vLLM greedy token ids changed across measured repeats")
 
-    harness_commit, harness_dirty = _git_metadata()
-    gpu_metadata = _gpu_metadata()
+    git = collect_git_metadata(REPO_ROOT)
+    gpu_metadata = collect_gpu_metadata().environment_dict()
     model_config_path = Path(args.model) / "config.json"
     record = {
         "schema_version": EXTERNAL_SCHEMA_VERSION,
@@ -417,8 +351,8 @@ def main() -> None:
         "protocol": {
             "name": "p7.1_external_offline_v2",
             "comparison_profile": comparison_profile,
-            "harness_git_commit": harness_commit,
-            "harness_git_dirty": harness_dirty,
+            "harness_git_commit": git.commit,
+            "harness_git_dirty": git.dirty,
             "framework_source_dirty": args.source_dirty,
             "process_scope": "fresh_process_per_case_and_backend",
             "command": [sys.executable, *sys.argv],

@@ -141,12 +141,12 @@ P1-001 已验证的定位工具:
 
 ```bash
 PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
-.venv-local/bin/python tests/test_full_model_layerwise_debug.py
+.venv-local/bin/python tools/debug/full_model_layerwise.py
 ```
 
 ```bash
 PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
-.venv-local/bin/python tests/test_attention_micro_debug.py
+.venv-local/bin/python tools/debug/attention_micro.py
 ```
 
 P1-001 结论:
@@ -346,7 +346,7 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 
 ```bash
 PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
-.venv-local/bin/python tests/test_full_model_vl_layerwise_debug.py
+.venv-local/bin/python tools/debug/full_model_vl_layerwise.py
 ```
 
 ```bash
@@ -3786,6 +3786,101 @@ git diff --check
 
 当前判定：P9-B PASS；允许进入 P9-C scaled FP8 scale lifecycle。P9-C 必须保持本节
 backend/identity contract，不得把 unit-scale direct cast 重新命名为 scaled FP8。
+
+### P9-B.2 代码质量复审与 compile 安全边界（PASS，2026-07-19）
+
+本轮不是新增算法或性能 claim，而是对 P9-B 之后的生产代码做第二次 AI Infra 架构
+复审。主要结果：
+
+- scheduler prefill 被拆为 immutable candidate、batch resource builder、running chunk
+  收集和 waiting admission；视觉 patch budget 使用 `Config` 的正式默认常量，不再用
+  `2**63 - 1` 伪装“无限”；FCFS 顺序、prefix-cache 和 oversized visual request 独占
+  batch 的语义保持不变；
+- `LLMEngine` 将 text/image/video 的 host prepare 与 scheduler submit 分开；mixed batch
+  先完整校验和预处理再发布请求；text/VL/mixed 同步 API 共用一个生成循环，异常时也
+  关闭 progress bar；exit 按 runner/backend、control channel、worker process 和 CUDA
+  cache 分层释放，并保留首个 cleanup failure；
+- online session 将 request value contract、arrival/cancel event、engine step、idle wait 和
+  result materialization 分开；NaN/负时间、错误 prompt/media payload 在 event loop 之前
+  fail closed；时间换算统一使用命名常量；
+- quality artifact、external comparison、profiling、KV trace 和 pruning fidelity 等
+  analysis/evidence 路径已按输入合同、运行合同、数据集计分、聚合与渲染职责拆分；
+- 整个 `prism_infer` 包（包括 `analysis`、`engine`、`layers`、`models`、`ops`、
+  `vision`）通过 `C901/PLR0911/PLR0912/PLR0915`；生产包 runtime `assert` 为 0，
+  `PLR2004` 为 0。上述范围已加入 CPU CI，不再只依赖一次性人工扫描。低层 Triton
+  kernel ABI 与标准 `nn.Module` 构造签名没有为了 lint 形式主义强行包装。
+
+真实 `torch.compile` 调查同时修复了一个安全性问题。每层 K/V cache 是同一块
+monolithic KV allocation 的非零 `storage_offset` view。把 mutable KV store 捕获进
+fullgraph 后，AOT functionalization 曾为 V cache 生成 `155,189,248` elements 的 clone，
+但 view data pointer 已位于 `storage_offset=150,994,944`；生成代码因此可能从 view
+起点越界读取，表现为 token 分叉和 `illegal memory access`。这不是普通 BF16 rounding。
+
+最终 compile state boundary 为：
+
+```text
+compiled pure subgraph: qkv_projection_qk_norm_mrope
+graph-external mutable boundary: validated_runtime_store_and_paged_decode
+```
+
+即 fullgraph 只捕获 QKV projection、QK-Norm 和 M-RoPE；KV store commit 与 paged
+attention read 继续使用带完整 contract validation 的 Prism Triton runtime。删除了不安全、
+无正式调用方的 compiled KV-store primitive；compile 仍必须由
+`allow_unsafe_decode_compile=True` 显式开启，没有 fallback，也没有提升为 supported
+backend。
+
+Correctness 边界必须诚实保留：真实 8B batch1/output32 eager 与 compile token exact；
+batch2/output32 两行都在第 29 个生成 token 出现后段分叉。FP32 logits 加
+`CUDA_LAUNCH_BLOCKING=1` 的诊断已不再触发 illegal access，但不能消除 batch2 数值
+分叉。因此本修复只把 compile 从“可能非法访问 aliased KV view”收敛为“内存安全、
+边界可审计的 rejected benchmark candidate”。
+
+本轮完整门禁：
+
+```bash
+.venv-local/bin/ruff format --check prism_infer tests benchmarks scripts
+.venv-local/bin/ruff check .
+.venv-local/bin/ruff check --select C901,PLR0911,PLR0912,PLR0915 prism_infer
+.venv-local/bin/ruff check --select S101,PLR2004 prism_infer
+.venv-local/bin/python -m compileall -q prism_infer tests benchmarks scripts tools
+git diff --check
+# PASS
+
+.venv-local/bin/python -m pytest -q \
+  -m "not model and not gpu and not slow and not distributed"
+# 368 passed, 76 deselected in 20.71s
+
+# 在 fresh interpreter 中令 triton/flash_attn 的 find_spec 返回 None，
+# 并阻止其直接 import 后重跑同一 CPU marker 集：
+# 368 passed, 76 deselected in 20.39s
+
+CUDA_VISIBLE_DEVICES=0 .venv-local/bin/python -m pytest -q \
+  -m "gpu and not model and not slow and not distributed"
+# 18 passed, 426 deselected in 7.59s
+
+CUDA_VISIBLE_DEVICES=0 .venv-local/bin/python -m pytest -q \
+  tests/test_compile_execution_config.py::\
+test_compile_qkv_split_handles_nonzero_offset_cache_views
+# 1 passed in 6.72s
+```
+
+最终真实 Qwen3-VL-8B batch1/output4 smoke 使用同一 single-image workload、BF16、
+greedy、`off_eager,off_compile_attention`：两边 token IDs 都是
+`[785, 2168, 3897, 374]`。schema-v7 metadata 分别记录
+`qkv_projection_qk_norm_mrope` 与 `validated_runtime_store_and_paged_decode`；运行结束后
+GPU0 回到 `1 MiB / 0%`。本 smoke 只有 `warmup=0/repeat=1`，仅作为 correctness、
+metadata 和 release gate，不形成 latency claim。
+
+本地 raw evidence：
+
+```text
+/tmp/prism_compile_split_architecture.jsonl
+/tmp/prism_compile_split_long.jsonl
+/tmp/prism_compile_split_fp32.jsonl
+/tmp/prism_final_compile_smoke.jsonl
+```
+
+这些 `/tmp` 文件尚未进入 release artifact；KI-011 的可复现证据风险仍适用。
 
 ### P9-C.1 scaled FP8 与标准质量 evaluator（FORMAL QUALITY PASS）
 

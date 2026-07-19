@@ -78,14 +78,11 @@ def _record(
             "video_tokens": 0,
             "request_types": ["image_file"] * num_requests,
             "input_shapes": [
-                {"type": "image_file", "visual_shapes": [[4, 4, 3]]}
-                for _ in range(num_requests)
+                {"type": "image_file", "visual_shapes": [[4, 4, 3]]} for _ in range(num_requests)
             ],
             "reference_sources": {},
             "task_references": (
-                task_references
-                if task_references is not None
-                else [None] * num_requests
+                task_references if task_references is not None else [None] * num_requests
             ),
         },
         "traffic": {
@@ -95,9 +92,7 @@ def _record(
         },
         "correctness": {
             "token_ids": tokens,
-            "decoded_texts": (
-                decoded_texts if decoded_texts is not None else [""] * num_requests
-            ),
+            "decoded_texts": (decoded_texts if decoded_texts is not None else [""] * num_requests),
         },
         "kv_cache": {
             "logical_prompt_tokens": 20 * num_requests,
@@ -163,9 +158,7 @@ def test_pruning_fidelity_aggregates_cases_and_strategies() -> None:
     ]
 
     summary = summarize_pruning_fidelity_records(records)
-    aggregates = {
-        row["candidate"]["strategy"]: row for row in summary["aggregates"]
-    }
+    aggregates = {row["candidate"]["strategy"]: row for row in summary["aggregates"]}
     attention = aggregates["attention"]
     uniform = aggregates["uniform"]
     markdown = render_pruning_fidelity_markdown(summary)
@@ -229,9 +222,9 @@ def test_pruning_fidelity_rejects_invalid_span_audit() -> None:
         active_bytes=100,
         kept_by_span=[2],
     )
-    candidate["kv_cache"]["layouts"][0]["compression_record"][
-        "kept_visual_tokens_by_span"
-    ][0]["kept_tokens"] = 1
+    candidate["kv_cache"]["layouts"][0]["compression_record"]["kept_visual_tokens_by_span"][0][
+        "kept_tokens"
+    ] = 1
 
     with pytest.raises(ValueError, match="audit sum does not match"):
         summarize_pruning_fidelity_records([baseline, candidate])
@@ -283,9 +276,7 @@ def test_pruning_fidelity_rejects_duplicate_baseline() -> None:
     )
 
     with pytest.raises(ValueError, match="duplicate 'off_graph' baseline"):
-        summarize_pruning_fidelity_records(
-            [baseline, deepcopy(baseline), candidate]
-        )
+        summarize_pruning_fidelity_records([baseline, deepcopy(baseline), candidate])
     print("P6.12 fidelity duplicate-baseline guard: PASS")
 
 
@@ -340,9 +331,7 @@ def test_pruning_fidelity_reports_reference_task_gate() -> None:
         [baseline, attention, uniform],
         max_task_quality_drop=0.01,
     )
-    aggregates = {
-        row["candidate"]["strategy"]: row for row in summary["aggregates"]
-    }
+    aggregates = {row["candidate"]["strategy"]: row for row in summary["aggregates"]}
     attention_quality = aggregates["attention"]["task_quality"]
     uniform_quality = aggregates["uniform"]["task_quality"]
     markdown = render_pruning_fidelity_markdown(summary)
@@ -353,10 +342,7 @@ def test_pruning_fidelity_reports_reference_task_gate() -> None:
     assert attention_quality["gate"]["passed"] is True
     assert uniform_quality["token_f1"]["candidate_macro"] == pytest.approx(1 / 6)
     assert uniform_quality["gate"]["passed"] is False
-    assert any(
-        "token_f1 macro drop" in failure
-        for failure in uniform_quality["gate"]["failures"]
-    )
+    assert any("token_f1 macro drop" in failure for failure in uniform_quality["gate"]["failures"])
     assert "Token F1 B/C" in markdown
     assert "PASS" in markdown
     assert "FAIL" in markdown
@@ -387,19 +373,15 @@ def test_pruning_fidelity_fails_when_only_rouge_l_exceeds_drop_limit() -> None:
         kept_by_span=[2],
     )
 
-    quality = summarize_pruning_fidelity_records(
-        [baseline, candidate], max_task_quality_drop=0.01
-    )["aggregates"][0]["task_quality"]
+    quality = summarize_pruning_fidelity_records([baseline, candidate], max_task_quality_drop=0.01)[
+        "aggregates"
+    ][0]["task_quality"]
 
     assert quality["token_f1"]["macro_delta"] == 0.0
     assert quality["rouge_l_f1"]["macro_delta"] == pytest.approx(-0.75)
     assert quality["gate"]["passed"] is False
-    assert not any(
-        "token_f1" in failure for failure in quality["gate"]["failures"]
-    )
-    assert any(
-        "rouge_l_f1" in failure for failure in quality["gate"]["failures"]
-    )
+    assert not any("token_f1" in failure for failure in quality["gate"]["failures"])
+    assert any("rouge_l_f1" in failure for failure in quality["gate"]["failures"])
     boundary_quality = summarize_pruning_fidelity_records(
         [baseline, candidate], max_task_quality_drop=0.75
     )["aggregates"][0]["task_quality"]

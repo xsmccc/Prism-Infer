@@ -20,9 +20,7 @@ from benchmarks.bench_paged_decode import (
 def test_parse_positive_int_csv_preserves_declared_matrix_order() -> None:
     """Page matrix 顺序应稳定，不能静默排序或去重。"""
 
-    assert _parse_positive_int_csv(
-        "16,32,256", option_name="--page-sizes"
-    ) == (16, 32, 256)
+    assert _parse_positive_int_csv("16,32,256", option_name="--page-sizes") == (16, 32, 256)
 
 
 @pytest.mark.parametrize("raw", ["", "16,", "0,16", "-1", "16,16", "x,16"])

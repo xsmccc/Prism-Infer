@@ -57,7 +57,7 @@ Result: MARGINAL
 
 - 已确认语法检查 PASS。
 - 已确认 P1 模块对齐套件 `20 passed in 81.83s`。
-- 已新增并运行 `tests/test_full_model_layerwise_debug.py`，按 embedding、RoPE、每层 norm/attention/MLP/output、final norm、logits 比较 HF 与 Prism-Infer 激活。
+- 已新增并运行现位于 `tools/debug/full_model_layerwise.py` 的手工诊断，按 embedding、RoPE、每层 norm/attention/MLP/output、final norm、logits 比较 HF 与 Prism-Infer 激活。
 - 分层证据:
   - `embed`: max diff `0.000000e+00`。
   - `rope`: max diff `0.000000e+00`。
@@ -67,7 +67,7 @@ Result: MARGINAL
   - final norm 后误差收敛为 max diff `1.500000e+00`, mean diff `7.806452e-03`。
   - logits max diff `2.500000e-01`, mean diff `2.831022e-02`。
 - 当前证据指向 attention 路径是首个差异来源；embedding、权重加载、RoPE 不是首个差异来源。
-- 进一步微定位脚本 `tests/test_attention_micro_debug.py` 显示:
+- 进一步微定位脚本 `tools/debug/attention_micro.py` 显示:
   - `embed/cos/sin/input_norm/q_norm/k_norm/v` 全部 max diff `0.000000e+00`。
   - 修复前第一处差异在 `q_rope/k_rope`。
   - 修复后 `q_rope/k_rope/sdpa/attn_out/layer0_out` 全部 max diff `0.000000e+00`。
@@ -97,7 +97,7 @@ Result: MARGINAL
 
 ```bash
 PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
-/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tests/test_attention_micro_debug.py
+/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tools/debug/attention_micro.py
 ```
 
 ```bash
@@ -131,7 +131,7 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 验证结果:
 
 - `compileall`: PASS。
-- `tests/test_attention_micro_debug.py`: 修复后 `q_rope/k_rope/sdpa_gqa/attn_out/layer0_out` max diff 全部 `0.000000e+00`。
+- `tools/debug/attention_micro.py`: 修复后 `q_rope/k_rope/sdpa_gqa/attn_out/layer0_out` max diff 全部 `0.000000e+00`。
 - `tests/test_mrope.py tests/test_qwen3_vl.py`: `6 passed in 74.11s`。
 - `tests/test_full_model.py`: `Result: PASS`; logits max diff `0.000000e+00`, mean diff `0.000000e+00`。
 - P1 模块对齐套件: `20 passed in 82.17s`。
@@ -663,7 +663,7 @@ logits                       2.215869e+01 4.351552e-01
 
 定位过程:
 
-- 先用 `tests/test_full_model_vl_layerwise_debug.py` 证明 embedding 和 LLM M-RoPE 为 exact match，首个差异已经出现在 `model.visual` 输出。
+- 先用 `tools/debug/full_model_vl_layerwise.py` 证明 embedding 和 LLM M-RoPE 为 exact match，首个差异已经出现在 `model.visual` 输出。
 - 再写临时 vision 内部分层检查，用同一个 processor 输入 `pixel_values=[784, 1536]` 和 `grid_thw=[[1, 28, 28]]` 对齐 HF 与 Prism-Infer。
 - 第一轮定位结果:
   - `patch_embed`: max diff `0.000000e+00`。
@@ -719,7 +719,7 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
 ```bash
 PYTHONPATH=/data/Prism-Infer \
 PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
-/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tests/test_full_model_vl_layerwise_debug.py
+/data/Prism-Infer/.venv-local/bin/python /data/Prism-Infer/tools/debug/full_model_vl_layerwise.py
 ```
 
 ```bash
@@ -773,7 +773,7 @@ PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/0c351dd01ed87e9c1b53cbc748cba
   - `Our mean/std: -1.756945e+00 / 4.123917e+00`
   - `Max diff:  0.000000e+00`
   - `Mean diff: 0.000000e+00`
-- `tests/test_full_model_vl_layerwise_debug.py`: 从 `visual`、`embed`、`rope`、36 层 LLM、`final_norm` 到 `logits` 全部 max diff `0.000000e+00`，mean diff `0.000000e+00`。
+- `tools/debug/full_model_vl_layerwise.py`: 从 `visual`、`embed`、`rope`、36 层 LLM、`final_norm` 到 `logits` 全部 max diff `0.000000e+00`，mean diff `0.000000e+00`。
 - P2 Gate + vision 回归: `24 passed in 48.49s`。
   - `HF token_ids: [785]`
   - `Prism token_ids: [785]`

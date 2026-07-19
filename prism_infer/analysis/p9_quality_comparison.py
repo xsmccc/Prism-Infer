@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import random
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from prism_infer.analysis.benchmark_schema import (
@@ -19,11 +20,21 @@ from prism_infer.analysis.p9_quality_metrics import (
     aggregate_quality_predictions,
     score_quality_prediction,
 )
+from prism_infer.analysis.schema_constants import (
+    GIT_SHA1_HEX_LENGTH,
+    LOWERCASE_HEX_DIGITS,
+    SHA256_HEX_LENGTH,
+)
 from prism_infer.engine.compression import (
     COMPRESSION_OFF,
     compression_mode_uses_fp8_payload,
     compression_mode_uses_token_head_scales,
     normalize_compression_mode,
+)
+from prism_infer.engine.kv_quantization import KV_COMPONENT_COUNT
+from prism_infer.models.qwen3_vl_architecture import (
+    CANONICAL_VISION_SPATIAL_MERGE_SIZE,
+    VISION_GRID_DIMENSIONS,
 )
 
 QUALITY_ARTIFACT_SCHEMA_VERSION = 1
@@ -33,6 +44,27 @@ QUALITY_DATASETS = {
     "muirbench_test",
     "mvbench_test",
 }
+KV_PAYLOAD_TENSOR_RANK = 6
+VISION_SPATIAL_MERGE_AREA = CANONICAL_VISION_SPATIAL_MERGE_SIZE**2
+MIN_POSITIVE_FPS = 1e-12
+VIDEO_FILE_SOURCE = "video_file"
+FRAME_DIRECTORY_SOURCE = "frame_directory"
+RANDOM_SEEK_ACCESS = "random_seek"
+SEQUENTIAL_FALLBACK_ACCESS = "sequential_fallback"
+FRAME_MANIFEST_ACCESS = "frame_manifest"
+SUPPORTED_FALLBACK_OPERATIONS = frozenset({"seek", "decode"})
+
+
+@dataclass(frozen=True)
+class _VideoAccess:
+    """Validated MVBench frame-access metadata used by source-specific checks."""
+
+    source_kind: str
+    decoder: object
+    source_frame_count: int
+    method: str
+    reported_frame_count: int
+    fallback_trigger: object
 
 
 def _mapping(value: object, path: str) -> Mapping[str, Any]:
@@ -79,8 +111,8 @@ def _number(
 
 def _sha256(value: object, path: str) -> str:
     digest = _string(value, path)
-    if len(digest) != 64 or any(
-        character not in "0123456789abcdef" for character in digest
+    if len(digest) != SHA256_HEX_LENGTH or any(
+        character not in LOWERCASE_HEX_DIGITS for character in digest
     ):
         raise ValueError(f"{path} must be a lowercase SHA256 digest")
     return digest
@@ -101,24 +133,18 @@ def _tensor_bytes(dtype: str, shape: Sequence[int], path: str) -> int:
 
 
 def _validate_kv_cache(cache: Mapping[str, Any], *, mode: str) -> None:
-    payload_dtype = _string(
-        cache.get("payload_dtype"), "artifact.kv_cache.payload_dtype"
-    )
+    payload_dtype = _string(cache.get("payload_dtype"), "artifact.kv_cache.payload_dtype")
     payload_shape = _list(cache.get("payload_shape"), "artifact.kv_cache.payload_shape")
-    if len(payload_shape) != 6 or any(
+    if len(payload_shape) != KV_PAYLOAD_TENSOR_RANK or any(
         isinstance(dimension, bool) or not isinstance(dimension, int) or dimension <= 0
         for dimension in payload_shape
     ):
-        raise ValueError(
-            "artifact.kv_cache.payload_shape must have 6 positive dimensions"
-        )
-    if payload_shape[0] != 2:
+        raise ValueError("artifact.kv_cache.payload_shape must have 6 positive dimensions")
+    if payload_shape[0] != KV_COMPONENT_COUNT:
         raise ValueError("artifact.kv_cache.payload_shape[0] must represent K and V")
 
     expected_payload_dtype = (
-        "torch.float8_e4m3fn"
-        if compression_mode_uses_fp8_payload(mode)
-        else "torch.bfloat16"
+        "torch.float8_e4m3fn" if compression_mode_uses_fp8_payload(mode) else "torch.bfloat16"
     )
     if payload_dtype != expected_payload_dtype:
         raise ValueError(
@@ -135,9 +161,7 @@ def _validate_kv_cache(cache: Mapping[str, Any], *, mode: str) -> None:
         payload_shape,
         "artifact.kv_cache.payload",
     ):
-        raise ValueError(
-            "artifact.kv_cache.payload_bytes does not match dtype and shape"
-        )
+        raise ValueError("artifact.kv_cache.payload_bytes does not match dtype and shape")
 
     scale_dtype = _string(cache.get("scale_dtype"), "artifact.kv_cache.scale_dtype")
     scale_shape = _list(cache.get("scale_shape"), "artifact.kv_cache.scale_shape")
@@ -145,17 +169,14 @@ def _validate_kv_cache(cache: Mapping[str, Any], *, mode: str) -> None:
     if compression_mode_uses_token_head_scales(mode):
         if scale_dtype != "torch.float32" or scale_shape != payload_shape[:-1]:
             raise ValueError(
-                "scaled FP8 artifact requires FP32 token/head scales matching "
-                "payload_shape[:-1]"
+                "scaled FP8 artifact requires FP32 token/head scales matching payload_shape[:-1]"
             )
         if scale_bytes != _tensor_bytes(
             scale_dtype,
             scale_shape,
             "artifact.kv_cache.scale",
         ):
-            raise ValueError(
-                "artifact.kv_cache.scale_bytes does not match dtype and shape"
-            )
+            raise ValueError("artifact.kv_cache.scale_bytes does not match dtype and shape")
     elif scale_dtype != "none" or scale_shape or scale_bytes != 0:
         raise ValueError("non-scaled KV mode must not report a scale cache")
 
@@ -179,17 +200,14 @@ def _validate_visual_input(identity: Mapping[str, Any], path: str) -> None:
     expected_visual_tokens = 0
     for row_index, row in enumerate(grid):
         row = _list(row, f"{path}.{grid_name}[{row_index}]")
-        if len(row) != 3 or any(
-            isinstance(value, bool) or not isinstance(value, int) or value <= 0
-            for value in row
+        if len(row) != VISION_GRID_DIMENSIONS or any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in row
         ):
             raise ValueError(f"{path}.{grid_name}[{row_index}] must be [T, H, W]")
         raw_patches = math.prod(row)
-        if raw_patches % 4:
-            raise ValueError(
-                f"{path}.{grid_name}[{row_index}] is not merge-size aligned"
-            )
-        expected_visual_tokens += raw_patches // 4
+        if raw_patches % VISION_SPATIAL_MERGE_AREA:
+            raise ValueError(f"{path}.{grid_name}[{row_index}] is not merge-size aligned")
+        expected_visual_tokens += raw_patches // VISION_SPATIAL_MERGE_AREA
     visual_tokens = _integer(
         identity.get("visual_placeholder_tokens"),
         f"{path}.visual_placeholder_tokens",
@@ -252,22 +270,12 @@ def _validate_reference_score(
             muirbench_random=muirbench_random,
         )
     except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise ValueError(
-            f"{path} could not be scored from its reference record"
-        ) from exc
+        raise ValueError(f"{path} could not be scored from its reference record") from exc
     if sample["score"] != recomputed:
         raise ValueError(f"{path}.score differs from independently recomputed score")
 
 
-def _validate_sample(
-    sample: Mapping[str, Any],
-    *,
-    dataset_id: str,
-    runtime: Mapping[str, Any],
-    dataset_evaluator: Mapping[str, Any],
-    path: str,
-) -> str:
-    sample_id = _string(sample.get("sample_id"), f"{path}.sample_id")
+def _validate_sample_input(sample: Mapping[str, Any], *, path: str) -> int:
     identity = _mapping(sample.get("input"), f"{path}.input")
     for key in (
         "source_prompt_sha256",
@@ -286,7 +294,17 @@ def _validate_sample(
     for media_index, digest in enumerate(media_sha256):
         _sha256(digest, f"{path}.input.media_sha256[{media_index}]")
     _validate_visual_input(identity, f"{path}.input")
+    return prompt_tokens
 
+
+def _validate_sample_output(
+    sample: Mapping[str, Any],
+    *,
+    prompt_tokens: int,
+    runtime: Mapping[str, Any],
+    dataset_evaluator: Mapping[str, Any],
+    path: str,
+) -> str:
     output_token_ids = _list(sample.get("output_token_ids"), f"{path}.output_token_ids")
     for token_index, token_id in enumerate(output_token_ids):
         _integer(token_id, f"{path}.output_token_ids[{token_index}]")
@@ -314,141 +332,239 @@ def _validate_sample(
     )
     if prompt_tokens + max_output_tokens > max_model_len:
         raise ValueError(f"{path} exceeds the frozen model length")
+    return raw_prediction
 
-    score = _mapping(sample.get("score"), f"{path}.score")
-    if dataset_id == "docvqa_validation":
-        target = _list(score.get("target"), f"{path}.score.target")
-        if not target or any(not isinstance(answer, str) for answer in target):
-            raise ValueError(f"{path}.score.target must contain reference strings")
-        _number(score.get("anls"), f"{path}.score.anls", maximum=1.0)
-    elif dataset_id == "muirbench_test":
-        target = _string(score.get("target"), f"{path}.score.target")
-        for prefix in ("strict", "official"):
-            prediction = score.get(f"{prefix}_prediction")
-            if prediction is not None:
-                _string(prediction, f"{path}.score.{prefix}_prediction")
-            _string(
-                score.get(f"{prefix}_parse_method"),
-                f"{path}.score.{prefix}_parse_method",
-            )
-            observed = _binary_score(
-                score.get(f"{prefix}_score"),
-                f"{path}.score.{prefix}_score",
-            )
-            if observed != int(prediction == target):
-                raise ValueError(f"{path}.score.{prefix}_score is inconsistent")
-    else:
-        target = _string(score.get("target"), f"{path}.score.target")
-        prediction = score.get("prediction")
+
+def _validate_docvqa_score(score: Mapping[str, Any], *, path: str) -> None:
+    target = _list(score.get("target"), f"{path}.score.target")
+    if not target or any(not isinstance(answer, str) for answer in target):
+        raise ValueError(f"{path}.score.target must contain reference strings")
+    _number(score.get("anls"), f"{path}.score.anls", maximum=1.0)
+
+
+def _validate_muirbench_score(score: Mapping[str, Any], *, path: str) -> None:
+    target = _string(score.get("target"), f"{path}.score.target")
+    for prefix in ("strict", "official"):
+        prediction = score.get(f"{prefix}_prediction")
         if prediction is not None:
-            _string(prediction, f"{path}.score.prediction")
-        _string(score.get("parse_method"), f"{path}.score.parse_method")
-        observed = _binary_score(score.get("score"), f"{path}.score.score")
+            _string(prediction, f"{path}.score.{prefix}_prediction")
+        _string(
+            score.get(f"{prefix}_parse_method"),
+            f"{path}.score.{prefix}_parse_method",
+        )
+        observed = _binary_score(
+            score.get(f"{prefix}_score"),
+            f"{path}.score.{prefix}_score",
+        )
         if observed != int(prediction == target):
-            raise ValueError(f"{path}.score.score is inconsistent")
-        answered = score.get("answered")
-        if not isinstance(answered, bool) or answered != bool(raw_prediction.strip()):
-            raise ValueError(f"{path}.score.answered is inconsistent")
-        _string(sample.get("task"), f"{path}.task")
-        video_sampling = _mapping(
-            sample.get("video_sampling"), f"{path}.video_sampling"
-        )
-        indices = _list(
-            video_sampling.get("sampled_indices"),
-            f"{path}.video_sampling.sampled_indices",
-        )
-        expected_frames = _integer(
-            runtime.get("video_frames"),
-            "evaluator.runtime.video_frames",
-            minimum=1,
-        )
-        if len(indices) != expected_frames:
-            raise ValueError(
-                f"{path}.video_sampling does not contain frozen frame count"
-            )
-        for frame_index, index in enumerate(indices):
-            _integer(index, f"{path}.video_sampling.sampled_indices[{frame_index}]")
-        _sha256(
-            video_sampling.get("sampled_rgb_identity_sha256"),
-            f"{path}.video_sampling.sampled_rgb_identity_sha256",
-        )
-        _number(video_sampling.get("fps"), f"{path}.video_sampling.fps", minimum=1e-12)
-        source_frame_count = _integer(
-            video_sampling.get("source_frame_count"),
-            f"{path}.video_sampling.source_frame_count",
-            minimum=1,
-        )
-        frame_access = _mapping(
-            video_sampling.get("frame_access"),
-            f"{path}.video_sampling.frame_access",
-        )
-        frame_access_method = _string(
+            raise ValueError(f"{path}.score.{prefix}_score is inconsistent")
+
+
+def _validate_mvbench_score(
+    sample: Mapping[str, Any],
+    score: Mapping[str, Any],
+    *,
+    raw_prediction: str,
+    path: str,
+) -> None:
+    target = _string(score.get("target"), f"{path}.score.target")
+    prediction = score.get("prediction")
+    if prediction is not None:
+        _string(prediction, f"{path}.score.prediction")
+    _string(score.get("parse_method"), f"{path}.score.parse_method")
+    observed = _binary_score(score.get("score"), f"{path}.score.score")
+    if observed != int(prediction == target):
+        raise ValueError(f"{path}.score.score is inconsistent")
+    answered = score.get("answered")
+    if not isinstance(answered, bool) or answered != bool(raw_prediction.strip()):
+        raise ValueError(f"{path}.score.answered is inconsistent")
+    _string(sample.get("task"), f"{path}.task")
+
+
+def _validate_video_sampling_metadata(
+    sample: Mapping[str, Any],
+    *,
+    runtime: Mapping[str, Any],
+    path: str,
+) -> _VideoAccess:
+    video_sampling = _mapping(sample.get("video_sampling"), f"{path}.video_sampling")
+    indices = _list(
+        video_sampling.get("sampled_indices"),
+        f"{path}.video_sampling.sampled_indices",
+    )
+    expected_frames = _integer(
+        runtime.get("video_frames"),
+        "evaluator.runtime.video_frames",
+        minimum=1,
+    )
+    if len(indices) != expected_frames:
+        raise ValueError(f"{path}.video_sampling does not contain frozen frame count")
+    for frame_index, index in enumerate(indices):
+        _integer(index, f"{path}.video_sampling.sampled_indices[{frame_index}]")
+    _sha256(
+        video_sampling.get("sampled_rgb_identity_sha256"),
+        f"{path}.video_sampling.sampled_rgb_identity_sha256",
+    )
+    _number(
+        video_sampling.get("fps"),
+        f"{path}.video_sampling.fps",
+        minimum=MIN_POSITIVE_FPS,
+    )
+    source_frame_count = _integer(
+        video_sampling.get("source_frame_count"),
+        f"{path}.video_sampling.source_frame_count",
+        minimum=1,
+    )
+    frame_access = _mapping(
+        video_sampling.get("frame_access"),
+        f"{path}.video_sampling.frame_access",
+    )
+    return _VideoAccess(
+        source_kind=_string(
+            video_sampling.get("source_kind"),
+            f"{path}.video_sampling.source_kind",
+        ),
+        decoder=video_sampling.get("decoder"),
+        source_frame_count=source_frame_count,
+        method=_string(
             frame_access.get("method"),
             f"{path}.video_sampling.frame_access.method",
-        )
-        reported_frame_count = _integer(
+        ),
+        reported_frame_count=_integer(
             frame_access.get("reported_frame_count"),
             f"{path}.video_sampling.frame_access.reported_frame_count",
             minimum=1,
+        ),
+        fallback_trigger=frame_access.get("fallback_trigger"),
+    )
+
+
+def _validate_sequential_fallback(access: _VideoAccess, *, path: str) -> None:
+    trigger = _mapping(
+        access.fallback_trigger,
+        f"{path}.video_sampling.frame_access.fallback_trigger",
+    )
+    operation = _string(
+        trigger.get("operation"),
+        f"{path}.video_sampling.frame_access.fallback_trigger.operation",
+    )
+    if operation not in SUPPORTED_FALLBACK_OPERATIONS:
+        raise ValueError(f"{path}.video_sampling has an unsupported fallback trigger")
+    _integer(
+        trigger.get("frame_index"),
+        f"{path}.video_sampling.frame_access.fallback_trigger.frame_index",
+    )
+
+
+def _validate_video_file_access(
+    access: _VideoAccess,
+    *,
+    dataset_evaluator: Mapping[str, Any],
+    path: str,
+) -> None:
+    expected_decoder = _mapping(
+        _mapping(
+            dataset_evaluator.get("video_sampling"),
+            "evaluator.datasets.mvbench_test.video_sampling",
+        ).get("video_file_decoder"),
+        "evaluator.datasets.mvbench_test.video_sampling.video_file_decoder",
+    )
+    if access.decoder != expected_decoder:
+        raise ValueError(f"{path}.video_sampling.decoder drifted from evaluator")
+    if access.method == RANDOM_SEEK_ACCESS:
+        if access.fallback_trigger is not None:
+            raise ValueError(f"{path}.video_sampling random seek cannot have a fallback")
+        if access.source_frame_count != access.reported_frame_count:
+            raise ValueError(f"{path}.video_sampling random seek frame count drifted")
+        return
+    if access.method == SEQUENTIAL_FALLBACK_ACCESS:
+        _validate_sequential_fallback(access, path=path)
+        return
+    raise ValueError(f"{path}.video_sampling.frame_access.method is unsupported")
+
+
+def _validate_frame_directory_access(access: _VideoAccess, *, path: str) -> None:
+    if access.decoder != "Pillow":
+        raise ValueError(f"{path}.video_sampling.decoder must be Pillow")
+    if (
+        access.method != FRAME_MANIFEST_ACCESS
+        or access.reported_frame_count != access.source_frame_count
+        or access.fallback_trigger is not None
+    ):
+        raise ValueError(f"{path}.video_sampling frame manifest drifted")
+
+
+def _validate_mvbench_video_sampling(
+    sample: Mapping[str, Any],
+    *,
+    runtime: Mapping[str, Any],
+    dataset_evaluator: Mapping[str, Any],
+    path: str,
+) -> None:
+    access = _validate_video_sampling_metadata(sample, runtime=runtime, path=path)
+    if access.source_kind == VIDEO_FILE_SOURCE:
+        _validate_video_file_access(
+            access,
+            dataset_evaluator=dataset_evaluator,
+            path=path,
         )
-        fallback_trigger = frame_access.get("fallback_trigger")
-        source_kind = _string(
-            video_sampling.get("source_kind"),
-            f"{path}.video_sampling.source_kind",
-        )
-        decoder = video_sampling.get("decoder")
-        if source_kind == "video_file":
-            expected_decoder = _mapping(
-                _mapping(
-                    dataset_evaluator.get("video_sampling"),
-                    "evaluator.datasets.mvbench_test.video_sampling",
-                ).get("video_file_decoder"),
-                "evaluator.datasets.mvbench_test.video_sampling.video_file_decoder",
-            )
-            if decoder != expected_decoder:
-                raise ValueError(
-                    f"{path}.video_sampling.decoder drifted from evaluator"
-                )
-            if frame_access_method == "random_seek":
-                if fallback_trigger is not None:
-                    raise ValueError(
-                        f"{path}.video_sampling random seek cannot have a fallback"
-                    )
-                if source_frame_count != reported_frame_count:
-                    raise ValueError(
-                        f"{path}.video_sampling random seek frame count drifted"
-                    )
-            elif frame_access_method == "sequential_fallback":
-                trigger = _mapping(
-                    fallback_trigger,
-                    f"{path}.video_sampling.frame_access.fallback_trigger",
-                )
-                if _string(
-                    trigger.get("operation"),
-                    f"{path}.video_sampling.frame_access.fallback_trigger.operation",
-                ) not in ("seek", "decode"):
-                    raise ValueError(
-                        f"{path}.video_sampling has an unsupported fallback trigger"
-                    )
-                _integer(
-                    trigger.get("frame_index"),
-                    f"{path}.video_sampling.frame_access.fallback_trigger.frame_index",
-                )
-            else:
-                raise ValueError(
-                    f"{path}.video_sampling.frame_access.method is unsupported"
-                )
-        elif source_kind == "frame_directory":
-            if decoder != "Pillow":
-                raise ValueError(f"{path}.video_sampling.decoder must be Pillow")
-            if (
-                frame_access_method != "frame_manifest"
-                or reported_frame_count != source_frame_count
-                or fallback_trigger is not None
-            ):
-                raise ValueError(f"{path}.video_sampling frame manifest drifted")
-        else:
-            raise ValueError(f"{path}.video_sampling.source_kind is unsupported")
+        return
+    if access.source_kind == FRAME_DIRECTORY_SOURCE:
+        _validate_frame_directory_access(access, path=path)
+        return
+    raise ValueError(f"{path}.video_sampling.source_kind is unsupported")
+
+
+def _validate_sample_score(
+    sample: Mapping[str, Any],
+    *,
+    dataset_id: str,
+    raw_prediction: str,
+    runtime: Mapping[str, Any],
+    dataset_evaluator: Mapping[str, Any],
+    path: str,
+) -> None:
+    score = _mapping(sample.get("score"), f"{path}.score")
+    if dataset_id == "docvqa_validation":
+        _validate_docvqa_score(score, path=path)
+        return
+    if dataset_id == "muirbench_test":
+        _validate_muirbench_score(score, path=path)
+        return
+    _validate_mvbench_score(sample, score, raw_prediction=raw_prediction, path=path)
+    _validate_mvbench_video_sampling(
+        sample,
+        runtime=runtime,
+        dataset_evaluator=dataset_evaluator,
+        path=path,
+    )
+
+
+def _validate_sample(
+    sample: Mapping[str, Any],
+    *,
+    dataset_id: str,
+    runtime: Mapping[str, Any],
+    dataset_evaluator: Mapping[str, Any],
+    path: str,
+) -> str:
+    sample_id = _string(sample.get("sample_id"), f"{path}.sample_id")
+    prompt_tokens = _validate_sample_input(sample, path=path)
+    raw_prediction = _validate_sample_output(
+        sample,
+        prompt_tokens=prompt_tokens,
+        runtime=runtime,
+        dataset_evaluator=dataset_evaluator,
+        path=path,
+    )
+    _validate_sample_score(
+        sample,
+        dataset_id=dataset_id,
+        raw_prediction=raw_prediction,
+        runtime=runtime,
+        dataset_evaluator=dataset_evaluator,
+        path=path,
+    )
     return sample_id
 
 
@@ -466,9 +582,7 @@ def validate_quality_samples(
     if isinstance(samples, (str, bytes)) or not samples:
         raise ValueError(f"{path_prefix} must be a non-empty sequence")
     references_by_id = (
-        None
-        if reference_records is None
-        else _index_reference_records(reference_records)
+        None if reference_records is None else _index_reference_records(reference_records)
     )
     muirbench_random = (
         random.Random(MUIRBENCH_RANDOM_FALLBACK_SEED)
@@ -509,16 +623,7 @@ def validate_quality_samples(
     }
 
 
-def validate_quality_artifact(
-    artifact: Mapping[str, Any],
-    *,
-    evaluator: Mapping[str, Any],
-    require_headline: bool = False,
-    reference_records: Sequence[Mapping[str, Any]] | None = None,
-) -> None:
-    """Validate one completed artifact without trusting stored score aggregates."""
-
-    artifact = _mapping(artifact, "artifact")
+def _validate_quality_artifact_header(artifact: Mapping[str, Any]) -> None:
     if artifact.get("schema_version") != QUALITY_ARTIFACT_SCHEMA_VERSION:
         raise ValueError("artifact has unsupported schema_version")
     if artifact.get("record_type") != "p9_quality_predictions":
@@ -526,7 +631,11 @@ def validate_quality_artifact(
     if artifact.get("status") != "complete":
         raise ValueError("quality artifact must be complete")
 
-    evaluator = _mapping(evaluator, "evaluator")
+
+def _validate_run_identity(
+    artifact: Mapping[str, Any],
+    evaluator: Mapping[str, Any],
+) -> Mapping[str, Any]:
     if evaluator.get("schema_version") != 1:
         raise ValueError("evaluator has unsupported schema_version")
     evaluator_sha256 = canonical_json_sha256(evaluator)
@@ -544,7 +653,16 @@ def validate_quality_artifact(
         != evaluator_sha256
     ):
         raise ValueError("artifact references a different evaluator")
+    return contract
 
+
+def _validate_run_scope(
+    artifact: Mapping[str, Any],
+    contract: Mapping[str, Any],
+    *,
+    require_headline: bool,
+    has_reference_records: bool,
+) -> tuple[str, bool]:
     dataset_id = _string(contract.get("dataset"), "artifact.run_contract.dataset")
     if dataset_id not in QUALITY_DATASETS:
         raise ValueError(f"unsupported quality dataset: {dataset_id!r}")
@@ -562,20 +680,23 @@ def validate_quality_artifact(
         raise ValueError("artifact.headline_eligible is inconsistent with scope")
     if require_headline and not headline_eligible:
         raise ValueError("headline evidence requires a formal quality artifact")
-    if headline_eligible and reference_records is None:
-        raise ValueError(
-            "formal quality artifacts require reference records to recompute scores"
-        )
+    if headline_eligible and not has_reference_records:
+        raise ValueError("formal quality artifacts require reference records to recompute scores")
+    return dataset_id, headline_eligible
 
-    mode = normalize_compression_mode(
-        _string(contract.get("mode"), "artifact.run_contract.mode")
-    )
+
+def _validate_execution_contract(
+    contract: Mapping[str, Any],
+    evaluator: Mapping[str, Any],
+    *,
+    dataset_id: str,
+) -> tuple[str, Mapping[str, Any], Mapping[str, Any]]:
+    mode = normalize_compression_mode(_string(contract.get("mode"), "artifact.run_contract.mode"))
     model = _string(contract.get("model"), "artifact.run_contract.model")
     if not model.startswith("/"):
         raise ValueError("artifact.run_contract.model must be an absolute path")
-    if contract.get("model_revision") != _mapping(
-        evaluator.get("model"), "evaluator.model"
-    ).get("revision"):
+    evaluator_model = _mapping(evaluator.get("model"), "evaluator.model")
+    if contract.get("model_revision") != evaluator_model.get("revision"):
         raise ValueError("artifact model revision differs from evaluator")
     runtime = _mapping(contract.get("runtime"), "artifact.run_contract.runtime")
     if runtime != _mapping(evaluator.get("runtime"), "evaluator.runtime"):
@@ -587,11 +708,18 @@ def validate_quality_artifact(
     )
     if contract.get("dataset_evaluator") != dataset_evaluator:
         raise ValueError("artifact dataset evaluator differs from frozen evaluator")
+    return mode, runtime, dataset_evaluator
 
+
+def _validate_git_contract(
+    contract: Mapping[str, Any],
+    *,
+    headline_eligible: bool,
+) -> None:
     git = _mapping(contract.get("git"), "artifact.run_contract.git")
     commit = _string(git.get("commit"), "artifact.run_contract.git.commit")
-    if len(commit) != 40 or any(
-        character not in "0123456789abcdef" for character in commit
+    if len(commit) != GIT_SHA1_HEX_LENGTH or any(
+        character not in LOWERCASE_HEX_DIGITS for character in commit
     ):
         raise ValueError("artifact.run_contract.git.commit must be a full Git revision")
     dirty = git.get("dirty")
@@ -600,38 +728,39 @@ def validate_quality_artifact(
     if headline_eligible and dirty:
         raise ValueError("formal quality artifact cannot come from a dirty tree")
 
+
+def _validate_environment_and_kv_contract(
+    artifact: Mapping[str, Any],
+    *,
+    mode: str,
+    runtime: Mapping[str, Any],
+) -> None:
     environment = _mapping(artifact.get("environment"), "artifact.environment")
     for key in ("gpu", "torch", "cuda"):
         _string(environment.get(key), f"artifact.environment.{key}")
-    _validate_kv_cache(
-        _mapping(artifact.get("kv_cache"), "artifact.kv_cache"),
-        mode=mode,
-    )
-    cache_shape = artifact["kv_cache"]["payload_shape"]
+    cache = _mapping(artifact.get("kv_cache"), "artifact.kv_cache")
+    _validate_kv_cache(cache, mode=mode)
+    cache_shape = cache["payload_shape"]
     if cache_shape[2] != runtime["num_kv_cache_blocks"]:
         raise ValueError("artifact KV block count differs from evaluator runtime")
     if cache_shape[3] != runtime["kv_cache_page_size"]:
         raise ValueError("artifact KV page size differs from evaluator runtime")
 
-    samples = _list(artifact.get("samples"), "artifact.samples")
-    if not samples:
-        raise ValueError("artifact.samples must not be empty")
-    sample_validation = validate_quality_samples(
-        samples,
-        dataset_id=dataset_id,
-        runtime=runtime,
-        dataset_evaluator=dataset_evaluator,
-        reference_records=reference_records,
-    )
-    sample_ids = sample_validation["sample_ids"]
 
+def _validate_sample_selection(
+    artifact: Mapping[str, Any],
+    contract: Mapping[str, Any],
+    *,
+    sample_ids: Sequence[str],
+) -> None:
     selection = _mapping(artifact.get("selection"), "artifact.selection")
+    sample_count = len(sample_ids)
     eligible_samples = _integer(
         selection.get("eligible_run_samples"),
         "artifact.selection.eligible_run_samples",
         minimum=1,
     )
-    if eligible_samples != len(samples):
+    if eligible_samples != sample_count:
         raise ValueError("artifact sample count differs from eligible_run_samples")
     eligible_sha256 = selected_ids_sha256(sample_ids)
     if (
@@ -659,21 +788,30 @@ def validate_quality_artifact(
         selection.get("selected_contract_ids_sha256"),
         "artifact.selection.selected_contract_ids_sha256",
     )
-    _list(
-        selection.get("protocol_exclusions"), "artifact.selection.protocol_exclusions"
-    )
+    _list(selection.get("protocol_exclusions"), "artifact.selection.protocol_exclusions")
 
+
+def _validate_sample_completion(
+    artifact: Mapping[str, Any],
+    *,
+    sample_count: int,
+    recomputed_aggregate: Mapping[str, Any],
+) -> None:
     completed = _integer(
         artifact.get("completed_samples"),
         "artifact.completed_samples",
         minimum=1,
     )
-    if completed != len(samples):
+    if completed != sample_count:
         raise ValueError("artifact.completed_samples is inconsistent")
-    recomputed = sample_validation["aggregate"]
-    if artifact.get("aggregate") != recomputed:
+    if artifact.get("aggregate") != recomputed_aggregate:
         raise ValueError("artifact.aggregate does not match per-sample scores")
 
+
+def _validate_materialization_identity(
+    artifact: Mapping[str, Any],
+    contract: Mapping[str, Any],
+) -> None:
     materialization = _mapping(
         artifact.get("materialization_verification"),
         "artifact.materialization_verification",
@@ -689,6 +827,61 @@ def validate_quality_artifact(
         "artifact.run_contract.materialization_manifest_sha256",
     ):
         raise ValueError("artifact materialization manifest identity is inconsistent")
+
+
+def validate_quality_artifact(
+    artifact: Mapping[str, Any],
+    *,
+    evaluator: Mapping[str, Any],
+    require_headline: bool = False,
+    reference_records: Sequence[Mapping[str, Any]] | None = None,
+) -> None:
+    """Validate one completed artifact without trusting stored score aggregates."""
+
+    artifact = _mapping(artifact, "artifact")
+    _validate_quality_artifact_header(artifact)
+    evaluator = _mapping(evaluator, "evaluator")
+    contract = _validate_run_identity(artifact, evaluator)
+    dataset_id, headline_eligible = _validate_run_scope(
+        artifact,
+        contract,
+        require_headline=require_headline,
+        has_reference_records=reference_records is not None,
+    )
+    mode, runtime, dataset_evaluator = _validate_execution_contract(
+        contract,
+        evaluator,
+        dataset_id=dataset_id,
+    )
+    _validate_git_contract(contract, headline_eligible=headline_eligible)
+    _validate_environment_and_kv_contract(
+        artifact,
+        mode=mode,
+        runtime=runtime,
+    )
+
+    samples = _list(artifact.get("samples"), "artifact.samples")
+    if not samples:
+        raise ValueError("artifact.samples must not be empty")
+    sample_validation = validate_quality_samples(
+        samples,
+        dataset_id=dataset_id,
+        runtime=runtime,
+        dataset_evaluator=dataset_evaluator,
+        reference_records=reference_records,
+    )
+    sample_ids = sample_validation["sample_ids"]
+    _validate_sample_selection(
+        artifact,
+        contract,
+        sample_ids=sample_ids,
+    )
+    _validate_sample_completion(
+        artifact,
+        sample_count=len(samples),
+        recomputed_aggregate=sample_validation["aggregate"],
+    )
+    _validate_materialization_identity(artifact, contract)
 
 
 def paired_bootstrap_non_inferiority(
@@ -718,8 +911,7 @@ def paired_bootstrap_non_inferiority(
     rng = random.Random(seed)
     sample_count = len(differences)
     bootstrap_means = [
-        sum(differences[rng.randrange(sample_count)] for _ in range(sample_count))
-        / sample_count
+        sum(differences[rng.randrange(sample_count)] for _ in range(sample_count)) / sample_count
         for _ in range(resamples)
     ]
     lower = percentile(bootstrap_means, 0.025)
@@ -783,9 +975,7 @@ def _validate_paired_samples(
             if left["task"] != right["task"]:
                 raise ValueError(f"quality pair MVBench task differs at index {index}")
             if left["video_sampling"] != right["video_sampling"]:
-                raise ValueError(
-                    f"quality pair decoded video identity differs at index {index}"
-                )
+                raise ValueError(f"quality pair decoded video identity differs at index {index}")
 
 
 def compare_quality_sample_sets(
@@ -865,9 +1055,7 @@ def compare_quality_sample_sets(
     if dataset_id == "mvbench_test":
         diagnostics["answered_samples"] = {
             "baseline": sum(sample["score"]["answered"] for sample in baseline_samples),
-            "candidate": sum(
-                sample["score"]["answered"] for sample in candidate_samples
-            ),
+            "candidate": sum(sample["score"]["answered"] for sample in candidate_samples),
         }
     paired_input_identity = []
     for sample in baseline_samples:
@@ -927,22 +1115,15 @@ def compare_quality_artifacts(
         raise ValueError("quality comparison baseline mode must be off")
     if candidate_mode == COMPRESSION_OFF:
         raise ValueError("quality comparison candidate mode must differ from off")
-    baseline_common = {
-        key: value for key, value in baseline_contract.items() if key != "mode"
-    }
-    candidate_common = {
-        key: value for key, value in candidate_contract.items() if key != "mode"
-    }
+    baseline_common = {key: value for key, value in baseline_contract.items() if key != "mode"}
+    candidate_common = {key: value for key, value in candidate_contract.items() if key != "mode"}
     if baseline_common != candidate_common:
         raise ValueError("quality pair run contracts differ beyond compression mode")
     if baseline["environment"] != candidate["environment"]:
         raise ValueError("quality pair environments differ")
     if baseline["selection"] != candidate["selection"]:
         raise ValueError("quality pair selections differ")
-    if (
-        baseline["materialization_verification"]
-        != candidate["materialization_verification"]
-    ):
+    if baseline["materialization_verification"] != candidate["materialization_verification"]:
         raise ValueError("quality pair materialization evidence differs")
 
     baseline_samples = baseline["samples"]
@@ -956,16 +1137,12 @@ def compare_quality_artifacts(
     metric_results = sample_comparison["metrics"]
     diagnostics = sample_comparison["diagnostics"]
     all_required_pass = sample_comparison["all_required_metrics_pass"]
-    formal_evidence = bool(
-        baseline["headline_eligible"] and candidate["headline_eligible"]
-    )
+    formal_evidence = bool(baseline["headline_eligible"] and candidate["headline_eligible"])
     if require_headline and not formal_evidence:
         raise ValueError("comparison requires formal headline artifacts")
     baseline_cache = baseline["kv_cache"]
     candidate_cache = candidate["kv_cache"]
-    decision = (
-        ("PASS" if all_required_pass else "FAIL") if formal_evidence else "SMOKE_ONLY"
-    )
+    decision = ("PASS" if all_required_pass else "FAIL") if formal_evidence else "SMOKE_ONLY"
     return {
         "schema_version": QUALITY_COMPARISON_SCHEMA_VERSION,
         "record_type": "p9_quality_non_inferiority",
@@ -980,9 +1157,7 @@ def compare_quality_artifacts(
         "evaluator_sha256": canonical_json_sha256(evaluator),
         "baseline_artifact_sha256": canonical_json_sha256(baseline),
         "candidate_artifact_sha256": canonical_json_sha256(candidate),
-        "paired_input_identity_sha256": sample_comparison[
-            "paired_input_identity_sha256"
-        ],
+        "paired_input_identity_sha256": sample_comparison["paired_input_identity_sha256"],
         "reference_scores_recomputed": reference_records is not None,
         "metrics": metric_results,
         "diagnostics": diagnostics,

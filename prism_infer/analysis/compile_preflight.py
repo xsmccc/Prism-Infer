@@ -25,6 +25,7 @@ from torch.utils._pytree import tree_flatten
 from prism_infer.analysis.benchmark_schema import summarize_values
 
 
+MAX_RECORDED_INPUT_SHAPES = 32
 COMPILE_PREFLIGHT_SCHEMA_VERSION = 1
 COMPILE_PREFLIGHT_REGIONS = (
     "decoder_layer",
@@ -63,12 +64,9 @@ def summarize_explain_output(output: Any) -> dict[str, Any]:
         )
 
     guards = list(output.out_guards or [])
-    guard_sources = Counter(
-        type(guard.originating_source).__name__ for guard in guards
-    )
+    guard_sources = Counter(type(guard.originating_source).__name__ for guard in guards)
     guard_create_functions = Counter(
-        getattr(guard.create_fn, "__name__", type(guard.create_fn).__name__)
-        for guard in guards
+        getattr(guard.create_fn, "__name__", type(guard.create_fn).__name__) for guard in guards
     )
     return {
         "graph_count": int(output.graph_count),
@@ -102,8 +100,8 @@ class DynamoCompileRecorder:
             {
                 "graph_index": len(self.compile_events),
                 "tensor_input_count": len(tensor_shapes),
-                "input_shapes": tensor_shapes[:32],
-                "input_shapes_truncated": len(tensor_shapes) > 32,
+                "input_shapes": tensor_shapes[:MAX_RECORDED_INPUT_SHAPES],
+                "input_shapes_truncated": (len(tensor_shapes) > MAX_RECORDED_INPUT_SHAPES),
                 "node_count": len(list(graph_module.graph.nodes)),
             }
         )
@@ -169,9 +167,7 @@ def compare_tensor_outputs(reference: Any, candidate: Any) -> dict[str, Any]:
 
     tensor_records = []
     max_abs_diff = 0.0
-    for index, (expected, actual) in enumerate(
-        zip(reference_values, candidate_values)
-    ):
+    for index, (expected, actual) in enumerate(zip(reference_values, candidate_values)):
         if not isinstance(expected, torch.Tensor) or not isinstance(actual, torch.Tensor):
             if expected != actual:
                 raise ValueError(
@@ -221,26 +217,36 @@ def validate_compile_preflight_record(record: Mapping[str, Any]) -> None:
         raise ValueError("compile preflight record_type is invalid")
     if record.get("region") not in COMPILE_PREFLIGHT_REGIONS:
         raise ValueError("compile preflight region is invalid")
+    _validate_compile_environment(record.get("environment"))
+    _validate_compile_inputs(record.get("inputs"))
+    _validate_dynamo_evidence(record.get("dynamo"))
+    _validate_recompile_evidence(record.get("recompile"))
+    _validate_compile_benchmark(record.get("benchmark"))
 
-    environment = record.get("environment")
-    if not isinstance(environment, Mapping):
+
+def _validate_compile_environment(raw_environment: object) -> None:
+    if not isinstance(raw_environment, Mapping):
         raise ValueError("compile preflight environment must be an object")
+    environment = raw_environment
     for key in ("torch_version", "cuda_version", "gpu", "git_commit"):
         if not isinstance(environment.get(key), str) or not environment[key]:
             raise ValueError(f"compile preflight environment.{key} is required")
     if not isinstance(environment.get("git_dirty"), bool):
         raise ValueError("compile preflight environment.git_dirty must be bool")
 
-    inputs = record.get("inputs")
-    if not isinstance(inputs, list) or not inputs:
+
+def _validate_compile_inputs(raw_inputs: object) -> None:
+    if not isinstance(raw_inputs, list) or not raw_inputs:
         raise ValueError("compile preflight inputs must be a non-empty list")
-    for shape_group in inputs:
+    for shape_group in raw_inputs:
         if not isinstance(shape_group, list):
             raise ValueError("compile preflight input shape group must be a list")
 
-    dynamo = record.get("dynamo")
-    if not isinstance(dynamo, Mapping):
+
+def _validate_dynamo_evidence(raw_dynamo: object) -> None:
+    if not isinstance(raw_dynamo, Mapping):
         raise ValueError("compile preflight dynamo must be an object")
+    dynamo = raw_dynamo
     for key in ("graph_count", "graph_break_count", "op_count", "guard_count"):
         value = dynamo.get(key)
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -250,9 +256,11 @@ def validate_compile_preflight_record(record: Mapping[str, Any]) -> None:
     if not isinstance(dynamo.get("break_reasons"), list):
         raise ValueError("compile preflight break_reasons must be a list")
 
-    recompile = record.get("recompile")
-    if not isinstance(recompile, Mapping):
+
+def _validate_recompile_evidence(raw_recompile: object) -> None:
+    if not isinstance(raw_recompile, Mapping):
         raise ValueError("compile preflight recompile must be an object")
+    recompile = raw_recompile
     if not isinstance(recompile.get("dynamic"), bool):
         raise ValueError("compile preflight recompile.dynamic must be bool")
     for count_key, list_key in (
@@ -264,13 +272,13 @@ def validate_compile_preflight_record(record: Mapping[str, Any]) -> None:
         if isinstance(count, bool) or not isinstance(count, int) or count < 0:
             raise ValueError(f"compile preflight recompile.{count_key} is invalid")
         if not isinstance(values, list) or count != len(values):
-            raise ValueError(
-                f"compile preflight recompile.{count_key}/{list_key} mismatch"
-            )
+            raise ValueError(f"compile preflight recompile.{count_key}/{list_key} mismatch")
 
-    benchmark = record.get("benchmark")
-    if not isinstance(benchmark, Mapping):
+
+def _validate_compile_benchmark(raw_benchmark: object) -> None:
+    if not isinstance(raw_benchmark, Mapping):
         raise ValueError("compile preflight benchmark must be an object")
+    benchmark = raw_benchmark
     if benchmark.get("status") not in COMPILE_STATUSES:
         raise ValueError("compile preflight benchmark.status is invalid")
     if not isinstance(benchmark.get("attempted"), bool):
@@ -287,7 +295,10 @@ def validate_compile_preflight_record(record: Mapping[str, Any]) -> None:
         if not isinstance(benchmark.get("error"), str) or not benchmark["error"]:
             raise ValueError("failed compile benchmark requires an error")
         return
+    _validate_successful_compile_benchmark(benchmark)
 
+
+def _validate_successful_compile_benchmark(benchmark: Mapping[str, Any]) -> None:
     for key in ("warmup", "repeat"):
         value = benchmark.get(key)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -308,18 +319,21 @@ def validate_compile_preflight_record(record: Mapping[str, Any]) -> None:
         ):
             raise ValueError(f"compile benchmark {key} must be finite and non-negative")
     for key in ("eager_ms", "compiled_ms"):
-        stats = benchmark.get(key)
-        if not isinstance(stats, Mapping):
-            raise ValueError(f"compile benchmark {key} must be stats")
-        expected_keys = {"count", "median", "p90", "p99", "min", "max"}
-        if set(stats) != expected_keys:
-            raise ValueError(f"compile benchmark {key} stats keys are invalid")
+        _validate_compile_latency_stats(benchmark.get(key), key)
     correctness = benchmark.get("correctness")
     if not isinstance(correctness, Mapping):
         raise ValueError("compile benchmark correctness must be an object")
     max_abs_diff = correctness.get("max_abs_diff")
     if not isinstance(max_abs_diff, (int, float)) or not math.isfinite(max_abs_diff):
         raise ValueError("compile benchmark correctness max_abs_diff is invalid")
+
+
+def _validate_compile_latency_stats(raw_stats: object, name: str) -> None:
+    if not isinstance(raw_stats, Mapping):
+        raise ValueError(f"compile benchmark {name} must be stats")
+    expected_keys = {"count", "median", "p90", "p99", "min", "max"}
+    if set(raw_stats) != expected_keys:
+        raise ValueError(f"compile benchmark {name} stats keys are invalid")
 
 
 def build_latency_stats(values: Sequence[float]) -> dict[str, int | float]:

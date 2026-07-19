@@ -2,6 +2,7 @@
 
 import gc
 
+import pytest
 import torch
 from PIL import Image
 
@@ -10,6 +11,13 @@ from prism_infer import LLM
 from prism_infer.sampling_params import SamplingParams
 from test_processor_pipeline_video import demo_video_frames
 
+
+pytestmark = [
+    pytest.mark.model,
+    pytest.mark.gpu,
+    pytest.mark.integration,
+    pytest.mark.slow,
+]
 
 MAX_TOKENS = 2
 

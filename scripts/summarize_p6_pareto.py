@@ -38,9 +38,7 @@ def main() -> None:
         if not selected_modes:
             raise SystemExit("--modes must contain at least one mode")
         selected_modes.add(args.baseline_mode)
-        records = [
-            record for record in records if record["mode"]["name"] in selected_modes
-        ]
+        records = [record for record in records if record["mode"]["name"] in selected_modes]
         if not records:
             raise SystemExit("--modes did not select any input records")
     rows = summarize_pareto_records(records, baseline_mode=args.baseline_mode)

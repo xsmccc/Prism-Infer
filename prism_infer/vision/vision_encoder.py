@@ -9,21 +9,58 @@
   PatchEmbed (Conv3d) -> PosEmbed -> 27x ViTBlock -> 4x PatchMerger
   Output: (main_features [196, 4096], [ds0, ds1, ds2] each [196, 4096])
 """
+
+from math import isqrt
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from prism_infer.models.qwen3_vl_architecture import (
+    CANONICAL_VISION_HIDDEN_SIZE,
+    CANONICAL_VISION_IN_CHANNELS,
+    CANONICAL_VISION_INTERMEDIATE_SIZE,
+    CANONICAL_VISION_NUM_HEADS,
+    CANONICAL_VISION_OUTPUT_SIZE,
+    CANONICAL_VISION_PATCH_SIZE,
+    CANONICAL_VISION_ROPE_THETA,
+    CANONICAL_VISION_SPATIAL_MERGE_SIZE,
+    CANONICAL_VISION_TEMPORAL_PATCH_SIZE,
+    Qwen3VLVisionArchitecture,
+)
 
-def _cfg_get(config, *names, default=None):
-    """Read an attribute/key from a HF config-like object without importing transformers."""
+try:
+    from flash_attn import flash_attn_varlen_func as vision_flash_attn_varlen_func
+
+    HAS_VISION_FLASH_ATTN = True
+except ImportError:
+    vision_flash_attn_varlen_func = None
+    HAS_VISION_FLASH_ATTN = False
+
+
+UNBATCHED_ATTENTION_TENSOR_RANK = 3
+VISION_TOKEN_MATRIX_RANK = 2
+SINGLE_SEQUENCE_CU_SEQLENS_COUNT = 2
+QKV_PROJECTION_COUNT = 3
+
+
+def _config_dtype(config: object | None) -> torch.dtype:
     if config is None:
-        return default
-    for name in names:
+        return torch.bfloat16
+    for name in ("torch_dtype", "dtype"):
         if isinstance(config, dict) and name in config:
-            return config[name]
+            value = config[name]
+            break
         if hasattr(config, name):
-            return getattr(config, name)
-    return default
+            value = getattr(config, name)
+            break
+    else:
+        return torch.bfloat16
+    if isinstance(value, str):
+        value = getattr(torch, value.replace("torch.", ""), None)
+    if not isinstance(value, torch.dtype):
+        raise TypeError(f"vision dtype must resolve to torch.dtype, got {value!r}")
+    return value
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -37,9 +74,14 @@ class PatchEmbed(nn.Module):
     patch features shape: [N, hidden_size=1152]
     """
 
-    def __init__(self, in_channels: int = 3, hidden_size: int = 1152,
-                 temporal_patch_size: int = 2, patch_size: int = 16,
-                 dtype: torch.dtype = torch.bfloat16):
+    def __init__(
+        self,
+        in_channels: int = CANONICAL_VISION_IN_CHANNELS,
+        hidden_size: int = CANONICAL_VISION_HIDDEN_SIZE,
+        temporal_patch_size: int = CANONICAL_VISION_TEMPORAL_PATCH_SIZE,
+        patch_size: int = CANONICAL_VISION_PATCH_SIZE,
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.in_channels = in_channels
         self.hidden_size = hidden_size
@@ -49,9 +91,9 @@ class PatchEmbed(nn.Module):
         kernel_size = (temporal_patch_size, patch_size, patch_size)
         # Conv3d: in_channels=3(RGB), out_channels=1152, kernel=(2,16,16), stride=(2,16,16)
         self.proj = nn.Conv3d(
-            in_channels=in_channels, # 3
-            out_channels=hidden_size, # 1152
-            kernel_size=kernel_size, # (2,16,16)
+            in_channels=in_channels,  # 3
+            out_channels=hidden_size,  # 1152
+            kernel_size=kernel_size,  # (2,16,16)
             stride=kernel_size,
             bias=True,
             dtype=dtype,
@@ -64,8 +106,7 @@ class PatchEmbed(nn.Module):
         target_dtype = self.proj.weight.dtype
         x = x.to(dtype=target_dtype)
         # reshape to [L, C, T, H, W] = [L, 3, 2, 16, 16]
-        x = x.view(L, self.in_channels, self.temporal_patch_size,
-                    self.patch_size, self.patch_size)
+        x = x.view(L, self.in_channels, self.temporal_patch_size, self.patch_size, self.patch_size)
         # Conv3d: [L, 3, 2, 16, 16] → [L, 1152, 1, 1, 1]
         x = self.proj(x)
         # squeeze → [L, 1152]
@@ -83,15 +124,19 @@ class ViTMLP(nn.Module):
     Qwen3-VL ViT 使用 GELU-Tanh 而非 LLM 的 SiLU。
     """
 
-    def __init__(self, dim: int = 1152, hidden_dim: int = 4304,
-                 dtype: torch.dtype = torch.bfloat16):
+    def __init__(
+        self,
+        dim: int = CANONICAL_VISION_HIDDEN_SIZE,
+        hidden_dim: int = CANONICAL_VISION_INTERMEDIATE_SIZE,
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.linear_fc1 = nn.Linear(dim, hidden_dim, bias=True, dtype=dtype)
         self.linear_fc2 = nn.Linear(hidden_dim, dim, bias=True, dtype=dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.linear_fc1(x)
-        x = F.gelu(x, approximate='tanh')  # GELU-Tanh
+        x = F.gelu(x, approximate="tanh")  # GELU-Tanh
         x = self.linear_fc2(x)
         return x
 
@@ -105,12 +150,10 @@ class VisionRotaryEmbedding(nn.Module):
     Ref: transformers/models/qwen3_vl/modeling_qwen3_vl.py:79-90
     """
 
-    def __init__(self, dim: int, theta: float = 10000.0) -> None:
+    def __init__(self, dim: int, theta: float = CANONICAL_VISION_ROPE_THETA) -> None:
         super().__init__()
         target_device = torch.empty((), dtype=torch.float).device
-        inv_freq = 1.0 / (
-            theta ** (torch.arange(0, dim, 2, dtype=torch.float, device="cpu") / dim)
-        )
+        inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2, dtype=torch.float, device="cpu") / dim))
         self.register_buffer("inv_freq", inv_freq.to(target_device), persistent=False)
 
     def forward(self, seqlen: int) -> torch.Tensor:
@@ -133,16 +176,20 @@ class ViTAttention(nn.Module):
       - 使用 2D RoPE
     """
 
-    def __init__(self, dim: int = 1152, num_heads: int = 16,
-                 dtype: torch.dtype = torch.bfloat16):
+    def __init__(
+        self,
+        dim: int = CANONICAL_VISION_HIDDEN_SIZE,
+        num_heads: int = CANONICAL_VISION_NUM_HEADS,
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads  # 72
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
 
         # 合并 QKV: 3 * dim = 3 * 1152 = 3456
-        self.qkv = nn.Linear(dim, dim * 3, bias=True, dtype=dtype)
+        self.qkv = nn.Linear(dim, dim * QKV_PROJECTION_COUNT, bias=True, dtype=dtype)
         # 输出投影
         self.proj = nn.Linear(dim, dim, bias=True, dtype=dtype)
 
@@ -153,8 +200,7 @@ class ViTAttention(nn.Module):
         return torch.cat((-x2, x1), dim=-1)
 
     @staticmethod
-    def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
-                         sin: torch.Tensor) -> torch.Tensor:
+    def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         """对 x 应用 Rotary Position Embedding. HF 在 float32 下计算以减少精度损失。
 
         x:   [B, heads, N, head_dim] 或 [heads, N, head_dim]
@@ -169,24 +215,28 @@ class ViTAttention(nn.Module):
         # cos: [N, head_dim] → [1, 1, N, head_dim]
         cos_f = cos_f.unsqueeze(0).unsqueeze(0)
         sin_f = sin_f.unsqueeze(0).unsqueeze(0)
-        if x_f.dim() == 3:
+        if x_f.dim() == UNBATCHED_ATTENTION_TENSOR_RANK:
             cos_f = cos_f.squeeze(0)
             sin_f = sin_f.squeeze(0)
         result = x_f * cos_f + ViTAttention.rotate_half(x_f) * sin_f
         return result.to(orig_dtype)
 
-    def forward(self, x: torch.Tensor,
-                cos: torch.Tensor = None,
-                sin: torch.Tensor = None,
-                cu_seqlens: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        cos: torch.Tensor = None,
+        sin: torch.Tensor = None,
+        cu_seqlens: torch.Tensor | None = None,
+        max_seqlen: int | None = None,
+    ) -> torch.Tensor:
         """x: [N, 1152] or [B, N, 1152] → same shape.
 
         cu_seqlens: [num_images + 1]，多图时按每张图分段做双向
         attention，避免不同图片 patch 之间互相注意。
         """
         squeeze_out = False
-        if x.dim() == 2:
-            x = x.unsqueeze(0)   # [N, 1152] → [1, N, 1152]
+        if x.dim() == VISION_TOKEN_MATRIX_RANK:
+            x = x.unsqueeze(0)  # [N, 1152] → [1, N, 1152]
             squeeze_out = True
 
         B, N, D = x.shape
@@ -195,7 +245,7 @@ class ViTAttention(nn.Module):
         qkv = self.qkv(x)
 
         # 2. 拆分为 Q, K, V: 3456 = 1152×3 → 3 × [B, N, 1152]
-        q, k, v = qkv.chunk(3, dim=-1)
+        q, k, v = qkv.chunk(QKV_PROJECTION_COUNT, dim=-1)
 
         # 3. Reshape 为多头: [B, N, 1152] → [B, N, 16, 72] → [B, 16, N, 72]
         q = q.view(B, N, self.num_heads, self.head_dim).transpose(1, 2)
@@ -210,18 +260,43 @@ class ViTAttention(nn.Module):
         # 5. Scaled Dot-Product Attention (双向, 无 causal mask)。
         # 多图时 HF eager 路径按 cu_seqlens 分段计算，不能让不同图片
         # patch 之间互相注意。单图或未传 cu_seqlens 时保持原路径。
-        if cu_seqlens is not None and cu_seqlens.numel() > 2:
+        if (
+            cu_seqlens is not None
+            and cu_seqlens.numel() > SINGLE_SEQUENCE_CU_SEQLENS_COUNT
+            and HAS_VISION_FLASH_ATTN
+            and q.is_cuda
+            and B == 1
+        ):
+            if max_seqlen is None:
+                max_seqlen = int((cu_seqlens[1:] - cu_seqlens[:-1]).max().item())
+            q_varlen = q[0].transpose(0, 1).contiguous()
+            k_varlen = k[0].transpose(0, 1).contiguous()
+            v_varlen = v[0].transpose(0, 1).contiguous()
+            o_varlen = vision_flash_attn_varlen_func(
+                q_varlen,
+                k_varlen,
+                v_varlen,
+                cu_seqlens_q=cu_seqlens,
+                cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=max_seqlen,
+                max_seqlen_k=max_seqlen,
+                softmax_scale=self.scale,
+                causal=False,
+                deterministic=True,
+            )
+            o = o_varlen.transpose(0, 1).unsqueeze(0)
+        elif cu_seqlens is not None and cu_seqlens.numel() > SINGLE_SEQUENCE_CU_SEQLENS_COUNT:
             outputs = []
             for start, end in zip(cu_seqlens[:-1].tolist(), cu_seqlens[1:].tolist()):
                 q_i = q[:, :, start:end, :]
                 k_i = k[:, :, start:end, :]
                 v_i = v[:, :, start:end, :]
-                outputs.append(F.scaled_dot_product_attention(
-                    q_i, k_i, v_i, is_causal=False, scale=self.scale))
+                outputs.append(
+                    F.scaled_dot_product_attention(q_i, k_i, v_i, is_causal=False, scale=self.scale)
+                )
             o = torch.cat(outputs, dim=2)
         else:
-            o = F.scaled_dot_product_attention(
-                q, k, v, is_causal=False, scale=self.scale)
+            o = F.scaled_dot_product_attention(q, k, v, is_causal=False, scale=self.scale)
 
         # 6. 合并多头 + 输出投影: [B, 16, N, 72] → [B, N, 1152]
         o = o.transpose(1, 2).reshape(B, N, D)
@@ -246,20 +321,35 @@ class ViTBlock(nn.Module):
       - 无 cross-attention
     """
 
-    def __init__(self, dim: int = 1152, num_heads: int = 16,
-                 mlp_hidden: int = 4304, dtype: torch.dtype = torch.bfloat16):
+    def __init__(
+        self,
+        dim: int = CANONICAL_VISION_HIDDEN_SIZE,
+        num_heads: int = CANONICAL_VISION_NUM_HEADS,
+        mlp_hidden: int = CANONICAL_VISION_INTERMEDIATE_SIZE,
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim, eps=1e-06, dtype=dtype)
         self.attn = ViTAttention(dim, num_heads, dtype)
         self.norm2 = nn.LayerNorm(dim, eps=1e-06, dtype=dtype)
         self.mlp = ViTMLP(dim, mlp_hidden, dtype)
 
-    def forward(self, x: torch.Tensor,
-                cos: torch.Tensor = None,
-                sin: torch.Tensor = None,
-                cu_seqlens: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        cos: torch.Tensor = None,
+        sin: torch.Tensor = None,
+        cu_seqlens: torch.Tensor | None = None,
+        max_seqlen: int | None = None,
+    ) -> torch.Tensor:
         # Pre-norm + Attention + residual
-        x = x + self.attn(self.norm1(x), cos=cos, sin=sin, cu_seqlens=cu_seqlens)
+        x = x + self.attn(
+            self.norm1(x),
+            cos=cos,
+            sin=sin,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=max_seqlen,
+        )
         # Pre-norm + MLP + residual
         x = x + self.mlp(self.norm2(x))
         return x
@@ -276,9 +366,14 @@ class PatchMerger(nn.Module):
     维度映射: LayerNorm → Linear(4608→4608) → GELU → Linear(4608→4096)
     """
 
-    def __init__(self, dim: int = 1152, out_dim: int = 4096,
-                 merge_size: int = 2, post_norm: bool = False,
-                 dtype: torch.dtype = torch.bfloat16):
+    def __init__(
+        self,
+        dim: int = CANONICAL_VISION_HIDDEN_SIZE,
+        out_dim: int = CANONICAL_VISION_OUTPUT_SIZE,
+        merge_size: int = CANONICAL_VISION_SPATIAL_MERGE_SIZE,
+        post_norm: bool = False,
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.dim = dim
         self.merge_size = merge_size
@@ -321,50 +416,49 @@ class VisionEncoder(nn.Module):
             dtype = config
             config = None
 
-        dtype = dtype or _cfg_get(config, "torch_dtype", "dtype",
-                                  default=torch.bfloat16)
+        dtype = dtype or _config_dtype(config)
         if isinstance(dtype, str):
-            dtype = getattr(torch, dtype.replace("torch.", ""))
+            dtype = getattr(torch, dtype.replace("torch.", ""), None)
+        if not isinstance(dtype, torch.dtype):
+            raise TypeError(f"vision dtype must be torch.dtype, got {dtype!r}")
 
-        dim = _cfg_get(config, "hidden_size", "embed_dim", default=1152)
-        in_channels = _cfg_get(config, "in_channels", default=3)
-        temporal_patch_size = _cfg_get(config, "temporal_patch_size", default=2)
-        patch_size = _cfg_get(config, "patch_size", default=16)
-        num_heads = _cfg_get(config, "num_heads", "num_attention_heads", default=16)
-        mlp_hidden = _cfg_get(config, "intermediate_size", "mlp_hidden_size",
-                              default=4304)
-        num_layers = _cfg_get(config, "depth", "num_hidden_layers",
-                              "num_layers", default=27)
-        out_dim = _cfg_get(config, "out_hidden_size", "output_hidden_size",
-                           default=4096)
-        pos_embed_size = _cfg_get(config, "num_position_embeddings",
-                                  "max_position_embeddings", default=2304)
-        spatial_merge_size = _cfg_get(config, "spatial_merge_size", default=2)
-        deepstack_indexes = _cfg_get(config, "deepstack_visual_indexes",
-                                     "deepstack_visual_indices",
-                                     default=[8, 16, 24])
+        architecture = (
+            Qwen3VLVisionArchitecture.canonical()
+            if config is None
+            else Qwen3VLVisionArchitecture.from_config(config)
+        )
+        dim = architecture.hidden_size
+        in_channels = architecture.in_channels
+        temporal_patch_size = architecture.temporal_patch_size
+        patch_size = architecture.patch_size
+        num_heads = architecture.num_heads
+        mlp_hidden = architecture.intermediate_size
+        num_layers = architecture.depth
+        out_dim = architecture.output_size
+        pos_embed_size = architecture.num_position_embeddings
+        spatial_merge_size = architecture.spatial_merge_size
+        deepstack_indexes = architecture.deepstack_visual_indexes
 
         # Patch Embed
-        self.patch_embed = PatchEmbed(
-            in_channels, dim, temporal_patch_size, patch_size, dtype)
+        self.patch_embed = PatchEmbed(in_channels, dim, temporal_patch_size, patch_size, dtype)
 
         # 可学习位置编码 (最多 2304 个 patch)
         self.pos_embed = nn.Embedding(pos_embed_size, dim, dtype=dtype)
-        self.num_grid_per_side = int(pos_embed_size ** 0.5)  # 48 for Qwen3-VL-8B
+        self.num_grid_per_side = isqrt(pos_embed_size)
 
         # 27 ViT Blocks
-        self.blocks = nn.ModuleList([
-            ViTBlock(dim, num_heads, mlp_hidden, dtype) for _ in range(num_layers)
-        ])
+        self.blocks = nn.ModuleList(
+            [ViTBlock(dim, num_heads, mlp_hidden, dtype) for _ in range(num_layers)]
+        )
 
         # 4 Mergers: 1 主 (post_norm=False) + 3 DeepStack (post_norm=True)
-        self.merger = PatchMerger(dim, out_dim, spatial_merge_size,
-                                  post_norm=False, dtype=dtype)
-        self.deepstack_merger_list = nn.ModuleList([
-            PatchMerger(dim, out_dim, spatial_merge_size,
-                        post_norm=True, dtype=dtype)
-            for _ in range(len(deepstack_indexes))
-        ])
+        self.merger = PatchMerger(dim, out_dim, spatial_merge_size, post_norm=False, dtype=dtype)
+        self.deepstack_merger_list = nn.ModuleList(
+            [
+                PatchMerger(dim, out_dim, spatial_merge_size, post_norm=True, dtype=dtype)
+                for _ in range(len(deepstack_indexes))
+            ]
+        )
         self.deepstack_visual_indexes = list(deepstack_indexes)
         self.spatial_merge_size = spatial_merge_size
         self.head_dim = dim // num_heads
@@ -381,8 +475,7 @@ class VisionEncoder(nn.Module):
         device = freq_table.device
 
         total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
-        pos_ids = torch.empty((total_tokens, 2), dtype=torch.long,
-                              device=device)
+        pos_ids = torch.empty((total_tokens, 2), dtype=torch.long, device=device)
 
         offset = 0
         for num_frames, height, width in grid_thw:
@@ -393,23 +486,32 @@ class VisionEncoder(nn.Module):
             intra_row = torch.arange(self.spatial_merge_size, device=device)
             intra_col = torch.arange(self.spatial_merge_size, device=device)
 
-            row_idx = block_rows[:, None, None, None] * self.spatial_merge_size + intra_row[None, None, :, None]
-            col_idx = block_cols[None, :, None, None] * self.spatial_merge_size + intra_col[None, None, None, :]
-            row_idx = row_idx.expand(merged_h, merged_w, self.spatial_merge_size, self.spatial_merge_size).reshape(-1)
-            col_idx = col_idx.expand(merged_h, merged_w, self.spatial_merge_size, self.spatial_merge_size).reshape(-1)
+            row_idx = (
+                block_rows[:, None, None, None] * self.spatial_merge_size
+                + intra_row[None, None, :, None]
+            )
+            col_idx = (
+                block_cols[None, :, None, None] * self.spatial_merge_size
+                + intra_col[None, None, None, :]
+            )
+            row_idx = row_idx.expand(
+                merged_h, merged_w, self.spatial_merge_size, self.spatial_merge_size
+            ).reshape(-1)
+            col_idx = col_idx.expand(
+                merged_h, merged_w, self.spatial_merge_size, self.spatial_merge_size
+            ).reshape(-1)
 
             coords = torch.stack((row_idx, col_idx), dim=-1)
             if num_frames > 1:
                 coords = coords.repeat(num_frames, 1)
             n = coords.shape[0]
-            pos_ids[offset:offset + n] = coords
+            pos_ids[offset : offset + n] = coords
             offset += n
 
         embeddings = freq_table[pos_ids]  # [N, 2, dim/2]
-        return embeddings.flatten(1)       # [N, dim]
+        return embeddings.flatten(1)  # [N, dim]
 
-    def _pos_embed_interpolate(self, grid_thw: torch.Tensor,
-                                 device: torch.device) -> torch.Tensor:
+    def _pos_embed_interpolate(self, grid_thw: torch.Tensor) -> torch.Tensor:
         """双线性插值 + spatial merge 重排 (完全参照 HF fast_pos_embed_interpolate)."""
         device = self.pos_embed.weight.device
         dtype = self.pos_embed.weight.dtype
@@ -456,8 +558,11 @@ class VisionEncoder(nn.Module):
                 self.spatial_merge_size,
             )
             reorder = (
-                h_idx[:, :, None, None] * w + w_idx[None, None, :, :]
-            ).transpose(1, 2).flatten().repeat(t)
+                (h_idx[:, :, None, None] * w + w_idx[None, None, :, :])
+                .transpose(1, 2)
+                .flatten()
+                .repeat(t)
+            )
 
             for i in range(4):
                 idx_parts[i].append(corner_indices[i][reorder])
@@ -468,8 +573,7 @@ class VisionEncoder(nn.Module):
         pos_embeds = self.pos_embed(idx_tensor) * weight_tensor[:, :, None]
         return pos_embeds.sum(0).to(dtype=dtype)
 
-    def _get_position_embeddings(self, grid_thw: torch.Tensor,
-                                  hidden_states: torch.Tensor):
+    def _get_position_embeddings(self, grid_thw: torch.Tensor, hidden_states: torch.Tensor):
         """生成 RoPE 的 (cos, sin) 对.
 
         rot_pos_emb 输出 [N, head_dim/2] = [N, 36],
@@ -484,26 +588,29 @@ class VisionEncoder(nn.Module):
         self,
         pixel_values: torch.Tensor,
         grid_thw: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int]:
         """准备 Vision tensor region 的输入。
 
         grid 驱动的位置插值、2D RoPE index 和分段边界包含 Python 动态控制流，
-        保留在 compile region 外；返回的四个 tensor 可供稳定 ViT blocks 使用。
+        保留在 compile region 外；同时只物化一次最大 segment 长度，避免每层
+        为 varlen attention 重复同步。
 
         pixel_values: [N, patch_input_dim]
         grid_thw: [num_images, 3]
-        返回: x [N, dim]、cos/sin [N, head_dim]、cu_seqlens [segments + 1]
+        返回: x、cos/sin、cu_seqlens，以及静态 max_seqlen。
         """
 
         x = self.patch_embed(pixel_values)  # [N, dim]
-        x = x + self._pos_embed_interpolate(grid_thw, x.device)
+        x = x + self._pos_embed_interpolate(grid_thw)
         cos, sin = self._get_position_embeddings(grid_thw, x)
-        cu_seqlens = torch.repeat_interleave(
+        segment_lengths = torch.repeat_interleave(
             grid_thw[:, 1] * grid_thw[:, 2],
             grid_thw[:, 0],
-        ).cumsum(dim=0, dtype=torch.int32)
+        )
+        max_seqlen = int(segment_lengths.max().item())
+        cu_seqlens = segment_lengths.cumsum(dim=0, dtype=torch.int32)
         cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0).to(x.device)
-        return x, cos, sin, cu_seqlens
+        return x, cos, sin, cu_seqlens, max_seqlen
 
     def forward_tensor_region(
         self,
@@ -511,6 +618,7 @@ class VisionEncoder(nn.Module):
         cos: torch.Tensor,
         sin: torch.Tensor,
         cu_seqlens: torch.Tensor,
+        max_seqlen: int,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         """执行 ViT blocks、DeepStack mergers 和 main merger。
 
@@ -522,18 +630,23 @@ class VisionEncoder(nn.Module):
 
         deepstack_features: list[torch.Tensor] = []
         for layer_index, block in enumerate(self.blocks):
-            x = block(x, cos=cos, sin=sin, cu_seqlens=cu_seqlens)
+            x = block(
+                x,
+                cos=cos,
+                sin=sin,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+            )
             if layer_index in self.deepstack_visual_indexes:
                 merger_index = self.deepstack_visual_indexes.index(layer_index)
-                deepstack_features.append(
-                    self.deepstack_merger_list[merger_index](x)
-                )
+                deepstack_features.append(self.deepstack_merger_list[merger_index](x))
 
         main = self.merger(x)
         return main, deepstack_features
 
-    def forward(self, pixel_values: torch.Tensor,
-                grid_thw: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    def forward(
+        self, pixel_values: torch.Tensor, grid_thw: torch.Tensor
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         """前向传播。
 
         pixel_values: [N, 1536]

@@ -228,11 +228,7 @@ def _text_k_norm_by_seq(record: dict[str, Any]) -> dict[int, float]:
             continue
         seq_id = int(stat.get("seq_id", 0))
         values.setdefault(seq_id, []).append(float(stat["k_norm_mean"]))
-    return {
-        seq_id: sum(items) / len(items)
-        for seq_id, items in values.items()
-        if items
-    }
+    return {seq_id: sum(items) / len(items) for seq_id, items in values.items() if items}
 
 
 def _span_k_norm_ratio(
@@ -330,7 +326,9 @@ def _get_step_id(record: dict[str, Any]) -> int:
 
 def _source_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     layer_records = [record for record in records if record.get("record_type") == "attention_layer"]
-    layers = sorted({int(record["layer_id"]) for record in layer_records if record.get("layer_id") is not None})
+    layers = sorted(
+        {int(record["layer_id"]) for record in layer_records if record.get("layer_id") is not None}
+    )
     phases = sorted({str(record.get("phase")) for record in layer_records})
     return {
         "schema_versions": sorted(
@@ -340,14 +338,18 @@ def _source_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
                 if record.get("schema_version") is not None
             }
         ),
-        "trace_headers": sum(1 for record in records if record.get("record_type") == "trace_header"),
+        "trace_headers": sum(
+            1 for record in records if record.get("record_type") == "trace_header"
+        ),
         "layer_records": len(layer_records),
         "layers": layers,
         "phases": phases,
     }
 
 
-def _sorted_token_scores(token_scores: dict[tuple[int, str, int, int], _TokenAggregate]) -> list[dict[str, Any]]:
+def _sorted_token_scores(
+    token_scores: dict[tuple[int, str, int, int], _TokenAggregate],
+) -> list[dict[str, Any]]:
     rows = [aggregate.to_dict() for aggregate in token_scores.values()]
     rows.sort(
         key=lambda row: (
@@ -360,7 +362,9 @@ def _sorted_token_scores(token_scores: dict[tuple[int, str, int, int], _TokenAgg
     return rows
 
 
-def _sorted_span_scores(span_scores: dict[tuple[int, str, int], _SpanAggregate]) -> list[dict[str, Any]]:
+def _sorted_span_scores(
+    span_scores: dict[tuple[int, str, int], _SpanAggregate],
+) -> list[dict[str, Any]]:
     rows = [aggregate.to_dict() for aggregate in span_scores.values()]
     rows.sort(
         key=lambda row: (
@@ -432,93 +436,12 @@ def score_visual_importance(
     visual_observation_count = 0
 
     for record in records:
-        if record.get("record_type") != "attention_layer":
-            continue
-        attention = record.get("attention", {})
-        if not attention.get("available", False):
-            continue
-        layer_id = _get_layer_id(record)
-        step_id = _get_step_id(record)
-        phase = str(record.get("phase", "unknown"))
-        for seq_stat in attention.get("sequence_stats", []) or []:
-            seq_id = int(seq_stat.get("seq_id", 0))
-            focus = _entropy_focus(seq_stat)
-            top_visual_tokens = _top_visual_token_scores(seq_stat)
-            for span_mass in seq_stat.get("span_masses", []) or []:
-                modality = str(span_mass.get("modality"))
-                if modality not in VISUAL_MODALITIES:
-                    continue
-                span_index = int(span_mass.get("span_index", 0))
-                token_start = int(span_mass["start"])
-                token_end = int(span_mass["end"])
-                token_count = token_end - token_start
-                if token_count <= 0:
-                    continue
-                attention_mass = _as_float(span_mass.get("mass_mean"))
-                k_norm_ratio = _span_k_norm_ratio(
-                    record,
-                    seq_id=seq_id,
-                    modality=modality,
-                    span_index=span_index,
-                    token_start=token_start,
-                    token_end=token_end,
-                )
-                visual_observation_count += 1
-
-                span_key = (seq_id, modality, span_index)
-                if span_key not in span_scores:
-                    span_scores[span_key] = _SpanAggregate(
-                        seq_id=seq_id,
-                        modality=modality,
-                        span_index=span_index,
-                        token_start=token_start,
-                        token_end=token_end,
-                    )
-                span_scores[span_key].add(
-                    score=_span_score(
-                        attention_mass=attention_mass,
-                        entropy_focus=focus,
-                        k_norm_ratio=k_norm_ratio,
-                        weights=active_weights,
-                    ),
-                    attention_mass=attention_mass,
-                    entropy_focus=focus,
-                    k_norm_ratio=k_norm_ratio,
-                    layer_id=layer_id,
-                    phase=phase,
-                    step_id=step_id,
-                )
-
-                token_masses = _token_masses_for_span(
-                    token_start=token_start,
-                    token_end=token_end,
-                    span_attention_mass=attention_mass,
-                    top_visual_tokens=top_visual_tokens,
-                )
-                for token_index, (token_mass, observed_top_token) in token_masses.items():
-                    token_key = (seq_id, modality, span_index, token_index)
-                    if token_key not in token_scores:
-                        token_scores[token_key] = _TokenAggregate(
-                            seq_id=seq_id,
-                            modality=modality,
-                            span_index=span_index,
-                            token_index=token_index,
-                        )
-                    token_scores[token_key].add(
-                        score=_span_score(
-                            attention_mass=token_mass,
-                            entropy_focus=focus,
-                            k_norm_ratio=k_norm_ratio,
-                            weights=active_weights,
-                        ),
-                        attention_mass=token_mass,
-                        entropy_focus=focus,
-                        k_norm_ratio=k_norm_ratio,
-                        observed_top_token=observed_top_token,
-                        layer_id=layer_id,
-                        phase=phase,
-                        step_id=step_id,
-                    )
+        visual_observation_count += _accumulate_importance_record(
+            record,
+            weights=active_weights,
+            token_scores=token_scores,
+            span_scores=span_scores,
+        )
 
     ranked_tokens = _sorted_token_scores(token_scores)
     ranked_spans = _sorted_span_scores(span_scores)
@@ -532,7 +455,7 @@ def score_visual_importance(
         "visual_span_observations": visual_observation_count,
         "total_token_observations": sum(int(row["observation_count"]) for row in ranked_tokens),
         "top_tokens": ranked_tokens[: max(0, top_k)],
-        "bottom_tokens": list(reversed(ranked_tokens[-max(0, top_k):])) if top_k > 0 else [],
+        "bottom_tokens": list(reversed(ranked_tokens[-max(0, top_k) :])) if top_k > 0 else [],
         "token_scores": ranked_tokens,
         "span_scores": ranked_spans,
         "keep_ratio_simulations": simulate_keep_ratios(ranked_tokens, keep_ratios),
@@ -545,6 +468,205 @@ def score_visual_importance(
             "until an active pruning strategy is implemented and benchmarked.",
         ],
     }
+
+
+def _accumulate_importance_record(
+    record: dict[str, Any],
+    *,
+    weights: ImportanceWeights,
+    token_scores: dict[tuple[int, str, int, int], _TokenAggregate],
+    span_scores: dict[tuple[int, str, int], _SpanAggregate],
+) -> int:
+    if record.get("record_type") != "attention_layer":
+        return 0
+    attention = record.get("attention", {})
+    if not attention.get("available", False):
+        return 0
+    observations = 0
+    for sequence_stats in attention.get("sequence_stats", []) or []:
+        observations += _accumulate_sequence_importance(
+            record,
+            sequence_stats,
+            weights=weights,
+            token_scores=token_scores,
+            span_scores=span_scores,
+        )
+    return observations
+
+
+def _accumulate_sequence_importance(
+    record: dict[str, Any],
+    sequence_stats: dict[str, Any],
+    *,
+    weights: ImportanceWeights,
+    token_scores: dict[tuple[int, str, int, int], _TokenAggregate],
+    span_scores: dict[tuple[int, str, int], _SpanAggregate],
+) -> int:
+    seq_id = int(sequence_stats.get("seq_id", 0))
+    focus = _entropy_focus(sequence_stats)
+    top_visual_tokens = _top_visual_token_scores(sequence_stats)
+    observations = 0
+    for span_mass in sequence_stats.get("span_masses", []) or []:
+        observations += _accumulate_visual_span(
+            record,
+            span_mass,
+            seq_id=seq_id,
+            entropy_focus=focus,
+            top_visual_tokens=top_visual_tokens,
+            weights=weights,
+            token_scores=token_scores,
+            span_scores=span_scores,
+        )
+    return observations
+
+
+def _accumulate_visual_span(
+    record: dict[str, Any],
+    span_mass: dict[str, Any],
+    *,
+    seq_id: int,
+    entropy_focus: float,
+    top_visual_tokens: dict[int, float],
+    weights: ImportanceWeights,
+    token_scores: dict[tuple[int, str, int, int], _TokenAggregate],
+    span_scores: dict[tuple[int, str, int], _SpanAggregate],
+) -> int:
+    modality = str(span_mass.get("modality"))
+    if modality not in VISUAL_MODALITIES:
+        return 0
+    span_index = int(span_mass.get("span_index", 0))
+    token_start = int(span_mass["start"])
+    token_end = int(span_mass["end"])
+    if token_end <= token_start:
+        return 0
+    attention_mass = _as_float(span_mass.get("mass_mean"))
+    k_norm_ratio = _span_k_norm_ratio(
+        record,
+        seq_id=seq_id,
+        modality=modality,
+        span_index=span_index,
+        token_start=token_start,
+        token_end=token_end,
+    )
+    observation = {
+        "layer_id": _get_layer_id(record),
+        "phase": str(record.get("phase", "unknown")),
+        "step_id": _get_step_id(record),
+    }
+    _update_span_importance(
+        span_scores,
+        seq_id=seq_id,
+        modality=modality,
+        span_index=span_index,
+        token_start=token_start,
+        token_end=token_end,
+        attention_mass=attention_mass,
+        entropy_focus=entropy_focus,
+        k_norm_ratio=k_norm_ratio,
+        weights=weights,
+        observation=observation,
+    )
+    _update_token_importance(
+        token_scores,
+        seq_id=seq_id,
+        modality=modality,
+        span_index=span_index,
+        token_start=token_start,
+        token_end=token_end,
+        attention_mass=attention_mass,
+        entropy_focus=entropy_focus,
+        k_norm_ratio=k_norm_ratio,
+        top_visual_tokens=top_visual_tokens,
+        weights=weights,
+        observation=observation,
+    )
+    return 1
+
+
+def _update_span_importance(
+    span_scores: dict[tuple[int, str, int], _SpanAggregate],
+    *,
+    seq_id: int,
+    modality: str,
+    span_index: int,
+    token_start: int,
+    token_end: int,
+    attention_mass: float,
+    entropy_focus: float,
+    k_norm_ratio: float,
+    weights: ImportanceWeights,
+    observation: dict[str, Any],
+) -> None:
+    span_key = (seq_id, modality, span_index)
+    aggregate = span_scores.setdefault(
+        span_key,
+        _SpanAggregate(
+            seq_id=seq_id,
+            modality=modality,
+            span_index=span_index,
+            token_start=token_start,
+            token_end=token_end,
+        ),
+    )
+    aggregate.add(
+        score=_span_score(
+            attention_mass=attention_mass,
+            entropy_focus=entropy_focus,
+            k_norm_ratio=k_norm_ratio,
+            weights=weights,
+        ),
+        attention_mass=attention_mass,
+        entropy_focus=entropy_focus,
+        k_norm_ratio=k_norm_ratio,
+        **observation,
+    )
+
+
+def _update_token_importance(
+    token_scores: dict[tuple[int, str, int, int], _TokenAggregate],
+    *,
+    seq_id: int,
+    modality: str,
+    span_index: int,
+    token_start: int,
+    token_end: int,
+    attention_mass: float,
+    entropy_focus: float,
+    k_norm_ratio: float,
+    top_visual_tokens: dict[int, float],
+    weights: ImportanceWeights,
+    observation: dict[str, Any],
+) -> None:
+    token_masses = _token_masses_for_span(
+        token_start=token_start,
+        token_end=token_end,
+        span_attention_mass=attention_mass,
+        top_visual_tokens=top_visual_tokens,
+    )
+    for token_index, (token_mass, observed_top_token) in token_masses.items():
+        token_key = (seq_id, modality, span_index, token_index)
+        aggregate = token_scores.setdefault(
+            token_key,
+            _TokenAggregate(
+                seq_id=seq_id,
+                modality=modality,
+                span_index=span_index,
+                token_index=token_index,
+            ),
+        )
+        aggregate.add(
+            score=_span_score(
+                attention_mass=token_mass,
+                entropy_focus=entropy_focus,
+                k_norm_ratio=k_norm_ratio,
+                weights=weights,
+            ),
+            attention_mass=token_mass,
+            entropy_focus=entropy_focus,
+            k_norm_ratio=k_norm_ratio,
+            observed_top_token=observed_top_token,
+            **observation,
+        )
 
 
 def format_importance_markdown(report: dict[str, Any], *, top_k: int = 20) -> str:

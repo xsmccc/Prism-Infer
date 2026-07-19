@@ -14,7 +14,6 @@ import argparse
 import gc
 import hashlib
 import json
-import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from benchmarks.harness import collect_git_metadata
 from prism_infer import LLM, SamplingParams
 from prism_infer.engine.kv_quantization import kv_cache_storage_bytes
 
@@ -49,9 +49,7 @@ class RecordingTrajectorySampler:
     """Record logits and optionally force a preselected single-request path."""
 
     def __init__(self, forced_token_ids: list[int] | None = None) -> None:
-        self.forced_token_ids = (
-            None if forced_token_ids is None else list(forced_token_ids)
-        )
+        self.forced_token_ids = None if forced_token_ids is None else list(forced_token_ids)
         self.logits: list[torch.Tensor] = []
         self.natural_argmax_ids: list[int] = []
 
@@ -75,9 +73,7 @@ class RecordingTrajectorySampler:
             selected_token = natural_token
         else:
             if step >= len(self.forced_token_ids):
-                raise RuntimeError(
-                    "engine requested more trajectory steps than forced tokens"
-                )
+                raise RuntimeError("engine requested more trajectory steps than forced tokens")
             selected_token = self.forced_token_ids[step]
         return torch.tensor(
             [selected_token],
@@ -93,15 +89,9 @@ class RecordingTrajectorySampler:
                 "emitted token/logit step mismatch: "
                 f"tokens={len(emitted_token_ids)}, logits={len(self.logits)}"
             )
-        if (
-            self.forced_token_ids is not None
-            and emitted_token_ids != self.forced_token_ids
-        ):
+        if self.forced_token_ids is not None and emitted_token_ids != self.forced_token_ids:
             raise RuntimeError("engine output did not follow the forced trajectory")
-        if (
-            self.forced_token_ids is None
-            and emitted_token_ids != self.natural_argmax_ids
-        ):
+        if self.forced_token_ids is None and emitted_token_ids != self.natural_argmax_ids:
             raise RuntimeError(
                 "baseline engine output did not follow the natural greedy trajectory"
             )
@@ -150,9 +140,7 @@ def compare_trajectories(
     baseline_log_probs = F.log_softmax(baseline_logits, dim=-1)
     candidate_log_probs = F.log_softmax(candidate_logits, dim=-1)
     baseline_probs = baseline_log_probs.exp()
-    kl_divergence = (
-        baseline_probs * (baseline_log_probs - candidate_log_probs)
-    ).sum(dim=-1)
+    kl_divergence = (baseline_probs * (baseline_log_probs - candidate_log_probs)).sum(dim=-1)
     natural_matches = sum(
         baseline_token == candidate_token
         for baseline_token, candidate_token in zip(
@@ -197,23 +185,14 @@ def aggregate_comparisons(
         raise ValueError("trajectory comparisons must contain positive steps")
 
     def weighted_mean(key: str) -> float:
-        return sum(
-            float(row[key]) * int(row["steps"])
-            for row in comparisons
-        ) / total_steps
+        return sum(float(row[key]) * int(row["steps"]) for row in comparisons) / total_steps
 
-    natural_matches = sum(
-        int(row["natural_argmax_matches"]) for row in comparisons
-    )
+    natural_matches = sum(int(row["natural_argmax_matches"]) for row in comparisons)
     return {
         "cases": len(comparisons),
         "steps": total_steps,
-        "max_abs_logit_diff": max(
-            float(row["max_abs_logit_diff"]) for row in comparisons
-        ),
-        "step_weighted_mean_abs_logit_diff": weighted_mean(
-            "mean_abs_logit_diff"
-        ),
+        "max_abs_logit_diff": max(float(row["max_abs_logit_diff"]) for row in comparisons),
+        "step_weighted_mean_abs_logit_diff": weighted_mean("mean_abs_logit_diff"),
         "step_weighted_mean_baseline_to_candidate_kl": weighted_mean(
             "mean_baseline_to_candidate_kl"
         ),
@@ -230,10 +209,7 @@ def aggregate_comparisons(
 def _images_and_video() -> tuple[Image.Image, Image.Image, list[Image.Image]]:
     image_a = Image.new("RGB", (448, 448), color=(100, 150, 200))
     image_b = Image.new("RGB", (448, 448), color=(200, 120, 80))
-    frames = [
-        Image.new("RGB", (448, 448), color=(80 + index * 30, 120, 180))
-        for index in range(4)
-    ]
+    frames = [Image.new("RGB", (448, 448), color=(80 + index * 30, 120, 180)) for index in range(4)]
     return image_a, image_b, frames
 
 
@@ -274,17 +250,11 @@ def _run_case(
     if request_type == "text":
         output = llm.generate([case["prompt"]], sampling, use_tqdm=False)[0]
     elif request_type == "image":
-        output = llm.generate_vl(
-            case["prompt"], case["image"], sampling, use_tqdm=False
-        )
+        output = llm.generate_vl(case["prompt"], case["image"], sampling, use_tqdm=False)
     elif request_type == "images":
-        output = llm.generate_images(
-            case["prompt"], case["images"], sampling, use_tqdm=False
-        )
+        output = llm.generate_images(case["prompt"], case["images"], sampling, use_tqdm=False)
     elif request_type == "video":
-        output = llm.generate_video(
-            case["prompt"], case["video"], sampling, use_tqdm=False
-        )
+        output = llm.generate_video(case["prompt"], case["video"], sampling, use_tqdm=False)
     else:
         raise ValueError(f"unsupported trajectory case type: {request_type!r}")
     return sampler.finish(list(output["token_ids"]))
@@ -350,9 +320,7 @@ def _run_mode(
                 "logits_sha256": _tensor_sha256(trajectory.logits),
             }
             if baseline is not None:
-                comparison = compare_trajectories(
-                    baseline[name], trajectory
-                )
+                comparison = compare_trajectories(baseline[name], trajectory)
                 row["comparison_to_baseline"] = comparison
                 comparisons.append(comparison)
             case_records[name] = row
@@ -362,9 +330,7 @@ def _run_mode(
             "cases": case_records,
         }
         if comparisons:
-            mode_record["aggregate_comparison_to_baseline"] = (
-                aggregate_comparisons(comparisons)
-            )
+            mode_record["aggregate_comparison_to_baseline"] = aggregate_comparisons(comparisons)
         return (
             mode_record,
             trajectories if baseline is None else None,
@@ -374,19 +340,6 @@ def _run_mode(
         del llm
         gc.collect()
         torch.cuda.empty_cache()
-
-
-def _git_metadata() -> dict[str, object]:
-    commit = subprocess.check_output(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"], text=True
-    ).strip()
-    dirty = bool(
-        subprocess.check_output(
-            ["git", "-C", str(REPO_ROOT), "status", "--porcelain"],
-            text=True,
-        ).strip()
-    )
-    return {"git_commit": commit, "git_dirty": dirty}
 
 
 def main() -> None:
@@ -431,6 +384,7 @@ def main() -> None:
                 raise RuntimeError("baseline mode did not return trajectories")
             baseline = new_baseline
 
+    git = collect_git_metadata(REPO_ROOT, strict=True)
     output = {
         "schema_version": TRAJECTORY_SCHEMA_VERSION,
         "record_type": "kv_trajectory_quality",
@@ -444,7 +398,7 @@ def main() -> None:
             "logits_precision": "model",
         },
         "environment": {
-            **_git_metadata(),
+            **git.as_dict(commit_key="git_commit", dirty_key="git_dirty"),
             "gpu": torch.cuda.get_device_name(0),
             "torch": torch.__version__,
             "cuda": torch.version.cuda,

@@ -105,6 +105,8 @@ def test_compile_metadata_reports_attention_region_and_cold_time() -> None:
     assert metadata == {
         "enabled": True,
         "region": "decode_attention",
+        "subgraph": "qkv_projection_qk_norm_mrope",
+        "kv_cache_boundary": "validated_runtime_store_and_paged_decode",
         "backend": "inductor",
         "mode": "default",
         "emulate_precision_casts": True,
@@ -129,6 +131,8 @@ def test_compile_metadata_reports_disabled_state() -> None:
     assert metadata == {
         "enabled": False,
         "region": "none",
+        "subgraph": "none",
+        "kv_cache_boundary": "none",
         "backend": "none",
         "mode": "none",
         "emulate_precision_casts": False,

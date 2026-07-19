@@ -207,6 +207,31 @@ def test_block_manager_and_runner_commit_physical_compaction() -> None:
         print("P6.4 post-prefill KV compact/block release: PASS")
 
 
+def test_compaction_commit_rejects_stale_decision_without_mutating_pages() -> None:
+    """A plan cannot commit after its pruning decision has changed."""
+
+    with _page_contract(4) as block_size:
+        manager = BlockManager(num_blocks=8, block_size=block_size)
+        seq = _manager_sequence(block_size)
+        manager.allocate(seq)
+        plan = manager.build_compaction_plan(seq, kv_dtype="torch.float32")
+        assert plan is not None
+        original_table = list(seq.block_table)
+        original_used = set(manager.used_block_ids)
+        seq.visual_pruning_decision_record = {
+            **seq.visual_pruning_decision_record,
+            "kept_token_indices": [2],
+        }
+
+        with pytest.raises(RuntimeError, match="decision changed"):
+            manager.commit_compaction(seq, plan)
+
+        assert seq.block_table == original_table
+        assert seq.kv_layout is None
+        assert manager.used_block_ids == original_used
+        assert not (set(original_table) & manager.free_block_id_set)
+
+
 def test_compact_decode_append_uses_physical_tail_and_clears_hashes() -> None:
     with _page_contract(4) as block_size:
         manager = BlockManager(num_blocks=8, block_size=block_size)
@@ -286,15 +311,16 @@ def test_compact_swap_pickle_swap_in_preserves_layout_and_hash_state() -> None:
         assert [gpu_id for gpu_id, _ in swap_out_map] == compact_gpu_table
         assert [cpu_id for cpu_id, _ in swap_in_map] == cpu_table
         assert all(
-            manager.blocks[block_id].hash == -1
-            and manager.blocks[block_id].token_ids == []
+            manager.blocks[block_id].hash == -1 and manager.blocks[block_id].token_ids == []
             for block_id in restored.block_table
         )
-        assert all(block_id not in manager.hash_to_block_id.values()
-                   for block_id in restored.block_table)
+        assert all(
+            block_id not in manager.hash_to_block_id.values() for block_id in restored.block_table
+        )
         print("P6.4 compact swap/pickle/swap-in lifecycle: PASS")
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepare_decode_uses_logical_mrope_and_physical_kv_tail() -> None:
     """Compact decode 必须分离 logical position 与 physical attention/write。"""
@@ -322,9 +348,7 @@ def test_prepare_decode_uses_logical_mrope_and_physical_kv_tail() -> None:
 
         expected_logical_position = len(seq) - 1 + int(seq.rope_delta.item())
         expected_physical_slot = (
-            seq.block_table[-1] * seq.block_size
-            + seq.physical_last_block_num_tokens
-            - 1
+            seq.block_table[-1] * seq.block_size + seq.physical_last_block_num_tokens - 1
         )
         print(f"decode logical length: {len(seq)}")
         print(f"decode physical KV length: {seq.physical_kv_len}")
@@ -339,6 +363,7 @@ def test_prepare_decode_uses_logical_mrope_and_physical_kv_tail() -> None:
         print("P6.4 compact decode logical/physical metadata: PASS")
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_fp8_kv_compaction_matches_independent_retained_reference() -> None:
     """FP8 compact 必须绕过不支持的 CUDA index_select 并保持量化值 exact。"""

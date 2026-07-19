@@ -49,8 +49,7 @@ def main() -> None:
     matches = [record for record in records if record["sample_id"] == args.sample_id]
     if len(matches) != 1:
         raise SystemExit(
-            f"expected exactly one MVBench record for {args.sample_id!r}, "
-            f"found {len(matches)}"
+            f"expected exactly one MVBench record for {args.sample_id!r}, found {len(matches)}"
         )
     record = matches[0]
     media = record["media"][0]
@@ -77,9 +76,7 @@ def main() -> None:
                 source,
                 frames=runtime["video_frames"],
                 temporal_bound=record["temporal_bound"],
-                decoder_contract=dataset_evaluator["video_sampling"][
-                    "video_file_decoder"
-                ],
+                decoder_contract=dataset_evaluator["video_sampling"]["video_file_decoder"],
             )
         evidence = write_video_bundle(
             args.output,

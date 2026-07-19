@@ -46,9 +46,7 @@ def test_scheduler_swap_in_capacity_uses_cpu_block_table() -> None:
     assert not is_prefill
     assert cow_pairs == []
     assert swap_out_map == []
-    assert [cpu_id for cpu_id, _ in swap_in_map] == [
-        cpu_id for _, cpu_id in swap_map
-    ]
+    assert [cpu_id for cpu_id, _ in swap_in_map] == [cpu_id for _, cpu_id in swap_map]
     assert seq.status == SequenceStatus.RUNNING
     assert seq.cpu_block_table == []
     assert seq.block_table

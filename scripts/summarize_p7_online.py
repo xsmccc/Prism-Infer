@@ -25,10 +25,7 @@ def main() -> None:
     parser.add_argument("--markdown-output")
     args = parser.parse_args()
 
-    records = [
-        json.loads(Path(path).read_text(encoding="utf-8"))
-        for path in args.records
-    ]
+    records = [json.loads(Path(path).read_text(encoding="utf-8")) for path in args.records]
     summary = summarize_online_records(records)
     rendered_json = json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)
     rendered_markdown = render_online_summary_markdown(summary)

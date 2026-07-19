@@ -43,9 +43,7 @@ def read_jsonl_objects(path: str | Path) -> list[dict[str, Any]]:
 
     source = Path(path)
     records = [
-        json.loads(line)
-        for line in source.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in source.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
     if not records or not all(isinstance(record, dict) for record in records):
         raise ValueError(f"expected non-empty JSONL records: {source}")
@@ -134,12 +132,8 @@ def prepare_dataset_records(
     for record in selected_records:
         unresolved = [media for media in record["media"] if media.get("sha256") is None]
         if unresolved:
-            reasons = sorted(
-                str(media.get("materialization_status")) for media in unresolved
-            )
-            exclusions.append(
-                {"sample_id": record["sample_id"], "reason": ",".join(reasons)}
-            )
+            reasons = sorted(str(media.get("materialization_status")) for media in unresolved)
+            exclusions.append({"sample_id": record["sample_id"], "reason": ",".join(reasons)})
         else:
             eligible.append(record)
     if max_samples is not None:
@@ -156,12 +150,8 @@ def quality_input_identity(
     """Build the framework-neutral semantic identity of one visual request."""
 
     record = {
-        "source_prompt_sha256": hashlib.sha256(
-            source_prompt.encode("utf-8")
-        ).hexdigest(),
-        "chat_prompt_sha256": hashlib.sha256(
-            inputs.prompt_text.encode("utf-8")
-        ).hexdigest(),
+        "source_prompt_sha256": hashlib.sha256(source_prompt.encode("utf-8")).hexdigest(),
+        "chat_prompt_sha256": hashlib.sha256(inputs.prompt_text.encode("utf-8")).hexdigest(),
         "prompt_token_count": len(inputs.token_ids),
         "prompt_token_ids_sha256": canonical_json_sha256(inputs.token_ids),
         "media_sha256": list(media_sha256),
@@ -196,9 +186,7 @@ def validate_resume_samples(
     if artifact.get("run_identity_sha256") != run_identity_sha256:
         raise ValueError("resume artifact run identity differs from requested run")
     samples = artifact.get("samples")
-    if not isinstance(samples, list) or not all(
-        isinstance(sample, dict) for sample in samples
-    ):
+    if not isinstance(samples, list) or not all(isinstance(sample, dict) for sample in samples):
         raise ValueError("resume artifact has no valid sample list")
     completed_ids = [sample["sample_id"] for sample in samples]
     if completed_ids != list(expected_ids[: len(completed_ids)]):
@@ -219,23 +207,41 @@ def load_reference_records_for_artifacts(
     root = Path(materialized_root).resolve()
     manifest_path = root / "p9_quality_materialization.json"
     manifest_sha256 = sha256_file(manifest_path)
+    dataset_id = _common_artifact_dataset(artifacts, manifest_sha256)
+    manifest = read_json_object(manifest_path)
+    dataset_entry = _materialization_dataset_entry(manifest, dataset_id, protocol)
+    selected = dataset_entry.get("selected_records")
+    if not isinstance(selected, Mapping):
+        raise ValueError("materialization dataset has no selected_records identity")
+    records_path = _selected_records_path(root, selected)
+    return read_jsonl_objects(records_path)
+
+
+def _common_artifact_dataset(
+    artifacts: Sequence[Mapping[str, Any]],
+    manifest_sha256: str,
+) -> str:
     datasets = []
     for index, artifact in enumerate(artifacts):
         contract = artifact.get("run_contract")
         if not isinstance(contract, Mapping):
             raise ValueError(f"artifact[{index}] has no run contract")
         if contract.get("materialization_manifest_sha256") != manifest_sha256:
-            raise ValueError(
-                f"artifact[{index}] references a different materialization manifest"
-            )
+            raise ValueError(f"artifact[{index}] references a different materialization manifest")
         dataset_id = contract.get("dataset")
         if not isinstance(dataset_id, str) or not dataset_id:
             raise ValueError(f"artifact[{index}] has no dataset identity")
         datasets.append(dataset_id)
     if len(set(datasets)) != 1:
         raise ValueError("quality artifacts do not reference the same dataset")
+    return datasets[0]
 
-    manifest = read_json_object(manifest_path)
+
+def _materialization_dataset_entry(
+    manifest: Mapping[str, Any],
+    dataset_id: str,
+    protocol: Mapping[str, Any],
+) -> Mapping[str, Any]:
     if manifest.get("schema_version") != 1:
         raise ValueError("materialization manifest has unsupported schema_version")
     if manifest.get("protocol_sha256") != canonical_json_sha256(protocol):
@@ -246,22 +252,21 @@ def load_reference_records_for_artifacts(
     matches = [
         artifact
         for artifact in manifest_datasets
-        if isinstance(artifact, dict) and artifact.get("id") == datasets[0]
+        if isinstance(artifact, dict) and artifact.get("id") == dataset_id
     ]
     if len(matches) != 1:
-        raise ValueError(
-            f"materialization manifest must contain dataset {datasets[0]!r} once"
-        )
-    selected = matches[0].get("selected_records")
-    if not isinstance(selected, Mapping):
-        raise ValueError("materialization dataset has no selected_records identity")
+        raise ValueError(f"materialization manifest must contain dataset {dataset_id!r} once")
+    return matches[0]
+
+
+def _selected_records_path(root: Path, selected: Mapping[str, Any]) -> Path:
     relative_path = selected.get("path")
     if not isinstance(relative_path, str) or not relative_path:
         raise ValueError("materialization selected_records.path is invalid")
     records_path = safe_materialized_path(root, relative_path)
     if sha256_file(records_path) != selected.get("sha256"):
         raise ValueError("materialized selected records SHA256 mismatch")
-    return read_jsonl_objects(records_path)
+    return records_path
 
 
 def selected_sample_identity(sample_ids: Sequence[str]) -> str:

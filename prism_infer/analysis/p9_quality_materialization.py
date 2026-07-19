@@ -19,13 +19,15 @@ from typing import Any, Mapping, Sequence
 from PIL import Image
 
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
+from prism_infer.analysis.schema_constants import (
+    LOWERCASE_HEX_DIGITS,
+    SHA256_HEX_LENGTH,
+)
 
 
 MATERIALIZATION_SCHEMA_VERSION = 1
 MV_SAMPLE_ID_SEPARATOR = "|"
-SELECTION_PREIMAGE_ENCODING = (
-    "utf8(dataset_id + revision + sample_id + decimal_seed)"
-)
+SELECTION_PREIMAGE_ENCODING = "utf8(dataset_id + revision + sample_id + decimal_seed)"
 IMAGE_FORMAT_SUFFIXES = {
     "BMP": ".bmp",
     "GIF": ".gif",
@@ -107,16 +109,12 @@ class SampleSelection:
             "development": {
                 "samples": len(self.development_ids),
                 "sample_ids": list(self.development_ids),
-                "selected_sample_ids_sha256": selected_ids_sha256(
-                    self.development_ids
-                ),
+                "selected_sample_ids_sha256": selected_ids_sha256(self.development_ids),
             },
             "final": {
                 "samples": len(self.final_ids),
                 "sample_ids": list(self.final_ids),
-                "selected_sample_ids_sha256": selected_ids_sha256(
-                    self.final_ids
-                ),
+                "selected_sample_ids_sha256": selected_ids_sha256(self.final_ids),
             },
         }
 
@@ -145,8 +143,7 @@ def select_sample_ids(
         raise ValueError("development_samples cannot exceed final_samples")
     if final_samples > len(normalized):
         raise ValueError(
-            f"{dataset_id} final selection requests {final_samples} of "
-            f"{len(normalized)} samples"
+            f"{dataset_id} final selection requests {final_samples} of {len(normalized)} samples"
         )
     ranked = sorted(
         normalized,
@@ -230,12 +227,7 @@ def materialize_embedded_image(
         raise ValueError("embedded image.path must be a string or null")
     suffix, width, height = _image_metadata(payload)
     digest = sha256_bytes(payload)
-    relative_path = (
-        PurePosixPath("media")
-        / dataset_id
-        / digest[:2]
-        / f"{digest}{suffix}"
-    )
+    relative_path = PurePosixPath("media") / dataset_id / digest[:2] / f"{digest}{suffix}"
     target = Path(output_root) / Path(relative_path)
     if target.exists():
         if target.stat().st_size != len(payload) or sha256_file(target) != digest:
@@ -266,8 +258,10 @@ def materialize_docvqa_row(
     image = row.get("image")
     if not isinstance(question, str) or not question:
         raise ValueError(f"DocVQA {sample_id} has no question")
-    if not isinstance(answers, list) or not answers or not all(
-        isinstance(answer, str) and answer for answer in answers
+    if (
+        not isinstance(answers, list)
+        or not answers
+        or not all(isinstance(answer, str) and answer for answer in answers)
     ):
         raise ValueError(f"DocVQA {sample_id} has invalid answers")
     if not isinstance(image, Mapping):
@@ -307,17 +301,19 @@ def materialize_muirbench_row(
     image_list = row.get("image_list")
     if not isinstance(question, str) or not question:
         raise ValueError(f"MuirBench {sample_id} has no question")
-    if not isinstance(options, list) or not options or not all(
-        isinstance(option, str) for option in options
+    if (
+        not isinstance(options, list)
+        or not options
+        or not all(isinstance(option, str) for option in options)
     ):
         raise ValueError(f"MuirBench {sample_id} has invalid options")
     valid_answers = {chr(ord("A") + index) for index in range(len(options))}
     if answer not in valid_answers:
-        raise ValueError(
-            f"MuirBench {sample_id} answer {answer!r} is outside its options"
-        )
-    if not isinstance(image_list, list) or not image_list or not all(
-        isinstance(image, Mapping) for image in image_list
+        raise ValueError(f"MuirBench {sample_id} answer {answer!r} is outside its options")
+    if (
+        not isinstance(image_list, list)
+        or not image_list
+        or not all(isinstance(image, Mapping) for image in image_list)
     ):
         raise ValueError(f"MuirBench {sample_id} has invalid image_list")
     return {
@@ -350,6 +346,45 @@ def build_mvbench_row(
 ) -> dict[str, Any]:
     """生成 MVBench metadata 记录；媒体未取到时必须显式标成 pending。"""
 
+    video, question, candidates, answer = _validate_mvbench_question(
+        row,
+        task=task,
+        question_index=question_index,
+    )
+    temporal_bound = _mvbench_temporal_bound(
+        row,
+        task=task,
+        question_index=question_index,
+        required=bool(task_media.get("uses_temporal_bound")),
+    )
+    availability = task_media.get("availability", "archive_available")
+    media_reference = _mvbench_media_reference(
+        video,
+        task=task,
+        task_media=task_media,
+        archives=archives,
+    )
+    return {
+        "sample_id": mvbench_sample_id(task, video, question_index),
+        "task": task,
+        "question_index": question_index,
+        "question": question,
+        "candidates": list(candidates),
+        "answer": answer,
+        "answer_index": candidates.index(answer),
+        "temporal_bound": temporal_bound,
+        "subtitle": row.get("subtitle"),
+        "source_availability": availability,
+        "media": [media_reference],
+    }
+
+
+def _validate_mvbench_question(
+    row: Mapping[str, Any],
+    *,
+    task: str,
+    question_index: int,
+) -> tuple[str, str, list[str], str]:
     video = row.get("video")
     question = row.get("question")
     candidates = row.get("candidates")
@@ -358,34 +393,51 @@ def build_mvbench_row(
         raise ValueError(f"MVBench {task}[{question_index}] has no video")
     if not isinstance(question, str) or not question:
         raise ValueError(f"MVBench {task}[{question_index}] has no question")
-    if not isinstance(candidates, list) or not candidates or not all(
-        isinstance(candidate, str) and candidate for candidate in candidates
+    if (
+        not isinstance(candidates, list)
+        or not candidates
+        or not all(isinstance(candidate, str) and candidate for candidate in candidates)
     ):
         raise ValueError(f"MVBench {task}[{question_index}] has invalid candidates")
-    if answer not in candidates:
+    if not isinstance(answer, str) or answer not in candidates:
         raise ValueError(f"MVBench {task}[{question_index}] answer is not a candidate")
+    return video, question, candidates, answer
 
-    temporal_bound = None
-    if task_media.get("uses_temporal_bound"):
-        start = row.get("start")
-        end = row.get("end")
-        if (
-            isinstance(start, bool)
-            or not isinstance(start, (int, float))
-            or isinstance(end, bool)
-            or not isinstance(end, (int, float))
-            or not math.isfinite(float(start))
-            or not math.isfinite(float(end))
-            or float(start) < 0.0
-            or float(end) <= float(start)
-        ):
-            raise ValueError(
-                f"MVBench {task}[{question_index}] has invalid temporal bound"
-            )
-        temporal_bound = {"start": float(start), "end": float(end)}
 
+def _mvbench_temporal_bound(
+    row: Mapping[str, Any],
+    *,
+    task: str,
+    question_index: int,
+    required: bool,
+) -> dict[str, float] | None:
+    if not required:
+        return None
+    start = row.get("start")
+    end = row.get("end")
+    valid = (
+        not isinstance(start, bool)
+        and isinstance(start, (int, float))
+        and not isinstance(end, bool)
+        and isinstance(end, (int, float))
+        and math.isfinite(float(start))
+        and math.isfinite(float(end))
+        and float(start) >= 0.0
+        and float(end) > float(start)
+    )
+    if not valid:
+        raise ValueError(f"MVBench {task}[{question_index}] has invalid temporal bound")
+    return {"start": float(start), "end": float(end)}
+
+
+def _mvbench_media_reference(
+    video: str,
+    *,
+    task: str,
+    task_media: Mapping[str, Any],
+    archives: Mapping[str, Any],
+) -> dict[str, Any]:
     archive_name = task_media.get("archive")
-    availability = task_media.get("availability", "archive_available")
     archive = None
     if archive_name is not None:
         archive = archives.get(archive_name)
@@ -411,19 +463,7 @@ def build_mvbench_row(
             "bytes": archive["bytes"],
             "sha256": archive["sha256"],
         }
-    return {
-        "sample_id": mvbench_sample_id(task, video, question_index),
-        "task": task,
-        "question_index": question_index,
-        "question": question,
-        "candidates": list(candidates),
-        "answer": answer,
-        "answer_index": candidates.index(answer),
-        "temporal_bound": temporal_bound,
-        "subtitle": row.get("subtitle"),
-        "source_availability": availability,
-        "media": [media_reference],
-    }
+    return media_reference
 
 
 def validate_selected_records(
@@ -447,12 +487,10 @@ def validate_selected_records(
             digest = item.get("sha256")
             if require_media_sha256 and (
                 not isinstance(digest, str)
-                or len(digest) != 64
-                or any(character not in "0123456789abcdef" for character in digest)
+                or len(digest) != SHA256_HEX_LENGTH
+                or any(character not in LOWERCASE_HEX_DIGITS for character in digest)
             ):
-                raise ValueError(
-                    f"sample {record['sample_id']} is missing media SHA256"
-                )
+                raise ValueError(f"sample {record['sample_id']} is missing media SHA256")
 
 
 def media_identity_record(
@@ -476,9 +514,7 @@ def media_identity_record(
                 complete = False
                 sample_complete = False
                 status = media.get("materialization_status")
-                if not (
-                    isinstance(status, str) and status.startswith("excluded_")
-                ):
+                if not (isinstance(status, str) and status.startswith("excluded_")):
                     all_resolved = False
             else:
                 unique_digests.add(digest)
@@ -494,9 +530,7 @@ def media_identity_record(
         "status": (
             "complete"
             if complete
-            else (
-                "complete_for_eligible_subset" if all_resolved else "pending"
-            )
+            else ("complete_for_eligible_subset" if all_resolved else "pending")
         ),
         "sample_media_references": total_references,
         "unique_materialized_media": len(unique_digests),
@@ -505,9 +539,7 @@ def media_identity_record(
             canonical_json_sha256(per_sample) if complete else None
         ),
         "eligible_per_sample_media_identity_sha256": (
-            canonical_json_sha256(eligible_per_sample)
-            if eligible_per_sample
-            else None
+            canonical_json_sha256(eligible_per_sample) if eligible_per_sample else None
         ),
     }
 
@@ -557,16 +589,12 @@ def evaluation_subset_record(
         "status": (
             "pending"
             if pending_ids
-            else (
-                "ready_with_protocol_exclusions" if exclusions else "ready"
-            )
+            else ("ready_with_protocol_exclusions" if exclusions else "ready")
         ),
         "selected_samples": len(records),
         "eligible_samples": len(eligible_ids),
         "eligible_sample_ids": eligible_ids,
-        "eligible_sample_ids_sha256": (
-            selected_ids_sha256(eligible_ids) if eligible_ids else None
-        ),
+        "eligible_sample_ids_sha256": (selected_ids_sha256(eligible_ids) if eligible_ids else None),
         "excluded_samples": exclusions,
         "pending_sample_ids": pending_ids,
     }
@@ -606,9 +634,9 @@ def selection_manifest_from_materialization(
 def write_json_atomic(path: str | Path, value: object) -> str:
     """稳定序列化 JSON 并原子写入，返回落盘文件 SHA256。"""
 
-    payload = (
-        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
+    payload = (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
     target = Path(path)
     _atomic_write_bytes(target, payload)
     return sha256_bytes(payload)
@@ -618,9 +646,7 @@ def write_jsonl_atomic(path: str | Path, records: Sequence[Mapping[str, Any]]) -
     """稳定写入 selected records JSONL，并返回文件 SHA256。"""
 
     payload = b"".join(
-        (
-            json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
-        ).encode("utf-8")
+        (json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
         for record in records
     )
     target = Path(path)

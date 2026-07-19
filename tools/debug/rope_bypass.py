@@ -1,12 +1,7 @@
-"""Test: bypass our MRope, use HF's RoPE directly in our model forward."""
-import sys
-
-if "pytest" in sys.modules:
-    import pytest
-    pytest.skip("manual GPU debug script", allow_module_level=True)
+"""Manually compare Prism MRope with the Hugging Face RoPE implementation."""
 
 import torch, gc; torch.manual_seed(42)
-from conftest import get_model_path
+from _common import get_model_path
 from transformers import Qwen3VLForConditionalGeneration
 MODEL_PATH = get_model_path()
 
@@ -34,7 +29,6 @@ x_dummy = torch.randn(1, 16, 4096, dtype=torch.bfloat16)
 hf_cos, hf_sin = hf_rot(x_dummy, pos_ids)
 hf_sd = hf_cpu.state_dict()
 
-import sys; sys.path.insert(0,'/data/Prism-Infer')
 from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 our = Qwen3VLForCausalLM(dtype=torch.bfloat16).cuda().eval()
 osd = our.state_dict()

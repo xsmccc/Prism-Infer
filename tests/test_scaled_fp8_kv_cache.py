@@ -85,12 +85,8 @@ def _reference_paged_decode(
     for row in range(q.shape[0]):
         context_len = int(context_lens[row].item())
         block_ids = block_tables[row].long()
-        keys = k_cache[block_ids].reshape(
-            -1, num_kv_heads, q.shape[-1]
-        )[:context_len]
-        values = v_cache[block_ids].reshape(
-            -1, num_kv_heads, q.shape[-1]
-        )[:context_len]
+        keys = k_cache[block_ids].reshape(-1, num_kv_heads, q.shape[-1])[:context_len]
+        values = v_cache[block_ids].reshape(-1, num_kv_heads, q.shape[-1])[:context_len]
         keys = keys.repeat_interleave(groups, dim=1)
         values = values.repeat_interleave(groups, dim=1)
         output = F.scaled_dot_product_attention(
@@ -122,9 +118,7 @@ def test_scaled_fp8_quantization_config_is_explicit() -> None:
     assert resolved.kv_scale_mode is KVScaleMode.PER_TOKEN_HEAD
 
     with pytest.raises(ValueError, match="kv_scale_mode conflicts"):
-        QuantizationConfig(kv_scale_mode=KVScaleMode.UNIT).resolve(
-            compression_mode="scaled_fp8_kv"
-        )
+        QuantizationConfig(kv_scale_mode=KVScaleMode.UNIT).resolve(compression_mode="scaled_fp8_kv")
 
 
 def test_scaled_fp8_storage_ratio_includes_fp32_scales() -> None:
@@ -182,18 +176,10 @@ def test_scaled_fp8_eager_store_matches_independent_reference() -> None:
     flat_k_scales = k_scales.reshape(-1, 2)
     flat_v_scales = v_scales.reshape(-1, 2)
 
-    assert torch.equal(
-        flat_k.index_select(0, written_slots).float(), expected_k.float()
-    )
-    assert torch.equal(
-        flat_v.index_select(0, written_slots).float(), expected_v.float()
-    )
-    torch.testing.assert_close(
-        flat_k_scales.index_select(0, written_slots), expected_k_scales
-    )
-    torch.testing.assert_close(
-        flat_v_scales.index_select(0, written_slots), expected_v_scales
-    )
+    assert torch.equal(flat_k.index_select(0, written_slots).float(), expected_k.float())
+    assert torch.equal(flat_v.index_select(0, written_slots).float(), expected_v.float())
+    torch.testing.assert_close(flat_k_scales.index_select(0, written_slots), expected_k_scales)
+    torch.testing.assert_close(flat_v_scales.index_select(0, written_slots), expected_v_scales)
     assert torch.all(flat_k[3] == -4.0)
     assert torch.all(flat_k_scales[3] == 17.0)
 
@@ -356,6 +342,7 @@ def test_scaled_fp8_cow_and_compaction_move_payload_and_scales_together() -> Non
     assert torch.equal(scales_after.index_select(2, destination), expected_scales)
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_scaled_fp8_swap_moves_payload_and_scales_together() -> None:
     runner = object.__new__(ModelRunner)
@@ -373,11 +360,10 @@ def test_scaled_fp8_swap_moves_payload_and_scales_together() -> None:
     runner.swap_blocks([(0, 1)], "in")
 
     torch.testing.assert_close(runner.kv_cache[:, :, 1].cpu(), expected_payload)
-    torch.testing.assert_close(
-        runner.kv_scale_cache[:, :, 1].cpu(), expected_scales
-    )
+    torch.testing.assert_close(runner.kv_scale_cache[:, :, 1].cpu(), expected_scales)
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_scaled_fp8_triton_store_matches_reference() -> None:
     _require_fp8_cuda()
@@ -424,6 +410,7 @@ def test_scaled_fp8_triton_store_matches_reference() -> None:
     assert torch.all(k_scales.reshape(-1, 2)[20] == 11.0)
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_scaled_fp8_paged_decode_matches_independent_reference() -> None:
     _require_fp8_cuda()
@@ -441,14 +428,17 @@ def test_scaled_fp8_paged_decode_matches_independent_reference() -> None:
         dtype=torch.int32,
     ).view(batch, blocks_per_sequence)
     q = torch.randn(batch, num_heads, head_dim, device="cuda", dtype=torch.bfloat16)
-    k_source = torch.randn(
-        batch * blocks_per_sequence,
-        page_size,
-        num_kv_heads,
-        head_dim,
-        device="cuda",
-        dtype=torch.bfloat16,
-    ) * 23.0
+    k_source = (
+        torch.randn(
+            batch * blocks_per_sequence,
+            page_size,
+            num_kv_heads,
+            head_dim,
+            device="cuda",
+            dtype=torch.bfloat16,
+        )
+        * 23.0
+    )
     v_source = torch.randn_like(k_source) * 15.0
     k_payload, k_scales = _reference_quantize(k_source)
     v_payload, v_scales = _reference_quantize(v_source)
@@ -480,6 +470,7 @@ def test_scaled_fp8_paged_decode_matches_independent_reference() -> None:
     assert diff.mean().item() < 2e-3
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_scaled_fp8_attention_cuda_graph_replay_updates_scales() -> None:
     _require_fp8_cuda()
@@ -500,9 +491,7 @@ def test_scaled_fp8_attention_cuda_graph_replay_updates_scales() -> None:
         1, 4, num_kv_heads, head_dim, device="cuda", dtype=torch.float8_e4m3fn
     )
     attention.v_cache = torch.empty_like(attention.k_cache)
-    attention.k_scale_cache = torch.empty(
-        1, 4, num_kv_heads, device="cuda", dtype=torch.float32
-    )
+    attention.k_scale_cache = torch.empty(1, 4, num_kv_heads, device="cuda", dtype=torch.float32)
     attention.v_scale_cache = torch.empty_like(attention.k_scale_cache)
     slots = torch.tensor([0], device="cuda", dtype=torch.int32)
     context_lens = torch.tensor([1], device="cuda", dtype=torch.int32)
@@ -534,18 +523,10 @@ def test_scaled_fp8_attention_cuda_graph_replay_updates_scales() -> None:
 
         expected_k_payload, expected_k_scales = _reference_quantize(replay_k)
         expected_v_payload, expected_v_scales = _reference_quantize(replay_v)
-        torch.testing.assert_close(
-            attention.k_scale_cache[0, 0], expected_k_scales[0]
-        )
-        torch.testing.assert_close(
-            attention.v_scale_cache[0, 0], expected_v_scales[0]
-        )
-        assert torch.equal(
-            attention.k_cache[0, 0].float(), expected_k_payload[0].float()
-        )
-        assert torch.equal(
-            attention.v_cache[0, 0].float(), expected_v_payload[0].float()
-        )
+        torch.testing.assert_close(attention.k_scale_cache[0, 0], expected_k_scales[0])
+        torch.testing.assert_close(attention.v_scale_cache[0, 0], expected_v_scales[0])
+        assert torch.equal(attention.k_cache[0, 0].float(), expected_k_payload[0].float())
+        assert torch.equal(attention.v_cache[0, 0].float(), expected_v_payload[0].float())
         expected_output = _reference_paged_decode(
             replay_q,
             expected_k_payload.view(1, 1, num_kv_heads, head_dim),

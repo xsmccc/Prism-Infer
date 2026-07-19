@@ -3,12 +3,18 @@
 Ref: prism_infer/vision/vision_encoder.py
 Ground truth: HF Qwen3-VL visual.blocks[0].mlp
 """
-import os, torch
+
+import os
+
+import pytest
+import torch
 
 import importlib.util
+
 spec = importlib.util.spec_from_file_location(
-    "vision_encoder", os.path.join(os.path.dirname(__file__),
-    "../prism_infer/vision/vision_encoder.py"))
+    "vision_encoder",
+    os.path.join(os.path.dirname(__file__), "../prism_infer/vision/vision_encoder.py"),
+)
 ve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ve)
 ViTMLP = ve.ViTMLP
@@ -27,12 +33,14 @@ def test_mlp_shape():
     print("  shape: PASS")
 
 
+@pytest.mark.model
+@pytest.mark.integration
 def test_mlp_accuracy():
     transformers = require_transformers()
     cache = get_model_path()
     hf = transformers.Qwen3VLForConditionalGeneration.from_pretrained(
-        cache, dtype=torch.bfloat16, device_map='cpu',
-        trust_remote_code=True, local_files_only=True)
+        cache, dtype=torch.bfloat16, device_map="cpu", trust_remote_code=True, local_files_only=True
+    )
     hf_mlp = hf_qwen3_vl_visual(hf).blocks[0].mlp
 
     our = ViTMLP(1152, 4304, torch.bfloat16)
@@ -50,7 +58,7 @@ def test_mlp_accuracy():
     print("  accuracy: PASS")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print("=== ViTMLP Tests ===")
     test_mlp_shape()
     test_mlp_accuracy()

@@ -3,6 +3,11 @@
 > 修订日期: 2026-07-09
 > 当前状态: P5 当前门禁已完成。P5.0 off baseline、P5.1 offline importance scoring、P5.2 active logical visual pruning 和 P5.3/P5.4 FP8 KV baseline 均有实现与验证；physical visual-token compaction 尚未实现。
 
+> 历史快照：本文件冻结 P5 当时的状态，不代表当前主线能力。physical compaction 已在
+> P6 完成；P9-C 又新增并正式验证 `scaled_fp8_kv`。当前结论以
+> [CLAIMS](CLAIMS.md)、[VERIFICATION](VERIFICATION.md) P9-C 和
+> [KNOWN_ISSUES](KNOWN_ISSUES.md) 为准，旧 `fp8_kv` 仍是 unit-scale rejected baseline。
+
 ## 结论摘要
 
 当前 P5 已完成当前门禁，核心结论如下:

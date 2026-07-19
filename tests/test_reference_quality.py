@@ -17,8 +17,7 @@ def _task_reference(*texts: str) -> dict[str, object]:
         "reference_source": "unit_test",
         "image_id": 1,
         "references": [
-            {"annotation_id": index + 1, "text": text}
-            for index, text in enumerate(texts)
+            {"annotation_id": index + 1, "text": text} for index, text in enumerate(texts)
         ],
     }
 

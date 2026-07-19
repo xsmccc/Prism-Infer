@@ -11,6 +11,7 @@ import torch
 
 from prism_infer.engine.llm_engine import validate_tensor_parallel_environment
 from prism_infer.engine.model_runner import ModelRunner
+from prism_infer.engine.tp_control import TPControlPlane, TPResponse
 
 
 def _config(tp_size: int = 2) -> SimpleNamespace:
@@ -46,11 +47,18 @@ def test_tp_preflight_checks_all_sharded_dimensions() -> None:
 def _runner(
     rank: int,
     channel: Connection | list[Connection],
+    *,
+    world_size: int = 3,
 ) -> ModelRunner:
     runner = ModelRunner.__new__(ModelRunner)
-    runner.world_size = 3
+    runner.world_size = world_size
     runner.rank = rank
     runner.control_channel = channel
+    runner.tp_control = TPControlPlane(
+        rank=rank,
+        world_size=world_size,
+        channel=channel,
+    )
     return runner
 
 
@@ -64,8 +72,7 @@ def test_tp_variable_control_channel_broadcasts_large_vl_payload() -> None:
 
     rank0 = _runner(rank=0, channel=senders)
     workers = [
-        _runner(rank=index + 1, channel=receiver)
-        for index, receiver in enumerate(receivers)
+        _runner(rank=index + 1, channel=receiver) for index, receiver in enumerate(receivers)
     ]
     sequence_like = SimpleNamespace(
         # [visual_tokens, vision_hidden], 超过旧协议的 1 MiB 上限。
@@ -113,9 +120,9 @@ def test_tp_variable_control_channel_broadcasts_large_vl_payload() -> None:
 def test_tp_control_channel_rejects_malformed_message() -> None:
     with pytest.raises(RuntimeError, match="deserialize"):
         ModelRunner._deserialize_control_message(b"not-a-pickle")
-    with pytest.raises(ValueError, match="non-empty list"):
+    with pytest.raises(ValueError, match="TPCommand"):
         ModelRunner._deserialize_control_message(pickle.dumps({"method": "run"}))
-    with pytest.raises(ValueError, match="method name"):
+    with pytest.raises(ValueError, match="TPCommand"):
         ModelRunner._deserialize_control_message(pickle.dumps([None]))
 
     print("P6.8 TP malformed control message guards: PASS")
@@ -123,8 +130,7 @@ def test_tp_control_channel_rejects_malformed_message() -> None:
 
 def test_tp_control_channel_reports_serialize_and_send_failures() -> None:
     receiver, sender = Pipe(duplex=False)
-    rank0 = _runner(rank=0, channel=[sender])
-    rank0.world_size = 2
+    rank0 = _runner(rank=0, channel=[sender], world_size=2)
 
     with pytest.raises(RuntimeError, match="failed to serialize"):
         rank0.write_control_message("run", lambda: None)
@@ -133,3 +139,79 @@ def test_tp_control_channel_reports_serialize_and_send_failures() -> None:
         rank0.write_control_message("run", b"payload")
     sender.close()
     print("P6.8 TP serialize/send failure reporting: PASS")
+
+
+def test_tp_call_waits_for_typed_worker_ack() -> None:
+    rank0_channel, worker_channel = Pipe(duplex=True)
+    rank0 = _runner(
+        rank=0,
+        channel=[rank0_channel],
+        world_size=2,
+    )
+    worker = _runner(
+        rank=1,
+        channel=worker_channel,
+        world_size=2,
+    )
+    observed: list[int] = []
+    rank0.run = lambda value: value * 2
+    worker.run = lambda value: observed.append(value)
+    rank0.exit = lambda: None
+    worker.exit = lambda: None
+
+    worker_thread = threading.Thread(target=worker.loop)
+    worker_thread.start()
+    assert rank0.call("run", 7) == 14
+    rank0.call("exit")
+    worker_thread.join(timeout=5)
+
+    assert not worker_thread.is_alive()
+    assert observed == [7]
+    rank0_channel.close()
+
+
+def test_tp_call_surfaces_worker_error_and_has_bounded_timeout() -> None:
+    rank0_channel, worker_channel = Pipe(duplex=True)
+    rank0 = _runner(
+        rank=0,
+        channel=[rank0_channel],
+        world_size=2,
+    )
+    worker = _runner(
+        rank=1,
+        channel=worker_channel,
+        world_size=2,
+    )
+    rank0.run = lambda value: value
+
+    def respond_with_error() -> None:
+        command = worker.read_control_command()
+        worker._send_control_response(
+            TPResponse.error(
+                command,
+                worker_rank=1,
+                error=ValueError("synthetic worker failure"),
+                traceback_text="synthetic traceback",
+            )
+        )
+
+    response_thread = threading.Thread(target=respond_with_error)
+    response_thread.start()
+    with pytest.raises(RuntimeError, match="rank 1: ValueError"):
+        rank0.call("run", 9)
+    response_thread.join(timeout=5)
+    rank0_channel.close()
+    worker_channel.close()
+
+    timeout_rank0_channel, silent_worker_channel = Pipe(duplex=True)
+    timeout_rank0 = _runner(
+        rank=0,
+        channel=[timeout_rank0_channel],
+        world_size=2,
+    )
+    timeout_rank0.tp_control.timeout_seconds = 0.05
+    timeout_rank0.run = lambda value: value
+    with pytest.raises(TimeoutError, match=r"pending_ranks=\[1\]"):
+        timeout_rank0.call("run", 11)
+    timeout_rank0_channel.close()
+    silent_worker_channel.close()

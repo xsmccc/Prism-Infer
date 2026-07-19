@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -41,9 +41,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     records = [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
     if not records or not all(isinstance(record, dict) for record in records):
         raise ValueError(f"expected non-empty JSONL records: {path}")
@@ -123,9 +121,7 @@ def _verify_media(
                 cache=cache,
             )
             total_bytes += frame["bytes"]
-            frame_identity.append(
-                {"archive_member_path": member, "sha256": frame["sha256"]}
-            )
+            frame_identity.append({"archive_member_path": member, "sha256": frame["sha256"]})
         if media.get("bytes") != total_bytes:
             raise ValueError("frame-manifest aggregate bytes do not match frame files")
         if digest != canonical_json_sha256(frame_identity):
@@ -208,9 +204,7 @@ def verify_materialization(
             raise ValueError(f"selected record order differs for {dataset_id}")
         if len(record_ids) != final_selection["samples"]:
             raise ValueError(f"selected record count differs for {dataset_id}")
-        if selected_ids_sha256(record_ids) != final_selection[
-            "selected_sample_ids_sha256"
-        ]:
+        if selected_ids_sha256(record_ids) != final_selection["selected_sample_ids_sha256"]:
             raise ValueError(f"selected ID aggregate differs for {dataset_id}")
 
         for record in records:
@@ -233,9 +227,7 @@ def verify_materialization(
             "selected_samples": len(records),
             "eligible_samples": actual_subset["eligible_samples"],
             "excluded_samples": len(actual_subset["excluded_samples"]),
-            "media_references": artifact["media_identity"][
-                "sample_media_references"
-            ],
+            "media_references": artifact["media_identity"]["sample_media_references"],
         }
 
     return {

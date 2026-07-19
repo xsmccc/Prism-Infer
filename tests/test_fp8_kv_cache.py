@@ -70,6 +70,7 @@ def test_fp8_kv_store_uses_half_bf16_cache_bytes_and_matches_roundtrip() -> None
     print("fp8 kv store roundtrip: PASS")
 
 
+@pytest.mark.gpu
 def test_fp8_kv_triton_store_matches_eager_reference_qwen_shape() -> None:
     """FP8 Triton store 应在 Qwen prefill 形状下 exact 对齐 eager reference。"""
 
@@ -170,13 +171,18 @@ def _reference_fp8_decode(
     q_i = q[0].unsqueeze(0).unsqueeze(2)
     k_i = keys.transpose(0, 1).unsqueeze(0)
     v_i = values.transpose(0, 1).unsqueeze(0)
-    return F.scaled_dot_product_attention(
-        q_i,
-        k_i,
-        v_i,
-        is_causal=False,
-        scale=8 ** -0.5,
-    ).squeeze(0).squeeze(1).unsqueeze(0)
+    return (
+        F.scaled_dot_product_attention(
+            q_i,
+            k_i,
+            v_i,
+            is_causal=False,
+            scale=8**-0.5,
+        )
+        .squeeze(0)
+        .squeeze(1)
+        .unsqueeze(0)
+    )
 
 
 def test_fp8_kv_decode_matches_dequantized_reference() -> None:
@@ -201,7 +207,7 @@ def test_fp8_kv_decode_matches_dequantized_reference() -> None:
         total_video_tokens=0,
         block_size=4,
     )
-    attn = Attention(num_heads=4, num_kv_heads=2, head_dim=8, scale=8 ** -0.5)
+    attn = Attention(num_heads=4, num_kv_heads=2, head_dim=8, scale=8**-0.5)
     attn.k_cache = k_cache.clone()
     attn.v_cache = v_cache.clone()
 
@@ -227,8 +233,7 @@ def test_fp8_kv_decode_matches_dequantized_reference() -> None:
     print(f"fp8 decode reference shape: {list(reference.shape)}")
     print(f"fp8 decode output mean/std: {output.mean().item():.6e}/{output.std().item():.6e}")
     print(
-        "fp8 decode reference mean/std: "
-        f"{reference.mean().item():.6e}/{reference.std().item():.6e}"
+        f"fp8 decode reference mean/std: {reference.mean().item():.6e}/{reference.std().item():.6e}"
     )
     print(f"fp8 decode max diff: {diff.max().item():.6e}")
 
@@ -237,6 +242,7 @@ def test_fp8_kv_decode_matches_dequantized_reference() -> None:
     print("fp8 kv decode reference: PASS")
 
 
+@pytest.mark.gpu
 def test_fp8_kv_cuda_attention_uses_paged_kernel_reference_semantics() -> None:
     """Engine FP8 CUDA decode 应走 paged kernel 并对齐量化后 SDPA reference。"""
 
@@ -278,14 +284,9 @@ def test_fp8_kv_cuda_attention_uses_paged_kernel_reference_semantics() -> None:
         device=device,
         dtype=torch.int32,
     ).view(batch, blocks_per_seq)
-    context_lens = torch.full(
-        (batch,), context_len, device=device, dtype=torch.int32
-    )
+    context_lens = torch.full((batch,), context_len, device=device, dtype=torch.int32)
     slot_mapping = torch.tensor(
-        [
-            int(block_tables[row, 2].item()) * block_size
-            for row in range(batch)
-        ],
+        [int(block_tables[row, 2].item()) * block_size for row in range(batch)],
         device=device,
         dtype=torch.int32,
     )
@@ -302,7 +303,7 @@ def test_fp8_kv_cuda_attention_uses_paged_kernel_reference_semantics() -> None:
         num_heads=num_heads,
         num_kv_heads=num_kv_heads,
         head_dim=head_dim,
-        scale=head_dim ** -0.5,
+        scale=head_dim**-0.5,
     ).cuda()
     attn.k_cache = initial_k.clone()
     attn.v_cache = initial_v.clone()
@@ -335,8 +336,10 @@ def test_fp8_kv_cuda_attention_uses_paged_kernel_reference_semantics() -> None:
                 keys.transpose(0, 1).unsqueeze(0),
                 values.transpose(0, 1).unsqueeze(0),
                 is_causal=False,
-                scale=head_dim ** -0.5,
-            ).squeeze(0).squeeze(1)
+                scale=head_dim**-0.5,
+            )
+            .squeeze(0)
+            .squeeze(1)
         )
     reference = torch.stack(reference_outputs)
     diff = (output - reference).abs()
@@ -350,8 +353,7 @@ def test_fp8_kv_cuda_attention_uses_paged_kernel_reference_semantics() -> None:
         f"{reference.float().mean().item():.6e}/{reference.float().std().item():.6e}"
     )
     print(
-        f"FP8 engine paged max/mean diff: {diff.max().item():.6e}/"
-        f"{diff.float().mean().item():.6e}"
+        f"FP8 engine paged max/mean diff: {diff.max().item():.6e}/{diff.float().mean().item():.6e}"
     )
     assert output.shape == reference.shape == q.shape
     assert diff.max().item() < 1e-2

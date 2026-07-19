@@ -27,7 +27,9 @@ from prism_infer.analysis.kv_trace import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analyze Prism-Infer KV trace JSONL")
     parser.add_argument("trace", type=Path, help="trace JSONL path")
-    parser.add_argument("--summary-json", type=Path, default=None, help="optional summary JSON output")
+    parser.add_argument(
+        "--summary-json", type=Path, default=None, help="optional summary JSON output"
+    )
     parser.add_argument("--markdown", type=Path, default=None, help="optional Markdown output")
     parser.add_argument("--svg", type=Path, default=None, help="optional SVG chart output")
     return parser.parse_args()

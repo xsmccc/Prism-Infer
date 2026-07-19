@@ -33,11 +33,7 @@ def _summary(values: Sequence[float]) -> dict[str, int | float]:
         raise ValueError("summary requires non-empty values")
     ordered = sorted(float(value) for value in values)
     middle = len(ordered) // 2
-    median = (
-        ordered[middle]
-        if len(ordered) % 2
-        else (ordered[middle - 1] + ordered[middle]) / 2.0
-    )
+    median = ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2.0
     return {
         "count": len(ordered),
         "median": median,
@@ -58,10 +54,7 @@ def _require_tables(connection: sqlite3.Connection) -> None:
         "CUPTI_ACTIVITY_KIND_RUNTIME",
     }
     actual = {
-        row[0]
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
-        )
+        row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
     missing = sorted(required - actual)
     if missing:
@@ -171,9 +164,7 @@ def _kernel_rows_for_correlations(
         return []
     columns = _table_columns(connection, "CUPTI_ACTIVITY_KIND_KERNEL")
     name_columns = [
-        column
-        for column in ("demangledName", "shortName", "mangledName")
-        if column in columns
+        column for column in ("demangledName", "shortName", "mangledName") if column in columns
     ]
     joins = []
     names = []
@@ -181,9 +172,7 @@ def _kernel_rows_for_correlations(
         alias = f"kernel_name_{index}"
         joins.append(f"LEFT JOIN StringIds AS {alias} ON k.{column} = {alias}.id")
         names.append(f"{alias}.value")
-    name_expression = (
-        f"coalesce({', '.join(names)}, '<unknown>')" if names else "'<unknown>'"
-    )
+    name_expression = f"coalesce({', '.join(names)}, '<unknown>')" if names else "'<unknown>'"
     placeholders = ",".join("?" for _ in correlation_ids)
     return [
         (int(start), int(end), str(name))
@@ -191,7 +180,7 @@ def _kernel_rows_for_correlations(
             f"""
             SELECT k.start, k.end, {name_expression}
             FROM CUPTI_ACTIVITY_KIND_KERNEL AS k
-            {' '.join(joins)}
+            {" ".join(joins)}
             WHERE k.correlationId IN ({placeholders})
             """,
             tuple(correlation_ids),
@@ -334,9 +323,7 @@ def _step_metrics(
             runtime_counts,
             "StreamSynchronize",
         ),
-        "kernel_busy_ms": sum(
-            kernel_end - kernel_start for kernel_start, kernel_end, _ in kernels
-        )
+        "kernel_busy_ms": sum(kernel_end - kernel_start for kernel_start, kernel_end, _ in kernels)
         / 1e6,
         "graph_execution_ms": sum(
             trace_end - trace_start for trace_start, trace_end in graph_traces
@@ -368,9 +355,7 @@ def analyze_nsys_sqlite(
         _require_tables(connection)
         engine_ranges = _nvtx_ranges(connection, engine_range)
         if len(engine_ranges) <= prefill_steps:
-            raise ValueError(
-                "capture does not contain enough engine ranges for prefill/decode"
-            )
+            raise ValueError("capture does not contain enough engine ranges for prefill/decode")
         raw_steps = [
             {
                 "phase": "prefill" if index < prefill_steps else "decode",
@@ -428,8 +413,7 @@ def analyze_nsys_sqlite(
                     correlation_ids,
                 )
                 kernels = [
-                    (kernel_start, kernel_end)
-                    for kernel_start, kernel_end, _ in kernel_rows
+                    (kernel_start, kernel_end) for kernel_start, kernel_end, _ in kernel_rows
                 ]
                 memcpy_rows = _memory_rows_for_correlations(
                     connection,
@@ -460,46 +444,28 @@ def analyze_nsys_sqlite(
                         )
                 kernel_counts.append(float(len(kernels)))
                 kernel_times_ms.append(
-                    sum(
-                        kernel_end - kernel_start
-                        for kernel_start, kernel_end in kernels
-                    )
-                    / 1e6
+                    sum(kernel_end - kernel_start for kernel_start, kernel_end in kernels) / 1e6
                 )
                 runtime_api_counts.append(float(len(runtime_rows)))
                 memcpy_async_counts.append(
-                    float(
-                        sum(
-                            "MemcpyAsync" in runtime_name
-                            for _, runtime_name in runtime_rows
-                        )
-                    )
+                    float(sum("MemcpyAsync" in runtime_name for _, runtime_name in runtime_rows))
                 )
                 stream_synchronize_counts.append(
                     float(
-                        sum(
-                            "StreamSynchronize" in runtime_name
-                            for _, runtime_name in runtime_rows
-                        )
+                        sum("StreamSynchronize" in runtime_name for _, runtime_name in runtime_rows)
                     )
                 )
                 graph_times_ms.append(
-                    sum(
-                        graph_end - graph_start
-                        for graph_start, graph_end in graph_traces
-                    )
-                    / 1e6
+                    sum(graph_end - graph_start for graph_start, graph_end in graph_traces) / 1e6
                 )
                 cpu_range_ns = end - start
                 cpu_range_times_ms.append(cpu_range_ns / 1e6)
                 memcpy_times_ms.append(
-                    sum(row_end - row_start for row_start, row_end, _ in memcpy_rows)
-                    / 1e6
+                    sum(row_end - row_start for row_start, row_end, _ in memcpy_rows) / 1e6
                 )
                 memcpy_bytes.append(float(sum(row[2] for row in memcpy_rows)))
                 memset_times_ms.append(
-                    sum(row_end - row_start for row_start, row_end, _ in memset_rows)
-                    / 1e6
+                    sum(row_end - row_start for row_start, row_end, _ in memset_rows) / 1e6
                 )
                 memset_bytes.append(float(sum(row[2] for row in memset_rows)))
                 gpu_intervals = [
@@ -536,9 +502,7 @@ def analyze_nsys_sqlite(
                     duration_ms = (kernel_end - kernel_start) / 1e6
                     category = _kernel_category(kernel_name)
                     category_counts[category] = category_counts.get(category, 0.0) + 1
-                    category_times[category] = (
-                        category_times.get(category, 0.0) + duration_ms
-                    )
+                    category_times[category] = category_times.get(category, 0.0) + duration_ms
                     totals = kernel_name_totals.setdefault(kernel_name, [0.0, 0.0])
                     totals[0] += 1
                     totals[1] += duration_ms
@@ -546,20 +510,13 @@ def analyze_nsys_sqlite(
                 category_times_by_range.append(category_times)
 
             all_categories = sorted(
-                {
-                    category
-                    for per_range in category_times_by_range
-                    for category in per_range
-                }
+                {category for per_range in category_times_by_range for category in per_range}
             )
             total_kernel_time_ms = sum(kernel_times_ms)
             kernel_categories = {
                 category: {
                     "kernel_count_total": int(
-                        sum(
-                            values.get(category, 0.0)
-                            for values in category_counts_by_range
-                        )
+                        sum(values.get(category, 0.0) for values in category_counts_by_range)
                     ),
                     "kernel_time_ms_total": sum(
                         values.get(category, 0.0) for values in category_times_by_range
@@ -567,26 +524,17 @@ def analyze_nsys_sqlite(
                     "kernel_time_fraction": (
                         min(
                             1.0,
-                            sum(
-                                values.get(category, 0.0)
-                                for values in category_times_by_range
-                            )
+                            sum(values.get(category, 0.0) for values in category_times_by_range)
                             / total_kernel_time_ms,
                         )
                         if total_kernel_time_ms
                         else 0.0
                     ),
                     "kernels_per_range": _summary(
-                        [
-                            values.get(category, 0.0)
-                            for values in category_counts_by_range
-                        ]
+                        [values.get(category, 0.0) for values in category_counts_by_range]
                     ),
                     "kernel_time_ms_per_range": _summary(
-                        [
-                            values.get(category, 0.0)
-                            for values in category_times_by_range
-                        ]
+                        [values.get(category, 0.0) for values in category_times_by_range]
                     ),
                 }
                 for category in all_categories
@@ -598,9 +546,7 @@ def analyze_nsys_sqlite(
                     "kernel_count_total": int(values[0]),
                     "kernel_time_ms_total": values[1],
                     "kernel_time_fraction": (
-                        min(1.0, values[1] / total_kernel_time_ms)
-                        if total_kernel_time_ms
-                        else 0.0
+                        min(1.0, values[1] / total_kernel_time_ms) if total_kernel_time_ms else 0.0
                     ),
                 }
                 for kernel_name, values in sorted(
@@ -634,9 +580,7 @@ def analyze_nsys_sqlite(
                 "gpu_busy_ms_per_range": _summary(gpu_busy_times_ms),
                 "gpu_span_ms_per_range": _summary(gpu_spans_ms),
                 "cpu_gpu_busy_overlap_ms_per_range": _summary(cpu_gpu_overlap_times_ms),
-                "cpu_gpu_busy_overlap_fraction_per_range": _summary(
-                    cpu_gpu_overlap_fractions
-                ),
+                "cpu_gpu_busy_overlap_fraction_per_range": _summary(cpu_gpu_overlap_fractions),
                 "gpu_tail_after_cpu_ms_per_range": _summary(gpu_tail_after_cpu_ms),
                 "gpu_start_offset_us_per_range": _summary(gpu_start_offsets_us),
                 "kernel_category_rules_version": 1,
