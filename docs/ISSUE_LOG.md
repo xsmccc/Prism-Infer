@@ -1171,6 +1171,138 @@ jq '.status, .formal_eligible, .comparability_checks, .summaries' \
 - BF16 batch4 已 Verified，scaled-FP8 formal matrix 可恢复；其 token/quality/comparability
   仍必须独立通过，不能从 BF16 结果外推。
 
+## P9-009: scaled-FP8 batch1 Graph 的 engine TTFT 出现正式回退
+
+状态: Investigating
+
+发现方式:
+
+- 在 commit `d28e68a` 上完成 H1 scaled-FP8 batch1/batch4 eager/model-only Graph 的
+  clean fresh-process formal matrix，并逐指标检查 bootstrap CI，而不只查看 decode TPOT。
+
+影响范围:
+
+- 不影响 scaled-FP8 Graph token correctness、KV pool identity、decode/E2E speedup 或既有
+  P9-C quality non-inferiority PASS。
+- 阻止“model-only Graph 同时改善 TTFT”的表述；后续 NSYS 必须单独解释 prefill/TTFT，
+  不能用 decode 收益代替完整 pipeline 归因。
+
+证据:
+
+```text
+batch1 artifact:
+data/p9_baseline/h1_scaled_fp8_b1_d28e68a.jsonl
+data/p9_baseline/h1_scaled_fp8_b1_d28e68a.manifest.json
+status=completed, formal_eligible=true, comparability=15/15 PASS
+token/text exact, 10/10 children released
+
+batch1 engine TTFT raw (ms):
+eager: [275.594, 287.790, 288.199, 281.423, 281.480]
+Graph: [290.896, 288.941, 289.786, 386.608, 290.818]
+median: 281.480 -> 290.818 ms
+regression: 3.32%, 95% CI [0.55%, 37.35%]
+
+batch1 preprocessing-inclusive TTFT:
+median: 427.669 -> 376.659 ms
+improvement CI: [-26.88%, +24.49%], crosses zero; no claim
+
+batch1 decode step:
+34.739 -> 19.162 ms, -44.84%, 95% CI [-47.97%, -44.50%]
+batch1 E2E:
+4898.21 -> 2810.74 ms, -42.62%, 95% CI [-44.98%, -39.57%]
+
+batch4 engine TTFT:
+938.967 -> 923.065 ms, improvement CI [-7.64%, +4.86%], crosses zero
+batch4 preprocessing-inclusive TTFT:
+1612.117 -> 1602.343 ms, improvement CI [-7.41%, +5.75%], crosses zero
+
+batch4 decode step:
+35.669 -> 19.998 ms, -43.93%, 95% CI [-45.17%, -43.65%]
+batch4 E2E:
+6245.12 -> 4200.98 ms, -32.73%, 95% CI [-34.93%, -30.60%]
+```
+
+定位过程:
+
+- 先确认不是 correctness 失败：batch1/batch4 两个 manifest 都是 15/15 comparability PASS，
+  每组五个 process output hash exact；scaled payload/scale/total bytes 和 KV metadata exact。
+- 先确认不是 Graph replay bucket 漂移：batch1 的 127 个 decode step 都是 `1 -> 1`；batch4
+  是 `1 -> 1 / 2 -> 2 / 3 -> 3 / 4 -> 4`，没有 padding。
+- `engine_ttft_ms` 口径是同步的 prefill step 总和；当前 model-only Graph 只 capture decode
+  model forward，理论上不直接优化 vision/prefill。因此 decode 大幅改善与 TTFT 不改善并不
+  矛盾，但 batch1 的显著回退仍需解释。
+- 检查 raw process 值后发现 Graph 有一个 `386.608 ms` 高值，但即使其余四个集中在
+  `288.9–290.9 ms`，也整体略高于 eager 中位数。按冻结协议保留全部样本，不删除该 run。
+- 对照 BF16 batch1：engine TTFT CI 跨零；对照 scaled-FP8 batch4：两种 TTFT CI 都跨零。
+  因而现有证据不支持“所有 Graph cell 都系统性降低/提高 prefill”，问题目前只绑定该
+  batch1 formal cell。
+
+错误假设与排除过程:
+
+- 不能把 E2E 改善 42.6% 解释为 TTFT 改善；output128 下 decode 主导 E2E。
+- 不能因为 Graph backend 只作用于 decode 就丢弃 TTFT；用户体验与完整 pipeline claim 仍
+  必须报告所有预注册指标。
+- 不能事后删除 `386.608 ms` 或立即重跑直到 CI 好看；若增加 repeats，必须先登记目的、
+  样本数和停止条件。
+- 目前不能把回退写成 CUDA Graph capture 成本：capture 在 engine 初始化阶段完成，不在
+  request TTFT timing scope；需要 NSYS/NVTX 验证 warmup 后的 prefill kernel/host timeline。
+
+根因:
+
+- Investigating。已确认这是 batch1 formal 指标结果，不是 correctness、bucket 或资源释放
+  失败；尚未证明是 GPU 状态噪声、prefill kernel/cache 状态、host preprocessing overlap，
+  还是 Graph 资源常驻对首个 measured prefill 的间接影响。
+
+修复:
+
+- 尚未修改 production。先把该结果作为 P9-D NSYS 的明确归因问题，不为美化 TTFT 改变
+  measurement scope 或 Graph backend。
+
+设计权衡与拒绝方案:
+
+- 保留 model-only Graph 为 supported decode candidate：batch1/batch4 correctness 与 decode/
+  E2E CI 均强 PASS，TTFT 问题不构成静默 fallback 或错误输出。
+- 不声明 TTFT 收益；batch1 engine TTFT 明确报告回退，其他 TTFT cell 报告 CI 跨零。
+- 不立即增加 process count。先用 profile 确认 prefill CPU/GPU timeline 是否存在可解释差异；
+  若仍需统计复验，再预注册额外 repeats。
+
+验证命令:
+
+```bash
+jq '.status, .formal_eligible, .summaries, .comparison.metrics' \
+  data/p9_baseline/h1_scaled_fp8_b1_d28e68a.manifest.json
+
+jq '.status, .formal_eligible, .summaries, .comparison.metrics' \
+  data/p9_baseline/h1_scaled_fp8_b4_d28e68a.manifest.json
+```
+
+验证结果:
+
+- scaled-FP8 batch1/batch4 formal correctness 与 decode/E2E performance PASS。
+- batch1 engine-only TTFT regression 被机器可读 CI 确认并保留，状态 Investigating。
+
+经验:
+
+- pipeline 优化不能只看 TPOT；同一个 candidate 可以显著改善 decode/E2E，同时在 TTFT
+  上无收益甚至回退。
+- process-level raw values 比单一 median 更重要；它能暴露离群点和稳定偏移，但是否归因
+  为系统问题仍需要 profiler，而不是凭肉眼删样本。
+
+面试故事提炼:
+
+- “scaled-FP8 Graph 在 batch1 把 decode step 从 34.74 ms 降到 19.16 ms，E2E 也改善
+  42.6%，但 formal gate 同时显示 engine TTFT 回退 3.3%。我没有用 E2E 掩盖它，也没有
+  删除一个 386 ms process；我确认 token、KV、bucket 和释放都 exact，把问题登记为
+  NSYS 的 prefill timeline 归因项。这个案例说明我优化的是完整推理 pipeline，而不是只挑
+  好看的 TPOT。”
+
+剩余风险:
+
+- batch1 只有五个 process，TTFT raw 分布较宽；当前 CI 是正式结果，但根因和跨时段
+  可重复性尚未验证。
+- model-only Graph 尚未 capture LM head、argmax、状态更新或 D2H；后续 full-step candidate
+  可能改变 decode 收益与 host timeline，必须重新跑相同 TTFT/TPOT/E2E gate。
+
 ## P1-001: Full logits 对齐为 MARGINAL
 
 状态: Verified

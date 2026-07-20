@@ -1,6 +1,7 @@
 # P9 Compiler / CUDA Graph Pipeline Playbook
 
-> 状态：执行合同已冻结，P9-D 实现与正式测量待完成
+> 状态：model-only CUDA Graph 的 BF16/scaled-FP8 × batch1/4 正式基线已完成；
+> NSYS 全流水线归因与 greedy full-step Graph 待完成（2026-07-20）
 > 目标：把 `torch.compile` 和 CUDA Graph 优化推进到完整推理 pipeline 的可证明边界，
 > 同时沉淀可复现的教学材料与面试问题链。
 
@@ -47,7 +48,7 @@ vision + prefill    decode steady state
                          └─ minimal result/status copy
 ```
 
-P9-D 的第一目标是 **greedy full-step CUDA Graph**：steady-state decoder、
+P9-D 的下一个实现目标是 **greedy full-step CUDA Graph**：steady-state decoder、
 model-precision LM head 和 argmax sampler进入同一 replay 边界。动态 vision/prefill 不为追求
 覆盖率强行 capture；它们独立 profiling，并只在有稳定 bucket 和收益证据时进入候选。
 
@@ -71,7 +72,7 @@ CPU Graph replay range只是异步提交时间，不能当作完整 GPU step；G
 | Backend | 作用 | 当前状态 | P9-D 判定 |
 |---|---|---|---|
 | eager | correctness与归因基线 | supported | 保留 |
-| model-only CUDA Graph | 当前强内部基线 | supported | 与 full-step并列重跑 |
+| model-only CUDA Graph | 当前强内部基线 | supported | 四个 formal cell 已完成；NSYS 归因中 |
 | greedy full-step CUDA Graph | decoder + LM head + argmax | pending | 主候选 |
 | pure compile subgraph | QKV/QK-Norm/M-RoPE | memory-safe、batch2分叉 | rejected evidence |
 | compile + full-step Graph | 相同DeviceBatch/capture边界 | pending | 只做一次正式候选 |
@@ -103,8 +104,9 @@ reference；显式 `flash_attn` 必须单独完成 single-image/H1/H2 质量、v
 
 ## 6. 优化顺序
 
-1. 在新 GPU UUID 上建立 eager/model-only Graph clean baseline。
-2. 用 NSYS 把完整 decode step分解，列出所有Graph外CPU/GPU工作和同步。
+1. **已完成**：在当前 GPU UUID 上建立 eager/model-only Graph clean baseline。
+2. **进行中**：用 NSYS 分解 prefill、完整 decode step、Graph 外 CPU/GPU 工作和同步，
+   优先归因 P9-009 的 scaled-FP8 batch1 engine TTFT 回退。
 3. 把 model-precision LM head纳入稳定 device buffer，验证权重不发生逐步转换/复制。
 4. 把 argmax sampler和必要的状态更新纳入Graph，结果只做最小D2H copy。
 5. 验证 full-step bucket、padding、KV/scale view和生命周期，再做正式 repeats。
@@ -119,10 +121,19 @@ ABBA/BAAB 顺序、完整 comparability checks 和 process-level bootstrap 95% C
 
 requested traffic batch、scheduler 发布的 actual decode batch 和 Graph captured bucket 是
 三个不同层级。H1 batch4 会受视觉 patch admission 与 prefill/decode interleaving 影响，
-实际先经历 batch `1/2/3`，其中 actual 3 replay captured bucket 4；output128 才会在后段
-形成 batch4 steady state。因此正式 artifact 必须保存每个 actual bucket 的 step count 和
-actual→captured 映射，eager/Graph actual histogram 必须 exact，不能用 nominal batch4 或
-最后一次 replay 代替。完整问题链记录为 P9-006。
+实际先经历 batch `1/2/3`，output128 才在后段形成 batch4 steady state。早期 sparse policy
+曾把 actual batch3 replay 到 captured batch4，并触发 BF16 轨迹分叉；该失败 artifact 已
+保留。commit `40466b6` 起 batch1–8 各自 exact capture，修复后正式 batch4 轨迹为
+`1→1:2 / 2→2:2 / 3→3:2 / 4→4:124`，512 个完整 logits row bit-exact。batch9–15 等仍
+使用 stride16 sparse bucket，不能外推 token-exact。因此正式 artifact 必须保存每个 actual
+bucket 的 step count 和 actual→captured 映射，eager/Graph actual histogram必须 exact，
+不能用 nominal batch4 或最后一次 replay代替。完整问题链记录为 P9-006/P9-008。
+
+截至 2026-07-20，BF16/scaled-FP8 × batch1/4 四个 clean formal cells 均为 15/15
+comparability PASS、token/text exact。model-only Graph 的 decode step 改善为
+`37.07%–44.84%`，E2E 改善为 `27.17%–42.62%`；TTFT 单独判定，其中 scaled-FP8
+batch1 engine TTFT 回退 `3.32%`、95% CI `[0.55%, 37.35%]`，已登记 P9-009，不能写成
+Graph 改善 TTFT。artifact、SHA256 和完整 CI 见`docs/REPRODUCIBILITY.md`第11节。
 
 ## 7. 止损规则
 
