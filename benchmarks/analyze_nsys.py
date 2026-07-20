@@ -11,9 +11,58 @@ import argparse
 import json
 import math
 import sqlite3
+from bisect import bisect_left, bisect_right
+from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+
+
+_NANOSECONDS_PER_MILLISECOND = 1_000_000.0
+_NANOSECONDS_PER_MICROSECOND = 1_000.0
+_TOP_KERNEL_LIMIT = 20
+_KERNEL_CATEGORY_RULES_VERSION = 1
+_KERNEL_CATEGORY_RULES = (
+    ("linear_gemv", ("gemv", "gemm")),
+    ("paged_decode_attention", ("_paged_decode_attention_kernel",)),
+    ("kv_store", ("_store_kvcache",)),
+    ("reduction", ("reduce_kernel",)),
+    ("copy_cast", ("copy_kernel", "bfloat16_copy")),
+    ("layout_index", ("catarray", "indexselect", "fillfunctor")),
+    ("trigonometric", ("sin_kernel", "cos_kernel")),
+    ("elementwise", ("elementwise_kernel", "silu_kernel")),
+)
+_TARGET_TOTAL_FIELDS = {
+    "kernel_count": "kernel_count_total",
+    "kernel_time_ms": "kernel_time_ms_total",
+    "runtime_api_count": "runtime_api_count_total",
+    "memcpy_async_count": "memcpy_async_count_total",
+    "stream_synchronize_count": "stream_synchronize_count_total",
+    "graph_execution_ms": "graph_execution_ms_total",
+    "memcpy_time_ms": "memcpy_time_ms_total",
+    "memcpy_bytes": "memcpy_bytes_total",
+    "memset_time_ms": "memset_time_ms_total",
+    "memset_bytes": "memset_bytes_total",
+}
+_TARGET_SUMMARY_FIELDS = {
+    "kernel_count": "kernels_per_range",
+    "kernel_time_ms": "kernel_time_ms_per_range",
+    "runtime_api_count": "runtime_apis_per_range",
+    "memcpy_async_count": "memcpy_async_per_range",
+    "stream_synchronize_count": "stream_synchronize_per_range",
+    "graph_execution_ms": "graph_execution_ms_per_range",
+    "cpu_range_ms": "cpu_range_ms_per_range",
+    "memcpy_time_ms": "memcpy_time_ms_per_range",
+    "memcpy_bytes": "memcpy_bytes_per_range",
+    "memset_time_ms": "memset_time_ms_per_range",
+    "memset_bytes": "memset_bytes_per_range",
+    "gpu_busy_ms": "gpu_busy_ms_per_range",
+    "gpu_span_ms": "gpu_span_ms_per_range",
+    "cpu_gpu_busy_overlap_ms": "cpu_gpu_busy_overlap_ms_per_range",
+    "cpu_gpu_busy_overlap_fraction": "cpu_gpu_busy_overlap_fraction_per_range",
+    "gpu_tail_after_cpu_ms": "gpu_tail_after_cpu_ms_per_range",
+    "gpu_start_offset_us": "gpu_start_offset_us_per_range",
+}
 
 
 def _percentile(values: Sequence[float], fraction: float) -> float:
@@ -79,6 +128,168 @@ def _table_columns(connection: sqlite3.Connection, name: str) -> set[str]:
     return {str(row[1]) for row in connection.execute(f"PRAGMA table_info({name})")}
 
 
+class _ActivityIndex:
+    """一次加载 CUPTI activity，并按时间与 correlationId 在内存关联。"""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self.runtime = [
+            (int(start), int(end), correlation_id, str(name))
+            for start, end, correlation_id, name in connection.execute(
+                """
+                SELECT r.start, r.end, r.correlationId, s.value
+                FROM CUPTI_ACTIVITY_KIND_RUNTIME AS r
+                JOIN StringIds AS s ON r.nameId = s.id
+                ORDER BY r.start
+                """
+            )
+        ]
+        self.runtime_starts = [row[0] for row in self.runtime]
+
+        kernel_columns = _table_columns(connection, "CUPTI_ACTIVITY_KIND_KERNEL")
+        name_columns = [
+            column
+            for column in ("demangledName", "shortName", "mangledName")
+            if column in kernel_columns
+        ]
+        joins = []
+        names = []
+        for index, column in enumerate(name_columns):
+            alias = f"kernel_name_{index}"
+            joins.append(f"LEFT JOIN StringIds AS {alias} ON k.{column} = {alias}.id")
+            names.append(f"{alias}.value")
+        name_expression = f"coalesce({', '.join(names)}, '<unknown>')" if names else "'<unknown>'"
+        self.kernels = [
+            (int(start), int(end), correlation_id, str(name))
+            for start, end, correlation_id, name in connection.execute(
+                f"""
+                SELECT k.start, k.end, k.correlationId, {name_expression}
+                FROM CUPTI_ACTIVITY_KIND_KERNEL AS k
+                {" ".join(joins)}
+                ORDER BY k.start
+                """
+            )
+        ]
+        self.kernel_starts = [row[0] for row in self.kernels]
+        self.kernels_by_correlation = self._group_by_correlation(self.kernels)
+
+        self.memory_by_correlation = {
+            table: self._load_memory_rows(connection, table)
+            for table in (
+                "CUPTI_ACTIVITY_KIND_MEMCPY",
+                "CUPTI_ACTIVITY_KIND_MEMSET",
+            )
+        }
+        self.graphs = self._load_graph_rows(connection)
+        self.graph_starts = [row[0] for row in self.graphs]
+        self.graphs_by_correlation = self._group_by_correlation(self.graphs)
+
+    @staticmethod
+    def _group_by_correlation(
+        rows: Sequence[tuple[int, int, int | None, Any]],
+    ) -> dict[int, list[tuple[int, int, int | None, Any]]]:
+        grouped: dict[int, list[tuple[int, int, int | None, Any]]] = defaultdict(list)
+        for row in rows:
+            correlation_id = row[2]
+            if correlation_id is not None:
+                grouped[int(correlation_id)].append(row)
+        return dict(grouped)
+
+    @staticmethod
+    def _load_memory_rows(
+        connection: sqlite3.Connection,
+        table: str,
+    ) -> dict[int, list[tuple[int, int, int | None, int]]]:
+        columns = _table_columns(connection, table)
+        if not {"start", "end", "correlationId"} <= columns:
+            return {}
+        bytes_expression = "bytes" if "bytes" in columns else "0"
+        rows = [
+            (int(start), int(end), correlation_id, int(num_bytes))
+            for start, end, correlation_id, num_bytes in connection.execute(
+                f"""
+                SELECT start, end, correlationId, {bytes_expression}
+                FROM {table}
+                """
+            )
+        ]
+        return _ActivityIndex._group_by_correlation(rows)
+
+    @staticmethod
+    def _load_graph_rows(
+        connection: sqlite3.Connection,
+    ) -> list[tuple[int, int, int | None, None]]:
+        columns = _table_columns(connection, "CUPTI_ACTIVITY_KIND_GRAPH_TRACE")
+        if not {"start", "end"} <= columns:
+            return []
+        correlation_expression = "correlationId" if "correlationId" in columns else "NULL"
+        return [
+            (int(start), int(end), correlation_id, None)
+            for start, end, correlation_id in connection.execute(
+                f"""
+                SELECT start, end, {correlation_expression}
+                FROM CUPTI_ACTIVITY_KIND_GRAPH_TRACE
+                ORDER BY start
+                """
+            )
+        ]
+
+    @staticmethod
+    def _within_range(
+        rows: Sequence[tuple[int, int, Any, Any]],
+        starts: Sequence[int],
+        start: int,
+        end: int,
+    ) -> list[tuple[int, int, Any, Any]]:
+        first = bisect_left(starts, start)
+        last = bisect_right(starts, end)
+        return [row for row in rows[first:last] if row[1] <= end]
+
+    def runtime_within(self, start: int, end: int) -> list[tuple[int, int, int | None, str]]:
+        return self._within_range(self.runtime, self.runtime_starts, start, end)
+
+    def kernels_within(self, start: int, end: int) -> list[tuple[int, int, int | None, str]]:
+        return self._within_range(self.kernels, self.kernel_starts, start, end)
+
+    def graphs_within(
+        self,
+        start: int,
+        end: int,
+    ) -> list[tuple[int, int, int | None, None]]:
+        return self._within_range(self.graphs, self.graph_starts, start, end)
+
+    def kernels_for_correlations(
+        self,
+        correlation_ids: Sequence[int],
+    ) -> list[tuple[int, int, str]]:
+        return [
+            (row[0], row[1], str(row[3]))
+            for correlation_id in correlation_ids
+            for row in self.kernels_by_correlation.get(correlation_id, ())
+        ]
+
+    def memory_for_correlations(
+        self,
+        table: str,
+        correlation_ids: Sequence[int],
+    ) -> list[tuple[int, int, int]]:
+        grouped = self.memory_by_correlation[table]
+        return [
+            (row[0], row[1], int(row[3]))
+            for correlation_id in correlation_ids
+            for row in grouped.get(correlation_id, ())
+        ]
+
+    def graphs_for_correlations(
+        self,
+        correlation_ids: Sequence[int],
+    ) -> list[tuple[int, int]]:
+        return [
+            (row[0], row[1])
+            for correlation_id in correlation_ids
+            for row in self.graphs_by_correlation.get(correlation_id, ())
+        ]
+
+
 def _interval_union_ns(intervals: Sequence[tuple[int, int]]) -> int:
     """计算一组半开时间区间的 union 长度。"""
 
@@ -115,102 +326,39 @@ def _kernel_category(name: str) -> str:
     """按可审计的 kernel-name 规则生成 operation category。"""
 
     lowered = name.lower()
-    if "gemv" in lowered or "gemm" in lowered:
-        return "linear_gemv"
-    if "_paged_decode_attention_kernel" in lowered:
-        return "paged_decode_attention"
-    if "_store_kvcache" in lowered:
-        return "kv_store"
-    if "reduce_kernel" in lowered:
-        return "reduction"
-    if "copy_kernel" in lowered or "bfloat16_copy" in lowered:
-        return "copy_cast"
-    if "catarray" in lowered or "indexselect" in lowered or "fillfunctor" in lowered:
-        return "layout_index"
-    if "sin_kernel" in lowered or "cos_kernel" in lowered:
-        return "trigonometric"
-    if "elementwise_kernel" in lowered or "silu_kernel" in lowered:
-        return "elementwise"
+    for category, fragments in _KERNEL_CATEGORY_RULES:
+        if any(fragment in lowered for fragment in fragments):
+            return category
     return "other"
 
 
 def _runtime_rows(
-    connection: sqlite3.Connection,
+    activities: _ActivityIndex,
     start: int,
     end: int,
 ) -> list[tuple[int | None, str]]:
     """读取完全落在一个 CPU NVTX range 内的 CUDA runtime 调用。"""
 
-    return list(
-        connection.execute(
-            """
-            SELECT r.correlationId, s.value
-            FROM CUPTI_ACTIVITY_KIND_RUNTIME AS r
-            JOIN StringIds AS s ON r.nameId = s.id
-            WHERE r.start >= ? AND r.end <= ?
-            """,
-            (start, end),
-        )
-    )
+    return [(row[2], row[3]) for row in activities.runtime_within(start, end)]
 
 
 def _kernel_rows_for_correlations(
-    connection: sqlite3.Connection,
+    activities: _ActivityIndex,
     correlation_ids: Sequence[int],
 ) -> list[tuple[int, int, str]]:
     """按 runtime correlation 解析 kernel interval 与可读名称。"""
 
-    if not correlation_ids:
-        return []
-    columns = _table_columns(connection, "CUPTI_ACTIVITY_KIND_KERNEL")
-    name_columns = [
-        column for column in ("demangledName", "shortName", "mangledName") if column in columns
-    ]
-    joins = []
-    names = []
-    for index, column in enumerate(name_columns):
-        alias = f"kernel_name_{index}"
-        joins.append(f"LEFT JOIN StringIds AS {alias} ON k.{column} = {alias}.id")
-        names.append(f"{alias}.value")
-    name_expression = f"coalesce({', '.join(names)}, '<unknown>')" if names else "'<unknown>'"
-    placeholders = ",".join("?" for _ in correlation_ids)
-    return [
-        (int(start), int(end), str(name))
-        for start, end, name in connection.execute(
-            f"""
-            SELECT k.start, k.end, {name_expression}
-            FROM CUPTI_ACTIVITY_KIND_KERNEL AS k
-            {" ".join(joins)}
-            WHERE k.correlationId IN ({placeholders})
-            """,
-            tuple(correlation_ids),
-        )
-    ]
+    return activities.kernels_for_correlations(correlation_ids)
 
 
 def _memory_rows_for_correlations(
-    connection: sqlite3.Connection,
+    activities: _ActivityIndex,
     table: str,
     correlation_ids: Sequence[int],
 ) -> list[tuple[int, int, int]]:
     """读取 memcpy/memset interval 与 bytes；旧 trace 缺表时返回空。"""
 
-    columns = _table_columns(connection, table)
-    if not correlation_ids or not {"start", "end", "correlationId"} <= columns:
-        return []
-    bytes_expression = "bytes" if "bytes" in columns else "0"
-    placeholders = ",".join("?" for _ in correlation_ids)
-    return [
-        (int(start), int(end), int(num_bytes))
-        for start, end, num_bytes in connection.execute(
-            f"""
-            SELECT start, end, {bytes_expression}
-            FROM {table}
-            WHERE correlationId IN ({placeholders})
-            """,
-            tuple(correlation_ids),
-        )
-    ]
+    return activities.memory_for_correlations(table, correlation_ids)
 
 
 def _nvtx_ranges(
@@ -234,24 +382,16 @@ def _nvtx_ranges(
 
 
 def _runtime_counts(
-    connection: sqlite3.Connection,
+    activities: _ActivityIndex,
     start: int,
     end: int,
 ) -> dict[str, int]:
     """统计一个时间区间内的 CUDA runtime/driver API 次数。"""
 
-    return dict(
-        connection.execute(
-            """
-            SELECT s.value, count(*)
-            FROM CUPTI_ACTIVITY_KIND_RUNTIME AS r
-            JOIN StringIds AS s ON r.nameId = s.id
-            WHERE r.start >= ? AND r.end <= ?
-            GROUP BY s.value
-            """,
-            (start, end),
-        )
-    )
+    counts: dict[str, int] = {}
+    for _, _, _, name in activities.runtime_within(start, end):
+        counts[name] = counts.get(name, 0) + 1
+    return counts
 
 
 def _matching_count(counts: dict[str, int], fragment: str) -> int:
@@ -261,47 +401,21 @@ def _matching_count(counts: dict[str, int], fragment: str) -> int:
 
 
 def _step_metrics(
-    connection: sqlite3.Connection,
+    activities: _ActivityIndex,
     start: int,
     end: int,
 ) -> dict[str, float | int]:
     """提取一个 engine NVTX range 的 kernel 与 launch 指标。"""
 
-    kernels = list(
-        connection.execute(
-            """
-            SELECT start, end, correlationId
-            FROM CUPTI_ACTIVITY_KIND_KERNEL
-            WHERE start >= ? AND end <= ?
-            """,
-            (start, end),
-        )
-    )
-    launches = list(
-        connection.execute(
-            """
-            SELECT r.start, r.end, r.correlationId
-            FROM CUPTI_ACTIVITY_KIND_RUNTIME AS r
-            JOIN StringIds AS s ON r.nameId = s.id
-            WHERE s.value LIKE '%LaunchKernel%'
-              AND r.start >= ? AND r.end <= ?
-            """,
-            (start, end),
-        )
-    )
-    graph_traces = []
-    if _has_table(connection, "CUPTI_ACTIVITY_KIND_GRAPH_TRACE"):
-        graph_traces = list(
-            connection.execute(
-                """
-                SELECT start, end
-                FROM CUPTI_ACTIVITY_KIND_GRAPH_TRACE
-                WHERE start >= ? AND end <= ?
-                """,
-                (start, end),
-            )
-        )
-    runtime_counts = _runtime_counts(connection, start, end)
+    kernel_rows = activities.kernels_within(start, end)
+    kernels = [(row[0], row[1], row[2]) for row in kernel_rows]
+    launches = [
+        (row[0], row[1], row[2])
+        for row in activities.runtime_within(start, end)
+        if "LaunchKernel" in row[3]
+    ]
+    graph_traces = [(row[0], row[1]) for row in activities.graphs_within(start, end)]
+    runtime_counts = _runtime_counts(activities, start, end)
     kernel_start_by_correlation = {
         correlation_id: kernel_start for kernel_start, _, correlation_id in kernels
     }
@@ -312,6 +426,7 @@ def _step_metrics(
         and kernel_start_by_correlation[correlation_id] >= launch_end
     ]
     return {
+        "cpu_range_ms": (end - start) / 1e6,
         "kernel_count": len(kernels),
         "kernel_launch_api_count": _matching_count(
             runtime_counts,
@@ -338,6 +453,238 @@ def _step_metrics(
     }
 
 
+def _phase_metrics(
+    activities: _ActivityIndex,
+    engine_ranges: Sequence[tuple[int, int]],
+    prefill_steps: int,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, dict[str, int | float]]]]:
+    """按 engine range 顺序生成 prefill/decode raw 与分位数。"""
+
+    raw_steps = [
+        {
+            "phase": "prefill" if index < prefill_steps else "decode",
+            **_step_metrics(activities, start, end),
+        }
+        for index, (start, end) in enumerate(engine_ranges)
+    ]
+    phase_summary = {}
+    for phase in ("prefill", "decode"):
+        matching = [step for step in raw_steps if step["phase"] == phase]
+        if matching:
+            phase_summary[phase] = {
+                key: _summary([float(step[key]) for step in matching])
+                for key in raw_steps[0]
+                if key != "phase"
+            }
+    return raw_steps, phase_summary
+
+
+def _gpu_timeline_observation(
+    gpu_intervals: Sequence[tuple[int, int]],
+    *,
+    cpu_start: int,
+    cpu_end: int,
+) -> dict[str, float]:
+    """计算一个 CPU range 直接关联 GPU activity 的 span、overlap 与 tail。"""
+
+    busy_ms = _interval_union_ns(gpu_intervals) / _NANOSECONDS_PER_MILLISECOND
+    if not gpu_intervals:
+        return {
+            "gpu_busy_ms": busy_ms,
+            "gpu_span_ms": 0.0,
+            "cpu_gpu_busy_overlap_ms": 0.0,
+            "cpu_gpu_busy_overlap_fraction": 0.0,
+            "gpu_tail_after_cpu_ms": 0.0,
+            "gpu_start_offset_us": 0.0,
+        }
+    gpu_start = min(interval[0] for interval in gpu_intervals)
+    gpu_end = max(interval[1] for interval in gpu_intervals)
+    cpu_range_ns = cpu_end - cpu_start
+    overlap_ns = _clipped_interval_union_ns(gpu_intervals, cpu_start, cpu_end)
+    return {
+        "gpu_busy_ms": busy_ms,
+        "gpu_span_ms": (gpu_end - gpu_start) / _NANOSECONDS_PER_MILLISECOND,
+        "cpu_gpu_busy_overlap_ms": overlap_ns / _NANOSECONDS_PER_MILLISECOND,
+        "cpu_gpu_busy_overlap_fraction": (overlap_ns / cpu_range_ns if cpu_range_ns else 0.0),
+        "gpu_tail_after_cpu_ms": (max(0, gpu_end - cpu_end) / _NANOSECONDS_PER_MILLISECOND),
+        "gpu_start_offset_us": ((gpu_start - cpu_start) / _NANOSECONDS_PER_MICROSECOND),
+    }
+
+
+def _target_observation(
+    activities: _ActivityIndex,
+    start: int,
+    end: int,
+) -> dict[str, Any]:
+    """提取一个 target NVTX range 的 direct activity，不重复计算嵌套 CPU 时间。"""
+
+    runtime_rows = _runtime_rows(activities, start, end)
+    correlation_ids = sorted(
+        {correlation_id for correlation_id, _ in runtime_rows if correlation_id is not None}
+    )
+    kernel_rows = _kernel_rows_for_correlations(activities, correlation_ids)
+    kernels = [(kernel_start, kernel_end) for kernel_start, kernel_end, _ in kernel_rows]
+    memcpy_rows = _memory_rows_for_correlations(
+        activities,
+        "CUPTI_ACTIVITY_KIND_MEMCPY",
+        correlation_ids,
+    )
+    memset_rows = _memory_rows_for_correlations(
+        activities,
+        "CUPTI_ACTIVITY_KIND_MEMSET",
+        correlation_ids,
+    )
+    graph_traces = activities.graphs_for_correlations(correlation_ids)
+    category_counts: dict[str, float] = {}
+    category_times: dict[str, float] = {}
+    for kernel_start, kernel_end, kernel_name in kernel_rows:
+        duration_ms = (kernel_end - kernel_start) / _NANOSECONDS_PER_MILLISECOND
+        category = _kernel_category(kernel_name)
+        category_counts[category] = category_counts.get(category, 0.0) + 1
+        category_times[category] = category_times.get(category, 0.0) + duration_ms
+    gpu_intervals = [
+        *kernels,
+        *[(row[0], row[1]) for row in memcpy_rows],
+        *[(row[0], row[1]) for row in memset_rows],
+    ]
+    return {
+        "kernel_count": float(len(kernels)),
+        "kernel_time_ms": sum(item[1] - item[0] for item in kernels) / _NANOSECONDS_PER_MILLISECOND,
+        "runtime_api_count": float(len(runtime_rows)),
+        "memcpy_async_count": float(
+            sum("MemcpyAsync" in runtime_name for _, runtime_name in runtime_rows)
+        ),
+        "stream_synchronize_count": float(
+            sum("StreamSynchronize" in runtime_name for _, runtime_name in runtime_rows)
+        ),
+        "graph_execution_ms": sum(item[1] - item[0] for item in graph_traces)
+        / _NANOSECONDS_PER_MILLISECOND,
+        "cpu_range_ms": (end - start) / _NANOSECONDS_PER_MILLISECOND,
+        "memcpy_time_ms": sum(item[1] - item[0] for item in memcpy_rows)
+        / _NANOSECONDS_PER_MILLISECOND,
+        "memcpy_bytes": float(sum(row[2] for row in memcpy_rows)),
+        "memset_time_ms": sum(item[1] - item[0] for item in memset_rows)
+        / _NANOSECONDS_PER_MILLISECOND,
+        "memset_bytes": float(sum(row[2] for row in memset_rows)),
+        "category_counts": category_counts,
+        "category_times": category_times,
+        "kernel_rows": kernel_rows,
+        **_gpu_timeline_observation(
+            gpu_intervals,
+            cpu_start=start,
+            cpu_end=end,
+        ),
+    }
+
+
+def _kernel_breakdown(
+    observations: Sequence[dict[str, Any]],
+    *,
+    total_kernel_time_ms: float,
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    """汇总 category 与 top kernel，同时保持历史逐 range 累加顺序。"""
+
+    category_counts_by_range = [item["category_counts"] for item in observations]
+    category_times_by_range = [item["category_times"] for item in observations]
+    all_categories = sorted(
+        {category for per_range in category_times_by_range for category in per_range}
+    )
+    categories = {}
+    for category in all_categories:
+        category_count_total = sum(values.get(category, 0.0) for values in category_counts_by_range)
+        category_time_total = sum(values.get(category, 0.0) for values in category_times_by_range)
+        categories[category] = {
+            "kernel_count_total": int(category_count_total),
+            "kernel_time_ms_total": category_time_total,
+            "kernel_time_fraction": (
+                min(1.0, category_time_total / total_kernel_time_ms)
+                if total_kernel_time_ms
+                else 0.0
+            ),
+            "kernels_per_range": _summary(
+                [values.get(category, 0.0) for values in category_counts_by_range]
+            ),
+            "kernel_time_ms_per_range": _summary(
+                [values.get(category, 0.0) for values in category_times_by_range]
+            ),
+        }
+    kernel_name_totals: dict[str, list[float]] = {}
+    for observation in observations:
+        for kernel_start, kernel_end, kernel_name in observation["kernel_rows"]:
+            duration_ms = (kernel_end - kernel_start) / _NANOSECONDS_PER_MILLISECOND
+            totals = kernel_name_totals.setdefault(kernel_name, [0.0, 0.0])
+            totals[0] += 1
+            totals[1] += duration_ms
+    top_kernels = [
+        {
+            "name": kernel_name,
+            "category": _kernel_category(kernel_name),
+            "kernel_count_total": int(values[0]),
+            "kernel_time_ms_total": values[1],
+            "kernel_time_fraction": (
+                min(1.0, values[1] / total_kernel_time_ms) if total_kernel_time_ms else 0.0
+            ),
+        }
+        for kernel_name, values in sorted(
+            kernel_name_totals.items(),
+            key=lambda item: (-item[1][1], item[0]),
+        )[:_TOP_KERNEL_LIMIT]
+    ]
+    return categories, top_kernels
+
+
+def _summarize_target(observations: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """把 target range observations 汇总为稳定的 schema-v2 字段。"""
+
+    values_by_field = {
+        field: [float(observation[field]) for observation in observations]
+        for field in _TARGET_SUMMARY_FIELDS
+    }
+    totals = {
+        output_name: (
+            int(sum(values_by_field[field]))
+            if field.endswith(("count", "bytes"))
+            else sum(values_by_field[field])
+        )
+        for field, output_name in _TARGET_TOTAL_FIELDS.items()
+    }
+    summaries = {
+        output_name: _summary(values_by_field[field])
+        for field, output_name in _TARGET_SUMMARY_FIELDS.items()
+    }
+    total_kernel_time_ms = float(totals["kernel_time_ms_total"])
+    categories, top_kernels = _kernel_breakdown(
+        observations,
+        total_kernel_time_ms=total_kernel_time_ms,
+    )
+    return {
+        "range_count": len(observations),
+        **totals,
+        **summaries,
+        "kernel_category_rules_version": _KERNEL_CATEGORY_RULES_VERSION,
+        "kernel_categories": categories,
+        "top_kernels": top_kernels,
+    }
+
+
+def _analyze_targets(
+    connection: sqlite3.Connection,
+    activities: _ActivityIndex,
+    target_ranges: Sequence[str],
+) -> dict[str, dict[str, Any]]:
+    """按名称解析全部 target ranges，并显式拒绝缺失标签。"""
+
+    targets = {}
+    for name in target_ranges:
+        ranges = _nvtx_ranges(connection, name)
+        if not ranges:
+            raise ValueError(f"target NVTX range not found: {name}")
+        targets[name] = _summarize_target(
+            [_target_observation(activities, start, end) for start, end in ranges]
+        )
+    return targets
+
+
 def analyze_nsys_sqlite(
     path: str | Path,
     *,
@@ -350,244 +697,22 @@ def analyze_nsys_sqlite(
     sqlite_path = Path(path)
     if prefill_steps < 0:
         raise ValueError("prefill_steps must be >= 0")
-    connection = sqlite3.connect(sqlite_path)
+    connection = sqlite3.connect(
+        sqlite_path.resolve().as_uri() + "?mode=ro",
+        uri=True,
+    )
     try:
         _require_tables(connection)
+        activities = _ActivityIndex(connection)
         engine_ranges = _nvtx_ranges(connection, engine_range)
         if len(engine_ranges) <= prefill_steps:
             raise ValueError("capture does not contain enough engine ranges for prefill/decode")
-        raw_steps = [
-            {
-                "phase": "prefill" if index < prefill_steps else "decode",
-                **_step_metrics(connection, start, end),
-            }
-            for index, (start, end) in enumerate(engine_ranges)
-        ]
-        phase_summary: dict[str, dict[str, dict[str, int | float]]] = {}
-        for phase in ("prefill", "decode"):
-            matching = [step for step in raw_steps if step["phase"] == phase]
-            if not matching:
-                continue
-            phase_summary[phase] = {
-                key: _summary([float(step[key]) for step in matching])
-                for key in raw_steps[0]
-                if key != "phase"
-            }
-
-        targets: dict[str, dict[str, Any]] = {}
-        for name in target_ranges:
-            ranges = _nvtx_ranges(connection, name)
-            if not ranges:
-                raise ValueError(f"target NVTX range not found: {name}")
-            kernel_counts = []
-            kernel_times_ms = []
-            runtime_api_counts = []
-            memcpy_async_counts = []
-            stream_synchronize_counts = []
-            graph_times_ms = []
-            cpu_range_times_ms = []
-            memcpy_times_ms = []
-            memcpy_bytes = []
-            memset_times_ms = []
-            memset_bytes = []
-            gpu_busy_times_ms = []
-            gpu_spans_ms = []
-            cpu_gpu_overlap_times_ms = []
-            cpu_gpu_overlap_fractions = []
-            gpu_tail_after_cpu_ms = []
-            gpu_start_offsets_us = []
-            category_counts_by_range: list[dict[str, float]] = []
-            category_times_by_range: list[dict[str, float]] = []
-            kernel_name_totals: dict[str, list[float]] = {}
-            for start, end in ranges:
-                runtime_rows = _runtime_rows(connection, start, end)
-                correlation_ids = sorted(
-                    {
-                        correlation_id
-                        for correlation_id, _ in runtime_rows
-                        if correlation_id is not None
-                    }
-                )
-                kernel_rows = _kernel_rows_for_correlations(
-                    connection,
-                    correlation_ids,
-                )
-                kernels = [
-                    (kernel_start, kernel_end) for kernel_start, kernel_end, _ in kernel_rows
-                ]
-                memcpy_rows = _memory_rows_for_correlations(
-                    connection,
-                    "CUPTI_ACTIVITY_KIND_MEMCPY",
-                    correlation_ids,
-                )
-                memset_rows = _memory_rows_for_correlations(
-                    connection,
-                    "CUPTI_ACTIVITY_KIND_MEMSET",
-                    correlation_ids,
-                )
-                graph_traces = []
-                if correlation_ids:
-                    placeholders = ",".join("?" for _ in correlation_ids)
-                    if _has_table(
-                        connection,
-                        "CUPTI_ACTIVITY_KIND_GRAPH_TRACE",
-                    ):
-                        graph_traces = list(
-                            connection.execute(
-                                f"""
-                                SELECT start, end
-                                FROM CUPTI_ACTIVITY_KIND_GRAPH_TRACE
-                                WHERE correlationId IN ({placeholders})
-                                """,
-                                correlation_ids,
-                            )
-                        )
-                kernel_counts.append(float(len(kernels)))
-                kernel_times_ms.append(
-                    sum(kernel_end - kernel_start for kernel_start, kernel_end in kernels) / 1e6
-                )
-                runtime_api_counts.append(float(len(runtime_rows)))
-                memcpy_async_counts.append(
-                    float(sum("MemcpyAsync" in runtime_name for _, runtime_name in runtime_rows))
-                )
-                stream_synchronize_counts.append(
-                    float(
-                        sum("StreamSynchronize" in runtime_name for _, runtime_name in runtime_rows)
-                    )
-                )
-                graph_times_ms.append(
-                    sum(graph_end - graph_start for graph_start, graph_end in graph_traces) / 1e6
-                )
-                cpu_range_ns = end - start
-                cpu_range_times_ms.append(cpu_range_ns / 1e6)
-                memcpy_times_ms.append(
-                    sum(row_end - row_start for row_start, row_end, _ in memcpy_rows) / 1e6
-                )
-                memcpy_bytes.append(float(sum(row[2] for row in memcpy_rows)))
-                memset_times_ms.append(
-                    sum(row_end - row_start for row_start, row_end, _ in memset_rows) / 1e6
-                )
-                memset_bytes.append(float(sum(row[2] for row in memset_rows)))
-                gpu_intervals = [
-                    *kernels,
-                    *[(row[0], row[1]) for row in memcpy_rows],
-                    *[(row[0], row[1]) for row in memset_rows],
-                ]
-                gpu_busy_times_ms.append(_interval_union_ns(gpu_intervals) / 1e6)
-                if gpu_intervals:
-                    gpu_start = min(interval[0] for interval in gpu_intervals)
-                    gpu_end = max(interval[1] for interval in gpu_intervals)
-                    gpu_spans_ms.append((gpu_end - gpu_start) / 1e6)
-                    overlap_ns = _clipped_interval_union_ns(
-                        gpu_intervals,
-                        start,
-                        end,
-                    )
-                    cpu_gpu_overlap_times_ms.append(overlap_ns / 1e6)
-                    cpu_gpu_overlap_fractions.append(
-                        overlap_ns / cpu_range_ns if cpu_range_ns else 0.0
-                    )
-                    gpu_tail_after_cpu_ms.append(max(0, gpu_end - end) / 1e6)
-                    gpu_start_offsets_us.append((gpu_start - start) / 1000.0)
-                else:
-                    gpu_spans_ms.append(0.0)
-                    cpu_gpu_overlap_times_ms.append(0.0)
-                    cpu_gpu_overlap_fractions.append(0.0)
-                    gpu_tail_after_cpu_ms.append(0.0)
-                    gpu_start_offsets_us.append(0.0)
-
-                category_counts: dict[str, float] = {}
-                category_times: dict[str, float] = {}
-                for kernel_start, kernel_end, kernel_name in kernel_rows:
-                    duration_ms = (kernel_end - kernel_start) / 1e6
-                    category = _kernel_category(kernel_name)
-                    category_counts[category] = category_counts.get(category, 0.0) + 1
-                    category_times[category] = category_times.get(category, 0.0) + duration_ms
-                    totals = kernel_name_totals.setdefault(kernel_name, [0.0, 0.0])
-                    totals[0] += 1
-                    totals[1] += duration_ms
-                category_counts_by_range.append(category_counts)
-                category_times_by_range.append(category_times)
-
-            all_categories = sorted(
-                {category for per_range in category_times_by_range for category in per_range}
-            )
-            total_kernel_time_ms = sum(kernel_times_ms)
-            kernel_categories = {
-                category: {
-                    "kernel_count_total": int(
-                        sum(values.get(category, 0.0) for values in category_counts_by_range)
-                    ),
-                    "kernel_time_ms_total": sum(
-                        values.get(category, 0.0) for values in category_times_by_range
-                    ),
-                    "kernel_time_fraction": (
-                        min(
-                            1.0,
-                            sum(values.get(category, 0.0) for values in category_times_by_range)
-                            / total_kernel_time_ms,
-                        )
-                        if total_kernel_time_ms
-                        else 0.0
-                    ),
-                    "kernels_per_range": _summary(
-                        [values.get(category, 0.0) for values in category_counts_by_range]
-                    ),
-                    "kernel_time_ms_per_range": _summary(
-                        [values.get(category, 0.0) for values in category_times_by_range]
-                    ),
-                }
-                for category in all_categories
-            }
-            top_kernels = [
-                {
-                    "name": kernel_name,
-                    "category": _kernel_category(kernel_name),
-                    "kernel_count_total": int(values[0]),
-                    "kernel_time_ms_total": values[1],
-                    "kernel_time_fraction": (
-                        min(1.0, values[1] / total_kernel_time_ms) if total_kernel_time_ms else 0.0
-                    ),
-                }
-                for kernel_name, values in sorted(
-                    kernel_name_totals.items(),
-                    key=lambda item: (-item[1][1], item[0]),
-                )[:20]
-            ]
-            targets[name] = {
-                "range_count": len(ranges),
-                "kernel_count_total": int(sum(kernel_counts)),
-                "kernel_time_ms_total": sum(kernel_times_ms),
-                "runtime_api_count_total": int(sum(runtime_api_counts)),
-                "memcpy_async_count_total": int(sum(memcpy_async_counts)),
-                "stream_synchronize_count_total": int(sum(stream_synchronize_counts)),
-                "graph_execution_ms_total": sum(graph_times_ms),
-                "memcpy_time_ms_total": sum(memcpy_times_ms),
-                "memcpy_bytes_total": int(sum(memcpy_bytes)),
-                "memset_time_ms_total": sum(memset_times_ms),
-                "memset_bytes_total": int(sum(memset_bytes)),
-                "kernels_per_range": _summary(kernel_counts),
-                "kernel_time_ms_per_range": _summary(kernel_times_ms),
-                "runtime_apis_per_range": _summary(runtime_api_counts),
-                "memcpy_async_per_range": _summary(memcpy_async_counts),
-                "stream_synchronize_per_range": _summary(stream_synchronize_counts),
-                "graph_execution_ms_per_range": _summary(graph_times_ms),
-                "cpu_range_ms_per_range": _summary(cpu_range_times_ms),
-                "memcpy_time_ms_per_range": _summary(memcpy_times_ms),
-                "memcpy_bytes_per_range": _summary(memcpy_bytes),
-                "memset_time_ms_per_range": _summary(memset_times_ms),
-                "memset_bytes_per_range": _summary(memset_bytes),
-                "gpu_busy_ms_per_range": _summary(gpu_busy_times_ms),
-                "gpu_span_ms_per_range": _summary(gpu_spans_ms),
-                "cpu_gpu_busy_overlap_ms_per_range": _summary(cpu_gpu_overlap_times_ms),
-                "cpu_gpu_busy_overlap_fraction_per_range": _summary(cpu_gpu_overlap_fractions),
-                "gpu_tail_after_cpu_ms_per_range": _summary(gpu_tail_after_cpu_ms),
-                "gpu_start_offset_us_per_range": _summary(gpu_start_offsets_us),
-                "kernel_category_rules_version": 1,
-                "kernel_categories": kernel_categories,
-                "top_kernels": top_kernels,
-            }
-
+        raw_steps, phase_summary = _phase_metrics(
+            activities,
+            engine_ranges,
+            prefill_steps,
+        )
+        targets = _analyze_targets(connection, activities, target_ranges)
         return {
             "schema_version": 2,
             "record_type": "nsys_profile_summary",
@@ -611,6 +736,11 @@ def main() -> None:
     parser.add_argument("--prefill-steps", type=int, default=1)
     parser.add_argument("--target-range", action="append", default=[])
     parser.add_argument("--output")
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="write --output without printing the full JSON summary",
+    )
     args = parser.parse_args()
 
     result = analyze_nsys_sqlite(
@@ -622,9 +752,12 @@ def main() -> None:
     payload = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True)
     if args.output is not None:
         output_path = Path(args.output)
+        if output_path.exists():
+            raise FileExistsError(f"refusing to overwrite Nsight summary: {output_path}")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(payload + "\n", encoding="utf-8")
-    print(payload)
+    if not args.quiet:
+        print(payload)
 
 
 if __name__ == "__main__":

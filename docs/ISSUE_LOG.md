@@ -1303,6 +1303,121 @@ jq '.status, .formal_eligible, .summaries, .comparison.metrics' \
 - model-only Graph 尚未 capture LM head、argmax、状态更新或 D2H；后续 full-step candidate
   可能改变 decode 收益与 host timeline，必须重新跑相同 TTFT/TPOT/E2E gate。
 
+## P9-010: NSYS 缺失 host-only ranges，且 analyzer 对长 trace 退化到逐 range 扫描
+
+状态: Fixed（clean H1 trace 待复验）
+
+发现方式:
+
+- 在 clean commit `5ef051d` 上采集 scaled-FP8 batch1 eager/model-only Graph 的 H1
+  output128 node-level NSYS trace，准备分解 P9-009 的 prefill/host timeline。
+- 检查 SQLite 的 `NVTX_EVENTS` 后发现 tokenizer/image processor/M-RoPE/scheduler 等
+  `cuda=False` region 完全不可见；进一步对 eager 的 4,572 个 decode attention ranges
+  运行 analyzer 时，分析超过 60 秒仍未完成。
+
+影响范围:
+
+- 原 semantic JSON 仍有 CPU region 和 phase，但 NSYS 无法把这些 host region 放回 CUDA
+  timeline，因此不足以证明 scheduler/preprocessing 与 GPU 的先后和重叠关系。
+- 原 analyzer 结果语义正确，但对 H1 output128 长 trace 不具备迭代效率，会阻塞后续
+  full-step Graph 与 kernel attribution。
+- 不影响已经保存的 raw `.nsys-rep`/SQLite、模型 token correctness 或 formal performance
+  数字；P9-009 仍为 Investigating，不能由工具修复直接升级为已归因。
+
+证据:
+
+```text
+clean diagnostic inputs, commit 5ef051d:
+data/p9_nsys/p9d_scaled_fp8_b1_eager_5ef051d.{nsys-rep,sqlite}
+data/p9_nsys/p9d_scaled_fp8_b1_graph_5ef051d.{nsys-rep,sqlite}
+
+eager SQLite events: 591,719
+graph SQLite events: 304,729
+eager semantic ranges:
+  engine.model_runner=128
+  attention.decode.fp8_paged_triton=4,572
+  attention.kv_store.triton_scaled_fp8=4,608
+  preprocess/scheduler/engine.step=absent
+
+old per-range SQL analyzer: >60 s on the full eager target set
+rejected TEMP-index candidate: still >60 s
+bulk in-memory correlation + refactor:
+  eager 5.28 s
+  Graph 2.98 s
+```
+
+定位过程:
+
+- `performance_profile._enabled_region()` 只在 `cuda=True` 且启用 CUDA Event 时调用
+  `torch.cuda.nvtx.range_push()`；因此 `cuda=False` 不仅关闭 Event，也意外关闭了 NVTX。
+- engine step 本身没有父 range。即使 scheduler range 可见，也无法可靠按第一个 prefill、
+  后续 decode 的完整 schedule→execute→postprocess 周期分组。
+- analyzer 对每个 target range 分别查询 runtime、kernel、memcpy、memset 和 graph trace；
+  数千 range 造成大量 SQLite 往返。给 raw 表建立 TEMP 副本/索引仍保留逐 range 查询结构，
+  实测没有达到停止条件，因此撤销该候选。
+- 将 runtime/kernel/memory/graph activity 各读取一次，分别按 start time 二分、按
+  `correlationId` 建索引后，同一统计可在 Python 内批量关联。
+
+根因:
+
+- NVTX emission 被错误耦合到 CUDA Event 开关，而 `cuda=False` 的真实含义只应是“不创建
+  CUDA Event”，不应是“从 Systems timeline 消失”。
+- analyzer 的数据访问模型是 `O(target ranges × SQL scans/queries)`，不适合长输出和逐层
+  attention ranges。
+
+修复:
+
+- active CUDA profiling session 对 CPU/GPU region 都 push/pop NVTX；只有 `cuda=True`
+  region 创建 CUDA Event。
+- `PerformanceProfileSession.begin_step()/end_step()` 增加成对的
+  `prism::engine.step` 父 range，且只在 profiling session 中执行，不改变默认 inference
+  路径。
+- analyzer 以 read-only URI 打开 raw SQLite，一次加载 CUPTI activity，在内存建立时间与
+  correlation 索引；增加 engine range 的 `cpu_range_ms`，并保持 schema-v2 既有字段。
+- kernel 分类规则、summary/total 字段映射和时间单位改为命名常量；拆分 phase、target、
+  GPU timeline 和 kernel breakdown，complexity gate 全部通过。
+- CLI 增加 `--quiet`，并默认拒绝覆盖已有 summary artifact。
+
+验证:
+
+- eager/Graph 两份真实 H1 trace 的重构输出分别与重构前逐字节一致：
+  SHA256 `5a063ccd0f0c816e8057f8fa079b80f7c2fe9db57e6e234cda9711881d02acd8`
+  和 `1414dd5920b9ccdfb4b1cba7d0a970b119e7241ffee38fbbf7d8d931fc61e8be`。
+- dirty integration smoke 的 SQLite 出现 `engine.step=4`、
+  `engine.scheduler.schedule/postprocess=4/4`、`preprocess.image_processor=1`、
+  `preprocess.mrope_positions=1`；CPU-only targets 的 direct kernel/GPU busy 均为 0，
+  没有被伪装为 CUDA 工作。
+- analyzer 以 `engine.step` 正确划分 1 个 prefill 和 3 个 decode；进程退出后 GPU 为
+  `1 MiB / 0%`。
+- focused profile/analyzer/P7 summary：`11 passed`；ruff、benchmark complexity、
+  compileall 和 diff check PASS。
+- 完整测试集：`472 collected`，其中 `471 passed, 1 skipped`，`0 failed, 0 errors`，
+  JUnit wall time `303.502 s`；结束后 GPU 再次回到 `1 MiB / 0%`。
+
+设计权衡与拒绝方案:
+
+- 不给每个 host region 创建 CUDA Event；这样会增加无意义的 stream event 和同步语义。
+  只补 NVTX，保留 semantic JSON 中 `cuda_ms=None` 的合同。
+- 不修改 raw SQLite 建永久索引；artifact 必须保持导出时内容。analyzer 用 read-only
+  connection 和进程内索引。
+- 不保留无效 TEMP-index 候选，也不以“有索引”作为优化结论；用真实 59 万事件 trace 和
+  byte-exact summary 验证算法替换。
+
+面试故事提炼:
+
+- “为了定位一个只有 3.3% 的 TTFT 回退，我先审计 profiler 自身，发现 CPU-only region
+  因为和 CUDA Event 开关耦合而没有进入 NVTX；同时长 trace analyzer 对 4,572 个 attention
+  range 逐个扫 SQLite。第一次加 TEMP 索引仍超过 60 秒，我按停止条件撤销，改成一次加载
+  CUPTI activity、按时间和 correlationId 批量关联，eager trace 降到 5.3 秒且 JSON
+  byte-exact。之后才继续根因分析，避免用不完整或被工具扭曲的 timeline 下结论。”
+
+剩余风险:
+
+- 当前 integration smoke 是 dirty diagnostic，不构成性能证据；必须提交后重新采集 clean
+  H1 eager/Graph trace，确认完整 host ranges、token hash 和 GPU release。
+- analyzer 现在用内存换查询时间；更大 online trace 的 peak RSS 尚未量化，后续需要在
+  trace metadata 中记录 event count、analysis wall time 和 max RSS。
+
 ## P1-001: Full logits 对齐为 MARGINAL
 
 状态: Verified

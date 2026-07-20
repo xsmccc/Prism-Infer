@@ -23,6 +23,7 @@ from prism_infer.observability.performance import install_performance_provider
 
 
 PERFORMANCE_PROFILE_SCHEMA_VERSION = 1
+ENGINE_STEP_NVTX_RANGE = "prism::engine.step"
 
 
 def _summarize_profile_regions(
@@ -202,6 +203,8 @@ class PerformanceProfileSession:
         self._next_step_id += 1
         self._steps.append(step)
         self._active_step = step
+        if self.cuda_timing:
+            torch.cuda.nvtx.range_push(ENGINE_STEP_NVTX_RANGE)
         return step.step_id
 
     def annotate_step(self, **metadata: Any) -> None:
@@ -217,7 +220,11 @@ class PerformanceProfileSession:
         if self._active_step is None:
             raise RuntimeError("cannot end performance profile without an active step")
         self._active_step.metadata["status"] = status
-        self._active_step = None
+        try:
+            if self.cuda_timing:
+                torch.cuda.nvtx.range_pop()
+        finally:
+            self._active_step = None
 
     def add_region(
         self,
@@ -369,10 +376,12 @@ def _enabled_region(
 
     cuda_start = None
     cuda_end = None
+    nvtx_enabled = session.cuda_timing
     if cuda and session.cuda_timing:
         cuda_start = torch.cuda.Event(enable_timing=True)
         cuda_end = torch.cuda.Event(enable_timing=True)
         cuda_start.record()
+    if nvtx_enabled:
         torch.cuda.nvtx.range_push(f"prism::{name}")
     cpu_start = perf_counter()
     try:
@@ -380,8 +389,9 @@ def _enabled_region(
             yield
     finally:
         cpu_ms = (perf_counter() - cpu_start) * 1000.0
-        if cuda_end is not None:
+        if nvtx_enabled:
             torch.cuda.nvtx.range_pop()
+        if cuda_end is not None:
             cuda_end.record()
         session.add_region(
             name=name,

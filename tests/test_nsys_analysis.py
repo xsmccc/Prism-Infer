@@ -1,9 +1,12 @@
 """P6.2 Nsight Systems SQLite structured analyzer 测试。"""
 
 import sqlite3
+import sys
 from pathlib import Path
 
-from benchmarks.analyze_nsys import analyze_nsys_sqlite
+import pytest
+
+from benchmarks.analyze_nsys import analyze_nsys_sqlite, main
 
 
 def _build_synthetic_nsys_sqlite(path: Path) -> None:
@@ -71,6 +74,7 @@ def test_analyze_nsys_sqlite_reports_phase_and_target_metrics(tmp_path: Path) ->
 
     assert len(result["raw_steps"]) == 3
     assert result["raw_steps"][0]["phase"] == "prefill"
+    assert result["phase_summary"]["prefill"]["cpu_range_ms"]["max"] == 0.001
     assert result["phase_summary"]["decode"]["kernel_count"]["median"] == 1
     assert result["phase_summary"]["decode"]["memcpy_async_count"]["max"] == 1
     assert result["phase_summary"]["decode"]["stream_synchronize_count"]["max"] == 1
@@ -89,6 +93,12 @@ def test_analyze_nsys_sqlite_reports_phase_and_target_metrics(tmp_path: Path) ->
     assert target["kernel_categories"]["linear_gemv"]["kernel_time_fraction"] == 1
     assert target["top_kernels"][0]["name"] == "internal::gemvx::kernel"
     assert result["target_ranges"]["prism::target"]["stream_synchronize_count_total"] == 1
+    connection = sqlite3.connect(sqlite_path)
+    persisted_analysis_indexes = connection.execute(
+        "SELECT name FROM sqlite_master WHERE name LIKE 'analysis_%'"
+    ).fetchall()
+    connection.close()
+    assert persisted_analysis_indexes == []
     print("P6.2 Nsight SQLite phase/target analysis: PASS")
 
 
@@ -109,3 +119,32 @@ def test_analyze_nsys_sqlite_accepts_capture_without_graph_table(
     assert result["phase_summary"]["prefill"]["graph_execution_ms"]["max"] == 0
     assert result["phase_summary"]["decode"]["graph_execution_ms"]["max"] == 0
     print("P6.2 Nsight eager capture without graph table: PASS")
+
+
+def test_analyzer_cli_quietly_writes_once_and_refuses_overwrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """summary artifact 默认不得覆盖，quiet 模式也必须保留机器可读输出。"""
+
+    sqlite_path = tmp_path / "synthetic.sqlite"
+    output_path = tmp_path / "summary.json"
+    _build_synthetic_nsys_sqlite(sqlite_path)
+    argv = [
+        "analyze_nsys.py",
+        str(sqlite_path),
+        "--output",
+        str(output_path),
+        "--quiet",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    main()
+
+    assert output_path.is_file()
+    assert capsys.readouterr().out == ""
+    original = output_path.read_bytes()
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        main()
+    assert output_path.read_bytes() == original

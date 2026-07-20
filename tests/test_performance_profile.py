@@ -89,6 +89,40 @@ def test_cpu_profile_builds_steps_regions_and_summary() -> None:
     print("P6.2 CPU performance profile schema: PASS")
 
 
+def test_cuda_profile_emits_nvtx_for_host_regions_and_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NSYS 必须看到 CPU-only region，并由 engine.step 包住完整调度周期。"""
+
+    nvtx_events: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        torch.cuda.nvtx,
+        "range_push",
+        lambda name: nvtx_events.append(("push", name)),
+    )
+    monkeypatch.setattr(
+        torch.cuda.nvtx,
+        "range_pop",
+        lambda: nvtx_events.append(("pop", None)),
+    )
+
+    with performance_profile(cuda_timing=True) as session:
+        session.begin_step()
+        session.annotate_step(phase="prefill", batch_size=1)
+        with profile_region("engine.scheduler.schedule", cuda=False):
+            sum(range(8))
+        session.end_step()
+
+    assert nvtx_events == [
+        ("push", "prism::engine.step"),
+        ("push", "prism::engine.scheduler.schedule"),
+        ("pop", None),
+        ("pop", None),
+    ]
+    print("P9-D CPU-only and engine-step NVTX coverage: PASS")
+
+
 def _run_profiled_prefill(enable_profile: bool) -> tuple[torch.Tensor, dict | None]:
     """运行一个 deterministic CPU prefill attention case。"""
 
