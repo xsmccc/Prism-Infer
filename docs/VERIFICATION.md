@@ -4219,7 +4219,7 @@ video:      [1,151936],    max/mean diff 0 / 0
 result: 4 passed in 39.60s
 ```
 
-详细问题链、错误假设和两分钟面试讲法见 `docs/ISSUE_LOG.md` 的 P9-001–P9-007；
+详细问题链、错误假设和两分钟面试讲法见 `docs/ISSUE_LOG.md` 的 P9-001–P9-008；
 pipeline capture/compile/NSYS/NCU 执行顺序和止损规则见
 `docs/P9_COMPILER_GRAPH_PLAYBOOK.md`。
 
@@ -4227,6 +4227,57 @@ pipeline capture/compile/NSYS/NCU 执行顺序和止损规则见
 commit 在当前 UUID 上完成 H1 BF16/scaled-FP8 batch1/4、output128、warmup2、每 mode 5
 fresh processes、10,000 bootstrap resamples，并且 manifest
 `formal_eligible=true`，结果才允许进入 NSYS/NCU 和后续 full-step Graph claim。
+
+### P9-D.1 H1 BF16 batch4 Graph correctness 闭环与 formal 结果（PASS，2026-07-20）
+
+commit `460d21a` 的第一次 clean formal cell 被 correctness gate 正确拒绝：五个 eager
+process 与五个 Graph process 各自 deterministic，但 request 0 在生成 index 31 从 token
+`2504` 分叉为 `448`。旧 artifact 保留为：
+
+- `data/p9_baseline/h1_bf16_b4.jsonl`；
+- `data/p9_baseline/h1_bf16_b4.manifest.json`，`status=failed_comparability`；
+- `data/p9_baseline/h1_bf16_b4_runs/`。
+
+fixed-history 逐 step 诊断把首个数值差异定位到 engine step 5：actual batch3 被 padding 到
+captured batch4。active input/control 与 padding sentinel 全部正确；晚 admission、只经历
+exact batch4 的 request 3 保持 logits exact，直到尾部第一次进入 3→4 才漂移。将 batch1–8
+改为 exact capture 后，相同 4×128 trajectory 的 512 个完整 logits row 全部 bit-exact，
+max diff 为 0。诊断 artifact 为：
+
+- `data/p9_diagnostics/h1_bf16_b4_graph_fixed_trajectory_v1.json`；
+- `data/p9_diagnostics/h1_bf16_b4_graph_fixed_trajectory_exact_small_v2.json`。
+
+修复提交 `40466b693e30c35652a9d2e739c61d5ccf1df0e3` 的 clean formal artifact：
+
+- `data/p9_baseline/h1_bf16_b4_exact_small_40466b6.jsonl`，SHA256
+  `700dd64fa9a56602a252f8c39918b65286fb8c0acceeac71e4330f239201fc6d`；
+- `data/p9_baseline/h1_bf16_b4_exact_small_40466b6.manifest.json`，SHA256
+  `26e7c523fb009a6d95981240439ecf559df4bc37eb689d67661543dca87dbdb4`。
+
+结果：`status=completed`、`formal_eligible=true`、15/15 comparability PASS、10/10 fresh
+children PASS，所有 child 前后均为 `1 MiB / 0%`；eager/Graph output SHA256 均为
+`a0f0cccd5699d11305c163bbbb20e6a9d50e82536a524cc760734cb7c57816b8`。Graph trajectory
+为 `1→1:2 / 2→2:2 / 3→3:2 / 4→4:124`。
+
+| H1 BF16 batch4 指标 | Eager median | Graph median | 改善与 process-bootstrap 95% CI |
+| --- | ---: | ---: | ---: |
+| Decode step | 32.608 ms | 20.519 ms | 37.07% `[36.62%, 38.34%]` |
+| Decode throughput | 119.492 tok/s | 190.432 tok/s | 59.37% `[58.38%, 62.47%]` |
+| End-to-end | 5969.98 ms | 4348.14 ms | 27.17% `[25.14%, 28.52%]` |
+| Engine output throughput | 98.095 tok/s | 139.585 tok/s | 42.30% `[38.85%, 47.90%]` |
+
+engine TTFT 与 preprocessing-inclusive TTFT 的 CI 都跨零，因此不声明改善。Graph 的代价
+是 peak allocated `+8.16 MiB`、reserved `+24 MiB`，五个 fresh-process capture time 为
+`967.546–985.300 ms`；capture 是 startup 成本，不混入 synchronized request timing。
+
+本轮完整 suite 为 `468 passed, 1 skipped in 300.37s`，JUnit 469 tests / 0 failures /
+0 errors / 1 skipped；随后新增的 text-position/padding-audit CPU test 在 focused suite
+通过。ruff、complexity/runtime assert/magic number、compileall、diff check 和 61 个本地
+Markdown 链接均 PASS。
+
+当前边界：H1 BF16 batch1 与 batch4 已 formal PASS，P9-008 Verified；batch9–15 等仍使用
+sparse bucket，不能外推 token-exact。scaled-FP8 batch1/4 formal matrix 尚未运行，完整 P9-D
+仍为 `IN PROGRESS`，但 BF16 correctness 不再阻塞下一 cell。
 
 ## 每次任务交付模板
 

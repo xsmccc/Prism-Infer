@@ -911,7 +911,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 
 ## P9-008: BF16 batch4 CUDA Graph 在动态 bucket 轨迹上稳定产生 token 分叉
 
-状态: Fixed
+状态: Verified
 
 发现方式:
 
@@ -979,6 +979,41 @@ natural argmax exact: true
 max logit diff: 0
 Graph capture time: 752.845 -> 1084.959 ms (+332.114 ms one-time startup)
 process exit: 1 MiB used, 0% utilization
+
+clean formal rerun after fix:
+commit: 40466b693e30c35652a9d2e739c61d5ccf1df0e3
+artifact: data/p9_baseline/h1_bf16_b4_exact_small_40466b6.jsonl
+manifest: data/p9_baseline/h1_bf16_b4_exact_small_40466b6.manifest.json
+status: completed
+formal_eligible: true
+comparability: 15/15 PASS
+fresh children: 10/10 PASS and released
+eager/Graph output SHA256:
+a0f0cccd5699d11305c163bbbb20e6a9d50e82536a524cc760734cb7c57816b8
+Graph actual -> captured:
+1 -> 1: 2, 2 -> 2: 2, 3 -> 3: 2, 4 -> 4: 124
+
+decode step median:
+32.6080 -> 20.5188 ms, -37.07%, 95% CI [-38.34%, -36.62%]
+decode throughput median:
+119.492 -> 190.432 token/s, +59.37%, 95% CI [+58.38%, +62.47%]
+end-to-end median:
+5969.98 -> 4348.14 ms, -27.17%, 95% CI [-28.52%, -25.14%]
+engine output throughput median:
+98.095 -> 139.585 token/s, +42.30%, 95% CI [+38.85%, +47.90%]
+
+TTFT:
+engine and preprocessing-inclusive CI both cross zero; no improvement claim
+
+Graph memory delta:
+peak allocated +8.16 MiB (+0.039%), reserved +24 MiB (+0.112%)
+Graph capture range across 5 fresh processes:
+967.546-985.300 ms
+
+aggregate SHA256:
+700dd64fa9a56602a252f8c39918b65286fb8c0acceeac71e4330f239201fc6d
+manifest SHA256:
+26e7c523fb009a6d95981240439ecf559df4bc37eb689d67661543dca87dbdb4
 ```
 
 定位过程:
@@ -1068,6 +1103,21 @@ jq '.status, .formal_eligible, .comparability_checks, .summaries' \
 .venv-local/bin/python -m pytest -q \
   tests/test_model_runner_vl_cudagraph.py \
   tests/test_p9_graph_trajectory_diagnostic.py -s
+
+.venv-local/bin/python benchmarks/run_p9_process_matrix.py \
+  --python /data/Prism-Infer/.venv-local/bin/python \
+  --model "$PRISM_MODEL_PATH" \
+  --manifest benchmarks/workloads/p9_headline.json \
+  --case h1_eight_image_448 \
+  --mode-a off_eager --mode-b off_graph \
+  --expected-gpu-uuid GPU-662a2fa1-37e4-cc52-0a51-27557dba315b \
+  --output data/p9_baseline/h1_bf16_b4_exact_small_40466b6.jsonl \
+  --fresh-process-repeats 5 --warmup 2 --max-tokens 128 --batch-size 4 \
+  --max-model-len 4096 --max-num-batched-tokens 16384 --max-num-seqs 4 \
+  --num-kvcache-blocks 113 --kvcache-block-size 256 \
+  --vision-attention-backend sdpa --logits-precision model \
+  --mlp-projection-mode packed --bootstrap-seed 20260717 \
+  --bootstrap-resamples 10000
 ```
 
 验证结果:
@@ -1085,8 +1135,11 @@ jq '.status, .formal_eligible, .comparability_checks, .summaries' \
   production diff 未再变化。
 - ruff format/check、production complexity/runtime-assert/magic-number、compileall、diff check
   和 61 个本地 Markdown 链接全部 PASS。
-- 原 formal cell 继续保持 rejected；修复后的 clean fresh-process formal rerun 尚未执行，
-  因此当前状态为 Fixed 而非 Verified。
+- 原 formal cell 继续保持 rejected，不重写历史；commit `40466b6` 的新路径 clean formal
+  rerun 为 `completed/formal_eligible=true`，15/15 comparability 和 10/10 child PASS，
+  eager/Graph token/text exact，因此 P9-008 升级为 Verified。
+- decode step 改善 37.07%（95% CI 36.62%–38.34%），E2E 改善 27.17%（95% CI
+  25.14%–28.52%）；TTFT CI 跨零，明确不作改善声明。
 
 经验:
 
@@ -1113,9 +1166,10 @@ jq '.status, .formal_eligible, .comparability_checks, .summaries' \
 - exact capture 目前只覆盖 1–8；actual batch9–15 等大 batch 仍可能 padding 到 stride16
   bucket，并具有同类 BF16 shape sensitivity。未来声称更大并发 token exact 前必须跑对应
   动态轨迹，或基于启动/内存数据决定是否扩大 exact capture 范围。
-- 新 policy 增加 Graph 数量和一次性 capture 时间；尚需在 clean commit 上重跑 formal
-  batch4，确认 steady-state TPOT 收益、capture ownership 和 formal eligibility。
-- scaled-FP8 formal matrix 继续暂停，直到 BF16 batch4 clean rerun Verified。
+- 新 policy 的 max4 Graph capture 为约 0.97–0.99 秒，且多占 8.16 MiB peak allocated / 24
+  MiB reserved；这是已量化的一次性/常驻代价，不应隐藏在 steady-state TPOT claim 中。
+- BF16 batch4 已 Verified，scaled-FP8 formal matrix 可恢复；其 token/quality/comparability
+  仍必须独立通过，不能从 BF16 结果外推。
 
 ## P1-001: Full logits 对齐为 MARGINAL
 
