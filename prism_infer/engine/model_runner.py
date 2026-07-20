@@ -89,7 +89,7 @@ from prism_infer.utils.context import (
 from prism_infer.utils.loader import load_model  # 权重加载
 
 
-CUDA_GRAPH_SMALL_BATCH_BUCKETS = (1, 2, 4, 8)
+CUDA_GRAPH_EXACT_BATCH_LIMIT = 8
 CUDA_GRAPH_BATCH_BUCKET_STRIDE = 16
 MROPE_DECODE_POSITION_RANK = 2
 
@@ -859,15 +859,20 @@ class ModelRunner:
     def _cudagraph_batch_sizes(max_bs: int) -> list[int]:
         """生成 CUDA Graph decode batch 档位，确保覆盖 `max_bs`。
 
-        常用档位保持 1/2/4/8/16...；当 `max_num_seqs` 是 3、5、17 等
-        非标准档位时，额外录制最后的 `max_bs`，避免 replay 查找失败。
+        小 batch 对 BF16 GEMM shape 很敏感，因此 1 到 8 每个 shape 都精确
+        录制；更大的 batch 使用 16 的步长控制启动 capture 成本。当
+        `max_num_seqs` 是 9、17 等非标准档位时，额外录制最后的 `max_bs`，
+        避免 replay 查找失败。
         """
 
         if max_bs < 1:
             raise ValueError(f"max_bs must be >= 1, got {max_bs}")
-        graph_bs = [
-            batch_size for batch_size in CUDA_GRAPH_SMALL_BATCH_BUCKETS if batch_size <= max_bs
-        ]
+        graph_bs = list(
+            range(
+                1,
+                min(max_bs, CUDA_GRAPH_EXACT_BATCH_LIMIT) + 1,
+            )
+        )
         graph_bs += list(
             range(
                 CUDA_GRAPH_BATCH_BUCKET_STRIDE,
@@ -1147,9 +1152,9 @@ class ModelRunner:
 
         # ── 要录制的 batch size 列表 ──
         self.graph_bs = self._cudagraph_batch_sizes(max_bs)
-        # [1, 2, 4, 8, 16, 32, 48, 64, ...]
+        # [1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 48, 64, ...]
         # 不是每个 bs 都录, 只录这些 "档位"
-        # 实际 bs 不在列表里时, 向上找最近的 (如 bs=3 → 用 bs=4 的 graph)
+        # 大 batch 不在列表里时, 向上找最近的 (如 bs=9 → 用 bs=16 的 graph)
 
         self.graphs = {}
         self.graph_pool = None  # 共享 GPU 内存池

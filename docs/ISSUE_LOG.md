@@ -909,6 +909,214 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 - 当前 gate 使用固定 synthetic 输入；标准质量与长生成稳定性仍由 P9 quality matrix 和
   teacher-forced/token-generation tests 单独覆盖。
 
+## P9-008: BF16 batch4 CUDA Graph 在动态 bucket 轨迹上稳定产生 token 分叉
+
+状态: Fixed
+
+发现方式:
+
+- 在 clean commit `460d21a` 上执行 H1 BF16 batch4、每 mode 5 个 fresh process 的
+  正式 eager/CUDA Graph comparability matrix。
+
+影响范围:
+
+- H1 batch4 CUDA Graph correctness，以及所有依赖该 cell 的 TPOT、吞吐和端到端性能 claim。
+- 后续 scaled-FP8 batch1/batch4 formal matrix；在基础 BF16 Graph correctness 未闭环前暂停。
+- 不影响已经通过 formal gate 的 H1 BF16 batch1 结论。
+
+证据:
+
+```text
+保留 artifact:
+data/p9_baseline/h1_bf16_b4.jsonl
+data/p9_baseline/h1_bf16_b4.manifest.json
+data/p9_baseline/h1_bf16_b4_runs/
+
+manifest status: failed_comparability
+fresh children: 10/10 executed and released successfully
+failed checks: token_ids_exact, decoded_texts_exact
+formal_eligible: false
+
+5 eager processes output SHA256:
+a0f0cccd5699d11305c163bbbb20e6a9d50e82536a524cc760734cb7c57816b8
+
+5 Graph processes output SHA256:
+1a3f60d65d054ca76f720185e83ab11c849cecb0cc227565db74c80d744b7121
+
+first mismatch:
+request=0, generated_token_index=31, eager=2504, graph=448
+requests 1-3: token exact
+
+eager actual decode histogram:
+batch1: 2, batch2: 2, batch3: 2, batch4: 124
+
+Graph actual -> captured histogram:
+1 -> 1: 2, 2 -> 2: 2, 3 -> 4: 2, 4 -> 4: 124
+
+every child before/after:
+1 MiB used, 0% utilization
+
+fixed-trajectory diagnostic before fix:
+artifact: data/p9_diagnostics/h1_bf16_b4_graph_fixed_trajectory_v1.json
+fixed history: exact, 4 requests x 128 sampled rows
+first numeric diff: engine step 5, request 0, generation index 3
+shape: actual batch3 -> captured batch4
+max/mean logit diff at first row: 0.25 / 0.0306588
+all three active rows at that step: non-exact logits, unchanged argmax
+first argmax diff: engine step 34, request 0, generation index 31
+eager top2: 2504=35.25, 448=35.00, margin=0.25
+Graph top2: 2504=35.25, 448=35.25, margin=0
+all active input/control audits: PASS
+all padding slot/context/block-table sentinel audits: PASS
+
+counterfactual after exact-small-batch capture:
+artifact: data/p9_diagnostics/h1_bf16_b4_graph_fixed_trajectory_exact_small_v2.json
+captured batches: [1, 2, 3, 4]
+scheduler/device-input trace exact: true
+fixed token history exact: true
+all 512 eager/Graph logit rows exact: true
+natural argmax exact: true
+max logit diff: 0
+Graph capture time: 752.845 -> 1084.959 ms (+332.114 ms one-time startup)
+process exit: 1 MiB used, 0% utilization
+```
+
+定位过程:
+
+- 已确认不是跨进程随机性：同一 backend 的五个 fresh process 分别得到完全相同的 output
+  hash，而两个 backend 之间稳定不同。
+- 已确认不是 workload 或 scheduler trajectory 漂移：eager/Graph 的 request、sampling、KV
+  metadata 和实际 decode batch histogram 均 exact。
+- 已确认分叉范围：只有最早 admission、经历 `batch1 -> batch2 -> batch3 -> batch4` 轨迹的
+  request 0 在第 32 个生成 token 改变 argmax；其余三个请求 exact。
+- 新增 `benchmarks/diagnose_graph_trajectory.py`：eager 生成自然 greedy history，Graph 强制
+  使用同一 history；按 request/generation step 比较完整 logits、自然 argmax、top-2 margin，
+  同时记录动态 batch 和 Graph static buffers。
+- fixed-history 证明第一个 argmax 分叉不是首个误差：首个数值差异精确发生在 engine step 5
+  的 actual batch3 -> captured batch4，三个 active row 同时不 exact，但 argmax 仍相同。
+- request 3 在该 step 后才 admission；它随后经历的 124 个 exact batch4 decode row 全部
+  logits exact，直到尾部其他请求结束、它第一次进入 actual batch3 -> captured batch4 才
+  出现数值差异。这构成了同一 run 内的对照组。
+- Graph static buffer 审计确认 active `input_ids/position_ids/slot_mapping/context_lens/
+  block_tables` 全部与 DeviceBatch exact；padding row 的 slot 为 -1、context 为 0、block table
+  全 -1。padding input/position 虽保留零值，但没有有效 KV slot 或 context。
+- 把 capture 集合从 `[1,2,4]` 改为 `[1,2,3,4]` 后重跑相同 fixed history，512 个 logit row
+  全部 bit-exact，首个数值差异和 argmax 差异都消失。
+- 诊断工具第一次尝试在同一进程依次加载两个 8B backend 时 OOM；不是 production 泄漏，
+  而是诊断 sampler 与 runner 双向持有。进程退出后 NVML 立即回到 1 MiB；显式切断
+  `runner -> sampler` 和 `sampler -> runner` 后，同进程顺序加载和释放成功。
+
+错误假设与排除过程:
+
+- 排除“某一次机器噪声导致 token 随机变化”：每个 mode 内 5/5 hash 完全稳定。
+- 排除“Graph 实际执行了不同请求数量”：逐 step histogram 和 actual-to-captured bucket
+  计数与调度合同一致。
+- 排除 padding row 写入有效 KV：padding 的 slot/context/block table 均使用无效 sentinel，
+  active control tensors 也逐项 exact。
+- 排除“CUDA Graph replay 本身必然改变数值”：exact batch1、batch2、batch4 在历史尚未被
+  padded step 污染时都与 eager bit-exact；补录 exact batch3 后全轨迹 exact。
+- 错误假设是第 31 个 token 才开始漂移；固定历史显示误差从 generation index 3 已出现，
+  只是当时 top-1 margin 足够大。第 31 个 token 的 eager margin 仅 0.25，Graph 中变成并列。
+
+根因:
+
+- production capture policy 对 max batch4 只录制 `[1,2,4]`，actual batch3 必须 padding 到
+  captured batch4。虽然每行数学上独立，但 BF16 model forward 的 GEMM batch shape 从 3
+  变为 4，会选择不同的低精度执行形状/内核舍入；首步小误差写入 KV 后沿自回归轨迹累积，
+  最终在低 margin token 上改变 greedy argmax。
+- 不是 stale control row、scheduler 漂移或跨进程噪声；补录同 shape 的 batch3 graph 后，
+  不改变其他输入即可让全轨迹恢复 bit-exact。
+
+修复:
+
+- `ModelRunner._cudagraph_batch_sizes` 对 batch1–8 逐个录制 exact graph；batch16 以上继续用
+  stride16 稀疏档位，并始终补录配置的 `max_bs`。
+- 更新 metadata/shape contract tests，明确 requested batch3 必须 selected batch3、padding=0，
+  max5/8/17 的 capture 集合也有精确期望。
+- 新增 CPU-tested fixed-trajectory 诊断器，保留完整 logits drift、top-2 margin、调度输入和
+  static-buffer 审计能力；输出路径拒绝覆盖既有 artifact。
+- 修复诊断 hook 的 ownership：每个 backend 结束时先断开 sampler/runner 双向引用，再释放
+  8B 模型和 CUDA allocator。
+
+设计权衡与拒绝方案:
+
+- 不用“文本语义相近”放宽 token exact；这是同权重、同 BF16 KV、同贪婪采样的执行
+  backend 对照，必须先解释数值边界。
+- 不删除或覆盖失败 artifact；修复后使用新文件名从零重跑，保留 rejected evidence。
+- 不先跑后续性能矩阵再回头处理 correctness；错误输出上的加速不构成有效优化。
+- 不为所有 1–512 batch 各录一张 graph；本次证据位于最常见的小动态 batch，1–8 exact
+  只增加有限的一次性 capture 成本。更大 sparse bucket 仍必须由对应 workload 的 token/
+  quality gate 约束，不能外推本次 exact 结论。
+- 不把 eager 也 padding 到 batch4 来制造 comparability；这会改变 baseline 语义并隐藏真正
+  的 shape sensitivity，而不是修复 Graph 路径。
+
+验证命令:
+
+```bash
+jq '.status, .formal_eligible, .comparability_checks, .summaries' \
+  data/p9_baseline/h1_bf16_b4.manifest.json
+
+.venv-local/bin/python benchmarks/diagnose_graph_trajectory.py \
+  --model "$PRISM_MODEL_PATH" \
+  --manifest benchmarks/workloads/p9_headline.json \
+  --case h1_eight_image_448 --batch-size 4 --max-tokens 128 \
+  --max-model-len 4096 --max-num-batched-tokens 16384 \
+  --max-num-seqs 4 --num-kvcache-blocks 113 --kvcache-block-size 256 \
+  --vision-attention-backend sdpa \
+  --output data/p9_diagnostics/h1_bf16_b4_graph_fixed_trajectory_exact_small_v2.json
+
+.venv-local/bin/python -m pytest -q \
+  tests/test_model_runner_vl_cudagraph.py \
+  tests/test_p9_graph_trajectory_diagnostic.py -s
+```
+
+验证结果:
+
+- 修复前 fixed trajectory：首个 numeric diff 与 batch3 -> graph4 边界精确重合；全部 active
+  input/control 和 padding sentinel audit PASS。
+- 修复后 fixed trajectory：4 x 128 = 512 个完整词表 logits row bit-exact，natural argmax
+  exact，max diff 0；Graph capture 后进程正常释放。
+- CPU shape/diagnostic contracts：`9 passed`；额外覆盖 text position 三轴规范化和 padding
+  static-buffer sentinel audit。
+- CUDA Graph 单图/多图/视频/mixed integration：`2 passed`；mixed metadata 明确断言
+  requested batch3 -> selected batch3、padding 0。
+- 完整 8B suite：`468 passed, 1 skipped in 300.37s`；JUnit 469 tests / 0 failures /
+  0 errors / 1 skipped。随后新增的一项纯 CPU static-buffer audit 已在 focused suite 通过，
+  production diff 未再变化。
+- ruff format/check、production complexity/runtime-assert/magic-number、compileall、diff check
+  和 61 个本地 Markdown 链接全部 PASS。
+- 原 formal cell 继续保持 rejected；修复后的 clean fresh-process formal rerun 尚未执行，
+  因此当前状态为 Fixed 而非 Verified。
+
+经验:
+
+- fresh-process 稳定性只能证明分叉可复现，不能自动证明任一 backend 正确。
+- CUDA Graph correctness 必须覆盖真实 scheduler 的 bucket 转换轨迹；只测固定 batch1 或
+  固定 batch4 会漏掉跨 bucket 状态和 shape-sensitive 数值路径。
+- teacher forcing 的价值不是“强行让输出相同”，而是把输入历史固定后观察候选自然 logits；
+  这样能区分误差起点、累计传播和第一个可见 argmax 分叉。
+- Graph padding 的 sentinel 可以保证内存安全，却不能保证 BF16 数值等价；shape 本身就是
+  kernel policy 的一部分。
+
+面试故事提炼:
+
+- “正式 ABBA/BAAB 实验在统计性能前被 token exact 门禁拒绝：五个 eager 与五个 Graph
+  进程各自稳定，但 request 0 在第 32 个 token 分叉。我没有放宽成语义相近，而是做了
+  teacher-forced 固定轨迹，把首个误差定位到 actual batch3 被 padding 到 graph4；active
+  control 和 padding sentinel 都正确，且晚加入、只跑 exact batch4 的 request 是 run 内
+  对照组。根因是 BF16 GEMM shape 舍入差异写入 KV 后累积。我将 1–8 改为 exact capture，
+  代价是约 332 ms 一次性启动 capture；修复后 512 个完整 logits row bit-exact。过程中还
+  发现诊断 hook 的双向引用会让第二个 8B 模型 OOM，因此同步修复了 ownership。”
+
+剩余风险:
+
+- exact capture 目前只覆盖 1–8；actual batch9–15 等大 batch 仍可能 padding 到 stride16
+  bucket，并具有同类 BF16 shape sensitivity。未来声称更大并发 token exact 前必须跑对应
+  动态轨迹，或基于启动/内存数据决定是否扩大 exact capture 范围。
+- 新 policy 增加 Graph 数量和一次性 capture 时间；尚需在 clean commit 上重跑 formal
+  batch4，确认 steady-state TPOT 收益、capture ownership 和 formal eligibility。
+- scaled-FP8 formal matrix 继续暂停，直到 BF16 batch4 clean rerun Verified。
+
 ## P1-001: Full logits 对齐为 MARGINAL
 
 状态: Verified

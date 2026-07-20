@@ -33,13 +33,14 @@ def test_cudagraph_decode_positions_normalize_text_and_vl_shapes() -> None:
 
 
 def test_cudagraph_batch_sizes_cover_non_standard_max_bs() -> None:
-    """非 1/2/4/8/16 档位的 max_num_seqs 也必须有可 replay graph。"""
+    """小 batch exact capture，非标准大上限也必须有可 replay graph。"""
 
     cases = {
         1: [1],
         3: [1, 2, 3],
-        5: [1, 2, 4, 5],
-        17: [1, 2, 4, 8, 16, 17],
+        5: [1, 2, 3, 4, 5],
+        8: [1, 2, 3, 4, 5, 6, 7, 8],
+        17: [1, 2, 3, 4, 5, 6, 7, 8, 16, 17],
     }
     for max_bs, expected in cases.items():
         got = ModelRunner._cudagraph_batch_sizes(max_bs)
@@ -53,7 +54,7 @@ def test_cudagraph_metadata_reports_capture_scope_and_selected_bucket() -> None:
 
     runner = object.__new__(ModelRunner)
     runner.enforce_eager = False
-    runner.graph_bs = [1, 2, 4, 8]
+    runner.graph_bs = [1, 2, 3, 4, 5, 6, 7, 8]
     runner.cudagraph_capture_ms = 123.5
 
     metadata = runner.cudagraph_metadata(3)
@@ -63,10 +64,10 @@ def test_cudagraph_metadata_reports_capture_scope_and_selected_bucket() -> None:
         "enabled": True,
         "capture_scope": "decode_model_forward",
         "capture_ms": 123.5,
-        "batch_sizes": [1, 2, 4, 8],
+        "batch_sizes": [1, 2, 3, 4, 5, 6, 7, 8],
         "requested_batch_size": 3,
-        "selected_batch_size": 4,
-        "batch_padding": 1,
+        "selected_batch_size": 3,
+        "batch_padding": 0,
     }
     print("ModelRunner CUDA Graph execution metadata: PASS")
 

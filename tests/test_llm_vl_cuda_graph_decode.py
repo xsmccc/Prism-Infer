@@ -139,6 +139,7 @@ def test_vl_cuda_graph_mixed_batch_matches_eager() -> None:
 
     graph_llm = _new_llm(model_path, enforce_eager=False, max_num_seqs=4)
     try:
+        graph_metadata = graph_llm.model_runner.cudagraph_metadata(len(requests))
         graph_outputs = graph_llm.generate_mixed(requests, sampling, use_tqdm=False)
     finally:
         graph_llm.exit()
@@ -150,7 +151,10 @@ def test_vl_cuda_graph_mixed_batch_matches_eager() -> None:
     print(f"mixed eager token_ids: {eager_ids}")
     print(f"mixed graph token_ids: {graph_ids}")
     print(f"mixed graph batch size: {len(requests)}")
-    print("mixed graph replay rounding: requested batch=3, replay graph batch=4")
+    print(f"mixed graph metadata: {graph_metadata}")
 
     assert graph_ids == eager_ids
+    assert graph_metadata["requested_batch_size"] == len(requests)
+    assert graph_metadata["selected_batch_size"] == len(requests)
+    assert graph_metadata["batch_padding"] == 0
     print("LLM.generate_mixed VL CUDA Graph decode equivalence: PASS")
