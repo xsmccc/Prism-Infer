@@ -256,6 +256,7 @@ def test_nested_config_and_flat_compatibility_adapter_are_equivalent(
             video_max_pixels=802816,
             max_vision_patches_per_batch=7000,
             vision_encoder_microbatch_patches=3500,
+            vision_attention_backend="flash_attn",
         ),
         cache=CacheConfig(
             gpu_memory_utilization=0.75,
@@ -286,6 +287,7 @@ def test_nested_config_and_flat_compatibility_adapter_are_equivalent(
         video_max_pixels=802816,
         max_vision_patches_per_batch=7000,
         vision_encoder_microbatch_patches=3500,
+        vision_attention_backend="flash_attn",
         gpu_memory_utilization=0.75,
         kvcache_block_size=32,
         num_kvcache_blocks=24,
@@ -307,8 +309,15 @@ def test_nested_config_and_flat_compatibility_adapter_are_equivalent(
     assert flat_runtime.video_max_pixels == 802816
     assert flat_runtime.max_vision_patches_per_batch == 7000
     assert flat_runtime.vision_encoder_microbatch_patches == 3500
+    assert flat_runtime.vision_attention_backend.value == "flash_attn"
     with pytest.raises(TypeError, match="cannot be combined with flat options"):
         Config(nested, max_num_seqs=4)
+
+
+def test_vision_attention_backend_rejects_implicit_auto_policy() -> None:
+    assert MultimodalConfig().vision_attention_backend.value == "sdpa"
+    with pytest.raises(ValueError, match="vision attention backend"):
+        MultimodalConfig(vision_attention_backend="auto")
 
 
 def test_runtime_config_is_frozen_replaced_and_pickle_stable(

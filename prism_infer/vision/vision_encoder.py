@@ -28,6 +28,10 @@ from prism_infer.models.qwen3_vl_architecture import (
     CANONICAL_VISION_TEMPORAL_PATCH_SIZE,
     Qwen3VLVisionArchitecture,
 )
+from prism_infer.vision.backends import (
+    VisionAttentionBackendName,
+    normalize_vision_attention_backend,
+)
 
 try:
     from flash_attn import flash_attn_varlen_func as vision_flash_attn_varlen_func
@@ -181,12 +185,23 @@ class ViTAttention(nn.Module):
         dim: int = CANONICAL_VISION_HIDDEN_SIZE,
         num_heads: int = CANONICAL_VISION_NUM_HEADS,
         dtype: torch.dtype = torch.bfloat16,
+        *,
+        attention_backend: VisionAttentionBackendName | str = VisionAttentionBackendName.SDPA,
     ):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads  # 72
         self.scale = self.head_dim**-0.5
+        self.attention_backend = normalize_vision_attention_backend(attention_backend)
+        if (
+            self.attention_backend is VisionAttentionBackendName.FLASH_ATTN
+            and not HAS_VISION_FLASH_ATTN
+        ):
+            raise RuntimeError(
+                "vision_attention_backend='flash_attn' was requested, but flash-attn "
+                "is not installed"
+            )
 
         # 合并 QKV: 3 * dim = 3 * 1152 = 3456
         self.qkv = nn.Linear(dim, dim * QKV_PROJECTION_COUNT, bias=True, dtype=dtype)
@@ -260,13 +275,13 @@ class ViTAttention(nn.Module):
         # 5. Scaled Dot-Product Attention (双向, 无 causal mask)。
         # 多图时 HF eager 路径按 cu_seqlens 分段计算，不能让不同图片
         # patch 之间互相注意。单图或未传 cu_seqlens 时保持原路径。
-        if (
-            cu_seqlens is not None
-            and cu_seqlens.numel() > SINGLE_SEQUENCE_CU_SEQLENS_COUNT
-            and HAS_VISION_FLASH_ATTN
-            and q.is_cuda
-            and B == 1
-        ):
+        if self.attention_backend is VisionAttentionBackendName.FLASH_ATTN:
+            if cu_seqlens is None:
+                raise RuntimeError("vision FlashAttention requires cu_seqlens")
+            if not q.is_cuda or B != 1 or q.dtype not in (torch.float16, torch.bfloat16):
+                raise RuntimeError(
+                    "vision FlashAttention requires a single packed CUDA batch in fp16 or bf16"
+                )
             if max_seqlen is None:
                 max_seqlen = int((cu_seqlens[1:] - cu_seqlens[:-1]).max().item())
             q_varlen = q[0].transpose(0, 1).contiguous()
@@ -327,10 +342,17 @@ class ViTBlock(nn.Module):
         num_heads: int = CANONICAL_VISION_NUM_HEADS,
         mlp_hidden: int = CANONICAL_VISION_INTERMEDIATE_SIZE,
         dtype: torch.dtype = torch.bfloat16,
+        *,
+        attention_backend: VisionAttentionBackendName | str = VisionAttentionBackendName.SDPA,
     ):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim, eps=1e-06, dtype=dtype)
-        self.attn = ViTAttention(dim, num_heads, dtype)
+        self.attn = ViTAttention(
+            dim,
+            num_heads,
+            dtype,
+            attention_backend=attention_backend,
+        )
         self.norm2 = nn.LayerNorm(dim, eps=1e-06, dtype=dtype)
         self.mlp = ViTMLP(dim, mlp_hidden, dtype)
 
@@ -409,7 +431,13 @@ class VisionEncoder(nn.Module):
     参照 HF Qwen3VLVisionModel 的结构自实现。
     """
 
-    def __init__(self, config=None, dtype: torch.dtype | None = None):
+    def __init__(
+        self,
+        config=None,
+        dtype: torch.dtype | None = None,
+        *,
+        attention_backend: VisionAttentionBackendName | str = VisionAttentionBackendName.SDPA,
+    ):
         super().__init__()
         # Backward compatibility: VisionEncoder(torch.bfloat16)
         if isinstance(config, torch.dtype):
@@ -421,6 +449,7 @@ class VisionEncoder(nn.Module):
             dtype = getattr(torch, dtype.replace("torch.", ""), None)
         if not isinstance(dtype, torch.dtype):
             raise TypeError(f"vision dtype must be torch.dtype, got {dtype!r}")
+        self.attention_backend = normalize_vision_attention_backend(attention_backend)
 
         architecture = (
             Qwen3VLVisionArchitecture.canonical()
@@ -448,7 +477,16 @@ class VisionEncoder(nn.Module):
 
         # 27 ViT Blocks
         self.blocks = nn.ModuleList(
-            [ViTBlock(dim, num_heads, mlp_hidden, dtype) for _ in range(num_layers)]
+            [
+                ViTBlock(
+                    dim,
+                    num_heads,
+                    mlp_hidden,
+                    dtype,
+                    attention_backend=self.attention_backend,
+                )
+                for _ in range(num_layers)
+            ]
         )
 
         # 4 Mergers: 1 主 (post_norm=False) + 3 DeepStack (post_norm=True)

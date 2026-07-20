@@ -26,9 +26,8 @@ from prism_infer.analysis.schema_constants import (
 )
 from prism_infer.models.qwen3_vl_architecture import VISION_GRID_DIMENSIONS
 
-
-BENCHMARK_SCHEMA_VERSION = 7
-SUPPORTED_BENCHMARK_SCHEMA_VERSIONS = (1, 2, 3, 4, 5, 6, 7)
+BENCHMARK_SCHEMA_VERSION = 9
+SUPPORTED_BENCHMARK_SCHEMA_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9)
 WORKLOAD_SCHEMA_VERSION = 1
 SCHEMA_REPRODUCIBLE_WORKLOAD_VERSION = 2
 SCHEMA_COMPILE_EVIDENCE_VERSION = 3
@@ -36,6 +35,8 @@ SCHEMA_PHYSICAL_KV_LAYOUT_VERSION = 4
 SCHEMA_MATERIALIZED_OUTPUT_VERSION = 5
 SCHEMA_PACKED_MLP_VERSION = 6
 SCHEMA_SCALED_KV_VERSION = 7
+SCHEMA_VISION_BACKEND_VERSION = 8
+SCHEMA_DYNAMIC_DECODE_TRAJECTORY_VERSION = 9
 STAT_KEYS = ("count", "median", "p90", "p99", "min", "max")
 TORCH_DTYPE_ELEMENT_BYTES = {
     "torch.bool": 1,
@@ -686,6 +687,12 @@ def _validate_execution_backend(
 ) -> None:
     execution = _require_mapping(record, "execution_backend", "record")
     path = "record.execution_backend"
+    if schema_version >= SCHEMA_VISION_BACKEND_VERSION:
+        vision_backend = _require_string(execution, "vision_attention_backend", path)
+        if vision_backend not in ("sdpa", "flash_attn"):
+            raise ValueError(
+                "record.execution_backend.vision_attention_backend must be 'sdpa' or 'flash_attn'"
+            )
     prefill_backend = _require_string(execution, "prefill_backend", path)
     decode_backend = _require_string(execution, "decode_backend", path)
     graph_enabled = _require_bool(execution, "cuda_graph_enabled", path)
@@ -713,6 +720,14 @@ def _validate_execution_backend(
         selected_batch_size=selected_batch_size,
         batch_padding=batch_padding,
     )
+    if schema_version >= SCHEMA_DYNAMIC_DECODE_TRAJECTORY_VERSION:
+        _validate_dynamic_decode_trajectory(
+            record,
+            execution,
+            graph_enabled=graph_enabled,
+            graph_batch_sizes=graph_batch_sizes,
+            requested_batch_size=requested_batch_size,
+        )
     if schema_version >= SCHEMA_COMPILE_EVIDENCE_VERSION:
         _validate_compile_state(execution, decode_backend, graph_enabled)
 
@@ -812,6 +827,94 @@ def _validate_enabled_cuda_graph(
         raise ValueError("CUDA Graph execution requires capture scope 'decode_model_forward'")
     if selected_batch_size not in graph_batch_sizes:
         raise ValueError("selected CUDA Graph batch size is absent from captured sizes")
+
+
+def _validate_dynamic_decode_trajectory(
+    record: Mapping[str, Any],
+    execution: Mapping[str, Any],
+    *,
+    graph_enabled: bool,
+    graph_batch_sizes: list[Any],
+    requested_batch_size: int,
+) -> None:
+    path = "record.execution_backend"
+    decode_counts = _read_decode_batch_counts(
+        execution,
+        requested_batch_size=requested_batch_size,
+    )
+    timing = _require_mapping(record, "timing_ms", "record")
+    decode_timing = _require_mapping(timing, "decode_step", "record.timing_ms")
+    expected_steps = _require_int(
+        decode_timing,
+        "count",
+        "record.timing_ms.decode_step",
+        minimum=1,
+    )
+    if sum(decode_counts.values()) != expected_steps:
+        raise ValueError(f"{path}.decode_batch_size_counts must cover every measured decode step")
+    _validate_graph_replay_counts(
+        execution,
+        graph_enabled=graph_enabled,
+        graph_batch_sizes=graph_batch_sizes,
+        decode_counts=decode_counts,
+    )
+
+
+def _read_decode_batch_counts(
+    execution: Mapping[str, Any],
+    *,
+    requested_batch_size: int,
+) -> dict[int, int]:
+    path = "record.execution_backend"
+    decode_entries = _require_list(execution, "decode_batch_size_counts", path)
+    decode_counts: dict[int, int] = {}
+    for index, entry in enumerate(decode_entries):
+        entry_path = f"{path}.decode_batch_size_counts[{index}]"
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"{entry_path} must be an object")
+        actual = _require_int(entry, "actual_batch_size", entry_path, minimum=1)
+        count = _require_int(entry, "count", entry_path, minimum=1)
+        if actual > requested_batch_size:
+            raise ValueError("observed decode batch exceeds the requested traffic batch")
+        if actual in decode_counts:
+            raise ValueError(f"{path}.decode_batch_size_counts contains duplicate batches")
+        decode_counts[actual] = count
+    if not decode_counts:
+        raise ValueError(f"{path}.decode_batch_size_counts must not be empty")
+    return decode_counts
+
+
+def _validate_graph_replay_counts(
+    execution: Mapping[str, Any],
+    *,
+    graph_enabled: bool,
+    graph_batch_sizes: list[Any],
+    decode_counts: Mapping[int, int],
+) -> None:
+    path = "record.execution_backend"
+    replay_entries = _require_list(execution, "cuda_graph_replay_counts", path)
+    if not graph_enabled:
+        if replay_entries:
+            raise ValueError("non-Graph execution must report empty CUDA Graph replay counts")
+        return
+    replay_counts: dict[tuple[int, int], int] = {}
+    projected_counts: dict[int, int] = {}
+    for index, entry in enumerate(replay_entries):
+        entry_path = f"{path}.cuda_graph_replay_counts[{index}]"
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"{entry_path} must be an object")
+        actual = _require_int(entry, "actual_batch_size", entry_path, minimum=1)
+        captured = _require_int(entry, "captured_batch_size", entry_path, minimum=1)
+        count = _require_int(entry, "count", entry_path, minimum=1)
+        pair = (actual, captured)
+        if pair in replay_counts:
+            raise ValueError(f"{path}.cuda_graph_replay_counts contains duplicate pairs")
+        if captured < actual or captured not in graph_batch_sizes:
+            raise ValueError("CUDA Graph replay count reports an invalid captured batch size")
+        replay_counts[pair] = count
+        projected_counts[actual] = projected_counts.get(actual, 0) + count
+    if projected_counts != decode_counts:
+        raise ValueError("CUDA Graph replay counts must match observed decode batch counts")
 
 
 def _validate_compile_state(

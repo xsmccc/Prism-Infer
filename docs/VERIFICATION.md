@@ -4151,6 +4151,83 @@ metadata 采用统一可复核字节合同；本节也不包含 TTFT/TPOT、onli
 Torch Compile/CUDA Graph 或 server SLO 结论。TP2/TP4 因当前租约只分配 GPU0，仍为
 **NOT RUN / UNVERIFIED**。
 
+### P9-D.0 Compiler/Graph 基线证据链（MECHANISM PASS / FORMAL PENDING，2026-07-20）
+
+本检查点建立 P9-D 正式 profiling 前的 correctness、backend identity 和 fresh-process
+证据链，不包含正式性能收益。当前物理设备是
+`GPU-662a2fa1-37e4-cc52-0a51-27557dba315b / RTX 5090 32 GiB`；它与历史 P8/P9-A
+formal UUID 不同，因此旧 latency/counter 不能与本轮组成 ratio。
+
+本轮关闭的关键问题：
+
+- full-model 测试端 `state_dict()` 浅引用、GPU logits 和未同步读数曾让已删除 Prism 模型
+  显示 16.4 GiB allocated；修复 ownership 后纯文本/单图/多图/视频函数内均回到
+  `0.0 GiB`，进程退出后 NVML 为 `1 MiB`；
+- Transformers 5.13 的 HF reference forward 新增 `mm_token_type_ids` 合同；兼容逻辑集中在
+  reference-only adapter，没有扩大 Prism production input；
+- vision backend 曾由 flash-attn 包存在性和 segment shape 隐式选择，造成多图 full logits
+  max diff `0.484375`；现在 startup 显式选择 `sdpa/flash_attn`，默认 SDPA，缺 capability
+  fail closed。SDPA 下单图、多图、视频 full logits bit-exact；
+- 原 benchmark 只做到 fresh model，不是 fresh process。新增标准库-only parent，每个
+  mode/repeat 独立 child，按同一 UUID 执行 idle/release、ABBA/BAAB、逐字段 comparability
+  和 process-level bootstrap CI；输出路径必须 gitignored且禁止覆盖；
+- H1 traffic batch4 受 `max_vision_patches_per_batch=8192` 和 prefill/decode interleaving
+  影响，短 smoke 的 actual decode histogram 是 `1:2 / 2:2 / 3:2`，不是静态 batch4。
+  schema-v9 保存 actual histogram 和 Graph actual→captured 映射
+  `1→1:2 / 2→2:2 / 3→4:2`，并要求 eager/Graph actual histogram exact；
+- 四个 `test_full_model*.py` 原先只有 main block，组合 pytest 会被其他 item 掩盖成绿灯。
+  现在四项都可被 pytest 收集，test 与 direct-script 复用同一 verification runner，任何
+  非 PASS 都会失败。
+
+H1 batch4 dirty diagnostic 使用正式 pool 配置但只运行 output4、warmup0、每 mode 1 个
+fresh process。BF16 (`113` blocks / `4,265,607,168 B`) 和 scaled-FP8 (`220` blocks /
+`4,282,122,240 B`) 的 eager/Graph 两组均为 15/15 comparability PASS、token exact、
+prompt/image tokens `6472/6272`、active prompt blocks `28`；所有 child 前后均为
+`1 MiB / 0%`。manifest 因 dirty、单 process、无 warmup 和 100 bootstrap resamples正确
+标记 `formal_eligible=false`；其 latency ratio 全部丢弃，不进入性能结论。
+
+完整候选 diff 门禁：
+
+```bash
+.venv-local/bin/ruff format --check prism_infer tests benchmarks scripts
+.venv-local/bin/ruff check prism_infer tests benchmarks scripts
+.venv-local/bin/ruff check --select C901,PLR0911,PLR0912,PLR0915 prism_infer
+.venv-local/bin/ruff check --select S101,PLR2004 prism_infer
+.venv-local/bin/python -m compileall -q prism_infer tests benchmarks scripts tools
+git diff --check
+# PASS; 188 Python files formatted
+
+.venv-local/bin/python -m pytest -q \
+  tests/test_benchmark_schema.py tests/test_p9_process_matrix.py
+# 60 passed
+
+CUDA_VISIBLE_DEVICES=0 PRISM_MODEL_PATH="$PRISM_MODEL_PATH" \
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+.venv-local/bin/python -m pytest -q tests \
+  --junitxml=data/p9_baseline/p9_prebaseline_full_regression_dirty.xml
+# 466 passed, 1 skipped in 297.11s
+# JUnit: 467 tests / 0 failures / 0 errors / 1 skipped
+```
+
+四项新可收集 full-logits gate 在同一完整 suite 外也单独串行复验：
+
+```text
+pure text:  [1,64,151936], max/mean diff 0 / 0
+single:     [1,151936],    max/mean diff 0 / 0
+multi:      [1,151936],    max/mean diff 0 / 0
+video:      [1,151936],    max/mean diff 0 / 0
+result: 4 passed in 39.60s
+```
+
+详细问题链、错误假设和两分钟面试讲法见 `docs/ISSUE_LOG.md` 的 P9-001–P9-007；
+pipeline capture/compile/NSYS/NCU 执行顺序和止损规则见
+`docs/P9_COMPILER_GRAPH_PLAYBOOK.md`。
+
+当前判定：P9-D baseline mechanism `PASS`，正式性能 `PENDING`。只有提交后的 clean
+commit 在当前 UUID 上完成 H1 BF16/scaled-FP8 batch1/4、output128、warmup2、每 mode 5
+fresh processes、10,000 bootstrap resamples，并且 manifest
+`formal_eligible=true`，结果才允许进入 NSYS/NCU 和后续 full-step Graph claim。
+
 ## 每次任务交付模板
 
 阶段级交付使用 `docs/STAGE_DELIVERY_TEMPLATE.md`，其中包含 requirement mapping、

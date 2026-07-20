@@ -89,29 +89,33 @@ def test_visual_encoder_microbatch_preserves_payload_order() -> None:
 
 
 @pytest.mark.gpu
-def test_vision_varlen_flash_attention_matches_segmented_reference(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_vision_varlen_flash_attention_matches_segmented_reference() -> None:
     if not torch.cuda.is_available() or not ve.HAS_VISION_FLASH_ATTN:
         pytest.skip("vision FlashAttention parity requires CUDA and flash-attn")
 
     torch.manual_seed(20260719)
-    attention = ve.ViTAttention(
+    reference_attention = ve.ViTAttention(
         dim=64,
         num_heads=4,
         dtype=torch.bfloat16,
+        attention_backend="sdpa",
     ).cuda()
+    flash_attention = ve.ViTAttention(
+        dim=64,
+        num_heads=4,
+        dtype=torch.bfloat16,
+        attention_backend="flash_attn",
+    ).cuda()
+    flash_attention.load_state_dict(reference_attention.state_dict())
     hidden_states = torch.randn(20, 64, dtype=torch.bfloat16, device="cuda")
     cu_seqlens = torch.tensor([0, 8, 20], dtype=torch.int32, device="cuda")
 
-    monkeypatch.setattr(ve, "HAS_VISION_FLASH_ATTN", False)
-    reference = attention(
+    reference = reference_attention(
         hidden_states,
         cu_seqlens=cu_seqlens,
         max_seqlen=12,
     )
-    monkeypatch.setattr(ve, "HAS_VISION_FLASH_ATTN", True)
-    actual = attention(
+    actual = flash_attention(
         hidden_states,
         cu_seqlens=cu_seqlens,
         max_seqlen=12,
@@ -120,6 +124,30 @@ def test_vision_varlen_flash_attention_matches_segmented_reference(
     diff = (actual.float() - reference.float()).abs()
     assert diff.max().item() <= 0.01
     assert diff.mean().item() <= 0.001
+
+
+def test_vision_attention_backend_is_explicit_and_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attention = ve.ViTAttention(dim=16, num_heads=4, dtype=torch.float32)
+    assert attention.attention_backend.value == "sdpa"
+
+    with pytest.raises(ValueError, match="vision attention backend"):
+        ve.ViTAttention(
+            dim=16,
+            num_heads=4,
+            dtype=torch.float32,
+            attention_backend="auto",
+        )
+
+    monkeypatch.setattr(ve, "HAS_VISION_FLASH_ATTN", False)
+    with pytest.raises(RuntimeError, match="flash-attn is not installed"):
+        ve.ViTAttention(
+            dim=16,
+            num_heads=4,
+            dtype=torch.bfloat16,
+            attention_backend="flash_attn",
+        )
 
 
 from conftest import get_model_path, hf_qwen3_vl_visual, require_transformers

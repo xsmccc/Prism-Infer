@@ -2,15 +2,20 @@
 
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from benchmarks.bench_system import (
     MODE_SPECS,
+    _aggregate_prompt_kv_snapshots,
     _annotate_comparisons,
+    _capture_completed_prompt_snapshots,
     _parse_keep_ratios,
     _parse_positive_ints,
+    _record_decode_batch_observation,
     _resolve_engine_max_num_seqs,
+    _sequence_prompt_kv_snapshot,
 )
 from benchmarks.harness import (
     describe_case_inputs,
@@ -25,7 +30,8 @@ from prism_infer.analysis.benchmark_schema import (
     validate_benchmark_record,
     validate_workload_manifest,
 )
-
+from prism_infer.engine.kv_layout import KV_LAYOUT_VISUAL_COMPACT, KVCacheLayoutDescriptor
+from prism_infer.engine.request import RequestState
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = REPO_ROOT / "benchmarks/workloads/p6_internal_smoke.json"
@@ -109,6 +115,7 @@ def _complete_record() -> dict[str, object]:
         "execution_backend": {
             "prefill_backend": "eager",
             "decode_backend": "eager",
+            "vision_attention_backend": "sdpa",
             "cuda_graph_enabled": False,
             "cuda_graph_capture_scope": "none",
             "cuda_graph_capture_ms": 0.0,
@@ -116,6 +123,8 @@ def _complete_record() -> dict[str, object]:
             "requested_decode_batch_size": 1,
             "selected_decode_batch_size": 1,
             "decode_batch_padding": 0,
+            "decode_batch_size_counts": [{"actual_batch_size": 1, "count": 3}],
+            "cuda_graph_replay_counts": [],
             "torch_compile_enabled": False,
             "torch_compile_region": "none",
             "torch_compile_backend": "none",
@@ -284,6 +293,124 @@ def test_summarize_values_reports_required_percentiles() -> None:
         "max": 4.0,
     }
     print("P6 benchmark summary contract: PASS")
+
+
+def test_staged_prefills_aggregate_prompt_kv_at_each_sequence_boundary() -> None:
+    dense = SimpleNamespace(
+        num_prompt_tokens=10,
+        block_size=4,
+        block_table=[0, 1, 2],
+        kv_layout=None,
+    )
+    compact_layout = KVCacheLayoutDescriptor(
+        mode=KV_LAYOUT_VISUAL_COMPACT,
+        logical_context_len=11,
+        physical_kv_len=7,
+        prompt_logical_len=10,
+        compressed_prompt_kv_len=6,
+        retained_original_positions=(0, 1, 2, 3, 4, 5),
+        kv_dtype="torch.bfloat16",
+        compression_record={"physical_compaction": True},
+    )
+    compact = SimpleNamespace(
+        num_prompt_tokens=10,
+        block_size=4,
+        block_table=[3, 4],
+        kv_layout=compact_layout,
+    )
+    dense_snapshot = _sequence_prompt_kv_snapshot(dense, kv_dtype="torch.bfloat16")
+    compact_snapshot = _sequence_prompt_kv_snapshot(compact, kv_dtype="torch.bfloat16")
+    aggregate = _aggregate_prompt_kv_snapshots(
+        {20: compact_snapshot, 10: dense_snapshot},
+        seq_ids=[10, 20],
+        payload_block_bytes=100,
+        scale_block_bytes=10,
+    )
+
+    compact_record = compact_snapshot["layout"]
+    assert compact_record["logical_context_len"] == compact.num_prompt_tokens
+    assert compact_record["physical_kv_len"] == compact_layout.compressed_prompt_kv_len
+    assert aggregate["logical_prompt_kv_tokens"] == (
+        dense.num_prompt_tokens + compact.num_prompt_tokens
+    )
+    assert aggregate["physical_prompt_kv_tokens"] == (
+        dense.num_prompt_tokens + compact_layout.compressed_prompt_kv_len
+    )
+    assert aggregate["kv_layouts"] == [dense_snapshot["layout"], compact_record]
+
+
+def test_staged_prefill_snapshot_is_captured_once_when_each_request_completes() -> None:
+    first = SimpleNamespace(
+        seq_id=10,
+        status=RequestState.DECODING,
+        num_prompt_tokens=10,
+        block_size=4,
+        block_table=[0, 1, 2],
+        kv_layout=None,
+    )
+    second = SimpleNamespace(
+        seq_id=20,
+        status=RequestState.PREFILLING,
+        num_prompt_tokens=6,
+        block_size=4,
+        block_table=[3, 4],
+        kv_layout=None,
+    )
+    llm = SimpleNamespace(model_runner=SimpleNamespace(kv_cache_dtype="torch.bfloat16"))
+    step = SimpleNamespace(plan=SimpleNamespace(sequences=(first, second)))
+    snapshots: dict[int, dict[str, object]] = {}
+
+    _capture_completed_prompt_snapshots(llm, step, snapshots)
+    assert list(snapshots) == [first.seq_id]
+
+    first.num_prompt_tokens = 12
+    second.status = RequestState.DECODING
+    _capture_completed_prompt_snapshots(llm, step, snapshots)
+
+    assert list(snapshots) == [first.seq_id, second.seq_id]
+    assert snapshots[first.seq_id]["logical_prompt_tokens"] == 10
+    assert snapshots[second.seq_id]["logical_prompt_tokens"] == 6
+
+
+def test_decode_batch_observation_records_actual_and_graph_bucket() -> None:
+    step = SimpleNamespace(plan=SimpleNamespace(batch_size=3))
+    actual: list[int] = []
+    replay: list[int] = []
+    eager = SimpleNamespace(model_runner=SimpleNamespace(enforce_eager=True))
+
+    _record_decode_batch_observation(
+        eager,
+        step,
+        decode_batch_sizes=actual,
+        replay_batch_sizes=replay,
+    )
+    assert actual == [3]
+    assert replay == []
+
+    graph = SimpleNamespace(
+        model_runner=SimpleNamespace(
+            enforce_eager=False,
+            last_cudagraph_actual_batch_size=3,
+            last_cudagraph_replay_batch_size=4,
+        )
+    )
+    _record_decode_batch_observation(
+        graph,
+        step,
+        decode_batch_sizes=actual,
+        replay_batch_sizes=replay,
+    )
+    assert actual == [3, 3]
+    assert replay == [4]
+
+    graph.model_runner.last_cudagraph_actual_batch_size = 2
+    with pytest.raises(RuntimeError, match="does not match"):
+        _record_decode_batch_observation(
+            graph,
+            step,
+            decode_batch_sizes=[],
+            replay_batch_sizes=[],
+        )
 
 
 def test_engine_max_num_seqs_can_exceed_workload_batch_for_padding() -> None:
@@ -571,6 +698,56 @@ def test_complete_benchmark_record_passes_validation() -> None:
     print(f"benchmark record correctness hash: {output_hash}")
     assert len(output_hash) == 64
     print("P6 complete benchmark record: PASS")
+
+
+def test_v8_benchmark_requires_explicit_vision_attention_backend() -> None:
+    record = _complete_record()
+    record["schema_version"] = 8
+    del record["execution_backend"]["vision_attention_backend"]
+    with pytest.raises(ValueError, match="vision_attention_backend"):
+        validate_benchmark_record(record)
+
+    record = _complete_record()
+    record["schema_version"] = 8
+    record["execution_backend"]["vision_attention_backend"] = "auto"
+    with pytest.raises(ValueError, match="vision_attention_backend"):
+        validate_benchmark_record(record)
+
+
+def test_v8_benchmark_remains_readable_without_dynamic_decode_trajectory() -> None:
+    record = _complete_record()
+    record["schema_version"] = 8
+    del record["execution_backend"]["decode_batch_size_counts"]
+    del record["execution_backend"]["cuda_graph_replay_counts"]
+
+    validate_benchmark_record(record)
+
+
+def test_v9_benchmark_requires_auditable_dynamic_decode_trajectory() -> None:
+    record = _complete_record()
+    del record["execution_backend"]["decode_batch_size_counts"]
+    with pytest.raises(ValueError, match="decode_batch_size_counts"):
+        validate_benchmark_record(record)
+
+    record = _complete_record()
+    record["mode"].update({"name": "off_graph", "execution": "cuda_graph"})
+    record["execution_backend"].update(
+        {
+            "decode_backend": "cuda_graph",
+            "cuda_graph_enabled": True,
+            "cuda_graph_capture_scope": "decode_model_forward",
+            "cuda_graph_capture_ms": 10.0,
+            "cuda_graph_batch_sizes": [1],
+            "cuda_graph_replay_counts": [
+                {"actual_batch_size": 1, "captured_batch_size": 1, "count": 3}
+            ],
+        }
+    )
+    validate_benchmark_record(record)
+
+    record["execution_backend"]["cuda_graph_replay_counts"][0]["count"] = 2
+    with pytest.raises(ValueError, match="replay counts"):
+        validate_benchmark_record(record)
 
 
 def test_v1_benchmark_record_remains_readable() -> None:

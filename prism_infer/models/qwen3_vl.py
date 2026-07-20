@@ -10,7 +10,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from prism_infer.observability import is_trace_enabled, profile_region
 from prism_infer.layers.attention import Attention
 from prism_infer.models.qwen3_vl_architecture import (
     CANONICAL_MROPE_SECTION,
@@ -27,10 +26,11 @@ from prism_infer.models.qwen3_vl_architecture import (
     Qwen3VLArchitecture,
     Qwen3VLTextArchitecture,
 )
+from prism_infer.observability import is_trace_enabled, profile_region
 from prism_infer.utils.context import get_context
-from prism_infer.vision.vision_encoder import VisionEncoder
+from prism_infer.vision.backends import VisionAttentionBackendName
 from prism_infer.vision.mrope import MRope, apply_mrope
-
+from prism_infer.vision.vision_encoder import VisionEncoder
 
 FLATTENED_TOKEN_FEATURES_RANK = 2
 BATCHED_TOKEN_FEATURES_RANK = 3
@@ -699,6 +699,9 @@ class Qwen3VLModel(nn.Module):
         *,
         mlp_projection_mode: str = "packed",
         vision_encoder_microbatch_patches: int | None = None,
+        vision_attention_backend: VisionAttentionBackendName | str = (
+            VisionAttentionBackendName.SDPA
+        ),
     ):
         super().__init__()
         architecture = (
@@ -718,7 +721,11 @@ class Qwen3VLModel(nn.Module):
             )
         )
         vision_config = _vision_config(config)
-        self.visual = VisionEncoder(vision_config, dtype=dtype)
+        self.visual = VisionEncoder(
+            vision_config,
+            dtype=dtype,
+            attention_backend=vision_attention_backend,
+        )
         self.language_model = (
             Qwen3VLTextModel.from_config(
                 config,
@@ -987,6 +994,9 @@ class Qwen3VLForCausalLM(nn.Module):
         *,
         mlp_projection_mode: str = "packed",
         vision_encoder_microbatch_patches: int | None = None,
+        vision_attention_backend: VisionAttentionBackendName | str = (
+            VisionAttentionBackendName.SDPA
+        ),
     ):
         # Backward compatibility: Qwen3VLForCausalLM(torch.bfloat16)
         if isinstance(config, torch.dtype):
@@ -1008,6 +1018,7 @@ class Qwen3VLForCausalLM(nn.Module):
             dtype=dtype,
             mlp_projection_mode=mlp_projection_mode,
             vision_encoder_microbatch_patches=vision_encoder_microbatch_patches,
+            vision_attention_backend=vision_attention_backend,
         )
         architecture = self.model.architecture
         hidden_size = architecture.text.hidden_size

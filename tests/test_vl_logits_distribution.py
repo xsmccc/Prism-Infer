@@ -1,14 +1,13 @@
 """P3.4 VL 生成轨迹 logits 分布与 perplexity 验证。"""
 
 import gc
-from inspect import signature
 
 import pytest
 import torch
 from PIL import Image
 from transformers import Qwen3VLForConditionalGeneration
 
-from conftest import build_mm_token_type_ids, get_model_path, require_transformers
+from conftest import get_model_path, require_transformers, with_hf_mm_token_type_ids
 from prism_infer.engine.vl_inputs import prepare_image_inputs, prepare_video_inputs
 from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
@@ -145,18 +144,6 @@ def _to_cuda_kwargs(kwargs: dict) -> dict:
     return {key: value.to(DEVICE) for key, value in kwargs.items()}
 
 
-def _with_mm_token_type_ids(hf_model, kwargs: dict) -> dict:
-    if "mm_token_type_ids" not in signature(hf_model.forward).parameters:
-        return kwargs
-    result = dict(kwargs)
-    result["mm_token_type_ids"] = build_mm_token_type_ids(
-        result["input_ids"],
-        image_token_id=getattr(hf_model.config, "image_token_id", None),
-        video_token_id=getattr(hf_model.config, "video_token_id", None),
-    )
-    return result
-
-
 def _teacher_forced_hf_logits(hf_model, hf_kwargs: dict, generated_ids: list[int]) -> torch.Tensor:
     generated = torch.tensor([generated_ids], dtype=torch.long)
     full_input_ids = torch.cat([hf_kwargs["input_ids"], generated], dim=1)
@@ -165,7 +152,7 @@ def _teacher_forced_hf_logits(hf_model, hf_kwargs: dict, generated_ids: list[int
     hf_full = dict(hf_kwargs)
     hf_full["input_ids"] = full_input_ids
     hf_full["attention_mask"] = full_attention
-    hf_full = _with_mm_token_type_ids(hf_model, hf_full)
+    hf_full = with_hf_mm_token_type_ids(hf_model, hf_full)
 
     with torch.inference_mode():
         return (
@@ -270,7 +257,7 @@ def test_vl_teacher_forced_logits_distribution_and_ppl_match_hf() -> None:
             )
             with torch.inference_mode():
                 hf_generated = hf_model.generate(
-                    **_to_cuda_kwargs(_with_mm_token_type_ids(hf_model, hf_kwargs)),
+                    **_to_cuda_kwargs(with_hf_mm_token_type_ids(hf_model, hf_kwargs)),
                     max_new_tokens=MAX_TOKENS,
                     do_sample=False,
                 )

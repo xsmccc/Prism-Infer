@@ -33,6 +33,10 @@ from prism_infer.engine.visual_pruning import (
     DEFAULT_VISUAL_PRUNING_STRATEGY,
     VisualPruningConfig,
 )
+from prism_infer.vision.backends import (
+    VisionAttentionBackendName,
+    normalize_vision_attention_backend,
+)
 
 
 AUTO_KV_CACHE_BLOCKS = -1
@@ -253,6 +257,7 @@ class MultimodalConfig:
     video_max_pixels: int | None = None
     max_vision_patches_per_batch: int = DEFAULT_MAX_VISION_PATCHES_PER_BATCH
     vision_encoder_microbatch_patches: int = DEFAULT_VISION_ENCODER_MICROBATCH_PATCHES
+    vision_attention_backend: VisionAttentionBackendName | str = VisionAttentionBackendName.SDPA
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -273,6 +278,11 @@ class MultimodalConfig:
             raise ValueError(
                 "max_vision_patches_per_batch must be >= vision_encoder_microbatch_patches"
             )
+        object.__setattr__(
+            self,
+            "vision_attention_backend",
+            normalize_vision_attention_backend(self.vision_attention_backend),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -472,6 +482,7 @@ class PrismConfig:
             "video_max_pixels": "video_max_pixels",
             "max_vision_patches_per_batch": "max_vision_patches_per_batch",
             "vision_encoder_microbatch_patches": ("vision_encoder_microbatch_patches"),
+            "vision_attention_backend": "vision_attention_backend",
         }
         cache_fields = {
             "gpu_memory_utilization": "gpu_memory_utilization",
@@ -768,6 +779,10 @@ class Config:
     @property
     def vision_encoder_microbatch_patches(self) -> int:
         return self.multimodal_config.vision_encoder_microbatch_patches
+
+    @property
+    def vision_attention_backend(self) -> VisionAttentionBackendName:
+        return self.multimodal_config.vision_attention_backend
 
     @property
     def max_num_batched_tokens(self) -> int:

@@ -4,9 +4,11 @@
 策略: 两个模型永不同时占用 GPU, 各自加载→跑 forward→释放。
 """
 
-import gc
-import pytest
 import sys
+
+import gc
+
+import pytest
 import torch
 
 sys.path.insert(0, "/data/Prism-Infer")
@@ -42,8 +44,11 @@ def run_hf_forward(input_ids):
 
     with torch.no_grad():
         out = model(input_ids=input_ids)
-    logits = out.logits.clone()
+    # Keep comparison data on CPU so the next 8B model is the only model-side
+    # allocation resident on the GPU.
+    logits = out.logits.detach().cpu()
     del model, out
+    torch.cuda.synchronize()
     gc.collect()
     torch.cuda.empty_cache()
     print(f"  HF 已释放 (显存: {_gpu_mem():.1f} GB)")
@@ -75,6 +80,7 @@ def run_our_forward(input_ids):
     # 3. 逐参数复制: HF(CPU) → Our(GPU)
     our_sd = our.state_dict()
     hf_sd = hf_cpu.state_dict()
+    expected_parameters = len(our_sd)
     loaded, missing = 0, []
     for key in our_sd:
         if key in hf_sd:
@@ -87,16 +93,18 @@ def run_our_forward(input_ids):
     # 4. 释放 HF CPU 模型
     del hf_cpu, hf_sd
     gc.collect()
-    print(f"  权重: {loaded}/{len(our_sd)} loaded")
+    print(f"  权重: {loaded}/{expected_parameters} loaded")
     print(f"  Missing: {missing[:5]}{'...' if len(missing) > 5 else ''}")
     print(f"  Unexpected: {unexpected[:5]}{'...' if len(unexpected) > 5 else ''}")
     print(f"  加载完成 (显存: {_gpu_mem():.1f} GB)")
+    del our_sd
 
     # 5. 跑 forward
     with torch.no_grad():
         hidden = our(input_ids=input_ids)
-    logits = our.compute_logits(hidden).clone()
+    logits = our.compute_logits(hidden).detach().cpu()
     del our, hidden
+    torch.cuda.synchronize()
     gc.collect()
     torch.cuda.empty_cache()
     print(f"  Our 已释放 (显存: {_gpu_mem():.1f} GB)")
@@ -132,8 +140,9 @@ def compare_logits(hf_logits, our_logits):
         return "MARGINAL"
 
 
-# ══════════════════════════════════════════════════════════
-if __name__ == "__main__":
+def _run_full_model_verification() -> str:
+    """Execute the heavyweight HF/Prism logits gate and return its decision."""
+
     print("=" * 60)
     print("Prism-Infer Full Model Verification")
     gpu_name = torch.cuda.get_device_name(0)
@@ -145,7 +154,6 @@ if __name__ == "__main__":
 
     torch.manual_seed(42)
     input_ids = torch.randint(0, VOCAB_SIZE, (1, 64)).to(DEVICE)
-    attention_mask = None  # 纯文本用 causal, 让 scaled_dot_product_attention 自动处理
 
     # Step 1: 跑 HF model
     print("\n[1/2] HF forward...")
@@ -161,3 +169,18 @@ if __name__ == "__main__":
     print(f"\n{'=' * 60}")
     print(f"Result: {result}")
     print("=" * 60)
+    return result
+
+
+def test_full_model_logits_match_hf() -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("full-model logits verification requires CUDA")
+    assert _run_full_model_verification() == "PASS"
+
+
+# ══════════════════════════════════════════════════════════
+if __name__ == "__main__":
+    if not torch.cuda.is_available():
+        raise RuntimeError("需要 CUDA 才能运行 full-model logits 验证")
+    if _run_full_model_verification() != "PASS":
+        raise SystemExit(1)

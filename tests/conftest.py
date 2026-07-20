@@ -65,6 +65,20 @@ def build_mm_token_type_ids(input_ids, *, image_token_id, video_token_id):
     return token_type_ids
 
 
+def with_hf_mm_token_type_ids(hf_model, kwargs: dict) -> dict:
+    """Add modality ids only when the installed HF forward requires them."""
+
+    if "mm_token_type_ids" not in signature(hf_model.forward).parameters:
+        return kwargs
+    result = dict(kwargs)
+    result["mm_token_type_ids"] = build_mm_token_type_ids(
+        result["input_ids"],
+        image_token_id=getattr(hf_model.config, "image_token_id", None),
+        video_token_id=getattr(hf_model.config, "video_token_id", None),
+    )
+    return result
+
+
 def hf_qwen3_vl_rope_index(
     transformers,
     config,

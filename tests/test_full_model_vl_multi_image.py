@@ -12,7 +12,7 @@ import torch
 from PIL import Image
 
 sys.path.insert(0, "/data/Prism-Infer")
-from conftest import get_model_path, require_transformers
+from conftest import get_model_path, require_transformers, with_hf_mm_token_type_ids
 from prism_infer.engine.vl_inputs import prepare_image_inputs
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 
@@ -75,15 +75,20 @@ def run_hf_vl_forward(inputs) -> torch.Tensor:
         .cuda()
         .eval()
     )
+    hf_kwargs = with_hf_mm_token_type_ids(
+        model,
+        {
+            "input_ids": inputs.input_ids.to(DEVICE),
+            "attention_mask": inputs.attention_mask.to(DEVICE),
+            "pixel_values": inputs.pixel_values.to(DEVICE),
+            "image_grid_thw": inputs.image_grid_thw.to(DEVICE),
+        },
+    )
     with torch.no_grad():
-        out = model(
-            input_ids=inputs.input_ids.to(DEVICE),
-            attention_mask=inputs.attention_mask.to(DEVICE),
-            pixel_values=inputs.pixel_values.to(DEVICE),
-            image_grid_thw=inputs.image_grid_thw.to(DEVICE),
-        )
-    logits = out.logits[:, -1, :].clone()
-    del model, out
+        out = model(**hf_kwargs)
+    logits = out.logits[:, -1, :].detach().cpu()
+    del model, out, hf_kwargs
+    torch.cuda.synchronize()
     gc.collect()
     torch.cuda.empty_cache()
     print(f"  HF VL 已释放 (显存: {_gpu_mem():.1f} GB)")
@@ -114,6 +119,7 @@ def run_our_vl_forward(inputs, position_ids: torch.Tensor) -> torch.Tensor:
 
     our_sd = our.state_dict()
     hf_sd = hf_cpu.state_dict()
+    expected_parameters = len(our_sd)
     loaded, missing = 0, []
     for key in our_sd:
         if key in hf_sd:
@@ -124,9 +130,10 @@ def run_our_vl_forward(inputs, position_ids: torch.Tensor) -> torch.Tensor:
     unexpected = [key for key in hf_sd if key not in our_sd]
     del hf_cpu, hf_sd
     gc.collect()
-    print(f"  权重: {loaded}/{len(our_sd)} loaded")
+    print(f"  权重: {loaded}/{expected_parameters} loaded")
     print(f"  Missing: {missing[:5]}{'...' if len(missing) > 5 else ''}")
     print(f"  Unexpected: {unexpected[:5]}{'...' if len(unexpected) > 5 else ''}")
+    del our_sd
 
     with torch.no_grad():
         hidden = our(
@@ -135,9 +142,10 @@ def run_our_vl_forward(inputs, position_ids: torch.Tensor) -> torch.Tensor:
             image_grid_thw=inputs.image_grid_thw.to(DEVICE),
             position_ids=position_ids.to(DEVICE),
         )
-        logits = our.compute_logits(hidden)[:, -1, :].clone()
+        logits = our.compute_logits(hidden)[:, -1, :].detach().cpu()
 
     del our, hidden
+    torch.cuda.synchronize()
     gc.collect()
     torch.cuda.empty_cache()
     print(f"  Prism-Infer VL 已释放 (显存: {_gpu_mem():.1f} GB)")
@@ -175,9 +183,8 @@ def compare_last_logits(hf_logits: torch.Tensor, our_logits: torch.Tensor) -> st
     return "FAIL"
 
 
-if __name__ == "__main__":
-    if not torch.cuda.is_available():
-        raise RuntimeError("需要 CUDA 才能运行多图 full-model logits 验证")
+def _run_full_model_multi_image_verification() -> str:
+    """Execute the multi-image HF/Prism full-logits gate."""
 
     print("=" * 60)
     print("Prism-Infer Multi-Image VL Full Model Verification")
@@ -199,6 +206,18 @@ if __name__ == "__main__":
     print("\n[2/2] Prism-Infer multi-image VL forward...")
     ours = run_our_vl_forward(vl_inputs, vl_position_ids)
     result = compare_last_logits(hf, ours)
+    print(f"Result: {result}")
+    return result
 
-    if result != "PASS":
+
+def test_full_model_multi_image_logits_match_hf() -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("multi-image full-model logits verification requires CUDA")
+    assert _run_full_model_multi_image_verification() == "PASS"
+
+
+if __name__ == "__main__":
+    if not torch.cuda.is_available():
+        raise RuntimeError("需要 CUDA 才能运行多图 full-model logits 验证")
+    if _run_full_model_multi_image_verification() != "PASS":
         raise SystemExit(1)

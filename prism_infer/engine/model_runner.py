@@ -202,6 +202,7 @@ class ModelRunner:
                 hf_config,
                 mlp_projection_mode=self.config.mlp_projection_mode,
                 vision_encoder_microbatch_patches=(self.config.vision_encoder_microbatch_patches),
+                vision_attention_backend=self.config.vision_attention_backend,
             )
             self.model.logits_precision = self.config.logits_precision
             self.is_vl_model = True

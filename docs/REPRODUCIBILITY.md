@@ -368,7 +368,79 @@ packed/legacy TPOT为`0.9924x–0.9952x`；Systems linear `253 -> 217`、总kern
 稳定E2E或online speedup claim。若baseline污染，`formal_eligible=false`记录仍不得进入
 headline。
 
-## 11. 证据保存与验收
+## 11. P9 eager/CUDA Graph fresh-process 基线
+
+P9-D 不直接用 `bench_system.py --modes A,B` 形成正式 ratio，因为该入口会在同一个已
+初始化 CUDA 的 Python 进程中依次运行多个 mode。正式基线使用标准库 parent
+`run_p9_process_matrix.py`，每个 mode/repeat 启动一个 child，并在 child 前后检查同一
+物理 GPU UUID。
+
+当前 H1 runtime baseline 固定：SDPA vision、model-precision logits、packed MLP、
+output128、warmup2、每 mode 5 个 fresh processes、ABBA/BAAB、batch1/4、
+`max_model_len=4096`、`max_num_batched_tokens=16384`、`max_num_seqs=4`。先确认：
+
+```bash
+export PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/\
+0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
+export P9_GPU_UUID=GPU-662a2fa1-37e4-cc52-0a51-27557dba315b
+
+git status --short
+nvidia-smi --query-gpu=uuid,name,memory.used,utilization.gpu \
+  --format=csv,noheader,nounits
+```
+
+BF16 KV eager/model-only Graph：
+
+```bash
+for batch in 1 4; do
+  .venv-local/bin/python benchmarks/run_p9_process_matrix.py \
+    --model "$PRISM_MODEL_PATH" \
+    --manifest benchmarks/workloads/p9_headline.json \
+    --case h1_eight_image_448 \
+    --mode-a off_eager --mode-b off_graph \
+    --expected-gpu-uuid "$P9_GPU_UUID" --cuda-visible-devices 0 \
+    --fresh-process-repeats 5 --warmup 2 --max-tokens 128 \
+    --batch-size "$batch" --max-model-len 4096 \
+    --max-num-batched-tokens 16384 --max-num-seqs 4 \
+    --num-kvcache-blocks 113 --kvcache-block-size 256 \
+    --vision-attention-backend sdpa \
+    --bootstrap-seed 20260717 --bootstrap-resamples 10000 \
+    --output "data/p9_baseline/h1_bf16_b${batch}.jsonl"
+done
+```
+
+scaled-FP8 KV eager/model-only Graph：
+
+```bash
+for batch in 1 4; do
+  .venv-local/bin/python benchmarks/run_p9_process_matrix.py \
+    --model "$PRISM_MODEL_PATH" \
+    --manifest benchmarks/workloads/p9_headline.json \
+    --case h1_eight_image_448 \
+    --mode-a scaled_fp8_kv --mode-b scaled_fp8_kv_graph \
+    --expected-gpu-uuid "$P9_GPU_UUID" --cuda-visible-devices 0 \
+    --fresh-process-repeats 5 --warmup 2 --max-tokens 128 \
+    --batch-size "$batch" --max-model-len 4096 \
+    --max-num-batched-tokens 16384 --max-num-seqs 4 \
+    --num-kvcache-blocks 220 --kvcache-block-size 256 \
+    --vision-attention-backend sdpa \
+    --bootstrap-seed 20260717 --bootstrap-resamples 10000 \
+    --output "data/p9_baseline/h1_scaled_fp8_b${batch}.jsonl"
+done
+```
+
+113 个 BF16 blocks 的 payload 为 `4,265,607,168 B`；220 个 scaled-FP8 blocks 的
+payload+scale 为 `4,282,122,240 B`，都不超过冻结的 4 GiB pool，并且再增加一个 block
+就会超出。这里仅用于建立 P9-D runtime baseline；page table、allocator metadata、unique
+storage 和 fragmentation 尚未统一计入，不能把这组数字冒充 P9-C.3 的 full-physical
+Gate A 结果。
+
+每个输出对应：aggregate JSONL、`.manifest.json`、`_runs/` 下的逐 process JSONL 和
+stderr。只有 manifest 同时满足 `status=completed`、全部 comparability checks、
+`formal_eligible=true`、token exact、同 UUID 前后 idle/release，才能进入后续 NSYS/NCU
+归因。一次 run 失败时保留整个失败 cell，不手工删 outlier。
+
+## 12. 证据保存与验收
 
 `data/` 默认 gitignored。每次正式复现至少保存：
 

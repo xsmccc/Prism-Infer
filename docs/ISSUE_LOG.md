@@ -12,13 +12,902 @@ ID:
 影响范围:
 证据:
 定位过程:
+错误假设与排除过程:
 根因:
 修复:
+设计权衡与拒绝方案:
 验证命令:
 验证结果:
 经验:
+面试故事提炼:
 剩余风险:
 ```
+
+## P9-001: 当前 GPU0 物理身份变化，历史性能数据不可直接混入新基线
+
+状态: Verified
+
+发现方式:
+
+- 在 clean `00982ec` 上启动 P9-C.3/P9-D release baseline 前执行 GPU identity gate。
+
+影响范围:
+
+- 所有要求“同一 GPU UUID”的 Prism/vLLM/SGLang 性能比例与 process-level repeats。
+- 不影响旧数据在其原始硬件上的历史有效性，也不影响当前 GPU 的 correctness 测试。
+
+证据:
+
+```text
+历史 P9-A/P8 formal GPU UUID:
+GPU-989db6f6-3273-d1dd-b2b9-56cced4f30a4
+
+2026-07-20 当前唯一可见 GPU0:
+GPU-662a2fa1-37e4-cc52-0a51-27557dba315b
+NVIDIA GeForce RTX 5090, 1 MiB used, 32149 MiB free, 0% utilization
+
+environment check:
+status=PASS, CUDA 12.8, compute capability 12.0,
+free/total=30.901/31.396 GiB, model revision and 4 weight files PASS
+```
+
+定位过程:
+
+- 用 `nvidia-smi -L` 确认当前容器只暴露一张 GPU，而不是 CUDA ordinal 重排后的多卡视图。
+- 用 `nvidia-smi topo -m` 确认当前只有 GPU0。
+- 搜索正式文档中的旧 UUID，确认 P8/P9-A page/NCU 数据绑定另一物理设备。
+- 重新运行 `scripts/check_environment.py`，确认当前设备、CUDA backend 和模型文件本身可用。
+
+错误假设与排除过程:
+
+- 不能因为设备名同为 RTX 5090、ordinal 同为 `0`，就假设是同一张物理卡。
+- 不能把 UUID 变化归因于 Prism、CUDA 或驱动；当前证据只能确认租赁/容器边界暴露了
+  不同物理设备，无法观察云平台的具体重新分配机制。
+
+根因:
+
+- 当前运行环境对应的物理 GPU 与历史 formal 环境不同；更底层的资源重新分配原因不可见。
+
+修复:
+
+- 历史结果继续绑定旧 UUID，不重写历史记录。
+- 从 `00982ec` 开始建立新的 clean baseline；同一个性能 claim 的 baseline/candidate、
+  Prism/external 和全部 repeats 必须在当前 UUID 上完成。
+- benchmark schema 继续保存 UUID，并拒绝跨 UUID 自动聚合。
+
+设计权衡与拒绝方案:
+
+- 不用“同型号 GPU”放宽成可直接计算 speedup ratio；RTX 5090 个体、功耗状态、拓扑和
+  云平台策略仍可能造成系统差异。
+- 不删除旧 P9-A 证据；它仍可用于解释设计发现，但不能和新设备数据拼成正式比值。
+
+验证命令:
+
+```bash
+nvidia-smi -L
+nvidia-smi topo -m
+CUDA_VISIBLE_DEVICES=0 .venv-local/bin/python scripts/check_environment.py \
+  --model /data/models/Qwen3-VL-8B-Instruct/\
+0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+  --require-cuda --min-free-gib 18
+```
+
+验证结果:
+
+- 当前 GPU identity、空闲资源、runtime capability 与模型完整性门禁 PASS。
+- 跨 UUID comparability 明确判定为不允许；新 formal matrix 尚未开始。
+
+经验:
+
+- GPU ordinal 是进程局部编号，UUID 才是性能证据的物理身份。
+- 每次云环境重启后，即使设备型号、显存和软件栈都相同，也必须先重建 identity gate。
+
+面试故事提炼:
+
+- “我在复现实验前发现同为 GPU0 的 RTX 5090 UUID 已变化，因此没有复用旧 baseline。
+  我把 GPU UUID 写进 schema 和聚合 comparability gate，避免跨物理设备制造虚假收益。”
+
+剩余风险:
+
+- 当前设备无法锁定 GPU clocks；正式 benchmark 仍需空闲门禁、ABBA/BAAB 顺序和
+  process-level 置信区间控制漂移。
+
+## P9-002: Full-model 释放读数被测试端 tensor ownership 与异步执行污染
+
+状态: Verified
+
+发现方式:
+
+- 在当前 GPU 上重跑纯文本 full-model correctness gate，检查测试打印的进程内
+  CUDA allocator 释放证据。
+
+影响范围:
+
+- `tests/test_full_model*.py` 的“模型已释放”结论和串行加载内存安全性。
+- 不影响已生成 logits 的数值正确性，也没有证据表明 production Engine 存在 ownership
+  泄漏。
+
+证据:
+
+```text
+修复前:
+HF 已释放:          0.0 GiB allocated
+Prism 加载完成:    16.4 GiB allocated
+Prism 已释放:      16.4 GiB allocated
+进程退出后 NVML:      1 MiB used
+
+仅删除 our_sd 后:
+Prism 已释放:       1.2 GiB allocated
+
+最终修复后:
+HF 已释放:          0.0 GiB allocated
+Prism 已释放:       0.0 GiB allocated
+进程退出后 NVML:      1 MiB used, 0% utilization
+HF/Prism logits: max diff 0, mean diff 0, Result PASS
+```
+
+定位过程:
+
+- 先比较进程内 `torch.cuda.memory_allocated()` 与进程退出后的 NVML；后者恢复到 1 MiB，
+  因而现象不支持“跨进程不可见占用”或驱动级常驻。
+- 检查测试对象生命周期，发现 `our_sd = our.state_dict()` 在删除 `our` 后仍然存活。
+  `state_dict()` 是持有参数/缓冲区 tensor 的浅映射，不是与模型 storage 无关的计数快照。
+- 保存参数数量后显式删除 `our_sd`，释放读数从 16.4 GiB 降到 1.2 GiB，验证参数 storage
+  的第二所有者是主因。
+- 剩余读数发生在对比 logits 仍位于 GPU 且 CUDA 工作未显式同步的观测点。测试改为先把
+  correctness 输出复制到 CPU，并在读取释放状态前同步；读数降到 0.0 GiB。由于这两项
+  同时修复，不进一步虚构 1.2 GiB 在二者之间的精确拆分。
+
+错误假设与排除过程:
+
+- 错误假设一：`del our` 足以释放全部参数。排除依据是删除 `our_sd` 后立即少了约
+  15.2 GiB；Python 对象图中还有 storage owner。
+- 错误假设二：`torch.cuda.empty_cache()` 会释放所有 GPU 内存。它只能把 allocator 中
+  已无活跃 tensor 的缓存块交还驱动，不能销毁仍被 Python 引用或尚待流完成的 allocation。
+- 错误假设三：一条 allocator 读数就能证明 Engine 泄漏。进程内 allocated、reserved、
+  异步 stream 状态和 NVML process bytes 的语义不同，必须结合对象生命周期判断。
+
+根因:
+
+- 测试 harness 长时间保留 `state_dict()`，使其参数 tensor 在模型对象删除后继续拥有
+  GPU storage。
+- correctness 输出仍驻留 GPU，且释放打印前缺少明确同步，使第二阶段读数继续含混。
+
+修复:
+
+- 在四个 full-model 脚本中先保存 `expected_parameters = len(our_sd)`，完成加载后显式
+  `del our_sd`。
+- 将用于比较的 logits 在模型释放前复制到 CPU，严格保证下一份 8B 模型加载时不保留
+  上一模型的 GPU 输出。
+- 在删除模型对象后显式 `torch.cuda.synchronize()`，再执行 GC、`empty_cache()` 和
+  allocator 读数。
+
+设计权衡与拒绝方案:
+
+- correctness gate 接受一次 device-to-host copy 和同步，因为目标是确定性对齐与可靠
+  ownership 证据；这些操作不得进入 latency benchmark 或 production fast path。
+- 拒绝为测试误报增加 Engine destructor、全局 cache 清理或每步同步；那会污染真实
+  pipeline，并掩盖测试端所有权错误。
+- 没有把 1.2 GiB 全部归因于 logits 或异步 delayed free；现有实验只证明组合修复后的
+  结果，未提供单因素精确拆分。
+
+验证命令:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/\
+0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+env -C /data/Prism-Infer .venv-local/bin/python tests/test_full_model.py
+
+nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader
+nvidia-smi --query-gpu=uuid,memory.used,memory.free,utilization.gpu \
+  --format=csv,noheader
+```
+
+验证结果:
+
+- 纯文本 full-model 权重 `750/750` 加载，missing/unexpected 均为空。
+- HF 与 Prism full logits shape 均为 `[1, 64, 151936]`，NaN 为零，max/mean diff 均为零。
+- 两个模型函数内释放后均显示 `0.0 GiB` allocated，进程退出后 GPU 为 1 MiB used。
+- 单图、多图和视频最后 token logits 均与 HF bit-exact，模型函数内释放后均为
+  `0.0 GiB` allocated。
+- CUDA Graph decode 的单图、多图、视频和 mixed batch 与 eager token exact；测试进程
+  退出后 NVML 为 1 MiB used。
+
+经验:
+
+- `state_dict()` 的生命周期也是模型显存 ownership 的一部分；诊断代码本身可以制造
+  看似 production 的泄漏。
+- 显存排障要至少区分 live tensor bytes、allocator reserved bytes、异步 delayed free
+  和 NVML process bytes，并检查进程退出边界。
+- correctness、memory forensics 与 performance benchmark 需要不同的同步策略，不能把
+  诊断同步混入被测 fast path。
+
+面试故事提炼:
+
+- “我发现模型删除后 allocator 仍显示 16.4 GiB，但进程退出后 NVML 归零。我没有修改
+  引擎，而是追踪 Python tensor ownership，定位到测试保留的 `state_dict()` 浅映射；
+  删除它后只剩 1.2 GiB，再通过 CPU 化输出和同步消除观测污染。最终 logits bit-exact，
+  函数内 allocated 归零，也避免把测试 harness 的 bug 误修进 production runtime。”
+
+剩余风险:
+
+- 后续 release gate 应同时结构化记录 allocated/reserved/NVML，而不是依赖一位小数的
+  console 文本。
+
+## P9-003: Transformers 5.13 要求 HF 多模态参考 forward 显式传 modality ids
+
+状态: Verified
+
+发现方式:
+
+- 完成 P9-002 后重跑单图 full-model reference gate，HF 5.13 在模型 forward 前抛出
+  `mm_token_type_ids is missing`。
+
+影响范围:
+
+- 影响由 Prism `ImageInputs`/`VideoInputs` 重建参数并调用 HF 的 correctness tests。
+- 不影响 Prism production runtime；Prism 在 host preprocessing 阶段自行生成并冻结
+  M-RoPE `position_ids`，不依赖 HF model forward。
+
+证据:
+
+```text
+Transformers: 5.13.0
+input_ids: [1, 210]
+image_grid_thw: [1, 3]
+
+ValueError: Multimodal data was passed (via `image_grid_thw` or
+`video_grid_thw`) but `mm_token_type_ids` is missing.
+```
+
+定位过程:
+
+- 检查当前 HF `Qwen3VLModel.compute_3d_position_ids`，确认只要传入视觉 grid 和
+  `input_ids`，新版 forward 就要求 modality ids。
+- 检查 processor 输出与仓库测试辅助代码，发现 `tests/conftest.py` 已有根据展开后的
+  image/video pad token 构造 modality ids 的兼容逻辑，但 full-model 脚本未复用。
+- 运行单图、多图、视频 M-RoPE 对照，Prism position ids 与当前 HF
+  `get_rope_index` max diff、rope delta diff 均为零，排除 production M-RoPE 合同缺失。
+
+错误假设与排除过程:
+
+- 没有因为 HF 报“字段缺失”就把 `mm_token_type_ids` 加进 production sequence/device
+  contract；该字段对 Prism 是可由 token ids 推导的 HF reference 输入。
+- 没有固定向所有 HF 版本无条件传参；旧版本 forward 不一定接受该字段，因此必须检查
+  安装版本的函数签名。
+
+根因:
+
+- 依赖升级改变了 HF reference forward 的显式参数合同；full-model 测试仍按旧版本调用。
+- 同一兼容逻辑此前只在 RoPE 和 logits-distribution 测试中局部存在，缺少共享入口。
+
+修复:
+
+- 在 `tests/conftest.py` 增加共享 `with_hf_mm_token_type_ids`：只在当前 HF forward
+  签名支持该字段时，从 image/video pad token 构造并附加 modality ids。
+- 单图、多图、视频 full-model 脚本统一复用该 helper。
+- 删除 `test_vl_logits_distribution.py` 的重复私有实现，避免兼容策略继续分叉。
+
+设计权衡与拒绝方案:
+
+- 兼容 helper 只位于 HF reference boundary，不污染 Prism runtime 数据结构。
+- 拒绝 pin 回旧 Transformers 来隐藏问题；release 应能明确知道当前 reference API 的
+  语义变化，但正式性能数据仍必须绑定精确依赖版本。
+- 拒绝用 `**batch` 绕过 Prism 输入合同进行 full-model 测试；测试必须验证 Prism
+  preprocessing 保留下来的数据足以重建正确 reference。
+
+验证命令:
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/\
+0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+env -C /data/Prism-Infer .venv-local/bin/python -m pytest -q \
+  tests/test_vl_rope_index.py \
+  tests/test_vl_rope_index_multi_image.py \
+  tests/test_vl_rope_index_video.py -s
+
+CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/\
+0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+env -C /data/Prism-Infer .venv-local/bin/python tests/test_full_model_vl.py
+```
+
+验证结果:
+
+- M-RoPE suite: `7 passed`，单图、多图、视频 position ids 与 rope delta exact。
+- 单图 HF/Prism logits shape `[1, 151936]`，max/mean diff 均为零。
+- 同一 helper 继续通过多图和视频 full-model reference forward。
+- 32-token teacher-forced 单图、多图、视频分布测试 PASS；model-precision logits 和
+  perplexity 三类输入均 exact。
+
+经验:
+
+- 外部 reference API 不是 production contract；升级依赖时必须先判断变化属于哪一侧。
+- 版本兼容判断应集中在 boundary adapter，不能散落为测试中的条件分支。
+- “能从已有语义无损推导的 reference-only 字段”通常不应扩大核心 runtime contract。
+
+面试故事提炼:
+
+- “升级 Transformers 后，HF 多模态 forward 强制要求 `mm_token_type_ids`。我先证明
+  Prism 自己的 M-RoPE 与新版 HF exact，再把问题限定为 reference adapter 兼容性，
+  用签名感知 helper 从视觉 pad token 重建字段，而没有把 HF 私有参数扩散进 runtime。”
+
+剩余风险:
+
+- 后续 Transformers 升级仍需跑 reference-signature、processor 和 M-RoPE 三层门禁；
+  不能仅依赖版本号判断兼容性。
+
+## P9-004: Vision FlashAttention 由包存在性隐式启用，造成 shape-dependent 数值漂移
+
+状态: Verified
+
+发现方式:
+
+- 修复 P9-003 后，单图 full logits exact，但同权重、同预处理的双图 full-model gate
+  出现显著 BF16 logits 差异。
+
+影响范围:
+
+- 安装 flash-attn 的环境中，`cu_seqlens` 多于一个 segment 的多图和视频 vision path。
+- 单图默认走 SDPA，因此原有单图 strict gate 无法发现该环境和 shape 相关行为。
+- 影响可复现性、backend 归因和正式性能/质量 claim；不代表 FlashAttention 算法语义错误。
+
+证据:
+
+```text
+隐式 FlashAttention:
+single-image max/mean logits diff: 0 / 0
+multi-image max logits diff:       0.484375
+multi-image mean logits diff:      0.08838902
+
+单因素关闭 vision FlashAttention:
+multi-image max/mean logits diff:  0 / 0
+
+显式 SDPA 修复后:
+multi-image max/mean logits diff:  0 / 0
+video max/mean logits diff:        0 / 0
+```
+
+定位过程:
+
+- 先运行 processor 与 M-RoPE 对照；多图 token count、grid、position ids 和 rope delta
+  全部 exact，排除输入和位置编码。
+- 复查历史 P3-001 的跨图 attention 修复，确认当前 SDPA 路径仍按 `cu_seqlens` 分段，
+  没有恢复错误的跨图 attention。
+- 检查 `ViTAttention.forward`，发现只有多 segment 且检测到 flash-attn 包时才自动调用
+  varlen FlashAttention；HF 当前 reference 配置走分段 SDPA。
+- 保持输入、权重、dtype 和软件栈不变，仅在 fresh process 中关闭该 capability flag，
+  多图 logits 立即恢复 bit-exact，完成单因素归因。
+
+错误假设与排除过程:
+
+- 最初候选一是 Transformers 5.13 新 M-RoPE 语义；position/delta exact 将其排除。
+- 候选二是 P3-001 的跨图 attention 边界回归；关闭 FlashAttention 后不改边界即可 exact，
+  将其排除。
+- 不把 micro-kernel 的小误差等同于 full-model 可忽略：27 层 ViT、DeepStack 和 36 层
+  LLM 会放大 BF16 舍入差异，因此必须看端到端 logits/质量。
+
+根因:
+
+- 可选依赖的“能力探测”被直接当成 backend “选择策略”。同一公开配置会随环境是否安装
+  flash-attn、以及输入是否包含多个视觉 segment 而静默改变执行后端。
+- Prism varlen FlashAttention 与 HF 分段 SDPA 的 BF16 reduction/kernel shape 不同；
+  micro 输出接近，但误差经完整多模态模型传播后不再满足 strict logits gate。
+
+修复:
+
+- 新增 `VisionAttentionBackendName`，只支持显式 `sdpa` / `flash_attn`，拒绝隐式
+  `auto`。
+- `MultimodalConfig` 默认固定为 `sdpa`，flat/nested config 使用同一类型化字段
+  `vision_attention_backend`。
+- 从 Config、ModelRunner、Qwen3VL model 到 VisionEncoder 全链路显式传递 backend。
+- 请求 `flash_attn` 但依赖、device、dtype 或 packed shape 不满足时 fail closed，不静默
+  回退到 SDPA。
+- 重写 vision micro parity 测试，显式构造同权重 SDPA/FlashAttention 两个候选，而不是
+  monkeypatch 包存在性来选择策略。
+
+设计权衡与拒绝方案:
+
+- 没有删除 FlashAttention；它仍是 P9-D 可测候选，但必须单独报告 backend、质量和性能。
+- 默认 SDPA 优先维持 HF strict reference；只有端到端质量和同卡性能证据都成立，才考虑
+  更改 release policy。
+- 拒绝保留 `auto` 再在日志里事后猜 backend；startup-selected backend 是实验身份的一部分。
+- 拒绝简单放宽多图 logits 阈值，因为 observed drift 远高于单 kernel parity，且当时没有
+  下游质量集证据支持。
+
+验证命令:
+
+```bash
+env -C /data/Prism-Infer .venv-local/bin/python -m pytest -q \
+  tests/test_p9_architecture_contracts.py::\
+test_nested_config_and_flat_compatibility_adapter_are_equivalent \
+  tests/test_p9_architecture_contracts.py::\
+test_vision_attention_backend_rejects_implicit_auto_policy \
+  tests/test_vision_encoder.py::\
+test_vision_attention_backend_is_explicit_and_fails_closed -s
+
+CUDA_VISIBLE_DEVICES=0 env -C /data/Prism-Infer \
+  .venv-local/bin/python -m pytest -q \
+  tests/test_vision_encoder.py::\
+test_vision_varlen_flash_attention_matches_segmented_reference -s
+
+CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/\
+0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+env -C /data/Prism-Infer .venv-local/bin/python \
+  tests/test_full_model_vl_multi_image.py
+```
+
+验证结果:
+
+- backend/config focused CPU tests: `4 passed`。
+- explicit varlen FlashAttention vs segmented SDPA micro parity: PASS，max diff `<= 0.01`、
+  mean diff `<= 0.001`。
+- 默认 SDPA 下单图、多图、视频 HF/Prism logits 全部 bit-exact，释放后 allocated 为零。
+- CUDA Graph decode: 单图 `[785, 2168]`、多图 `[785, 1378]`、视频
+  `[1986, 2766]` eager/graph exact；mixed batch 三行 exact，`2 passed`。
+- CUDA Graph 进程退出后 GPU 为 1 MiB used、0% utilization。
+- 32-token teacher-forced distribution: `1 passed`；单图、多图、视频 model-precision
+  logits max/mean diff 与 perplexity diff 均为零，fp32 LM-head 模式通过既有容差。
+
+经验:
+
+- capability detection 只能回答“能不能调用”，不能回答“应该调用哪个”；backend policy
+  必须显式、可序列化、可进入 benchmark schema。
+- 单图 correctness 不能覆盖多图/视频的 packed-varlen 分支，shape matrix 是 runtime 测试
+  的一部分。
+- micro parity 不能替代 full-model quality；小的 BF16 kernel 误差可能经深层网络放大。
+
+面试故事提炼:
+
+- “我遇到单图 exact、多图却漂移 0.48 的问题。通过 M-RoPE exact 和单因素禁用实验，
+  定位到代码把 flash-attn 是否安装误当成 backend policy，导致多 segment 输入静默换
+  kernel。我把 vision backend 做成类型化 startup 配置、默认 SDPA、缺能力 fail closed，
+  同时保留 FlashAttention 为独立性能候选；最终 full logits 和 CUDA Graph mixed batch
+  恢复 exact。”
+
+剩余风险:
+
+- P9-D 需在同一 GPU UUID 上测量 SDPA/FlashAttention 的 vision latency、TTFT、峰值显存
+  和真实多图/视频质量，再决定 release 推荐值。
+- 正式 artifact schema 需要记录 `vision_attention_backend`，禁止不同 backend 聚合。
+
+## P9-005: 进程内多 mode benchmark 不能证明 cold/fresh-process 性能
+
+状态: Verified
+
+发现方式:
+
+- 在当前 GPU UUID 上准备 P9-D eager/CUDA Graph 基线时，复查 `bench_system.py` 的执行
+  生命周期和旧 artifact 的 `process_scope`。
+
+影响范围:
+
+- torch.compile cold peak、CUDA Graph capture ownership、allocator reserved memory、全局
+  CUDA context/cache 和 eager/Graph TPOT 对比。
+- 不否定旧 runner 的进程内功能回归价值；但它不能单独支持“5 次 fresh-process repeats”
+  或 process-level 95% CI claim。
+
+证据:
+
+```text
+旧 runner:
+- 模块顶层 import torch
+- 同一个 Python 进程内依次 for mode in modes
+- 每个 mode 会重建/exit LLM，但不会重建 Python/CUDA process
+- artifact protocol.process_scope = fresh_model_per_case_and_mode
+
+新 orchestrator smoke（dirty diagnostic，不能形成性能 claim）:
+- parent import 后 sys.modules 不含 torch
+- off_eager/off_graph 各一个独立 child process
+- 两次 child 前后均为 GPU 1 MiB used / 0% utilization
+- 15/15 comparability checks PASS
+- token IDs / decoded text / KV layout exact
+- git_dirty=true、repeats=1、warmup=0，因此 formal_eligible=false
+```
+
+定位过程:
+
+- 先区分“fresh model”与“fresh process”：`llm.exit()`、GC 和 `empty_cache()` 可以释放
+  Engine ownership，但 CUDA context、模块级 cache、compiler cache 和 Python import 状态仍
+  属于同一进程。
+- 检查旧 runner 的 mode 循环，确认所有 mode 共用一个已导入 torch 的父进程，无法在
+  mode 之间执行可靠的外部 NVML idle/release gate。
+- 审阅首版 orchestrator 后继续发现三个证据链缺口：只比较 output hash、没有完整
+  comparability gate；只报 process median、没有 bootstrap CI；输出若位于仓库中非
+  ignored 路径，会在首个 child 前后改变 Git dirty identity。
+- 用两 child smoke 验证进程边界、GPU 释放和完整字段 gate；用纯 CPU 测试验证非 ignored
+  路径拒绝、ABBA/BAAB 截断顺序和 deterministic bootstrap。
+
+错误假设与排除过程:
+
+- 错误假设一：`llm.exit() + empty_cache()` 等价于 fresh process。它只处理可释放的
+  runtime/allocator ownership，不能重置 CUDA context 和全部全局 cache。
+- 错误假设二：token hash 相同就足以比较性能。即使输出相同，model config、prompt
+  token、KV layout、vision backend、软件版本或 batch contract 不同，ratio 仍不公平。
+- 错误假设三：先检查 clean Git，随后把结果写到任意仓库路径也安全。非 ignored 输出会
+  让后续 child 看到不同的 `git_dirty`，污染同一个 matrix。
+- 错误假设四：把所有样本放进一个进程做普通 median 就满足“重复实验”。那只能反映
+  warm process 内部波动，不能覆盖 process-level cold/capture/ownership 变化。
+
+根因:
+
+- 旧 benchmark 的生命周期合同是“每 mode 新模型”，而 P9-D 需要“每 mode/repeat 新
+  进程”；二者在 CUDA runtime 和统计抽样层级上不是同一个实验。
+- runner schema 此前记录执行结果，但没有负责跨进程编排、外部 GPU gate 和 process-level
+  聚合。
+
+修复:
+
+- 新增 `benchmarks/run_p9_process_matrix.py`，父进程不导入 torch，每个 mode/repeat 只
+  启动一个 `bench_system.py` child。
+- 运行顺序按 ABBA/BAAB block 交替并截断为每 mode 精确相同次数；5 repeats 时顺序是
+  `ABBABAABAB`。
+- 每个 child 前按物理 UUID 检查 NVML memory/utilization，退出后等待同一 idle gate；
+  固定 `CUDA_VISIBLE_DEVICES`、offline mode 和 `PYTHONHASHSEED`。
+- 强制 clean worktree；dirty 仅在显式 `--allow-dirty` 时作为 diagnostic，且永远不标记
+  formal eligible。
+- 输出只能写到仓库外或 gitignored 路径，拒绝覆盖既有 artifact；manifest 原子更新并
+  在每个 child 后保存进度，失败时保留已完成 run 和错误信息。
+- 对 environment、model、workload、traffic、sampling、measurement、非执行 mode 字段、
+  非 Graph backend 字段、完整 KV metadata 和 token/text 执行 exact comparability gate。
+- 保存各 process 原始值、median/p90/p95/p99/min/max，并用固定 seed 的独立 process
+  bootstrap 计算 candidate/baseline median ratio 95% CI。
+- formal eligibility 额外要求 clean Git、至少 5 次每 mode、warmup 至少 2、10,000 次
+  bootstrap 和冻结 seed；smoke 即使全部 correctness gate 通过也不能升级成正式结论。
+
+设计权衡与拒绝方案:
+
+- 不在 parent 中 import benchmark schema/torch 来复用常量；parent 是否持有 CUDA 相关
+  runtime 是被测生命周期的一部分，保持标准库-only 更容易审计。
+- 不尝试在同一进程手工清空所有 CUDA/compiler cache；这种清理既不完备，也可能改变
+  production 行为。
+- 不自动覆盖或续写旧路径。保留每次原始证据比“方便重跑同名文件”更重要。
+- ABBA/BAAB 只降低时间漂移，不声称消除时钟、温度或云平台噪声；因此仍需 idle gate、
+  原始样本和 CI。
+
+验证命令:
+
+```bash
+.venv-local/bin/python -m pytest -q tests/test_p9_process_matrix.py -s
+
+.venv-local/bin/python benchmarks/run_p9_process_matrix.py \
+  --model "$PRISM_MODEL_PATH" \
+  --manifest benchmarks/workloads/p9_headline.json \
+  --case guardrail_single_image_448 \
+  --mode-a off_eager --mode-b off_graph \
+  --expected-gpu-uuid GPU-662a2fa1-37e4-cc52-0a51-27557dba315b \
+  --fresh-process-repeats 1 --warmup 0 --max-tokens 4 \
+  --batch-size 1 --max-num-seqs 1 --num-kvcache-blocks 16 \
+  --vision-attention-backend sdpa --bootstrap-resamples 100 \
+  --allow-dirty \
+  --output data/p9_baseline/p9_process_orchestrator_v2_smoke_dirty.jsonl
+```
+
+验证结果:
+
+- orchestrator contract tests: `11 passed`。
+- dry-run 生成 5-repeat `ABBABAABAB` 的 10 条 child 命令，且不创建 artifact 目录。
+- dirty smoke 两个 child 均正常退出，前后 GPU 都是 `1 MiB / 0%`；15 项 comparability
+  gate 全部 PASS，输出 token exact。
+- smoke 的单样本 ratio/CI 只验证汇总器，不解释为性能收益；manifest 正确标记
+  `git_dirty=true`、`formal_eligible=false`。
+
+经验:
+
+- benchmark 的“进程边界”与 timing scope、输入和 backend 一样，必须进入实验合同。
+- 正确性 hash 是必要条件而非 comparability 的充分条件；公平比较需要逐字段白名单。
+- formal/diagnostic 不应靠文档口头区分，应由机器可读 eligibility gates 自动判定。
+
+面试故事提炼:
+
+- “我发现原 benchmark 虽然每个 mode 都重建模型，却共用同一个 CUDA 进程，所以不能
+  证明 cold compile、Graph capture 或 allocator 状态公平。我把它拆成标准库父进程加
+  单次 child，加入 UUID/idle/release、ABBA/BAAB、逐字段 comparability 和 process-level
+  bootstrap CI。还修了一个容易忽略的问题：结果若写到非 ignored 路径，会让后续 run
+  自己把 clean Git 变脏。最终 smoke 的两次进程前后显存都回到 1 MiB；只有满足 5 次、
+  clean commit 和完整统计门禁的矩阵才会被机器标成 formal。”
+
+剩余风险:
+
+- 当前只完成 dirty 单样本 smoke；H1 output128、每 mode 5 fresh processes 的正式数据必须
+  在本轮改动提交后的 clean commit 上重跑。
+- 5 个 process 的 CI 仍可能较宽；若 CI 跨越无收益边界，应增加预注册 repeats，而不是
+  删除 outlier。
+- 当前 `kv_cache.bytes` 主要覆盖 payload 和 scale；page table、allocator metadata、
+  unique storage 与 fragmentation 的统一物理 accounting 属于 P9-C.3，不能由本 runner
+  的 exact KV metadata gate 替代。
+
+## P9-006: 多模态 admission 使 nominal batch4 变成动态 decode bucket 轨迹
+
+状态: Verified
+
+发现方式:
+
+- 用 H1 八图 workload、batch4 和正式 KV pool 配置运行 P9 eager/CUDA Graph
+  fresh-process smoke 时，旧 benchmark 无法在第一次 prefill 后找到四个请求的完整
+  prompt KV layout；修复 snapshot 后，Graph 路径又因“最后一次 replay 不是 batch4”失败。
+
+影响范围:
+
+- H1/H2 等高视觉成本 workload 的 CUDA Graph bucket、padding、TPOT 归因和 eager/Graph
+  comparability。
+- prompt KV physical accounting：不同请求可能在不同 prefill step 才完成，不能只在某个
+  全局时刻读取 scheduler 当前状态。
+- 不影响 scheduler 的 production 语义；暴露的是 benchmark 对动态 admission 的错误假设。
+
+证据:
+
+```text
+workload: 4 requests × 8 images × 448×448
+aggregate prompt/image tokens: 6472 / 6272
+prefill steps: 4
+decode steps: 6
+
+eager actual decode batch histogram:
+1:2, 2:2, 3:2
+
+CUDA Graph actual -> captured bucket histogram:
+1 -> 1:2, 2 -> 2:2, 3 -> 4:2
+captured buckets: [1, 2, 4]
+
+BF16 KV pool:       4,265,607,168 B
+scaled-FP8 KV pool: 4,282,122,240 B
+active prompt blocks: 28
+all four outputs: [6025, 264, 16585, 12313]
+output SHA256: 60bc800b87a62c23e5bb7ef1c89732fe52222aa7ce0bedb840c703cfdb6db1a7
+each child before/after: 1 MiB used, 0% utilization
+```
+
+保留的失败 artifact:
+
+- `data/p9_baseline/p9_h1_b4_bf16_config_smoke_dirty*`：第一次 prefill 后要求四个请求
+  同时处于 running，报 `could not capture all post-prefill KV layouts`。
+- `data/p9_baseline/p9_h1_b4_bf16_config_smoke_v2_dirty*`：按请求保存 layout 后，仍把
+  最后 replay 强制等同 nominal batch4，Graph child 失败。
+
+定位过程:
+
+- 检查 H1 materialized input：每个请求有八张 448 图，视觉 patch 成本大于
+  `max_vision_patches_per_batch=8192` 的一半，因此一个 prefill batch 无法同时 admission
+  两个请求；batch4 实际需要四个 prefill step。
+- 检查 scheduler policy：`max_consecutive_prefill_batches=1` 会在等待中的 prefill 与已
+  running 请求的 decode 之间交替，而不是先完成四个 prefill 再进入静态 batch4 decode。
+- 用 typed `StepResult.plan` 逐 step 记录 phase 和 batch size，得到确定轨迹：请求逐个加入，
+  较早请求也逐个达到 `max_tokens=4` 并退出，所以 measured decode 依次覆盖 batch
+  `1/2/3`，本次短 smoke 根本没有 batch4 replay。
+- 对照 Graph runner 的运行时 observation，实际 batch3 正确 padding 到 captured bucket4；
+  eager 与 Graph 的实际 batch histogram、输出和 KV metadata 一致。
+
+错误假设与排除过程:
+
+- 错误假设一：traffic batch4 等于每个 decode step 都是 batch4。traffic batch 只描述同轮
+  提交的请求数；admission、prefill 成本和完成时间会改变运行时 batch。
+- 错误假设二：第一次 prefill 后可以一次性 snapshot 全部 prompt KV。只有完成 prefill 的
+  sequence 才拥有最终 prompt layout；未 admission 请求还在 waiting。
+- 错误假设三：最后一次 Graph replay 最能代表 requested batch。短输出下最后存活的请求
+  反而最少，最后 replay 是 batch1；Graph correctness 必须逐 decode step 检查。
+- 排除了 Graph 调错 bucket：逐 step observation 显示 actual `1/2/3` 分别 replay
+  captured `1/2/4`，满足 padding contract，且 token exact。
+
+根因:
+
+- benchmark 把静态 workload 配置、scheduler 的动态 BatchPlan 和 CUDA Graph capture
+  bucket 三个不同层级都压缩成一个 `requested_batch_size=4`。
+- prompt KV snapshot 与 Graph metadata 都读取“某一个时刻”的全局状态，无法表达 staged
+  prefill 和请求生命周期。
+
+修复:
+
+- `bench_system.py` 改用 typed `step_result()`，不再从 legacy signed token count 推断
+  prefill/decode。
+- 每个 sequence 在自身 prefill 完成、进入 `DECODING` 时复制 prompt KV snapshot；结束后按
+  原始 request 顺序聚合。compressed layout 会去掉“已 sample 但尚未写入 KV”的 pending
+  append，只保留真正的 prompt boundary。
+- 每个 decode step 记录实际 BatchPlan batch；Graph 路径同时读取 runner 观测到的 actual
+  和 captured replay batch，并逐 step fail closed。
+- benchmark schema 升级到 v9，新增 `decode_batch_size_counts` 和
+  `cuda_graph_replay_counts`；校验 histogram 覆盖全部 measured decode steps、actual 不超过
+  traffic batch、captured bucket 已捕获且不小于 actual、Graph 投影与 decode histogram
+  完全一致。v8 artifact 保持可读。
+- fresh-process comparability 允许 Graph replay 映射作为 backend 差异，但要求 eager/Graph
+  的实际 decode histogram exact。
+
+设计权衡与拒绝方案:
+
+- 不提高 vision patch budget 来强行制造静态 batch4；那会改变显存峰值和 production
+  admission policy，不再是同一个 baseline。
+- 不把所有请求 prefill 完后再测 decode；那会绕开真实 scheduler 的 interleaving，掩盖
+  TTFT、KV occupancy 和 Graph bucket 的 pipeline 行为。
+- 不只记录最后一次 replay，也不把 actual batch3 伪装为 batch4；保存 actual→captured
+  映射才能区分真实并发与 padding 开销。
+- schema 当前保存聚合 histogram，而逐 step 原始顺序由 diagnostic 运行时检查保证；如果
+  后续引入非确定 admission，正式 online trace 还需保存完整有序事件流。
+
+验证命令:
+
+```bash
+.venv-local/bin/python -m pytest -q \
+  tests/test_benchmark_schema.py \
+  tests/test_p9_process_matrix.py
+
+.venv-local/bin/python benchmarks/run_p9_process_matrix.py \
+  --model "$PRISM_MODEL_PATH" \
+  --manifest benchmarks/workloads/p9_headline.json \
+  --case h1_eight_image_448 \
+  --mode-a off_eager --mode-b off_graph \
+  --expected-gpu-uuid "$P9_GPU_UUID" --cuda-visible-devices 0 \
+  --fresh-process-repeats 1 --warmup 0 --max-tokens 4 \
+  --batch-size 4 --max-model-len 4096 \
+  --max-num-batched-tokens 16384 --max-num-seqs 4 \
+  --num-kvcache-blocks 113 --kvcache-block-size 256 \
+  --vision-attention-backend sdpa --bootstrap-resamples 100 \
+  --allow-dirty \
+  --output data/p9_baseline/p9_h1_b4_bf16_config_smoke_v3_dirty.jsonl
+```
+
+scaled-FP8 使用同一命令合同，将 mode 改为
+`scaled_fp8_kv/scaled_fp8_kv_graph`、blocks 改为 `220`。
+
+验证结果:
+
+- schema/process tests: `60 passed`；architecture/vision focused: `29 passed`。
+- BF16 和 scaled-FP8 两个 batch4 smoke 均为 15/15 comparability PASS、token exact，
+  actual decode histogram 和 Graph replay 映射均通过 schema-v9 校验。
+- 所有 child 前后 GPU 都恢复 `1 MiB / 0%`。
+- 两次运行均为 dirty、warmup0、每 mode 1 process、output4，manifest 正确标记
+  `formal_eligible=false`；任何单样本 latency ratio 均不形成性能结论。
+
+经验:
+
+- serving batch 是动态状态，不是 CLI 常量；多模态 admission 成本会直接改变 Graph
+  bucket 分布和可优化边界。
+- benchmark 必须观察 scheduler 发布的 BatchPlan，而不是从请求数或最后一次 runner 状态
+  反推执行形态。
+- “为了 benchmark 方便而改变 admission”会把 pipeline 问题藏掉；真实 interleaving 本身
+  就是后续 Graph、scheduler 和 goodput 优化的重要证据。
+
+面试故事提炼:
+
+- “我原本按 batch4 验证 CUDA Graph，却连续遇到 prompt KV snapshot 缺失和最后 replay
+  不是 batch4。逐步检查 scheduler 后发现，每个八图请求的 patch 成本使四个 prefill
+  分阶段 admission，而且 policy 会穿插 decode，所以真实 batch 是动态的 1、2、3，
+  batch3 再 padding 到 Graph bucket4。我没有提高预算掩盖问题，而是让 benchmark 基于
+  typed BatchPlan 逐请求 snapshot、逐 step 校验 actual→captured 映射，并把 schema 升到
+  v9。最终 BF16/FP8 eager 与 Graph token exact、显存完整释放；dirty smoke 只作为机制
+  证据，正式性能仍坚持 clean、ABBA/BAAB 和 process-level CI。”
+
+剩余风险:
+
+- schema-v9 的 histogram 能验证 bucket 计数和 comparability，但不能替代 online workload
+  的完整有序 scheduler trace；P9-E 需要记录 arrival/admission/completion 时间线。
+- output128 时后续请求最终会汇聚到 batch4 steady state；正式 H1 matrix 必须报告各 actual
+  bucket 占比，不能只给一个平均 TPOT。
+- 当前 smoke 只验证 SDPA、单 GPU 和固定 scheduler policy；FlashAttention、不同视觉预算
+  或未来 cost model 都需要重新建立轨迹证据。
+
+## P9-007: Full-model 文件名像测试但 pytest 实际未收集 logits gate
+
+状态: Verified
+
+发现方式:
+
+- 在 checkpoint 前按 `docs/REPRODUCIBILITY.md` 复核 full-model 命令，检查四个
+  `tests/test_full_model*.py` 的 pytest collection identity。
+
+影响范围:
+
+- 纯文本、单图、多图、视频 HF→Prism full-logits correctness gate。
+- 文档中的组合 pytest 命令和历史 full-suite 计数：其他测试通过时，命令整体可以 PASS，
+  但四个 script-only 文件的 `if __name__ == "__main__"` 根本不会执行。
+- 不推翻本轮此前直接运行脚本得到的 bit-exact 结果；问题在自动收集和失败传播。
+
+证据:
+
+```text
+修复前文件结构:
+- module pytestmark = model/gpu/integration/slow
+- run_hf_*/run_our_*/compare_* helpers
+- only `if __name__ == "__main__"` invokes the gate
+- no `test_*` callable for pytest collection
+
+额外缺口:
+- text script打印 FAIL/MARGINAL 后没有非零退出
+
+修复后 collection:
+tests/test_full_model.py::test_full_model_logits_match_hf
+tests/test_full_model_vl.py::test_full_model_single_image_logits_match_hf
+tests/test_full_model_vl_multi_image.py::test_full_model_multi_image_logits_match_hf
+tests/test_full_model_vl_video.py::test_full_model_video_logits_match_hf
+```
+
+定位过程:
+
+- 对照文档命令与源码入口，发现 pytest 导入模块时 `__name__ != "__main__"`，因此 main
+  block 不会执行。
+- 用 `pytest --collect-only` 单独检查四个文件，确认修复前没有对应 full-logits item；组合
+  命令之所以不报“no tests”，是同一命令中的 structure/generate tests 提供了可收集 item。
+- 检查 direct-script 失败传播，三个 VL 脚本会 `SystemExit(1)`，纯文本脚本只打印结果，
+  MARGINAL/FAIL 仍可能以 0 退出。
+
+错误假设与排除过程:
+
+- 错误假设一：文件名以 `test_` 开头就会运行其中的 main。pytest 只收集符合规则的 callable，
+  不执行 script main block。
+- 错误假设二：组合命令 exit 0 证明每个列出的文件都执行。pytest 的退出状态是所收集 item
+  的聚合结果，不是“每个路径至少贡献一个 test”的门禁。
+- 没有把问题归因于 marker 过滤；即使显式选择 slow/model/gpu，文件中没有 test callable
+  仍然无项可运行。
+
+根因:
+
+- heavyweight correctness 最初作为手工诊断脚本编写，后来移动到 `tests/` 并写入 pytest
+  复现命令，但入口形态没有完成从 script 到 test 的迁移。
+- 输出字符串被当作人工观察结果，没有统一成为 pytest assertion 和 process exit contract。
+
+修复:
+
+- 四个文件各自抽取唯一 `_run_*_verification()`；pytest test 和 direct-script main 复用同一
+  执行函数，避免复制 HF/Prism 加载、释放与 compare 逻辑。
+- 新增四个可收集 `test_*_logits_match_hf`，CUDA 不可用时按既有 marker 语义 skip，运行时
+  必须断言 decision 为 `PASS`。
+- direct-script 继续可单独运行，但四条路径都在非 PASS 时 `SystemExit(1)`。
+- 保留 `model/gpu/integration/slow` markers，使 8B gate 不进入 CPU presubmit，也不会被普通
+  快速回归意外触发。
+
+设计权衡与拒绝方案:
+
+- 不只修改文档为四条 `python file.py` 命令；那仍会让 full pytest/JUnit 永久漏掉核心 gate。
+- 不在 test wrapper 里重新实现一份逻辑；共享 runner 保证手工复现与 CI/pytest 是同一条
+  correctness 路径。
+- 不把 heavyweight test 降为普通 GPU marker；每个 case 顺序加载 HF 与 Prism 8B，必须
+  保持 slow 显式选择，避免占满开发机默认回归。
+
+验证命令:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+PRISM_MODEL_PATH="$PRISM_MODEL_PATH" \
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+.venv-local/bin/python -m pytest -q \
+  tests/test_full_model.py \
+  tests/test_full_model_vl.py \
+  tests/test_full_model_vl_multi_image.py \
+  tests/test_full_model_vl_video.py -s
+```
+
+验证结果:
+
+- pytest collection：四个文件精确收集 4 个 heavyweight item。
+- `4 passed in 39.60s`。
+- 纯文本 full logits `[1,64,151936]`，单图/多图/视频 last logits `[1,151936]`；四项
+  max/mean diff 均为 `0`，NaN 均为 `0`。
+- 每次 HF 与 Prism 模型函数内释放后 allocator 显示 `0.0 GiB`；suite 退出后 GPU 回到
+  `1 MiB / 0%`。
+
+经验:
+
+- correctness 文件存在、命令列出路径、pytest exit 0 三件事都不能证明某个 gate 被执行；
+  release checklist 必须检查 collection identity 和 item count。
+- 人工打印的 PASS/FAIL 必须转换成 assertion 或进程退出合同，否则自动化系统无法消费。
+- heavyweight 测试可以通过 marker 控制成本，但不能因此停留在“看起来像 test 的脚本”。
+
+面试故事提炼:
+
+- “我在复核 release 命令时发现四个 full-model 文件虽然叫 `test_*`，却只有 main block。
+  组合 pytest 因其他测试通过而显示绿灯，实际没有跑纯文本、单图、多图、视频 logits gate；
+  纯文本脚本甚至在 MARGINAL 时仍返回 0。我把每条路径收敛成一个共享 verification runner，
+  pytest assertion 和 direct-script exit 复用它，并保留 slow/model/gpu markers。修复后明确
+  收集 4 项，四类 HF/Prism logits 都 bit-exact，显存逐项释放。”
+
+剩余风险:
+
+- 历史 full-suite/JUnit 的 test count 不包含这四项，不能拿旧计数证明当前 full-logits
+  coverage；下一次 clean release 必须生成新的 JUnit。
+- 当前 gate 使用固定 synthetic 输入；标准质量与长生成稳定性仍由 P9 quality matrix 和
+  teacher-forced/token-generation tests 单独覆盖。
 
 ## P1-001: Full logits 对齐为 MARGINAL
 

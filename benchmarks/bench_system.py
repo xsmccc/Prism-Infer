@@ -12,6 +12,7 @@ import gc
 import hashlib
 import json
 import sys
+from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,7 +22,6 @@ from typing import Any
 
 import torch
 import transformers
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -47,11 +47,12 @@ from prism_infer.analysis.performance_profile import (
     performance_profile,
     validate_performance_profile_record,
 )
+from prism_infer.engine.kv_layout import KV_LAYOUT_DENSE, KV_LAYOUT_SCHEMA_VERSION
 from prism_infer.engine.kv_quantization import (
     kv_cache_storage_bytes,
     tensor_storage_bytes,
 )
-
+from prism_infer.engine.request import RequestState
 
 DEFAULT_MANIFEST = Path(__file__).with_name("workloads") / "p6_internal_smoke.json"
 
@@ -181,6 +182,8 @@ class IterationResult:
     ttft_ms: float
     prefill_step_ms: list[float]
     decode_step_ms: list[float]
+    decode_batch_sizes: list[int]
+    cuda_graph_replay_batch_sizes: list[int]
     end_to_end_ms: float
     engine_output_tokens_per_s: float
     e2e_output_tokens_per_s: float
@@ -257,6 +260,105 @@ def _add_requests(
     return seq_ids, (prompt_tokens, image_tokens, video_tokens)
 
 
+def _sequence_prompt_kv_snapshot(seq, *, kv_dtype: str) -> dict[str, Any]:
+    """Copy one completed prefill layout before later decode mutates it."""
+
+    dense_blocks = (seq.num_prompt_tokens + seq.block_size - 1) // seq.block_size
+    active_blocks = len(seq.block_table)
+    if seq.kv_layout is None:
+        physical_prompt_tokens = seq.num_prompt_tokens
+        layout = {
+            "schema_version": KV_LAYOUT_SCHEMA_VERSION,
+            "mode": KV_LAYOUT_DENSE,
+            "logical_context_len": seq.num_prompt_tokens,
+            "physical_kv_len": seq.num_prompt_tokens,
+            "prompt_logical_len": seq.num_prompt_tokens,
+            "compressed_prompt_kv_len": seq.num_prompt_tokens,
+            "retained_original_positions": [],
+            "block_table": list(seq.block_table),
+            "kv_dtype": kv_dtype,
+            "compression_record": {},
+        }
+    else:
+        physical_prompt_tokens = seq.kv_layout.compressed_prompt_kv_len
+        layout = seq.kv_layout.to_record(block_table=seq.block_table)
+        # postprocess has sampled the first output token, but that token has not
+        # entered KV until the next decode step.  This artifact is explicitly a
+        # prompt snapshot, so remove the pending append from copied metadata.
+        layout["logical_context_len"] = seq.num_prompt_tokens
+        layout["physical_kv_len"] = physical_prompt_tokens
+    return {
+        "logical_prompt_tokens": seq.num_prompt_tokens,
+        "physical_prompt_tokens": physical_prompt_tokens,
+        "dense_prompt_blocks": dense_blocks,
+        "active_prompt_blocks": active_blocks,
+        "layout": layout,
+    }
+
+
+def _aggregate_prompt_kv_snapshots(
+    snapshots: dict[int, dict[str, Any]],
+    *,
+    seq_ids: list[int],
+    payload_block_bytes: int,
+    scale_block_bytes: int,
+) -> dict[str, Any]:
+    missing = [seq_id for seq_id in seq_ids if seq_id not in snapshots]
+    if missing:
+        raise RuntimeError(f"benchmark missed completed prompt KV snapshots: {missing}")
+    ordered = [snapshots[seq_id] for seq_id in seq_ids]
+    logical_prompt_tokens = sum(item["logical_prompt_tokens"] for item in ordered)
+    physical_prompt_tokens = sum(item["physical_prompt_tokens"] for item in ordered)
+    dense_prompt_blocks = sum(item["dense_prompt_blocks"] for item in ordered)
+    active_prompt_blocks = sum(item["active_prompt_blocks"] for item in ordered)
+    block_bytes = payload_block_bytes + scale_block_bytes
+    return {
+        "logical_prompt_kv_tokens": logical_prompt_tokens,
+        "physical_prompt_kv_tokens": physical_prompt_tokens,
+        "dense_prompt_blocks": dense_prompt_blocks,
+        "active_prompt_blocks": active_prompt_blocks,
+        "released_prompt_blocks": dense_prompt_blocks - active_prompt_blocks,
+        "dense_prompt_payload_bytes": dense_prompt_blocks * payload_block_bytes,
+        "dense_prompt_scale_bytes": dense_prompt_blocks * scale_block_bytes,
+        "dense_prompt_bytes": dense_prompt_blocks * block_bytes,
+        "active_prompt_payload_bytes": active_prompt_blocks * payload_block_bytes,
+        "active_prompt_scale_bytes": active_prompt_blocks * scale_block_bytes,
+        "active_prompt_bytes": active_prompt_blocks * block_bytes,
+        "kv_layouts": [item["layout"] for item in ordered],
+    }
+
+
+def _capture_completed_prompt_snapshots(
+    llm: LLM,
+    step,
+    snapshots: dict[int, dict[str, Any]],
+) -> None:
+    for seq in step.plan.sequences:
+        if seq.seq_id not in snapshots and seq.status is RequestState.DECODING:
+            snapshots[seq.seq_id] = _sequence_prompt_kv_snapshot(
+                seq,
+                kv_dtype=str(llm.model_runner.kv_cache_dtype),
+            )
+
+
+def _record_decode_batch_observation(
+    llm: LLM,
+    step,
+    *,
+    decode_batch_sizes: list[int],
+    replay_batch_sizes: list[int],
+) -> None:
+    actual_batch_size = step.plan.batch_size
+    decode_batch_sizes.append(actual_batch_size)
+    if llm.model_runner.enforce_eager:
+        return
+    observed_actual = llm.model_runner.last_cudagraph_actual_batch_size
+    observed_replay = llm.model_runner.last_cudagraph_replay_batch_size
+    if observed_actual != actual_batch_size or observed_replay is None:
+        raise RuntimeError("CUDA Graph replay observation does not match the decode BatchPlan")
+    replay_batch_sizes.append(observed_replay)
+
+
 def _run_iteration(
     llm: LLM,
     case: dict[str, Any],
@@ -275,85 +377,33 @@ def _run_iteration(
     outputs: dict[int, list[int]] = {}
     prefill_step_ms: list[float] = []
     decode_step_ms: list[float] = []
+    decode_batch_sizes: list[int] = []
+    cuda_graph_replay_batch_sizes: list[int] = []
     decode_tokens = 0
-    prompt_kv_snapshot: dict[str, Any] | None = None
+    prompt_kv_snapshots: dict[int, dict[str, Any]] = {}
     while not llm.is_finished():
         torch.cuda.synchronize()
         step_start = perf_counter()
-        finished, num_tokens = llm.step()
+        step = llm.step_result()
         torch.cuda.synchronize()
         elapsed_ms = (perf_counter() - step_start) * 1000.0
-        if num_tokens > 0:
+        if step.plan.is_prefill:
             prefill_step_ms.append(elapsed_ms)
-            active_sequences = {
-                seq.seq_id: seq for seq in llm.scheduler.running if seq.seq_id in seq_ids
-            }
-            if set(active_sequences) != set(seq_ids):
-                raise RuntimeError("benchmark could not capture all post-prefill KV layouts")
-            ordered_sequences = [active_sequences[seq_id] for seq_id in seq_ids]
-            logical_prompt_kv_tokens = sum(seq.num_prompt_tokens for seq in ordered_sequences)
-            physical_prompt_kv_tokens = sum(
-                (
-                    seq.num_prompt_tokens
-                    if seq.kv_layout is None
-                    else seq.kv_layout.compressed_prompt_kv_len
-                )
-                for seq in ordered_sequences
-            )
-            dense_prompt_blocks = sum(
-                (seq.num_prompt_tokens + seq.block_size - 1) // seq.block_size
-                for seq in ordered_sequences
-            )
-            active_prompt_blocks = sum(len(seq.block_table) for seq in ordered_sequences)
-            payload_block_bytes = tensor_storage_bytes(llm.model_runner.kv_cache[:, :, 0])
-            scale_cache = llm.model_runner.kv_scale_cache
-            scale_block_bytes = (
-                0 if scale_cache is None else tensor_storage_bytes(scale_cache[:, :, 0])
-            )
-            block_bytes = payload_block_bytes + scale_block_bytes
-            layouts = []
-            for seq in ordered_sequences:
-                if seq.kv_layout is None:
-                    layouts.append(
-                        {
-                            "schema_version": 1,
-                            "mode": "dense",
-                            "logical_context_len": seq.num_prompt_tokens,
-                            "physical_kv_len": seq.num_prompt_tokens,
-                            "prompt_logical_len": seq.num_prompt_tokens,
-                            "compressed_prompt_kv_len": seq.num_prompt_tokens,
-                            "retained_original_positions": [],
-                            "block_table": list(seq.block_table),
-                            "kv_dtype": str(llm.model_runner.kv_cache_dtype),
-                            "compression_record": {},
-                        }
-                    )
-                else:
-                    layouts.append(seq.kv_layout.to_record(block_table=seq.block_table))
-            prompt_kv_snapshot = {
-                "logical_prompt_kv_tokens": logical_prompt_kv_tokens,
-                "physical_prompt_kv_tokens": physical_prompt_kv_tokens,
-                "dense_prompt_blocks": dense_prompt_blocks,
-                "active_prompt_blocks": active_prompt_blocks,
-                "released_prompt_blocks": (dense_prompt_blocks - active_prompt_blocks),
-                "dense_prompt_payload_bytes": (dense_prompt_blocks * payload_block_bytes),
-                "dense_prompt_scale_bytes": (dense_prompt_blocks * scale_block_bytes),
-                "dense_prompt_bytes": dense_prompt_blocks * block_bytes,
-                "active_prompt_payload_bytes": (active_prompt_blocks * payload_block_bytes),
-                "active_prompt_scale_bytes": (active_prompt_blocks * scale_block_bytes),
-                "active_prompt_bytes": active_prompt_blocks * block_bytes,
-                "kv_layouts": layouts,
-            }
+            _capture_completed_prompt_snapshots(llm, step, prompt_kv_snapshots)
         else:
             decode_step_ms.append(elapsed_ms)
-            decode_tokens += -num_tokens
-        for seq_id, token_ids in finished:
-            outputs[seq_id] = list(token_ids)
+            decode_tokens += step.plan.batch_size
+            _record_decode_batch_observation(
+                llm,
+                step,
+                decode_batch_sizes=decode_batch_sizes,
+                replay_batch_sizes=cuda_graph_replay_batch_sizes,
+            )
+        for output in step.outputs:
+            outputs[output.request_id] = list(output.token_ids)
 
     if not prefill_step_ms:
         raise RuntimeError("benchmark workload completed without a prefill step")
-    if prompt_kv_snapshot is None:
-        raise RuntimeError("benchmark did not capture a prompt KV snapshot")
     if not decode_step_ms or decode_tokens <= 0:
         raise RuntimeError("benchmark requires max_tokens >= 2 so decode TPOT can be measured")
     if set(outputs) != set(seq_ids):
@@ -377,6 +427,15 @@ def _run_iteration(
     num_requests = len(ordered_outputs)
     decode_ms = sum(decode_step_ms)
     prompt_tokens, image_tokens, video_tokens = token_counts
+    payload_block_bytes = tensor_storage_bytes(llm.model_runner.kv_cache[:, :, 0])
+    scale_cache = llm.model_runner.kv_scale_cache
+    scale_block_bytes = 0 if scale_cache is None else tensor_storage_bytes(scale_cache[:, :, 0])
+    prompt_kv_snapshot = _aggregate_prompt_kv_snapshots(
+        prompt_kv_snapshots,
+        seq_ids=seq_ids,
+        payload_block_bytes=payload_block_bytes,
+        scale_block_bytes=scale_block_bytes,
+    )
     return IterationResult(
         token_ids=ordered_outputs,
         decoded_texts=decoded_texts,
@@ -384,6 +443,8 @@ def _run_iteration(
         ttft_ms=sum(prefill_step_ms),
         prefill_step_ms=prefill_step_ms,
         decode_step_ms=decode_step_ms,
+        decode_batch_sizes=decode_batch_sizes,
+        cuda_graph_replay_batch_sizes=cuda_graph_replay_batch_sizes,
         end_to_end_ms=end_to_end_ms,
         engine_output_tokens_per_s=output_tokens / (engine_ms / 1000.0),
         e2e_output_tokens_per_s=output_tokens / (end_to_end_ms / 1000.0),
@@ -432,6 +493,7 @@ def _build_llm(
         visual_pruning_attention_last_n_layers=(args.visual_pruning_attention_last_n_layers),
         logits_precision=args.logits_precision,
         mlp_projection_mode=args.mlp_projection_mode,
+        vision_attention_backend=args.vision_attention_backend,
     )
 
 
@@ -483,14 +545,19 @@ def _build_record(
     output_tokens = sum(len(tokens) for tokens in first.token_ids)
     graph_metadata = llm.model_runner.cudagraph_metadata(len(case["requests"]))
     compile_metadata = llm.model_runner.compile_metadata()
-    if graph_metadata["enabled"]:
-        if (
-            llm.model_runner.last_cudagraph_actual_batch_size
-            != graph_metadata["requested_batch_size"]
-            or llm.model_runner.last_cudagraph_replay_batch_size
-            != graph_metadata["selected_batch_size"]
-        ):
-            raise RuntimeError("observed CUDA Graph replay batch does not match recorded metadata")
+    decode_batch_counts = Counter(
+        batch_size for result in results for batch_size in result.decode_batch_sizes
+    )
+    replay_batch_counts = Counter(
+        zip(
+            (batch_size for result in results for batch_size in result.decode_batch_sizes),
+            (
+                replay_size
+                for result in results
+                for replay_size in result.cuda_graph_replay_batch_sizes
+            ),
+        )
+    )
     record: dict[str, Any] = {
         "schema_version": BENCHMARK_SCHEMA_VERSION,
         "record_type": "system_benchmark",
@@ -575,6 +642,7 @@ def _build_record(
         "execution_backend": {
             "prefill_backend": "eager",
             "decode_backend": mode.execution,
+            "vision_attention_backend": config.vision_attention_backend.value,
             "cuda_graph_enabled": graph_metadata["enabled"],
             "cuda_graph_capture_scope": graph_metadata["capture_scope"],
             "cuda_graph_capture_ms": graph_metadata["capture_ms"],
@@ -582,6 +650,23 @@ def _build_record(
             "requested_decode_batch_size": graph_metadata["requested_batch_size"],
             "selected_decode_batch_size": graph_metadata["selected_batch_size"],
             "decode_batch_padding": graph_metadata["batch_padding"],
+            "decode_batch_size_counts": [
+                {
+                    "actual_batch_size": batch_size,
+                    "count": count,
+                }
+                for batch_size, count in sorted(decode_batch_counts.items())
+            ],
+            "cuda_graph_replay_counts": [
+                {
+                    "actual_batch_size": actual_batch_size,
+                    "captured_batch_size": captured_batch_size,
+                    "count": count,
+                }
+                for (actual_batch_size, captured_batch_size), count in sorted(
+                    replay_batch_counts.items()
+                )
+            ],
             "torch_compile_enabled": compile_metadata["enabled"],
             "torch_compile_region": compile_metadata["region"],
             "torch_compile_subgraph": compile_metadata["subgraph"],
@@ -727,6 +812,7 @@ def _bench_mode(
                     "mode": mode.name,
                     "execution": mode.execution,
                     "attention": mode.attention,
+                    "vision_attention_backend": (llm.config.vision_attention_backend.value),
                     "compression": mode.compression,
                     "mlp_projection_mode": args.mlp_projection_mode,
                     "case_id": case["id"],
@@ -873,15 +959,21 @@ def _resolve_engine_max_num_seqs(
     return configured
 
 
-def _write_records(records: list[dict[str, Any]], output: str | None) -> None:
+def _write_records(
+    records: list[dict[str, Any]],
+    output: str | None,
+    *,
+    print_records: bool = True,
+) -> None:
     lines = [json.dumps(record, ensure_ascii=False, sort_keys=True) for record in records]
     if output is not None:
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"wrote {len(lines)} records to {output_path}", file=sys.stderr)
-    for line in lines:
-        print(line)
+    if print_records:
+        for line in lines:
+            print(line)
 
 
 def _write_profile_records(records: list[dict[str, Any]], output: str) -> None:
@@ -966,7 +1058,18 @@ def main() -> None:
         default="packed",
         help="execute gate/up as two legacy projections or one packed projection",
     )
+    parser.add_argument(
+        "--vision-attention-backend",
+        choices=("sdpa", "flash_attn"),
+        default="sdpa",
+        help="explicit startup-selected vision attention backend",
+    )
     parser.add_argument("--output")
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="write --output without echoing large JSON records to stdout",
+    )
     parser.add_argument(
         "--profile-output",
         help="write separate semantic CPU/CUDA profile JSONL",
@@ -1047,7 +1150,7 @@ def main() -> None:
                     if profile_record is not None:
                         profile_records.append(profile_record)
     _annotate_comparisons(records)
-    _write_records(records, args.output)
+    _write_records(records, args.output, print_records=not args.quiet)
     if args.profile_output is not None:
         _write_profile_records(profile_records, args.profile_output)
 
