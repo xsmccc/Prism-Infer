@@ -214,6 +214,11 @@ class ModelRunner:
                     "enable_fused_qk_mrope",
                     False,
                 )
+                layer.self_attn.packed_kv_projection_enabled = getattr(
+                    self.config,
+                    "enable_packed_kv_projection",
+                    False,
+                )
             self.model.model.language_model.fused_add_rmsnorm_enabled = getattr(
                 self.config,
                 "enable_fused_add_rmsnorm",

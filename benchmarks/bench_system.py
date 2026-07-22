@@ -72,6 +72,7 @@ class ModeSpec:
     fused_qk_rmsnorm: bool = False
     fused_qk_mrope: bool = False
     fused_add_rmsnorm: bool = False
+    packed_kv_projection: bool = False
 
 
 MODE_SPECS = {
@@ -190,6 +191,19 @@ MODE_SPECS = {
         fused_qk_rmsnorm=True,
         fused_qk_mrope=True,
         fused_add_rmsnorm=True,
+    ),
+    "scaled_fp8_kv_tuned_kvproj_graph": ModeSpec(
+        name="scaled_fp8_kv_tuned_kvproj_graph",
+        execution="cuda_graph",
+        attention="prefill_sdpa_decode_fused_norms_mrope_packed_kv_fp8_paged_bn256",
+        compression="scaled_fp8_kv",
+        enforce_eager=False,
+        logits_precision="selective_fp32",
+        paged_decode_block_n=256,
+        fused_qk_rmsnorm=True,
+        fused_qk_mrope=True,
+        fused_add_rmsnorm=True,
+        packed_kv_projection=True,
     ),
     "visual_compact_fp8": ModeSpec(
         name="visual_compact_fp8",
@@ -549,6 +563,7 @@ def _build_llm(
         enable_fused_qk_rmsnorm=mode.fused_qk_rmsnorm,
         enable_fused_qk_mrope=mode.fused_qk_mrope,
         enable_fused_add_rmsnorm=mode.fused_add_rmsnorm,
+        enable_packed_kv_projection=mode.packed_kv_projection,
         vision_attention_backend=args.vision_attention_backend,
     )
 
@@ -654,6 +669,7 @@ def _build_record(
             "fused_qk_rmsnorm": config.enable_fused_qk_rmsnorm,
             "fused_qk_mrope": config.enable_fused_qk_mrope,
             "fused_add_rmsnorm": config.enable_fused_add_rmsnorm,
+            "packed_kv_projection": config.enable_packed_kv_projection,
         },
         "mode": {
             "name": mode.name,
@@ -665,6 +681,7 @@ def _build_record(
             "fused_qk_rmsnorm": config.enable_fused_qk_rmsnorm,
             "fused_qk_mrope": config.enable_fused_qk_mrope,
             "fused_add_rmsnorm": config.enable_fused_add_rmsnorm,
+            "packed_kv_projection": config.enable_packed_kv_projection,
             "visual_pruning_keep_ratio": args.visual_pruning_keep_ratio,
             "visual_pruning_min_keep_tokens": args.visual_pruning_min_keep_tokens,
             "visual_pruning_strategy": args.visual_pruning_strategy,

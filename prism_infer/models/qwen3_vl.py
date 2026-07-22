@@ -181,8 +181,10 @@ class Qwen3VLTextAttention(nn.Module):
         self.num_key_value_groups = num_heads // num_kv_heads  # 4
 
         self.q_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=False, dtype=dtype)
-        self.k_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False, dtype=dtype)
-        self.v_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False, dtype=dtype)
+        kv_size = num_kv_heads * head_dim
+        self.kv_proj = _PackedLinear(hidden_size, 2 * kv_size, dtype=dtype)
+        self.k_proj = _LinearWeightView(self.kv_proj.weight, 0, kv_size)
+        self.v_proj = _LinearWeightView(self.kv_proj.weight, kv_size, kv_size)
         self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=False, dtype=dtype)
 
         self.q_norm = Qwen3VLTextRMSNorm(head_dim, eps=rms_norm_eps, dtype=dtype)
@@ -191,6 +193,13 @@ class Qwen3VLTextAttention(nn.Module):
         self._compiled_decode_qkv_forward = None
         self.fused_qk_rmsnorm_enabled = False
         self.fused_qk_mrope_enabled = False
+        self.packed_kv_projection_enabled = False
+
+    def _apply(self, fn, recurse: bool = True):
+        super()._apply(fn, recurse=recurse)
+        self.k_proj.rebind(self.kv_proj.weight)
+        self.v_proj.rebind(self.kv_proj.weight)
+        return self
 
     def enable_decode_compile(
         self,
@@ -325,8 +334,13 @@ class Qwen3VLTextAttention(nn.Module):
 
         num_tokens = hidden_states.shape[0]
         q = self.q_proj(hidden_states).view(num_tokens, self.num_heads, self.head_dim)
-        k = self.k_proj(hidden_states).view(num_tokens, self.num_kv_heads, self.head_dim)
-        v = self.v_proj(hidden_states).view(num_tokens, self.num_kv_heads, self.head_dim)
+        if self.packed_kv_projection_enabled and num_tokens == 1:
+            k, v = self.kv_proj(hidden_states).chunk(2, dim=-1)
+        else:
+            k = self.k_proj(hidden_states)
+            v = self.v_proj(hidden_states)
+        k = k.view(num_tokens, self.num_kv_heads, self.head_dim)
+        v = v.view(num_tokens, self.num_kv_heads, self.head_dim)
         fused_mrope = False
         if (
             self.fused_qk_rmsnorm_enabled

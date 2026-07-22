@@ -48,6 +48,7 @@ MODE_VARIANT_FIELDS = frozenset(
         "fused_qk_rmsnorm",
         "fused_qk_mrope",
         "fused_add_rmsnorm",
+        "packed_kv_projection",
     }
 )
 MODEL_TUNING_FIELDS = frozenset(
@@ -57,6 +58,7 @@ MODEL_TUNING_FIELDS = frozenset(
         "fused_qk_rmsnorm",
         "fused_qk_mrope",
         "fused_add_rmsnorm",
+        "packed_kv_projection",
     }
 )
 CUDA_GRAPH_EXECUTION_FIELDS = frozenset(

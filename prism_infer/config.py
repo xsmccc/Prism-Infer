@@ -300,6 +300,7 @@ class ExecutionConfig:
     fused_qk_rmsnorm: bool = False
     fused_qk_mrope: bool = False
     fused_add_rmsnorm: bool = False
+    packed_kv_projection: bool = False
 
     def __post_init__(self) -> None:
         try:
@@ -333,6 +334,10 @@ class ExecutionConfig:
         _boolean(
             self.fused_add_rmsnorm,
             name="enable_fused_add_rmsnorm",
+        )
+        _boolean(
+            self.packed_kv_projection,
+            name="enable_packed_kv_projection",
         )
         if self.fused_qk_mrope and not self.fused_qk_rmsnorm:
             raise ValueError(
@@ -547,6 +552,7 @@ class PrismConfig:
             "enable_fused_qk_rmsnorm": "fused_qk_rmsnorm",
             "enable_fused_qk_mrope": "fused_qk_mrope",
             "enable_fused_add_rmsnorm": "fused_add_rmsnorm",
+            "enable_packed_kv_projection": "packed_kv_projection",
         }
         control_fields = {"enforce_eager", "execution_backend"}
         allowed = (
@@ -918,6 +924,10 @@ class Config:
     @property
     def enable_fused_add_rmsnorm(self) -> bool:
         return self.execution_config.fused_add_rmsnorm
+
+    @property
+    def enable_packed_kv_projection(self) -> bool:
+        return self.execution_config.packed_kv_projection
 
     @property
     def decode_compile_mode(self) -> str:
