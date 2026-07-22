@@ -29,6 +29,8 @@ from prism_infer.models.qwen3_vl_architecture import (
 from prism_infer.observability import is_trace_enabled, profile_region
 from prism_infer.ops.add_rmsnorm import fused_add_rmsnorm
 from prism_infer.ops.qk_rmsnorm import fused_qk_rmsnorm
+from prism_infer.ops.selective_topk import selective_topk_indices
+from prism_infer.ops.swiglu import fused_silu_mul
 from prism_infer.utils.context import get_context
 from prism_infer.vision.backends import VisionAttentionBackendName
 from prism_infer.vision.mrope import MRope, apply_mrope
@@ -517,11 +519,23 @@ class Qwen3VLTextMLP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.projection_mode == "packed":
-            gate, up = self.gate_up_proj(x).chunk(2, dim=-1)
+            packed = self.gate_up_proj(x)
+            if (
+                packed.ndim == 2
+                and packed.is_cuda
+                and packed.dtype == torch.bfloat16
+                and packed.shape[0] <= 4
+                and not torch.compiler.is_compiling()
+            ):
+                activated = fused_silu_mul(packed)
+            else:
+                gate, up = packed.chunk(2, dim=-1)
+                activated = F.silu(gate) * up
         else:
             gate = self.gate_proj(x)
             up = self.up_proj(x)
-        return self.down_proj(F.silu(gate) * up)
+            activated = F.silu(gate) * up
+        return self.down_proj(activated)
 
     def _apply(self, fn, recurse: bool = True):
         super()._apply(fn, recurse=recurse)
@@ -1243,11 +1257,17 @@ class Qwen3VLForCausalLM(nn.Module):
             and hidden_states.dtype in (torch.float16, torch.bfloat16)
         ):
             logits = self.lm_head(hidden_states)
-            top_ids = logits.topk(
-                k=SELECTIVE_FP32_LOGITS_TOP_K,
-                dim=-1,
-                sorted=False,
-            ).indices
+            if logits.dtype == torch.bfloat16 and logits.shape[0] <= 4:
+                top_ids = selective_topk_indices(
+                    logits,
+                    k=SELECTIVE_FP32_LOGITS_TOP_K,
+                )
+            else:
+                top_ids = logits.topk(
+                    k=SELECTIVE_FP32_LOGITS_TOP_K,
+                    dim=-1,
+                    sorted=False,
+                ).indices
             candidate_weights = F.embedding(top_ids, self.lm_head.weight)
             ranked_logits = torch.bmm(
                 candidate_weights.float(),
