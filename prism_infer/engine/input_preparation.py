@@ -77,10 +77,13 @@ class ModelInputPreparer:
         *,
         dtype: torch.dtype,
     ) -> torch.Tensor:
-        host = torch.tensor(values, dtype=dtype, pin_memory=True)
         if self.config.execution_backend == "cuda_graph":
-            return host
-        return host.cuda(non_blocking=True)
+            # CUDA Graph replay copies these small staging values into its own
+            # persistent pinned host buffers.  Pinning each throw-away source
+            # tensor forces two page-locked allocations on every decode step
+            # without accelerating that CPU-to-CPU copy.
+            return torch.tensor(values, dtype=dtype)
+        return torch.tensor(values, dtype=dtype, pin_memory=True).cuda(non_blocking=True)
 
     @staticmethod
     def _position_tensor(

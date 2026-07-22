@@ -174,6 +174,12 @@ class CompileExecutionBackend(EagerExecutionBackend):
 class CudaGraphExecutionBackend(ModelExecutionBackend):
     name = ExecutionBackendName.CUDA_GRAPH
 
+    def prepare(self, plan: BatchPlan) -> DeviceBatch:
+        fast_batch = self.runner.prepare_single_greedy_decode_cudagraph(plan)
+        if fast_batch is not None:
+            return fast_batch
+        return super().prepare(plan)
+
     def execute(self, device_batch: DeviceBatch) -> ExecutionResult:
         if not isinstance(device_batch, DeviceBatch):
             raise TypeError(f"execute requires DeviceBatch, got {type(device_batch).__name__}")
@@ -226,6 +232,7 @@ class CudaGraphExecutionBackend(ModelExecutionBackend):
             "graph_vars",
             "graph_logits",
             "graph_greedy_tokens",
+            "_single_greedy_decode_batch_cache",
         ):
             if hasattr(runner, name):
                 delattr(runner, name)

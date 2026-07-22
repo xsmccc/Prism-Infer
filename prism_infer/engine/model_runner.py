@@ -29,6 +29,7 @@ from prism_infer.analysis.schema_constants import (
     DECODE_COMPILE_SUBGRAPH,
 )
 from prism_infer.observability import (
+    is_trace_enabled,
     profile_region,
     register_model_config,
 )
@@ -37,6 +38,7 @@ from prism_infer.config import (
     MAX_CUDA_GRAPH_BATCH_SIZE,
 )
 from prism_infer.engine.compression import (
+    build_compression_metadata,
     build_visual_pruning_config,
     compression_supports_cuda_graph,
     compression_mode_uses_fp8_payload,
@@ -1042,10 +1044,12 @@ class ModelRunner:
                 )
             )
             if use_packed_staging:
-                graph_vars["host_packed_model_inputs"].copy_(packed_model_inputs)
-                graph_vars["host_packed_decode_metadata"][
-                    : packed_decode_metadata.numel()
-                ].copy_(packed_decode_metadata)
+                if packed_model_inputs is not graph_vars["host_packed_model_inputs"]:
+                    graph_vars["host_packed_model_inputs"].copy_(packed_model_inputs)
+                if packed_decode_metadata is not graph_vars["host_packed_decode_metadata"]:
+                    graph_vars["host_packed_decode_metadata"][
+                        : packed_decode_metadata.numel()
+                    ].copy_(packed_decode_metadata)
             else:
                 graph_vars["host_input_ids"][:batch_size] = input_ids
                 graph_vars["host_positions"][:, :batch_size] = (
@@ -1101,6 +1105,94 @@ class ModelRunner:
         if plan.is_prefill:
             self._commit_prefill_execution(plan, device_batch, token_ids)
         return ExecutionResult(token_ids=tuple(token_ids))
+
+    def prepare_single_greedy_decode_cudagraph(
+        self,
+        plan: BatchPlan,
+    ) -> DeviceBatch | None:
+        """Fill persistent Graph host buffers for the latency-critical B1 path.
+
+        General decode preparation intentionally materializes immutable staging
+        tensors.  For TP=1, compression-off, greedy batch-one replay, the Graph
+        already owns stable pinned buffers and ``sampled_tokens.tolist()`` makes
+        each step sequential.  Reusing those buffers avoids two small tensor
+        allocations, a second host copy, and repeated Context/DeviceBatch setup.
+        """
+
+        if (
+            plan.phase is not BatchPhase.DECODE
+            or plan.batch_size != 1
+            or self.world_size != 1
+            or self.config.compression_mode != "off"
+            or getattr(self.config, "enable_visual_pruning_shadow", False)
+            or is_trace_enabled()
+            or 1 not in getattr(self, "graph_vars", {})
+        ):
+            return None
+        seq = plan.sequences[0]
+        if seq.temperature > SAMPLING_NUMERICAL_EPSILON:
+            return None
+        if not seq.block_table or seq.physical_last_block_num_tokens <= 0:
+            raise RuntimeError(f"batch-one Graph decode has no writable KV slot: {seq.seq_id}")
+
+        graph_vars = self.graph_vars[1]
+        host_model_values = graph_vars["host_packed_model_inputs_numpy"]
+        host_metadata_values = graph_vars["host_packed_decode_metadata_numpy"]
+        logical_position = len(seq) - 1
+        if seq.rope_delta is not None:
+            logical_position += int(seq.rope_delta.item())
+        host_model_values[0] = seq.last_token
+        host_model_values[1 : 1 + MROPE_AXIS_COUNT] = logical_position
+
+        physical_context_len = seq.physical_kv_len
+        host_metadata_values[0] = (
+            seq.block_table[-1] * self.block_size
+            + seq.physical_last_block_num_tokens
+            - 1
+        )
+        host_metadata_values[1] = physical_context_len
+        host_metadata_values[2] = len(seq)
+        host_metadata_values[3] = physical_context_len
+        cache = getattr(self, "_single_greedy_decode_batch_cache", None)
+        if cache is None or cache[0] != seq.seq_id:
+            host_metadata_values[4:] = -1
+            compression_metadata = build_compression_metadata(
+                self.config,
+                [seq],
+                is_prefill=False,
+            )
+            host_packed_model_inputs = graph_vars["host_packed_model_inputs"]
+            host_packed_decode_metadata = graph_vars["host_packed_decode_metadata"]
+            context = Context(
+                is_prefill=False,
+                slot_mapping=graph_vars["host_slot_mapping"],
+                context_lens=graph_vars["host_context_lens"],
+                logical_context_lens=host_packed_decode_metadata[2:3],
+                block_tables=graph_vars["host_block_tables"],
+                decode_max_context_len=graph_vars["host_decode_max_context_len"],
+                packed_decode_metadata=host_packed_decode_metadata,
+                paged_decode_block_n=self.config.paged_decode_block_n,
+                compression_metadata=compression_metadata,
+            )
+            device_batch = DeviceBatch(
+                phase=BatchPhase.DECODE,
+                sequence_ids=plan.sequence_ids,
+                scheduled_token_counts=plan.scheduled_token_counts,
+                model_inputs=DeviceModelInputs(
+                    input_ids=graph_vars["host_input_ids"],
+                    position_ids=graph_vars["host_positions"],
+                    packed_decode_inputs=host_packed_model_inputs,
+                ),
+                attention_context=context,
+                temperatures=None,
+                execution_bucket=1,
+                sampling_mode="greedy",
+                kv_scale_views=(),
+            )
+            cache = (seq.seq_id, device_batch)
+            self._single_greedy_decode_batch_cache = cache
+        host_metadata_values[4 : 4 + len(seq.block_table)] = seq.block_table
+        return cache[1]
 
     def _validate_execution_plan(self, plan: BatchPlan) -> None:
         if not isinstance(plan, BatchPlan):
@@ -1251,6 +1343,8 @@ class ModelRunner:
                 device="cpu",
                 pin_memory=True,
             )
+            host_packed_model_inputs_numpy = host_packed_model_inputs.numpy()
+            host_packed_decode_metadata_numpy = host_packed_decode_metadata.numpy()
             slot_mapping = packed_decode_metadata[:bs]
             context_lens = packed_decode_metadata[bs : 2 * bs]
             decode_max_context_len = packed_decode_metadata[3 * bs]
@@ -1364,6 +1458,8 @@ class ModelRunner:
                 packed_decode_metadata=packed_decode_metadata,
                 host_packed_model_inputs=host_packed_model_inputs,
                 host_packed_decode_metadata=host_packed_decode_metadata,
+                host_packed_model_inputs_numpy=host_packed_model_inputs_numpy,
+                host_packed_decode_metadata_numpy=host_packed_decode_metadata_numpy,
                 input_ids=input_ids,
                 positions=positions,
                 slot_mapping=slot_mapping,

@@ -361,6 +361,30 @@ class Scheduler:
         )
 
     def _decode_plan(self) -> BatchPlan:
+        # The latency-critical offline/interactive path has one resident
+        # decoding request and no swapped work.  Keep it in-place instead of
+        # rebuilding/removing/restoring temporary deques every token.  Any
+        # capacity pressure or mixed state falls through to the general path.
+        if not self.swapped and len(self.running) == 1:
+            seq = self.running[0]
+            if (
+                seq.status is RequestState.DECODING
+                and self.block_manager.can_append(seq)
+            ):
+                cow_pair = self.block_manager.copy_on_write(seq)
+                self.block_manager.may_append(seq)
+                self._observe_state()
+                return BatchPlan(
+                    phase=BatchPhase.DECODE,
+                    sequences=(seq,),
+                    scheduled_token_counts=(1,),
+                    kv_transfers=KVTransferPlan(
+                        copy_on_write=(() if cow_pair is None else (cow_pair,)),
+                    ),
+                    policy_name=self.policy.name,
+                    created_ns=self.clock_ns(),
+                )
+
         cow_pairs: list[tuple[int, int]] = []
         swap_in_map: list[tuple[int, int]] = []
         swap_out_map: list[tuple[int, int]] = []
