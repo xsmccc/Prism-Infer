@@ -174,6 +174,25 @@ class CompileExecutionBackend(EagerExecutionBackend):
 class CudaGraphExecutionBackend(ModelExecutionBackend):
     name = ExecutionBackendName.CUDA_GRAPH
 
+    def execute(self, device_batch: DeviceBatch) -> ExecutionResult:
+        if not isinstance(device_batch, DeviceBatch):
+            raise TypeError(f"execute requires DeviceBatch, got {type(device_batch).__name__}")
+        if (
+            device_batch.phase is BatchPhase.DECODE
+            and device_batch.sampling_mode == "greedy"
+        ):
+            runner = self.runner
+            with use_context(device_batch.attention_context):
+                with profile_region("runner.run_model"):
+                    sampled_tokens = runner.run_model_cudagraph(
+                        device_batch.model_inputs,
+                        return_greedy_tokens=True,
+                    )
+                with profile_region("runner.sampler"):
+                    token_ids = tuple(sampled_tokens.tolist())
+            return ExecutionResult(token_ids=token_ids)
+        return super().execute(device_batch)
+
     def execution_bucket(self, plan: BatchPlan) -> int:
         if plan.phase is BatchPhase.PREFILL:
             return plan.batch_size
@@ -200,7 +219,14 @@ class CudaGraphExecutionBackend(ModelExecutionBackend):
         return self.runner.run_model_cudagraph(device_batch.model_inputs)
 
     def _release_resources(self, runner: "ModelRunner") -> None:
-        for name in ("graphs", "graph_pool", "graph_vars"):
+        for name in (
+            "graphs",
+            "greedy_graphs",
+            "graph_pool",
+            "graph_vars",
+            "graph_logits",
+            "graph_greedy_tokens",
+        ):
             if hasattr(runner, name):
                 delattr(runner, name)
 

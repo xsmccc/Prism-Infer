@@ -40,6 +40,15 @@ try:
 except ImportError:
     HAS_FLASH_ATTN = False
 
+try:
+    from vllm.vllm_flash_attn.flash_attn_interface import (
+        flash_attn_varlen_func as vllm_paged_flash_attn,
+    )
+
+    HAS_VLLM_PAGED_FLASH_ATTN = True
+except (ImportError, RuntimeError):
+    HAS_VLLM_PAGED_FLASH_ATTN = False
+
 
 # Compatibility exports: existing callers historically imported the storage
 # implementation from this module. New code should use ops.kv_cache_store.
@@ -68,14 +77,27 @@ class Attention(nn.Module):
         self.k_scale_cache: torch.Tensor | None = None
         self.v_scale_cache: torch.Tensor | None = None
         self.layer_idx: int | None = None
+        self._paged_flash_cu_seqlens_q: dict[int, torch.Tensor] = {}
 
-    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        *,
+        kv_already_stored: bool = False,
+    ) -> torch.Tensor:
         """Route one attention call while keeping storage and semantics explicit."""
 
         context = get_context()
         ensure_supported_compression_metadata(context.compression_metadata)
         payload_cache_bound = self._validate_cache_bindings(context.compression_metadata)
-        if payload_cache_bound:
+        if kv_already_stored:
+            if context.is_prefill or not payload_cache_bound:
+                raise RuntimeError("pre-stored KV is valid only for bound decode caches")
+            if self.k_scale_cache is not None or self.v_scale_cache is not None:
+                raise RuntimeError("pre-stored KV does not support scaled caches")
+        elif payload_cache_bound:
             self._store_current_kv(k, v, context)
         output = (
             self._forward_prefill(q, k, v, context)
@@ -215,6 +237,14 @@ class Attention(nn.Module):
             )
 
     def _forward_decode_paged(self, q: torch.Tensor, context: Context) -> torch.Tensor:
+        if (
+            HAS_VLLM_PAGED_FLASH_ATTN
+            and q.is_cuda
+            and q.dtype == torch.bfloat16
+            and self.k_cache.dtype == torch.bfloat16
+            and self.v_cache.dtype == torch.bfloat16
+        ):
+            return self._forward_decode_paged_flash(q, context)
         if HAS_PAGED_DECODE_TRITON and q.is_cuda:
             return self._forward_decode_paged_triton(
                 q,
@@ -226,6 +256,38 @@ class Attention(nn.Module):
             context,
             profile_prefix="attention.decode.bf16_eager",
         )
+
+    def _forward_decode_paged_flash(
+        self,
+        q: torch.Tensor,
+        context: Context,
+    ) -> torch.Tensor:
+        if context.block_tables is None or context.context_lens is None:
+            raise RuntimeError("paged FlashAttention requires block tables and context lengths")
+        batch_size = q.shape[0]
+        cu_seqlens_q = self._paged_flash_cu_seqlens_q.get(batch_size)
+        if cu_seqlens_q is None or cu_seqlens_q.device != q.device:
+            cu_seqlens_q = torch.arange(
+                batch_size + 1,
+                dtype=torch.int32,
+                device=q.device,
+            )
+            self._paged_flash_cu_seqlens_q[batch_size] = cu_seqlens_q
+        max_seqlen_k = context.block_tables.shape[1] * self.k_cache.shape[1]
+        with profile_region("attention.decode.vllm_flash_attn_paged"):
+            return vllm_paged_flash_attn(
+                q,
+                self.k_cache,
+                self.v_cache,
+                max_seqlen_q=1,
+                cu_seqlens_q=cu_seqlens_q,
+                max_seqlen_k=max_seqlen_k,
+                seqused_k=context.context_lens,
+                block_table=context.block_tables,
+                softmax_scale=self.scale,
+                causal=True,
+                fa_version=2,
+            )
 
     def _forward_decode_paged_triton(
         self,

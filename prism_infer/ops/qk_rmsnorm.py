@@ -19,8 +19,8 @@ except ImportError:  # pragma: no cover - CPU-only environments
     HAS_QK_RMSNORM_TRITON = False
 
 
-QK_RMSNORM_XBLOCK = 8
-QK_RMSNORM_NUM_WARPS = 4
+QK_RMSNORM_XBLOCK = 4
+QK_RMSNORM_NUM_WARPS = 2
 SUPPORTED_QK_RMSNORM_HEAD_DIM = 128
 MAX_EXACT_QK_RMSNORM_BATCH = 4
 
@@ -51,6 +51,10 @@ if HAS_QK_RMSNORM_TRITON:
         sin_ptr,
         q_out_ptr,
         k_out_ptr,
+        v_ptr,
+        k_cache_ptr,
+        v_cache_ptr,
+        slot_mapping_ptr,
         Q_ROWS: tl.constexpr,
         K_ROWS: tl.constexpr,
         Q_HEADS: tl.constexpr,
@@ -59,6 +63,7 @@ if HAS_QK_RMSNORM_TRITON:
         EPS: tl.constexpr,
         XBLOCK: tl.constexpr,
         APPLY_MROPE: tl.constexpr,
+        STORE_KV: tl.constexpr,
     ):
         rows = tl.program_id(0) * XBLOCK + tl.arange(0, XBLOCK)[:, None]
         offsets = tl.arange(0, HEAD_DIM)[None, :]
@@ -171,6 +176,25 @@ if HAS_QK_RMSNORM_TRITON:
             output,
             mask=valid & ~is_q,
         )
+        if STORE_KV:
+            token_rows = (rows - Q_ROWS) // K_HEADS
+            kv_heads = (rows - Q_ROWS) % K_HEADS
+            slots = tl.load(
+                slot_mapping_ptr + token_rows,
+                mask=valid & ~is_q,
+                other=-1,
+            )
+            cache_offsets = (
+                slots * K_HEADS * HEAD_DIM + kv_heads * HEAD_DIM + offsets
+            )
+            store_mask = valid & ~is_q & (slots >= 0)
+            values_v = tl.load(
+                v_ptr + (rows - Q_ROWS) * HEAD_DIM + offsets,
+                mask=store_mask,
+                other=0.0,
+            )
+            tl.store(k_cache_ptr + cache_offsets, output, mask=store_mask)
+            tl.store(v_cache_ptr + cache_offsets, values_v, mask=store_mask)
 
 
 def fused_qk_rmsnorm(
@@ -182,6 +206,10 @@ def fused_qk_rmsnorm(
     eps: float,
     cos: torch.Tensor | None = None,
     sin: torch.Tensor | None = None,
+    v: torch.Tensor | None = None,
+    k_cache: torch.Tensor | None = None,
+    v_cache: torch.Tensor | None = None,
+    slot_mapping: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Normalize Q/K and optionally apply exact M-RoPE in one Triton launch."""
 
@@ -222,6 +250,10 @@ def fused_qk_rmsnorm(
     if (cos is None) != (sin is None):
         raise ValueError("cos and sin must either both be provided or both be omitted")
     apply_mrope = cos is not None
+    store_kv_args = (v, k_cache, v_cache, slot_mapping)
+    store_kv = any(value is not None for value in store_kv_args)
+    if store_kv and any(value is None for value in store_kv_args):
+        raise ValueError("v, K/V caches, and slot_mapping must be provided together")
     head_dim = q.shape[-1]
     if apply_mrope:
         expected_position_shape = (q.shape[0], head_dim)
@@ -236,6 +268,28 @@ def fused_qk_rmsnorm(
                     f"{name} must be contiguous BF16 with shape "
                     f"{expected_position_shape} on the Q/K device"
                 )
+    if store_kv:
+        if v.shape != k.shape or v.dtype != k.dtype or v.device != k.device:
+            raise ValueError("fused KV store requires V to match K shape, dtype, and device")
+        if not v.is_contiguous():
+            raise ValueError("fused KV store requires contiguous V")
+        for name, cache in (("k_cache", k_cache), ("v_cache", v_cache)):
+            if (
+                cache.dtype != torch.bfloat16
+                or cache.device != q.device
+                or not cache.is_contiguous()
+                or tuple(cache.shape[-2:]) != tuple(k.shape[-2:])
+            ):
+                raise ValueError(
+                    f"{name} must be contiguous BF16 with K head dimensions"
+                )
+        if (
+            slot_mapping.dtype != torch.int32
+            or slot_mapping.device != q.device
+            or slot_mapping.ndim != 1
+            or slot_mapping.numel() != q.shape[0]
+        ):
+            raise ValueError("slot_mapping must provide one CUDA int32 slot per token")
 
     q_rows = q.numel() // head_dim
     k_rows = k.numel() // head_dim
@@ -251,6 +305,10 @@ def fused_qk_rmsnorm(
         sin if apply_mrope else q,
         q_out,
         k_out,
+        v if store_kv else q,
+        k_cache if store_kv else q,
+        v_cache if store_kv else q,
+        slot_mapping if store_kv else q,
         Q_ROWS=q_rows,
         K_ROWS=k_rows,
         Q_HEADS=q.shape[1],
@@ -259,6 +317,7 @@ def fused_qk_rmsnorm(
         EPS=eps,
         XBLOCK=QK_RMSNORM_XBLOCK,
         APPLY_MROPE=apply_mrope,
+        STORE_KV=store_kv,
         num_warps=QK_RMSNORM_NUM_WARPS,
     )
     return q_out, k_out

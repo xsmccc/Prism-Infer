@@ -180,11 +180,14 @@ class Qwen3VLTextAttention(nn.Module):
         self.scale = head_dim**-0.5
         self.num_key_value_groups = num_heads // num_kv_heads  # 4
 
-        self.q_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=False, dtype=dtype)
+        q_size = num_heads * head_dim
         kv_size = num_kv_heads * head_dim
-        self.kv_proj = _PackedLinear(hidden_size, 2 * kv_size, dtype=dtype)
-        self.k_proj = _LinearWeightView(self.kv_proj.weight, 0, kv_size)
-        self.v_proj = _LinearWeightView(self.kv_proj.weight, kv_size, kv_size)
+        self.q_size = q_size
+        self.kv_size = kv_size
+        self.qkv_proj = _PackedLinear(hidden_size, q_size + 2 * kv_size, dtype=dtype)
+        self.q_proj = _LinearWeightView(self.qkv_proj.weight, 0, q_size)
+        self.k_proj = _LinearWeightView(self.qkv_proj.weight, q_size, kv_size)
+        self.v_proj = _LinearWeightView(self.qkv_proj.weight, q_size + kv_size, kv_size)
         self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=False, dtype=dtype)
 
         self.q_norm = Qwen3VLTextRMSNorm(head_dim, eps=rms_norm_eps, dtype=dtype)
@@ -197,8 +200,9 @@ class Qwen3VLTextAttention(nn.Module):
 
     def _apply(self, fn, recurse: bool = True):
         super()._apply(fn, recurse=recurse)
-        self.k_proj.rebind(self.kv_proj.weight)
-        self.v_proj.rebind(self.kv_proj.weight)
+        self.q_proj.rebind(self.qkv_proj.weight)
+        self.k_proj.rebind(self.qkv_proj.weight)
+        self.v_proj.rebind(self.qkv_proj.weight)
         return self
 
     def enable_decode_compile(
@@ -321,24 +325,57 @@ class Qwen3VLTextAttention(nn.Module):
             position_embeddings,
             num_tokens=hidden_states.shape[0],
         )
-        q, k, v = self._forward_engine_qkv(hidden_states, prepared_positions)
-        o = self.engine_attn(q, k, v)
+        context = get_context()
+        fused_kv_store = (
+            self.fused_qk_rmsnorm_enabled
+            and hidden_states.is_cuda
+            and not torch.compiler.is_compiling()
+            and not context.is_prefill
+            and hidden_states.shape[0] <= 4
+            and context.slot_mapping is not None
+            and self.engine_attn.k_cache.numel() > 0
+            and self.engine_attn.k_cache.dtype == torch.bfloat16
+            and self.engine_attn.v_cache.dtype == torch.bfloat16
+            and self.engine_attn.k_scale_cache is None
+            and self.engine_attn.v_scale_cache is None
+        )
+        q, k, v = self._forward_engine_qkv(
+            hidden_states,
+            prepared_positions,
+            store_kv=fused_kv_store,
+        )
+        o = self.engine_attn(q, k, v, kv_already_stored=fused_kv_store)
         return self._project_engine_output(o)
 
     def _forward_engine_qkv(
         self,
         hidden_states: torch.Tensor,
         position_embeddings: tuple | None,
+        *,
+        store_kv: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Pure QKV/QK-Norm/M-RoPE region shared by eager and compile."""
 
         num_tokens = hidden_states.shape[0]
-        q = self.q_proj(hidden_states).view(num_tokens, self.num_heads, self.head_dim)
-        if self.packed_kv_projection_enabled and num_tokens == 1:
-            k, v = self.kv_proj(hidden_states).chunk(2, dim=-1)
+        packed_decode = self.packed_kv_projection_enabled and num_tokens == 1
+        if (
+            packed_decode
+            and self.engine_attn.k_cache.numel()
+            and self.engine_attn.k_cache.dtype == torch.bfloat16
+        ):
+            q, k, v = self.qkv_proj(hidden_states).split(
+                (self.q_size, self.kv_size, self.kv_size),
+                dim=-1,
+            )
         else:
-            k = self.k_proj(hidden_states)
-            v = self.v_proj(hidden_states)
+            q = self.q_proj(hidden_states)
+            if packed_decode:
+                kv_weight = self.qkv_proj.weight.narrow(0, self.q_size, 2 * self.kv_size)
+                k, v = F.linear(hidden_states, kv_weight).chunk(2, dim=-1)
+            else:
+                k = self.k_proj(hidden_states)
+                v = self.v_proj(hidden_states)
+        q = q.view(num_tokens, self.num_heads, self.head_dim)
         k = k.view(num_tokens, self.num_kv_heads, self.head_dim)
         v = v.view(num_tokens, self.num_kv_heads, self.head_dim)
         fused_mrope = False
@@ -354,6 +391,15 @@ class Qwen3VLTextAttention(nn.Module):
                 cos, sin = position_embeddings
                 fused_positions = {"cos": cos, "sin": sin}
                 fused_mrope = True
+            fused_store = {}
+            if store_kv:
+                context = get_context()
+                fused_store = {
+                    "v": v,
+                    "k_cache": self.engine_attn.k_cache,
+                    "v_cache": self.engine_attn.v_cache,
+                    "slot_mapping": context.slot_mapping,
+                }
             q, k = fused_qk_rmsnorm(
                 q,
                 k,
@@ -361,6 +407,7 @@ class Qwen3VLTextAttention(nn.Module):
                 self.k_norm.weight,
                 eps=float(self.q_norm.eps),
                 **fused_positions,
+                **fused_store,
             )
         else:
             q = self.q_norm(q)
@@ -1182,3 +1229,30 @@ class Qwen3VLForCausalLM(nn.Module):
             logits = logits.float()
             logits.scatter_(-1, candidate_ids, candidate_logits)
         return logits
+
+    def compute_greedy_tokens(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """Apply selective-FP32 greedy selection without a full-vocabulary scatter."""
+
+        if hidden_states.ndim == FLATTENED_TOKEN_FEATURES_RANK:
+            context = get_context()
+            if context.is_prefill and context.cu_seqlens_q is not None:
+                hidden_states = hidden_states[context.cu_seqlens_q[1:] - 1].contiguous()
+        if (
+            self.logits_precision == "selective_fp32"
+            and hidden_states.is_cuda
+            and hidden_states.dtype in (torch.float16, torch.bfloat16)
+        ):
+            logits = self.lm_head(hidden_states)
+            top_ids = logits.topk(
+                k=SELECTIVE_FP32_LOGITS_TOP_K,
+                dim=-1,
+                sorted=False,
+            ).indices
+            candidate_weights = F.embedding(top_ids, self.lm_head.weight)
+            ranked_logits = torch.bmm(
+                candidate_weights.float(),
+                hidden_states.float().unsqueeze(-1),
+            ).squeeze(-1)
+            winner = ranked_logits.argmax(dim=-1, keepdim=True)
+            return top_ids.gather(-1, winner).squeeze(-1)
+        return self.compute_logits(hidden_states).argmax(dim=-1)

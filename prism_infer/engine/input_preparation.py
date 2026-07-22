@@ -71,6 +71,17 @@ class ModelInputPreparer:
     def _to_cuda_tensor(values: object, *, dtype: torch.dtype) -> torch.Tensor:
         return torch.tensor(values, dtype=dtype, pin_memory=True).cuda(non_blocking=True)
 
+    def _to_decode_staging_tensor(
+        self,
+        values: object,
+        *,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        host = torch.tensor(values, dtype=dtype, pin_memory=True)
+        if self.config.execution_backend == "cuda_graph":
+            return host
+        return host.cuda(non_blocking=True)
+
     @staticmethod
     def _position_tensor(
         text_positions: list[int],
@@ -439,7 +450,7 @@ class ModelInputPreparer:
         position_values = (
             mrope_positions * MROPE_AXIS_COUNT if uses_mrope else text_positions
         )
-        packed_model_inputs = self._to_cuda_tensor(
+        packed_model_inputs = self._to_decode_staging_tensor(
             [*input_ids, *position_values],
             dtype=torch.int64,
         )
@@ -456,7 +467,7 @@ class ModelInputPreparer:
             seq.block_table + [-1] * (max_blocks - len(seq.block_table))
             for seq in seqs
         ]
-        packed_attention_metadata = self._to_cuda_tensor(
+        packed_attention_metadata = self._to_decode_staging_tensor(
             [
                 *slot_mapping,
                 *context_lens,
@@ -528,6 +539,7 @@ class ModelInputPreparer:
             model_inputs=DeviceModelInputs(
                 input_ids=input_ids_tensor,
                 position_ids=positions_tensor,
+                packed_decode_inputs=packed_model_inputs,
             ),
             attention_context=Context(
                 is_prefill=False,
@@ -536,6 +548,7 @@ class ModelInputPreparer:
                 logical_context_lens=logical_context_lens_tensor,
                 block_tables=block_tables,
                 decode_max_context_len=decode_max_context_len,
+                packed_decode_metadata=packed_attention_metadata,
                 paged_decode_block_n=self.config.paged_decode_block_n,
                 trace_metadata=trace_metadata,
                 compression_metadata=compression_metadata,

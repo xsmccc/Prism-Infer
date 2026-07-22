@@ -282,6 +282,7 @@ class DeviceModelInputs:
 
     input_ids: torch.Tensor
     position_ids: torch.Tensor
+    packed_decode_inputs: torch.Tensor | None = None
     pixel_values: torch.Tensor | None = None
     image_grid_thw: torch.Tensor | None = None
     pixel_values_videos: torch.Tensor | None = None
@@ -297,6 +298,7 @@ class DeviceModelInputs:
         if self.position_ids.numel() == 0:
             raise ValueError("DeviceModelInputs.position_ids must not be empty")
         for name in (
+            "packed_decode_inputs",
             "pixel_values",
             "image_grid_thw",
             "pixel_values_videos",

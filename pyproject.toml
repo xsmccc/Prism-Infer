@@ -11,8 +11,8 @@ readme = "README.md"
 description = "A multi-modal inference engine with KV Cache optimization — built from nano-vllm"
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    "torch>=2.5,<2.9",
-    "transformers==5.13.0",
+    "torch>=2.5,<2.12",
+    "transformers>=5.13,<5.15",
     "numpy>=1.26",
     "packaging>=23.2",
     "safetensors>=0.4",
@@ -22,6 +22,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+blackwell = [
+    "vllm==0.25.1",
+]
 quality = [
     "opencv-python-headless==4.10.0.84",
     "pyarrow>=14.0",
