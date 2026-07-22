@@ -413,7 +413,7 @@ class ModelInputPreparer:
 
         input_ids: list[int] = []
         text_positions: list[int] = []
-        mrope_chunks: list[torch.Tensor] = []
+        mrope_positions: list[int] = []
         slot_mapping: list[int] = []
         context_lens: list[int] = []
         logical_context_lens: list[int] = []
@@ -424,8 +424,7 @@ class ModelInputPreparer:
             logical_position = len(seq) - 1
             if uses_mrope:
                 delta = int(seq.rope_delta.item()) if seq.rope_delta is not None else 0
-                position = torch.arange(1, dtype=torch.long) + logical_position + delta
-                mrope_chunks.append(position.expand(MROPE_AXIS_COUNT, -1))
+                mrope_positions.append(logical_position + delta)
             else:
                 text_positions.append(logical_position)
             context_lens.append(seq.physical_kv_len)
@@ -436,20 +435,56 @@ class ModelInputPreparer:
                 seq.block_table[-1] * self.block_size + seq.physical_last_block_num_tokens - 1
             )
 
-        input_ids_tensor = self._to_cuda_tensor(input_ids, dtype=torch.int64)
-        positions_tensor = self._position_tensor(
-            text_positions,
-            mrope_chunks,
-            uses_mrope=uses_mrope,
+        batch_size = len(seqs)
+        position_values = (
+            mrope_positions * MROPE_AXIS_COUNT if uses_mrope else text_positions
         )
-        slot_mapping_tensor = self._to_cuda_tensor(slot_mapping, dtype=torch.int32)
-        context_lens_tensor = self._to_cuda_tensor(context_lens, dtype=torch.int32)
-        logical_context_lens_tensor = self._to_cuda_tensor(
-            logical_context_lens,
+        packed_model_inputs = self._to_cuda_tensor(
+            [*input_ids, *position_values],
+            dtype=torch.int64,
+        )
+        input_ids_tensor = packed_model_inputs[:batch_size]
+        positions_flat = packed_model_inputs[batch_size:]
+        positions_tensor = (
+            positions_flat.view(MROPE_AXIS_COUNT, batch_size)
+            if uses_mrope
+            else positions_flat
+        )
+
+        max_blocks = max(len(seq.block_table) for seq in seqs)
+        padded_block_tables = [
+            seq.block_table + [-1] * (max_blocks - len(seq.block_table))
+            for seq in seqs
+        ]
+        packed_attention_metadata = self._to_cuda_tensor(
+            [
+                *slot_mapping,
+                *context_lens,
+                *logical_context_lens,
+                max(context_lens),
+                *(block_id for row in padded_block_tables for block_id in row),
+            ],
             dtype=torch.int32,
         )
-        decode_max_context_len = self._to_cuda_tensor(max(context_lens), dtype=torch.int32)
-        block_tables = self.prepare_block_tables(seqs)
+        metadata_offset = 0
+        slot_mapping_tensor = packed_attention_metadata[
+            metadata_offset : metadata_offset + batch_size
+        ]
+        metadata_offset += batch_size
+        context_lens_tensor = packed_attention_metadata[
+            metadata_offset : metadata_offset + batch_size
+        ]
+        metadata_offset += batch_size
+        logical_context_lens_tensor = packed_attention_metadata[
+            metadata_offset : metadata_offset + batch_size
+        ]
+        metadata_offset += batch_size
+        decode_max_context_len = packed_attention_metadata[metadata_offset]
+        metadata_offset += 1
+        block_tables = packed_attention_metadata[metadata_offset:].view(
+            batch_size,
+            max_blocks,
+        )
 
         trace_metadata = build_trace_metadata(
             seqs,
