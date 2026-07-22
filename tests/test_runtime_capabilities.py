@@ -95,7 +95,7 @@ def test_fp8_runtime_never_silently_falls_back_without_dtype_or_triton() -> None
 def test_core_capability_errors_include_version_and_required_apis() -> None:
     capabilities = replace(
         _complete_capabilities(),
-        torch_version="2.7.0",
+        torch_version="2.9.0",
         torch_version_supported=False,
         cuda_available=False,
         distributed_available=False,

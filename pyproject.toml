@@ -11,7 +11,7 @@ readme = "README.md"
 description = "A multi-modal inference engine with KV Cache optimization — built from nano-vllm"
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    "torch>=2.5,<2.7",
+    "torch>=2.5,<2.9",
     "transformers==5.13.0",
     "numpy>=1.26",
     "packaging>=23.2",
