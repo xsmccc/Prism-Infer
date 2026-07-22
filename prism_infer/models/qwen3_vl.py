@@ -27,6 +27,7 @@ from prism_infer.models.qwen3_vl_architecture import (
     Qwen3VLTextArchitecture,
 )
 from prism_infer.observability import is_trace_enabled, profile_region
+from prism_infer.ops.add_rmsnorm import fused_add_rmsnorm
 from prism_infer.ops.qk_rmsnorm import fused_qk_rmsnorm
 from prism_infer.utils.context import get_context
 from prism_infer.vision.backends import VisionAttentionBackendName
@@ -523,6 +524,37 @@ class Qwen3VLTextDecoderLayer(nn.Module):
         hidden_states = residual + hidden_states
         return hidden_states
 
+    def forward_decode_fused_add_rmsnorm(
+        self,
+        hidden_states: torch.Tensor,
+        residual: torch.Tensor | None,
+        position_embeddings: tuple | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Carry residual state so both decoder adds fuse with the following norm."""
+
+        if residual is None:
+            residual = hidden_states
+            hidden_states = self.input_layernorm(hidden_states)
+        else:
+            hidden_states, residual = fused_add_rmsnorm(
+                hidden_states,
+                residual,
+                self.input_layernorm.weight,
+                eps=float(self.input_layernorm.eps),
+            )
+        hidden_states = self.self_attn(
+            hidden_states,
+            position_embeddings=position_embeddings,
+            attention_mask=None,
+        )
+        hidden_states, residual = fused_add_rmsnorm(
+            hidden_states,
+            residual,
+            self.post_attention_layernorm.weight,
+            eps=float(self.post_attention_layernorm.eps),
+        )
+        return self.mlp(hidden_states), residual
+
 
 # ═══════════════════════════════════════════════════════════════
 # Qwen3VLTextModel — LLM Backbone (36 layers)
@@ -574,6 +606,7 @@ class Qwen3VLTextModel(nn.Module):
             eps=rms_norm_eps,
             dtype=dtype,
         )
+        self.fused_add_rmsnorm_enabled = False
         # M-RoPE: LLM 3D 位置编码 (head_dim=128, theta=5M, mrope_section=[24,20,20])
         self.rotary_emb = MRope(
             head_dim=head_dim,
@@ -660,12 +693,30 @@ class Qwen3VLTextModel(nn.Module):
                 position_ids = position_ids[:, None, :]
             position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
+        use_fused_add_rmsnorm = (
+            self.fused_add_rmsnorm_enabled
+            and hidden_states.ndim == FLATTENED_TOKEN_FEATURES_RANK
+            and hidden_states.is_cuda
+            and not torch.compiler.is_compiling()
+            and not get_context().is_prefill
+            and hidden_states.shape[0] <= 4
+            and attention_mask is None
+            and deepstack_visual_embeds is None
+        )
+        residual = None
         for layer_idx, layer in enumerate(self.layers):
-            hidden_states = layer(
-                hidden_states,
-                position_embeddings=position_embeddings,
-                attention_mask=attention_mask,
-            )
+            if use_fused_add_rmsnorm:
+                hidden_states, residual = layer.forward_decode_fused_add_rmsnorm(
+                    hidden_states,
+                    residual,
+                    position_embeddings,
+                )
+            else:
+                hidden_states = layer(
+                    hidden_states,
+                    position_embeddings=position_embeddings,
+                    attention_mask=attention_mask,
+                )
 
             # DeepStack 注入: 在 layers 0, 1, 2 之后 (HF L835-L840)
             # deepstack_visual_embeds 是 list of 3, 对应 layer 0,1,2
@@ -676,7 +727,15 @@ class Qwen3VLTextModel(nn.Module):
                     deepstack_visual_embeds[layer_idx],
                 )
 
-        hidden_states = self.norm(hidden_states)
+        if use_fused_add_rmsnorm:
+            hidden_states, _ = fused_add_rmsnorm(
+                hidden_states,
+                residual,
+                self.norm.weight,
+                eps=float(self.norm.eps),
+            )
+        else:
+            hidden_states = self.norm(hidden_states)
         return hidden_states
 
     def _deepstack_process(

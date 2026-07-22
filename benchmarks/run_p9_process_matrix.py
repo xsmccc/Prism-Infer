@@ -46,10 +46,16 @@ MODE_VARIANT_FIELDS = frozenset(
         "logits_precision",
         "paged_decode_block_n",
         "fused_qk_rmsnorm",
+        "fused_add_rmsnorm",
     }
 )
 MODEL_TUNING_FIELDS = frozenset(
-    {"logits_precision", "paged_decode_block_n", "fused_qk_rmsnorm"}
+    {
+        "logits_precision",
+        "paged_decode_block_n",
+        "fused_qk_rmsnorm",
+        "fused_add_rmsnorm",
+    }
 )
 CUDA_GRAPH_EXECUTION_FIELDS = frozenset(
     {
