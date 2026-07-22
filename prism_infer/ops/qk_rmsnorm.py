@@ -28,18 +28,37 @@ MAX_EXACT_QK_RMSNORM_BATCH = 4
 if HAS_QK_RMSNORM_TRITON:
 
     @triton.jit
+    def _round_bfloat16(value):
+        """Materialize an RN BF16 boundary so LLVM cannot contract M-RoPE ops."""
+
+        rounded = tl.inline_asm_elementwise(
+            asm="cvt.rn.bf16.f32 $0, $1;",
+            constraints="=h,f",
+            args=[value],
+            dtype=tl.bfloat16,
+            is_pure=True,
+            pack=1,
+        )
+        return rounded.to(tl.float32)
+
+    @triton.jit
     def _fused_qk_rmsnorm_kernel(
         q_ptr,
         k_ptr,
         q_weight_ptr,
         k_weight_ptr,
+        cos_ptr,
+        sin_ptr,
         q_out_ptr,
         k_out_ptr,
         Q_ROWS: tl.constexpr,
         K_ROWS: tl.constexpr,
+        Q_HEADS: tl.constexpr,
+        K_HEADS: tl.constexpr,
         HEAD_DIM: tl.constexpr,
         EPS: tl.constexpr,
         XBLOCK: tl.constexpr,
+        APPLY_MROPE: tl.constexpr,
     ):
         rows = tl.program_id(0) * XBLOCK + tl.arange(0, XBLOCK)[:, None]
         offsets = tl.arange(0, HEAD_DIM)[None, :]
@@ -71,6 +90,77 @@ if HAS_QK_RMSNORM_TRITON:
         )
         output = (weight * normalized).to(tl.bfloat16).to(tl.float32)
 
+        if APPLY_MROPE:
+            rotated_offsets = tl.where(
+                offsets < HEAD_DIM // 2,
+                offsets + HEAD_DIM // 2,
+                offsets - HEAD_DIM // 2,
+            )
+            q_rotated = tl.load(
+                q_ptr + rows * HEAD_DIM + rotated_offsets,
+                mask=valid & is_q,
+                other=0.0,
+            ).to(tl.float32)
+            k_rotated = tl.load(
+                k_ptr + (rows - Q_ROWS) * HEAD_DIM + rotated_offsets,
+                mask=valid & ~is_q,
+                other=0.0,
+            ).to(tl.float32)
+            rotated_values = tl.where(is_q, q_rotated, k_rotated)
+            q_rotated_weight = (
+                tl.load(q_weight_ptr + rotated_offsets)
+                .to(tl.bfloat16)
+                .to(tl.float32)
+            )
+            k_rotated_weight = (
+                tl.load(k_weight_ptr + rotated_offsets)
+                .to(tl.bfloat16)
+                .to(tl.float32)
+            )
+            rotated_weight = tl.where(is_q, q_rotated_weight, k_rotated_weight)
+            rotated_normalized = (
+                (rotated_values * inverse_rms)
+                .to(tl.float32)
+                .to(tl.bfloat16)
+                .to(tl.float32)
+            )
+            rotated_output = (
+                (rotated_weight * rotated_normalized)
+                .to(tl.bfloat16)
+                .to(tl.float32)
+            )
+            rotated_output = tl.where(
+                offsets < HEAD_DIM // 2,
+                -rotated_output,
+                rotated_output,
+            )
+            token_rows = tl.where(
+                is_q,
+                rows // Q_HEADS,
+                (rows - Q_ROWS) // K_HEADS,
+            )
+            cos = (
+                tl.load(
+                    cos_ptr + token_rows * HEAD_DIM + offsets,
+                    mask=valid,
+                    other=0.0,
+                )
+                .to(tl.bfloat16)
+                .to(tl.float32)
+            )
+            sin = (
+                tl.load(
+                    sin_ptr + token_rows * HEAD_DIM + offsets,
+                    mask=valid,
+                    other=0.0,
+                )
+                .to(tl.bfloat16)
+                .to(tl.float32)
+            )
+            direct_product = _round_bfloat16(output * cos)
+            rotated_product = _round_bfloat16(rotated_output * sin)
+            output = _round_bfloat16(direct_product + rotated_product)
+
         tl.store(
             q_out_ptr + rows * HEAD_DIM + offsets,
             output,
@@ -90,8 +180,10 @@ def fused_qk_rmsnorm(
     k_weight: torch.Tensor,
     *,
     eps: float,
+    cos: torch.Tensor | None = None,
+    sin: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Normalize contiguous BF16 decode Q/K in one Graph-safe Triton launch."""
+    """Normalize Q/K and optionally apply exact M-RoPE in one Triton launch."""
 
     if not HAS_QK_RMSNORM_TRITON:
         raise RuntimeError("fused Q/K RMSNorm requires Triton")
@@ -127,8 +219,24 @@ def fused_qk_rmsnorm(
             raise ValueError(f"{name} must be contiguous BF16 on the Q/K device")
     if not isinstance(eps, float) or not math.isfinite(eps) or eps <= 0.0:
         raise ValueError(f"eps must be a positive finite float, got {eps!r}")
-
+    if (cos is None) != (sin is None):
+        raise ValueError("cos and sin must either both be provided or both be omitted")
+    apply_mrope = cos is not None
     head_dim = q.shape[-1]
+    if apply_mrope:
+        expected_position_shape = (q.shape[0], head_dim)
+        for name, value in (("cos", cos), ("sin", sin)):
+            if (
+                tuple(value.shape) != expected_position_shape
+                or value.device != q.device
+                or value.dtype != q.dtype
+                or not value.is_contiguous()
+            ):
+                raise ValueError(
+                    f"{name} must be contiguous BF16 with shape "
+                    f"{expected_position_shape} on the Q/K device"
+                )
+
     q_rows = q.numel() // head_dim
     k_rows = k.numel() // head_dim
     q_out = torch.empty_like(q)
@@ -139,13 +247,18 @@ def fused_qk_rmsnorm(
         k,
         q_weight,
         k_weight,
+        cos if apply_mrope else q,
+        sin if apply_mrope else q,
         q_out,
         k_out,
         Q_ROWS=q_rows,
         K_ROWS=k_rows,
+        Q_HEADS=q.shape[1],
+        K_HEADS=k.shape[1],
         HEAD_DIM=head_dim,
         EPS=eps,
         XBLOCK=QK_RMSNORM_XBLOCK,
+        APPLY_MROPE=apply_mrope,
         num_warps=QK_RMSNORM_NUM_WARPS,
     )
     return q_out, k_out

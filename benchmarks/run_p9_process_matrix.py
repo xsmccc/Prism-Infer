@@ -46,6 +46,7 @@ MODE_VARIANT_FIELDS = frozenset(
         "logits_precision",
         "paged_decode_block_n",
         "fused_qk_rmsnorm",
+        "fused_qk_mrope",
         "fused_add_rmsnorm",
     }
 )
@@ -54,6 +55,7 @@ MODEL_TUNING_FIELDS = frozenset(
         "logits_precision",
         "paged_decode_block_n",
         "fused_qk_rmsnorm",
+        "fused_qk_mrope",
         "fused_add_rmsnorm",
     }
 )

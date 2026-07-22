@@ -190,6 +190,7 @@ class Qwen3VLTextAttention(nn.Module):
         self.engine_attn = Attention(num_heads, head_dim, self.scale, num_kv_heads)
         self._compiled_decode_qkv_forward = None
         self.fused_qk_rmsnorm_enabled = False
+        self.fused_qk_mrope_enabled = False
 
     def enable_decode_compile(
         self,
@@ -326,6 +327,7 @@ class Qwen3VLTextAttention(nn.Module):
         q = self.q_proj(hidden_states).view(num_tokens, self.num_heads, self.head_dim)
         k = self.k_proj(hidden_states).view(num_tokens, self.num_kv_heads, self.head_dim)
         v = self.v_proj(hidden_states).view(num_tokens, self.num_kv_heads, self.head_dim)
+        fused_mrope = False
         if (
             self.fused_qk_rmsnorm_enabled
             and q.is_cuda
@@ -333,17 +335,23 @@ class Qwen3VLTextAttention(nn.Module):
             and not get_context().is_prefill
             and q.shape[0] <= 4
         ):
+            fused_positions = {}
+            if self.fused_qk_mrope_enabled and position_embeddings is not None:
+                cos, sin = position_embeddings
+                fused_positions = {"cos": cos, "sin": sin}
+                fused_mrope = True
             q, k = fused_qk_rmsnorm(
                 q,
                 k,
                 self.q_norm.weight,
                 self.k_norm.weight,
                 eps=float(self.q_norm.eps),
+                **fused_positions,
             )
         else:
             q = self.q_norm(q)
             k = self.k_norm(k)
-        if position_embeddings is not None:
+        if position_embeddings is not None and not fused_mrope:
             cos, sin = position_embeddings
             q, k = self._apply_mrope_engine(q, k, cos, sin)
         return q, k, v

@@ -70,6 +70,7 @@ class ModeSpec:
     logits_precision: str | None = None
     paged_decode_block_n: int | None = None
     fused_qk_rmsnorm: bool = False
+    fused_qk_mrope: bool = False
     fused_add_rmsnorm: bool = False
 
 
@@ -176,6 +177,18 @@ MODE_SPECS = {
         logits_precision="selective_fp32",
         paged_decode_block_n=256,
         fused_qk_rmsnorm=True,
+        fused_add_rmsnorm=True,
+    ),
+    "scaled_fp8_kv_tuned_fused_graph": ModeSpec(
+        name="scaled_fp8_kv_tuned_fused_graph",
+        execution="cuda_graph",
+        attention="prefill_sdpa_decode_fused_norms_mrope_scaled_fp8_paged_bn256",
+        compression="scaled_fp8_kv",
+        enforce_eager=False,
+        logits_precision="selective_fp32",
+        paged_decode_block_n=256,
+        fused_qk_rmsnorm=True,
+        fused_qk_mrope=True,
         fused_add_rmsnorm=True,
     ),
     "visual_compact_fp8": ModeSpec(
@@ -534,6 +547,7 @@ def _build_llm(
             mode.paged_decode_block_n or args.paged_decode_block_n
         ),
         enable_fused_qk_rmsnorm=mode.fused_qk_rmsnorm,
+        enable_fused_qk_mrope=mode.fused_qk_mrope,
         enable_fused_add_rmsnorm=mode.fused_add_rmsnorm,
         vision_attention_backend=args.vision_attention_backend,
     )
@@ -638,6 +652,7 @@ def _build_record(
             "mlp_projection_mode": config.mlp_projection_mode,
             "paged_decode_block_n": config.paged_decode_block_n,
             "fused_qk_rmsnorm": config.enable_fused_qk_rmsnorm,
+            "fused_qk_mrope": config.enable_fused_qk_mrope,
             "fused_add_rmsnorm": config.enable_fused_add_rmsnorm,
         },
         "mode": {
@@ -648,6 +663,7 @@ def _build_record(
             "logits_precision": config.logits_precision,
             "paged_decode_block_n": config.paged_decode_block_n,
             "fused_qk_rmsnorm": config.enable_fused_qk_rmsnorm,
+            "fused_qk_mrope": config.enable_fused_qk_mrope,
             "fused_add_rmsnorm": config.enable_fused_add_rmsnorm,
             "visual_pruning_keep_ratio": args.visual_pruning_keep_ratio,
             "visual_pruning_min_keep_tokens": args.visual_pruning_min_keep_tokens,
