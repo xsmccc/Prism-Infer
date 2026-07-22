@@ -27,6 +27,7 @@ from prism_infer.models.qwen3_vl_architecture import (
     Qwen3VLTextArchitecture,
 )
 from prism_infer.observability import is_trace_enabled, profile_region
+from prism_infer.ops.qk_rmsnorm import fused_qk_rmsnorm
 from prism_infer.utils.context import get_context
 from prism_infer.vision.backends import VisionAttentionBackendName
 from prism_infer.vision.mrope import MRope, apply_mrope
@@ -187,6 +188,7 @@ class Qwen3VLTextAttention(nn.Module):
         self.k_norm = Qwen3VLTextRMSNorm(head_dim, eps=rms_norm_eps, dtype=dtype)
         self.engine_attn = Attention(num_heads, head_dim, self.scale, num_kv_heads)
         self._compiled_decode_qkv_forward = None
+        self.fused_qk_rmsnorm_enabled = False
 
     def enable_decode_compile(
         self,
@@ -323,8 +325,23 @@ class Qwen3VLTextAttention(nn.Module):
         q = self.q_proj(hidden_states).view(num_tokens, self.num_heads, self.head_dim)
         k = self.k_proj(hidden_states).view(num_tokens, self.num_kv_heads, self.head_dim)
         v = self.v_proj(hidden_states).view(num_tokens, self.num_kv_heads, self.head_dim)
-        q = self.q_norm(q)
-        k = self.k_norm(k)
+        if (
+            self.fused_qk_rmsnorm_enabled
+            and q.is_cuda
+            and not torch.compiler.is_compiling()
+            and not get_context().is_prefill
+            and q.shape[0] <= 4
+        ):
+            q, k = fused_qk_rmsnorm(
+                q,
+                k,
+                self.q_norm.weight,
+                self.k_norm.weight,
+                eps=float(self.q_norm.eps),
+            )
+        else:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
         if position_embeddings is not None:
             cos, sin = position_embeddings
             q, k = self._apply_mrope_engine(q, k, cos, sin)

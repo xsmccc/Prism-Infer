@@ -205,6 +205,10 @@ class ModelRunner:
                 vision_attention_backend=self.config.vision_attention_backend,
             )
             self.model.logits_precision = self.config.logits_precision
+            for layer in self.model.model.language_model.layers:
+                layer.self_attn.fused_qk_rmsnorm_enabled = (
+                    getattr(self.config, "enable_fused_qk_rmsnorm", False)
+                )
             self.is_vl_model = True
             return
         if Qwen3ForCausalLM is None:

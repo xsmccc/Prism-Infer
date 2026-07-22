@@ -39,9 +39,18 @@ NVIDIA_SMI_QUERY_FIELDS = (
     "utilization.gpu",
 )
 MODE_VARIANT_FIELDS = frozenset(
-    {"name", "execution", "attention", "logits_precision", "paged_decode_block_n"}
+    {
+        "name",
+        "execution",
+        "attention",
+        "logits_precision",
+        "paged_decode_block_n",
+        "fused_qk_rmsnorm",
+    }
 )
-MODEL_TUNING_FIELDS = frozenset({"logits_precision", "paged_decode_block_n"})
+MODEL_TUNING_FIELDS = frozenset(
+    {"logits_precision", "paged_decode_block_n", "fused_qk_rmsnorm"}
+)
 CUDA_GRAPH_EXECUTION_FIELDS = frozenset(
     {
         "cuda_graph_batch_sizes",

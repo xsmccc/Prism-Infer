@@ -297,6 +297,7 @@ class ExecutionConfig:
     compile_force_same_precision: bool = True
     allow_unsafe_compile: bool = False
     paged_decode_block_n: int = DEFAULT_PAGED_DECODE_BLOCK_N
+    fused_qk_rmsnorm: bool = False
 
     def __post_init__(self) -> None:
         try:
@@ -318,6 +319,10 @@ class ExecutionConfig:
         _boolean(
             self.allow_unsafe_compile,
             name="allow_unsafe_decode_compile",
+        )
+        _boolean(
+            self.fused_qk_rmsnorm,
+            name="enable_fused_qk_rmsnorm",
         )
         if self.paged_decode_block_n not in SUPPORTED_PAGED_DECODE_BLOCK_N:
             supported = ", ".join(
@@ -525,6 +530,7 @@ class PrismConfig:
             "decode_compile_force_same_precision": ("compile_force_same_precision"),
             "allow_unsafe_decode_compile": "allow_unsafe_compile",
             "paged_decode_block_n": "paged_decode_block_n",
+            "enable_fused_qk_rmsnorm": "fused_qk_rmsnorm",
         }
         control_fields = {"enforce_eager", "execution_backend"}
         allowed = (
@@ -884,6 +890,10 @@ class Config:
     @property
     def paged_decode_block_n(self) -> int:
         return self.execution_config.paged_decode_block_n
+
+    @property
+    def enable_fused_qk_rmsnorm(self) -> bool:
+        return self.execution_config.fused_qk_rmsnorm
 
     @property
     def decode_compile_mode(self) -> str:

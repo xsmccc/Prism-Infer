@@ -69,6 +69,7 @@ class ModeSpec:
     decode_compile_region: str = "none"
     logits_precision: str | None = None
     paged_decode_block_n: int | None = None
+    fused_qk_rmsnorm: bool = False
 
 
 MODE_SPECS = {
@@ -151,6 +152,16 @@ MODE_SPECS = {
         enforce_eager=False,
         logits_precision="selective_fp32",
         paged_decode_block_n=256,
+    ),
+    "scaled_fp8_kv_tuned_qknorm_graph": ModeSpec(
+        name="scaled_fp8_kv_tuned_qknorm_graph",
+        execution="cuda_graph",
+        attention="prefill_sdpa_decode_fused_qk_rmsnorm_scaled_fp8_paged_triton_bn256",
+        compression="scaled_fp8_kv",
+        enforce_eager=False,
+        logits_precision="selective_fp32",
+        paged_decode_block_n=256,
+        fused_qk_rmsnorm=True,
     ),
     "visual_compact_fp8": ModeSpec(
         name="visual_compact_fp8",
@@ -507,6 +518,7 @@ def _build_llm(
         paged_decode_block_n=(
             mode.paged_decode_block_n or args.paged_decode_block_n
         ),
+        enable_fused_qk_rmsnorm=mode.fused_qk_rmsnorm,
         vision_attention_backend=args.vision_attention_backend,
     )
 
@@ -609,6 +621,7 @@ def _build_record(
             "logits_precision": config.logits_precision,
             "mlp_projection_mode": config.mlp_projection_mode,
             "paged_decode_block_n": config.paged_decode_block_n,
+            "fused_qk_rmsnorm": config.enable_fused_qk_rmsnorm,
         },
         "mode": {
             "name": mode.name,
@@ -617,6 +630,7 @@ def _build_record(
             "compression": mode.compression,
             "logits_precision": config.logits_precision,
             "paged_decode_block_n": config.paged_decode_block_n,
+            "fused_qk_rmsnorm": config.enable_fused_qk_rmsnorm,
             "visual_pruning_keep_ratio": args.visual_pruning_keep_ratio,
             "visual_pruning_min_keep_tokens": args.visual_pruning_min_keep_tokens,
             "visual_pruning_strategy": args.visual_pruning_strategy,
