@@ -116,6 +116,12 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=32)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeat", type=int, default=3)
+    parser.add_argument("--max-model-len", type=int, default=1280)
+    parser.add_argument("--max-total-tokens", type=int, default=4096)
+    parser.add_argument("--mem-fraction-static", type=float, default=0.60)
+    parser.add_argument("--enforce-eager", action="store_true")
+    parser.add_argument("--attention-backend", default="triton")
+    parser.add_argument("--mm-attention-backend", default="triton_attn")
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--framework-version", required=True)
     parser.add_argument("--output", required=True)
@@ -137,15 +143,16 @@ def main() -> None:
         model_path=args.model,
         dtype="bfloat16",
         tp_size=1,
-        context_length=1280,
-        max_total_tokens=4096,
-        mem_fraction_static=0.60,
+        context_length=args.max_model_len,
+        max_total_tokens=args.max_total_tokens,
+        mem_fraction_static=args.mem_fraction_static,
         max_running_requests=len(requests),
         chunked_prefill_size=-1,
-        disable_cuda_graph=True,
+        disable_cuda_graph=args.enforce_eager,
+        cuda_graph_max_bs_decode=len(requests),
         disable_radix_cache=True,
-        attention_backend="triton",
-        mm_attention_backend="triton_attn",
+        attention_backend=args.attention_backend,
+        mm_attention_backend=args.mm_attention_backend,
         enable_request_time_stats_logging=True,
         stream_interval=1,
         random_seed=0,
@@ -182,9 +189,12 @@ def main() -> None:
         token_ids = [list(final_output["output_ids"])]
         prompt_tokens = [int(final_output["meta_info"]["prompt_tokens"])]
         ttft_ms = [(arrival_times[0] - started) * 1000.0]
+        if len(arrival_times) < 2:
+            raise RuntimeError("SGLang TPOT measurement requires at least two output tokens")
         tpot_ms = [
-            (current - previous) * 1000.0
-            for previous, current in zip(arrival_times, arrival_times[1:])
+            (arrival_times[-1] - arrival_times[0])
+            * 1000.0
+            / (len(arrival_times) - 1)
         ]
         return token_ids, prompt_tokens, elapsed_ms, ttft_ms, tpot_ms
 
@@ -222,20 +232,24 @@ def main() -> None:
                 "transformers": importlib.metadata.version("transformers"),
                 "cuda": torch.version.cuda,
                 "gpu": torch.cuda.get_device_name(0),
+                "gpu_uuid": pynvml.nvmlDeviceGetUUID(
+                    pynvml.nvmlDeviceGetHandleByIndex(0)
+                ),
+                "driver": pynvml.nvmlSystemGetDriverVersion(),
             },
             "model": {
                 "path": args.model,
                 "dtype": "torch.bfloat16",
                 "tensor_parallel_size": 1,
-                "max_model_len": 1280,
+                "max_model_len": args.max_model_len,
                 "max_num_seqs": len(requests),
-                "kv_cache_capacity_tokens": 4096,
-                "mem_fraction_static": 0.60,
+                "kv_cache_capacity_tokens": args.max_total_tokens,
+                "mem_fraction_static": args.mem_fraction_static,
             },
             "backend": {
-                "execution": "eager",
-                "attention": "triton",
-                "mm_attention": "triton_attn",
+                "execution": "eager" if args.enforce_eager else "cuda_graph",
+                "attention": args.attention_backend,
+                "mm_attention": args.mm_attention_backend,
                 "prefix_caching": False,
                 "chunked_prefill": False,
             },
@@ -255,6 +269,12 @@ def main() -> None:
                 "warmup": args.warmup,
                 "repeat": args.repeat,
                 "cuda_synchronize_timing": True,
+                "decode_tpot_scope": "first_to_last_token_divided_by_output_intervals",
+            },
+            "protocol": {
+                "name": "p9_external_sglang_offline_v2",
+                "command": list(sys.argv),
+                "process_scope": "fresh_process_per_case_and_backend",
             },
             "correctness": {
                 "outputs_identical_across_repeats": True,
