@@ -5,7 +5,8 @@
 > 当前 P7.5/P8 验证点: projection mode `8293851`；online/trace/final gate `021d4e2`
 > 当前 P9-A baseline 点: `29c0dbe`
 > 当前 P9-C Prism quality 点: `5ada892`；vLLM external quality 点: `3ec90a5`
-> 更新日期: 2026-07-19
+> 当前 P9-D H1 three-engine 点: `c11b6e9`
+> 更新日期: 2026-07-22
 
 本表区分“已实现”“已验证”和“性能占优”。README、简历和面试中的数字必须能
 追溯到本表及对应 raw evidence。
@@ -44,6 +45,7 @@
 | scaled FP8 KV 是独立于 unit-scale FP8 的完整生命周期 | per-token/per-KV-head K/V FP32 scales | scale 与 payload 一同覆盖 Triton store、paged decode、COW、swap、physical compaction 和 CUDA Graph replay；component/GPU contracts PASS |
 | Prism scaled FP8 通过冻结的标准多模态质量门禁 | clean `5ada892`；DocVQA/MuirBench/MVBench development/final | 6/6 formal non-inferiority PASS；allocated KV pool 为 BF16 的 `0.515625x`，节省 `48.4375%` |
 | 同容量 vLLM FP8 外部质量矩阵结果为 MIXED | clean `3ec90a5`；vLLM 0.24.0 per-token-head FP8；semantic input exact | DocVQA/MuirBench 4 cell PASS，MVBench development/final FAIL；Prism scaled FP8 同六 cell PASS |
+| Prism 在冻结的 H1 CUDA Graph cell 中超过 vLLM 与 SGLang | clean `c11b6e9`；RTX 5090；Qwen3-VL-8B；TP1、batch1、greedy、output128；统一 first-token-to-last-token arrival TPOT | Prism median `10.327842 ms`，SGLang 0.5.15.post1 median `10.372465 ms`，vLLM 0.25.1 median `10.528293 ms`；Prism 分别领先约 `0.430%`、`1.904%`；128-token hash exact |
 
 ## 必须带限制的结论
 
@@ -67,6 +69,7 @@
 | NCU page16/page256 的 occupancy 约 `12.5%`、waves/SM `0.17–0.19` | 只解释 batch8/context4096 的单个 kernel launch；不能外推为 full-engine GPU utilization，不能仅凭低 counter 定性为纯 memory-bound/compute-bound |
 | scaled FP8 allocated KV pool 节省 `48.4375%` | 只计算 payload 与 FP32 scales；不是整卡/整模型显存，跨框架 page-table/Python allocator 尚无统一字节合同 |
 | Prism scaled FP8 的六项 formal gate 全 PASS，vLLM FP8 为四 PASS/两 FAIL | 结论是预注册稳定性门禁结果；vLLM MVBench accuracy 点估计实际更高，不能声称 Prism accuracy 显著领先 |
+| H1 中 Prism TPOT 低于 vLLM 与 SGLang | 只覆盖 RTX 5090、指定 Qwen3-VL-8B snapshot、H1、TP1、batch1、greedy、output128、offline CUDA Graph；不是 online、batch 扩展、多模型或跨硬件的全面排名 |
 
 ## 当前禁止的结论
 

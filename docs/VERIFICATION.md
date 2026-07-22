@@ -1,7 +1,38 @@
 # Prism-Infer 验证标准
 
-> 修订日期: 2026-07-18
+> 修订日期: 2026-07-22
 > 目的: 统一记录每个阶段的验证命令、PASS 标准和禁止行为。所有完成声明必须能追溯到本文件中的命令或等价验证输出。
+
+## P9-D H1 three-engine closure（PASS，2026-07-22）
+
+冻结范围：RTX 5090（UUID `GPU-e783aa8f-d1a7-fd67-fcdc-51eca9ea0953`）、
+Qwen3-VL-8B 指定 snapshot、TP1、batch1、greedy、8 张 448 图、prompt 1618、
+output128、warmup2、BF16 KV logical capacity `28,928`、offline CUDA Graph。
+
+- Prism clean commit：`c11b6e9590589fc308f3c8cc40c42b46d848b3f1`。
+- 统一指标：第一个 token 到最后一个 token 的真实返回时间除以 127；每个 decode
+  step 的返回包含 greedy sampled token D2H，与外部 runner 的 token-arrival 语义一致。
+- Prism formal repeat3：`data/p9_final_clean_surpass_three_engines/h1_clean_repeat3.jsonl`，
+  TPOT min/median/max = `10.315139 / 10.327842 / 10.333493 ms`。
+- SGLang 0.5.15.post1：`data/p9_external_sglang_0515/h1_triton_graph_r2.jsonl`，
+  TPOT min/median/max = `10.370497 / 10.372465 / 10.375000 ms`。
+- vLLM 0.25.1：`data/p9_interleaved_vllm/h1_best_stable_current_pytorch_r1.jsonl`，
+  TPOT median = `10.528293 ms`。
+- Prism 相对 SGLang median 领先约 `0.430%`，相对 vLLM median 领先约
+  `1.904%`；Prism formal max 仍低于 SGLang min。
+- 额外 3 个 clean fresh Prism process：
+  `h1_clean_r1.jsonl`、`h1_clean_r2.jsonl`、`h1_clean_r3.jsonl`，TPOT 分别为
+  `10.356021 / 10.310616 / 10.313644 ms`，均低于 SGLang median。
+- 所有 Prism run 的 128-token output hash 均为
+  `76ad1fb97daffe7dcbdec4300198350a5dac1341f09a78e312e55ae3376e14c6`。
+- 原有逐步同步 benchmark 仍通过：
+  `data/p9_final_clean_surpass_three_engines/h1_internal_sync.jsonl`，127 次 decode
+  replay，median `10.333702 ms`，输出 hash exact。
+- 针对 engine contracts、scheduler swap tables 与 P9 architecture contracts 的
+  focused regression 为 `38 passed`。
+
+允许结论：Prism 在上述冻结 H1 cell 中稳定超过 vLLM 与 SGLang。禁止外推为
+Prism 在全部模型、batch、硬件、online serving 或 workload 上全面超过两个框架。
 
 ## 全局规则
 

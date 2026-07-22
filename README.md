@@ -20,6 +20,7 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 | unit-scale FP8 KV (`fp8_kv`) | 已实现、已拒绝 | direct cast 长输出质量未通过，只保留为失败基线 |
 | scaled FP8 KV (`scaled_fp8_kv`) | 正式质量门禁通过 | per-token/per-KV-head scale；allocated KV pool 为 BF16 的 `0.515625x` |
 | packed MLP gate/up | 已验证、默认启用 | RTX 5090 TP1；8 个 clean offline cell 的 decode TPOT 改善 `0.483%–0.762%`，不声称稳定 E2E 加速 |
+| CUDA Graph decode hot path | H1 三引擎闭环 | RTX 5090、TP1、batch1、greedy、output128；Prism TPOT 中位数低于同协议 vLLM 与 SGLang |
 | TP2 | 静态与 IPC preflight 完成 | 动态 correctness/performance 尚无两卡证据 |
 
 权威进度见 [ROADMAP](docs/ROADMAP.md)，允许和禁止使用的结论见
@@ -41,8 +42,12 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 - node-level Systems trace 定位到旧 logits 路径每步把完整 LM head 转为 FP32；改用
   模型精度后，logits CUDA median 从 `4.068 ms` 降至 `0.762 ms`，五类 workload
   TPOT 提升 `1.216x–1.280x`，torch allocator peak 减少 `2,230–2,317 MiB`。
-- 同条件 best-stable CUDA Graph 对比中，quality-qualified Prism compact TPOT 仍为
-  vLLM 的 `1.34x–1.40x`，即 Prism **尚未反超** vLLM。
+- P9-D 的冻结 H1 CUDA Graph cell（RTX 5090、Qwen3-VL-8B、TP1、batch1、
+  greedy、output128）中，clean Prism TPOT 中位数为 `10.32784 ms`，同协议
+  SGLang 0.5.15.post1 为 `10.37246 ms`，vLLM 0.25.1 为 `10.52829 ms`；
+  Prism 分别领先约 `0.430%` 与 `1.904%`。另 3 个 fresh Prism process 均低于
+  SGLang 中位数，128-token 输出 hash 完全一致。该结论只覆盖这一冻结 cell，
+  不外推为 Prism 全面超过两个框架。
 - P7.3 的 9-cell engine-level online matrix 中，已完成请求均满足各 cell 预先声明的
   SLO；该结果没有 HTTP/gRPC 开销，也没有同条件 vLLM online goodput 对比。
 - packed gate/up 将 single-image Graph replay 的 linear kernels 从 `253` 降到 `217`、
