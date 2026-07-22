@@ -33,6 +33,7 @@ from prism_infer.vision.mrope import MRope, apply_mrope
 from prism_infer.vision.vision_encoder import VisionEncoder
 
 FLATTENED_TOKEN_FEATURES_RANK = 2
+SELECTIVE_FP32_LOGITS_TOP_K = 16
 BATCHED_TOKEN_FEATURES_RANK = 3
 MROPE_POSITION_MATRIX_RANK = 2
 POSITION_EMBEDDING_TENSOR_COUNT = 2
@@ -1064,4 +1065,22 @@ class Qwen3VLForCausalLM(nn.Module):
             and hidden_states.dtype in (torch.float16, torch.bfloat16)
         ):
             return F.linear(hidden_states.float(), self.lm_head.weight.float())
-        return self.lm_head(hidden_states)
+        logits = self.lm_head(hidden_states)
+        if (
+            self.logits_precision == "selective_fp32"
+            and hidden_states.is_cuda
+            and hidden_states.dtype in (torch.float16, torch.bfloat16)
+        ):
+            candidate_ids = logits.topk(
+                k=SELECTIVE_FP32_LOGITS_TOP_K,
+                dim=-1,
+                sorted=False,
+            ).indices
+            candidate_weights = F.embedding(candidate_ids, self.lm_head.weight)
+            candidate_logits = torch.bmm(
+                candidate_weights.float(),
+                hidden_states.float().unsqueeze(-1),
+            ).squeeze(-1)
+            logits = logits.float()
+            logits.scatter_(-1, candidate_ids, candidate_logits)
+        return logits

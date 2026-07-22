@@ -501,6 +501,7 @@ class ModelInputPreparer:
                 logical_context_lens=logical_context_lens_tensor,
                 block_tables=block_tables,
                 decode_max_context_len=decode_max_context_len,
+                paged_decode_block_n=self.config.paged_decode_block_n,
                 trace_metadata=trace_metadata,
                 compression_metadata=compression_metadata,
                 visual_pruning_slot_mappings=visual_pruning_slot_mappings,

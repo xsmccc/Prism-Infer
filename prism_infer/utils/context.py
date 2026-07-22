@@ -27,6 +27,7 @@ class Context:
     logical_context_lens: torch.Tensor | None = None  # M-RoPE/审计使用的未压缩长度
     block_tables: torch.Tensor | None = None  # 每条序列的 block 页表 (Decode/PrefixCache 用)
     decode_max_context_len: torch.Tensor | None = None  # decode batch 动态物理 K 上界
+    paged_decode_block_n: int = 32  # Triton decode token tile; CUDA Graph capture-stable
     trace_metadata: Any | None = None  # KV trace 元数据; 默认关闭时为 None
     compression_metadata: Any | None = None  # KV 压缩元数据; P5.0 off baseline 为 no-op
     visual_pruning_slot_mappings: tuple[torch.Tensor, ...] = ()
@@ -51,6 +52,13 @@ class Context:
             value = getattr(self, name)
             if value is not None and not isinstance(value, torch.Tensor):
                 raise TypeError(f"Context.{name} must be a tensor or None")
+        if (
+            isinstance(self.paged_decode_block_n, bool)
+            or not isinstance(self.paged_decode_block_n, int)
+            or self.paged_decode_block_n <= 0
+            or self.paged_decode_block_n & (self.paged_decode_block_n - 1)
+        ):
+            raise ValueError("Context.paged_decode_block_n must be a positive power of two")
         if self.decode_max_context_len is not None:
             if self.decode_max_context_len.numel() != 1:
                 raise ValueError("Context.decode_max_context_len must contain one scalar")
@@ -106,6 +114,7 @@ def set_context(
     context_lens: torch.Tensor | None = None,
     block_tables: torch.Tensor | None = None,
     decode_max_context_len: torch.Tensor | None = None,
+    paged_decode_block_n: int = 32,
     trace_metadata: Any | None = None,
     compression_metadata: Any | None = None,
     visual_pruning_slot_mappings: tuple[torch.Tensor, ...] = (),
@@ -125,6 +134,7 @@ def set_context(
             logical_context_lens=logical_context_lens,
             block_tables=block_tables,
             decode_max_context_len=decode_max_context_len,
+            paged_decode_block_n=paged_decode_block_n,
             trace_metadata=trace_metadata,
             compression_metadata=compression_metadata,
             visual_pruning_slot_mappings=visual_pruning_slot_mappings,

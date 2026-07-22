@@ -247,6 +247,7 @@ class Attention(nn.Module):
                 k_scale_cache=self.k_scale_cache,
                 v_scale_cache=self.v_scale_cache,
                 max_context_len=context.decode_max_context_len,
+                block_n=context.paged_decode_block_n,
             )
 
     def _record_observability(
@@ -321,6 +322,7 @@ class Attention(nn.Module):
                 context.context_lens,
                 self.scale,
                 max_context_len=context.decode_max_context_len,
+                block_n=context.paged_decode_block_n,
             )
 
     def _forward_prefill_paged(self, q: torch.Tensor, context: Context) -> torch.Tensor:

@@ -38,7 +38,10 @@ NVIDIA_SMI_QUERY_FIELDS = (
     "memory.free",
     "utilization.gpu",
 )
-MODE_EXECUTION_FIELDS = frozenset({"name", "execution"})
+MODE_VARIANT_FIELDS = frozenset(
+    {"name", "execution", "attention", "logits_precision", "paged_decode_block_n"}
+)
+MODEL_TUNING_FIELDS = frozenset({"logits_precision", "paged_decode_block_n"})
 CUDA_GRAPH_EXECUTION_FIELDS = frozenset(
     {
         "cuda_graph_batch_sizes",
@@ -47,6 +50,7 @@ CUDA_GRAPH_EXECUTION_FIELDS = frozenset(
         "cuda_graph_enabled",
         "cuda_graph_replay_counts",
         "decode_backend",
+        "paged_decode_block_n",
     }
 )
 
@@ -308,6 +312,8 @@ def _child_command(
         args.vision_attention_backend,
         "--logits-precision",
         args.logits_precision,
+        "--paged-decode-block-n",
+        str(args.paged_decode_block_n),
         "--mlp-projection-mode",
         args.mlp_projection_mode,
         "--disable-prefix-caching",
@@ -488,10 +494,10 @@ def comparability_checks(
     expected_order: Sequence[str],
     expected_output_tokens: int,
 ) -> dict[str, bool]:
-    """Return strict same-cell checks, allowing only execution-backend differences."""
+    """Return same-cell checks with explicit decode-tuning differences only."""
 
     mode_names = [record["mode"]["name"] for record in records]
-    sections = ("environment", "model", "workload", "traffic", "sampling", "measurement")
+    sections = ("environment", "workload", "traffic", "sampling", "measurement")
     checks = {
         "record_count": len(records) == 2 * repeats_per_mode,
         "mode_counts": (
@@ -503,8 +509,11 @@ def comparability_checks(
             f"{section}_exact": _all_equal([record[section] for record in records])
             for section in sections
         },
-        "mode_configuration_except_execution_exact": _all_equal(
-            [_without_keys(record["mode"], MODE_EXECUTION_FIELDS) for record in records]
+        "model_configuration_except_tuning_exact": _all_equal(
+            [_without_keys(record["model"], MODEL_TUNING_FIELDS) for record in records]
+        ),
+        "mode_configuration_except_variant_exact": _all_equal(
+            [_without_keys(record["mode"], MODE_VARIANT_FIELDS) for record in records]
         ),
         "execution_configuration_except_cuda_graph_exact": _all_equal(
             [
@@ -562,8 +571,9 @@ def _validate_child_configuration(
         "num_kvcache_blocks": args.num_kvcache_blocks,
         "gpu_memory_utilization": args.gpu_memory_utilization,
         "prefix_caching_enabled": False,
-        "logits_precision": args.logits_precision,
+        "logits_precision": record["mode"]["logits_precision"],
         "mlp_projection_mode": args.mlp_projection_mode,
+        "paged_decode_block_n": record["mode"]["paged_decode_block_n"],
     }
     mismatched_model = {
         key: (model.get(key), expected)
@@ -901,7 +911,17 @@ def _parser() -> argparse.ArgumentParser:
         choices=("sdpa", "flash_attn"),
         default="sdpa",
     )
-    parser.add_argument("--logits-precision", choices=("fp32", "model"), default="model")
+    parser.add_argument(
+        "--logits-precision",
+        choices=("fp32", "model", "selective_fp32"),
+        default="model",
+    )
+    parser.add_argument(
+        "--paged-decode-block-n",
+        type=int,
+        choices=(16, 32, 64, 128, 256),
+        default=32,
+    )
     parser.add_argument("--mlp-projection-mode", choices=("legacy", "packed"), default="packed")
     parser.add_argument(
         "--max-idle-memory-mib",

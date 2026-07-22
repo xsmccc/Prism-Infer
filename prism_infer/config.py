@@ -50,6 +50,8 @@ MAX_CUDA_GRAPH_BATCH_SIZE = 512
 # oversized single request is isolated and still processed incrementally.
 DEFAULT_VISION_ENCODER_MICROBATCH_PATCHES = 4096
 DEFAULT_MAX_VISION_PATCHES_PER_BATCH = 2 * DEFAULT_VISION_ENCODER_MICROBATCH_PATCHES
+DEFAULT_PAGED_DECODE_BLOCK_N = 32
+SUPPORTED_PAGED_DECODE_BLOCK_N = frozenset({16, 32, 64, 128, 256})
 
 
 class ExecutionBackendName(str, Enum):
@@ -114,9 +116,10 @@ class ModelConfig:
             self.tensor_parallel_timeout_seconds,
             name="tensor_parallel_timeout_seconds",
         )
-        if self.logits_precision not in ("fp32", "model"):
+        if self.logits_precision not in ("fp32", "model", "selective_fp32"):
             raise ValueError(
-                f"logits_precision must be 'fp32' or 'model', got {self.logits_precision!r}"
+                "logits_precision must be 'fp32', 'model', or 'selective_fp32', "
+                f"got {self.logits_precision!r}"
             )
         if self.mlp_projection_mode not in ("legacy", "packed"):
             raise ValueError(
@@ -293,6 +296,7 @@ class ExecutionConfig:
     compile_emulate_precision_casts: bool = True
     compile_force_same_precision: bool = True
     allow_unsafe_compile: bool = False
+    paged_decode_block_n: int = DEFAULT_PAGED_DECODE_BLOCK_N
 
     def __post_init__(self) -> None:
         try:
@@ -315,6 +319,14 @@ class ExecutionConfig:
             self.allow_unsafe_compile,
             name="allow_unsafe_decode_compile",
         )
+        if self.paged_decode_block_n not in SUPPORTED_PAGED_DECODE_BLOCK_N:
+            supported = ", ".join(
+                str(value) for value in sorted(SUPPORTED_PAGED_DECODE_BLOCK_N)
+            )
+            raise ValueError(
+                f"paged_decode_block_n must be one of {supported}; "
+                f"got {self.paged_decode_block_n!r}"
+            )
         if self.compile_region not in ("none", "attention"):
             raise ValueError(
                 f"decode_compile_region must be 'none' or 'attention', got {self.compile_region!r}"
@@ -512,6 +524,7 @@ class PrismConfig:
             "decode_compile_emulate_precision_casts": ("compile_emulate_precision_casts"),
             "decode_compile_force_same_precision": ("compile_force_same_precision"),
             "allow_unsafe_decode_compile": "allow_unsafe_compile",
+            "paged_decode_block_n": "paged_decode_block_n",
         }
         control_fields = {"enforce_eager", "execution_backend"}
         allowed = (
@@ -867,6 +880,10 @@ class Config:
     @property
     def decode_compile_region(self) -> str:
         return self.execution_config.compile_region
+
+    @property
+    def paged_decode_block_n(self) -> int:
+        return self.execution_config.paged_decode_block_n
 
     @property
     def decode_compile_mode(self) -> str:

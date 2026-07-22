@@ -67,6 +67,8 @@ class ModeSpec:
     compression: str
     enforce_eager: bool
     decode_compile_region: str = "none"
+    logits_precision: str | None = None
+    paged_decode_block_n: int | None = None
 
 
 MODE_SPECS = {
@@ -140,6 +142,15 @@ MODE_SPECS = {
         attention="prefill_sdpa_decode_scaled_fp8_paged_triton",
         compression="scaled_fp8_kv",
         enforce_eager=False,
+    ),
+    "scaled_fp8_kv_tuned_graph": ModeSpec(
+        name="scaled_fp8_kv_tuned_graph",
+        execution="cuda_graph",
+        attention="prefill_sdpa_decode_scaled_fp8_paged_triton_bn256",
+        compression="scaled_fp8_kv",
+        enforce_eager=False,
+        logits_precision="selective_fp32",
+        paged_decode_block_n=256,
     ),
     "visual_compact_fp8": ModeSpec(
         name="visual_compact_fp8",
@@ -491,8 +502,11 @@ def _build_llm(
         visual_pruning_min_keep_tokens=args.visual_pruning_min_keep_tokens,
         visual_pruning_strategy=args.visual_pruning_strategy,
         visual_pruning_attention_last_n_layers=(args.visual_pruning_attention_last_n_layers),
-        logits_precision=args.logits_precision,
+        logits_precision=mode.logits_precision or args.logits_precision,
         mlp_projection_mode=args.mlp_projection_mode,
+        paged_decode_block_n=(
+            mode.paged_decode_block_n or args.paged_decode_block_n
+        ),
         vision_attention_backend=args.vision_attention_backend,
     )
 
@@ -594,12 +608,15 @@ def _build_record(
             "chunked_prefill_enabled": config.enable_chunked_prefill,
             "logits_precision": config.logits_precision,
             "mlp_projection_mode": config.mlp_projection_mode,
+            "paged_decode_block_n": config.paged_decode_block_n,
         },
         "mode": {
             "name": mode.name,
             "execution": mode.execution,
             "attention": mode.attention,
             "compression": mode.compression,
+            "logits_precision": config.logits_precision,
+            "paged_decode_block_n": config.paged_decode_block_n,
             "visual_pruning_keep_ratio": args.visual_pruning_keep_ratio,
             "visual_pruning_min_keep_tokens": args.visual_pruning_min_keep_tokens,
             "visual_pruning_strategy": args.visual_pruning_strategy,
@@ -642,6 +659,7 @@ def _build_record(
         "execution_backend": {
             "prefill_backend": "eager",
             "decode_backend": mode.execution,
+            "paged_decode_block_n": config.paged_decode_block_n,
             "vision_attention_backend": config.vision_attention_backend.value,
             "cuda_graph_enabled": graph_metadata["enabled"],
             "cuda_graph_capture_scope": graph_metadata["capture_scope"],
@@ -1048,9 +1066,16 @@ def main() -> None:
     )
     parser.add_argument(
         "--logits-precision",
-        choices=("fp32", "model"),
+        choices=("fp32", "model", "selective_fp32"),
         default="model",
         help="lm_head projection precision; model uses the loaded model dtype",
+    )
+    parser.add_argument(
+        "--paged-decode-block-n",
+        type=int,
+        choices=(16, 32, 64, 128, 256),
+        default=32,
+        help="Triton paged-decode token tile; tuned modes may override it",
     )
     parser.add_argument(
         "--mlp-projection-mode",

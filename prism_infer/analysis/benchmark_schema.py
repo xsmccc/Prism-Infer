@@ -520,6 +520,14 @@ def _validate_benchmark_model(record: Mapping[str, Any], schema_version: int) ->
         _require_bool(model, "prefix_caching_enabled", "record.model")
     if schema_version >= SCHEMA_PACKED_MLP_VERSION:
         _validate_mlp_projection_mode(model)
+    if "logits_precision" in model:
+        logits_precision = _require_string(model, "logits_precision", "record.model")
+        if logits_precision not in ("fp32", "model", "selective_fp32"):
+            raise ValueError("record.model.logits_precision is unsupported")
+    if "paged_decode_block_n" in model:
+        block_n = _require_int(model, "paged_decode_block_n", "record.model", minimum=1)
+        if block_n not in (16, 32, 64, 128, 256):
+            raise ValueError("record.model.paged_decode_block_n is unsupported")
 
 
 def _validate_mlp_projection_mode(model: Mapping[str, Any]) -> None:
@@ -540,6 +548,10 @@ def _validate_benchmark_mode(record: Mapping[str, Any]) -> None:
         _require_string(mode, key, "record.mode")
     _require_number(mode, "visual_pruning_keep_ratio", "record.mode")
     _require_int(mode, "visual_pruning_min_keep_tokens", "record.mode")
+    if "logits_precision" in mode:
+        _require_string(mode, "logits_precision", "record.mode")
+    if "paged_decode_block_n" in mode:
+        _require_int(mode, "paged_decode_block_n", "record.mode", minimum=1)
 
 
 def _validate_benchmark_workload(record: Mapping[str, Any], schema_version: int) -> int:
@@ -695,6 +707,8 @@ def _validate_execution_backend(
             )
     prefill_backend = _require_string(execution, "prefill_backend", path)
     decode_backend = _require_string(execution, "decode_backend", path)
+    if "paged_decode_block_n" in execution:
+        _require_int(execution, "paged_decode_block_n", path, minimum=1)
     graph_enabled = _require_bool(execution, "cuda_graph_enabled", path)
     capture_scope = _require_string(execution, "cuda_graph_capture_scope", path)
     capture_ms = _require_number(execution, "cuda_graph_capture_ms", path)

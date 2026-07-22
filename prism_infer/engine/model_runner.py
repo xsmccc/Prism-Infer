@@ -1172,6 +1172,7 @@ class ModelRunner:
                 context_lens=context_lens[:bs],
                 decode_max_context_len=decode_max_context_len,
                 block_tables=block_tables[:bs],
+                paged_decode_block_n=config.paged_decode_block_n,
             )
             with use_context(capture_context):
                 outputs[:bs] = self._forward_model(
