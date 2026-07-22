@@ -11,6 +11,7 @@ from prism_infer.engine.compression import (
     COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
 )
 from prism_infer.engine.contracts import (
+    BatchPhase,
     BatchPlan,
     ExecutionResult,
     KVCacheManager,
@@ -33,6 +34,17 @@ class ModelExecutor:
 
     def execute(self, plan: BatchPlan) -> ExecutionResult:
         transfers = plan.kv_transfers
+        if plan.phase is BatchPhase.DECODE and transfers.is_empty:
+            fast_execute = getattr(
+                self.runner,
+                "execute_single_greedy_decode_cudagraph",
+                None,
+            )
+            if fast_execute is not None:
+                with profile_region("engine.model_runner"):
+                    fast_result = fast_execute(plan)
+                if fast_result is not None:
+                    return fast_result
         if transfers.copy_on_write:
             with profile_region("engine.kv.copy_on_write"):
                 self.runner.call("copy_kv_blocks", list(transfers.copy_on_write))

@@ -15,8 +15,8 @@ except ImportError:  # pragma: no cover - CPU-only environments
     HAS_SWIGLU_TRITON = False
 
 
-SWIGLU_BLOCK_SIZE = 256
-SWIGLU_NUM_WARPS = 4
+SWIGLU_BLOCK_SIZE = 64
+SWIGLU_NUM_WARPS = 1
 MAX_SWIGLU_BATCH = 4
 
 

@@ -371,9 +371,13 @@ class Scheduler:
                 seq.status is RequestState.DECODING
                 and self.block_manager.can_append(seq)
             ):
+                block_count = len(seq.block_table)
                 cow_pair = self.block_manager.copy_on_write(seq)
                 self.block_manager.may_append(seq)
-                self._observe_state()
+                # Queue cardinality cannot grow on this path.  Only a newly
+                # allocated KV block can advance a scheduler peak.
+                if len(seq.block_table) != block_count:
+                    self._observe_state()
                 return BatchPlan(
                     phase=BatchPhase.DECODE,
                     sequences=(seq,),
@@ -535,7 +539,11 @@ class Scheduler:
                 )
             elif plan is not None and plan.phase is BatchPhase.PREFILL:
                 raise RuntimeError("prefill result received for request outside PREFILLING state")
-        self._observe_state()
+        # A batch-one decode commit only appends a token or removes a finished
+        # request; neither can increase queue/KV peaks.  The scheduling side
+        # records the only possible growth (a new KV block).
+        if plan is None or plan.phase is not BatchPhase.DECODE or len(seqs) != 1:
+            self._observe_state()
         return tuple(outputs)
 
     def cancel(self, request_id: int) -> bool:

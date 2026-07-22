@@ -1194,6 +1194,25 @@ class ModelRunner:
         host_metadata_values[4 : 4 + len(seq.block_table)] = seq.block_table
         return cache[1]
 
+    def execute_single_greedy_decode_cudagraph(
+        self,
+        plan: BatchPlan,
+    ) -> ExecutionResult | None:
+        """Execute the persistent batch-one Graph path without generic wrappers."""
+
+        device_batch = self.prepare_single_greedy_decode_cudagraph(plan)
+        if device_batch is None:
+            return None
+        with use_context(device_batch.attention_context):
+            with profile_region("runner.run_model"):
+                sampled_tokens = self.run_model_cudagraph(
+                    device_batch.model_inputs,
+                    return_greedy_tokens=True,
+                )
+            with profile_region("runner.sampler"):
+                token_ids = tuple(sampled_tokens.tolist())
+        return ExecutionResult(token_ids=token_ids)
+
     def _validate_execution_plan(self, plan: BatchPlan) -> None:
         if not isinstance(plan, BatchPlan):
             raise TypeError(f"run_plan requires BatchPlan, got {type(plan).__name__}")
