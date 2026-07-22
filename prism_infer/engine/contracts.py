@@ -336,6 +336,7 @@ class DeviceBatch:
     attention_context: Context
     temperatures: torch.Tensor | None
     execution_bucket: int
+    sampling_mode: str | None = None
     kv_scale_views: tuple[torch.Tensor, ...] = ()
 
     def __post_init__(self) -> None:
@@ -382,6 +383,8 @@ class DeviceBatch:
             raise ValueError("DeviceBatch phase/context mismatch")
 
     def _validate_sampling(self, batch_size: int) -> None:
+        if self.sampling_mode not in (None, "greedy", "random", "mixed"):
+            raise ValueError(f"unsupported DeviceBatch sampling_mode: {self.sampling_mode!r}")
         if self.temperatures is not None and not isinstance(
             self.temperatures,
             torch.Tensor,

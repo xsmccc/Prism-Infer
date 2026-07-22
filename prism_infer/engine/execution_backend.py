@@ -80,7 +80,12 @@ class ModelExecutionBackend(ABC):
                 f"got {type(prepared).__name__}"
             )
         with profile_region("runner.prepare_sample_inputs"):
-            temperatures = runner.prepare_sample(seqs) if runner.rank == 0 else None
+            sampling_mode = runner.resolve_sampling_mode(seqs) if runner.rank == 0 else None
+            temperatures = (
+                runner.prepare_sample(seqs)
+                if runner.rank == 0 and sampling_mode != "greedy"
+                else None
+            )
         kv_scale_cache = getattr(runner, "kv_scale_cache", None)
         return DeviceBatch(
             phase=plan.phase,
@@ -90,6 +95,7 @@ class ModelExecutionBackend(ABC):
             attention_context=prepared.attention_context,
             temperatures=temperatures,
             execution_bucket=self.execution_bucket(plan),
+            sampling_mode=sampling_mode,
             kv_scale_views=(
                 () if kv_scale_cache is None else (kv_scale_cache[0], kv_scale_cache[1])
             ),
@@ -114,13 +120,17 @@ class ModelExecutionBackend(ABC):
             with profile_region("runner.run_model"):
                 logits = self.forward_logits(device_batch)
             if runner.rank == 0:
-                if device_batch.temperatures is None:
-                    raise RuntimeError("rank 0 DeviceBatch requires temperatures")
+                if (
+                    device_batch.sampling_mode != "greedy"
+                    and device_batch.temperatures is None
+                ):
+                    raise RuntimeError("rank 0 non-greedy DeviceBatch requires temperatures")
                 with profile_region("runner.sampler"):
                     token_ids = tuple(
                         runner.sampler(
                             logits,
                             device_batch.temperatures,
+                            sampling_mode=device_batch.sampling_mode,
                         ).tolist()
                     )
             else:

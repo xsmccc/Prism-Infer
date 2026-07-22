@@ -78,7 +78,10 @@ except ImportError:
 from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 from prism_infer.models.model_registry import ModelFamily, resolve_model_family
 from prism_infer.models.qwen3_vl_architecture import MROPE_AXIS_COUNT
-from prism_infer.layers.sampler import Sampler  # 采样器 (温度采样/贪婪)
+from prism_infer.layers.sampler import (  # 采样器 (温度采样/贪婪)
+    SAMPLING_NUMERICAL_EPSILON,
+    Sampler,
+)
 from prism_infer.utils.context import (
     Context,
     get_context,
@@ -854,6 +857,17 @@ class ModelRunner:
             non_blocking=True
         )
         return temperatures
+
+    @staticmethod
+    def resolve_sampling_mode(seqs: list[Sequence]) -> str:
+        """Resolve the batch sampling branch from host-owned request state."""
+
+        greedy = [seq.temperature <= SAMPLING_NUMERICAL_EPSILON for seq in seqs]
+        if all(greedy):
+            return "greedy"
+        if not any(greedy):
+            return "random"
+        return "mixed"
 
     @staticmethod
     def _as_mrope_decode_positions(position_ids: torch.Tensor) -> torch.Tensor:

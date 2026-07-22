@@ -3,6 +3,7 @@ from torch import nn
 
 
 SAMPLING_NUMERICAL_EPSILON = 1.0e-10
+SAMPLING_MODES = frozenset({"greedy", "random", "mixed"})
 
 
 # ============================================================
@@ -16,17 +17,32 @@ class Sampler(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, logits: torch.Tensor, temperatures: torch.Tensor):
+    def forward(
+        self,
+        logits: torch.Tensor,
+        temperatures: torch.Tensor | None,
+        *,
+        sampling_mode: str | None = None,
+    ):
         """根据每条请求的 temperature 采样下一个 token。
 
         logits: [num_seqs, vocab_size]
         temperatures: [num_seqs]，temperature <= 1e-10 时走 greedy argmax。
         """
 
-        greedy_mask = temperatures <= SAMPLING_NUMERICAL_EPSILON
-        if bool(greedy_mask.all().item()):
+        if sampling_mode is not None and sampling_mode not in SAMPLING_MODES:
+            raise ValueError(f"unsupported sampling mode: {sampling_mode!r}")
+        if sampling_mode == "greedy":
             return logits.argmax(dim=-1)
-        if bool((~greedy_mask).all().item()):
+        if temperatures is None:
+            raise ValueError("temperatures are required for non-greedy sampling")
+        if sampling_mode == "random":
+            return self._sample_random(logits, temperatures)
+
+        greedy_mask = temperatures <= SAMPLING_NUMERICAL_EPSILON
+        if sampling_mode is None and bool(greedy_mask.all().item()):
+            return logits.argmax(dim=-1)
+        if sampling_mode is None and bool((~greedy_mask).all().item()):
             return self._sample_random(logits, temperatures)
 
         sample_tokens = torch.empty(logits.shape[0], dtype=torch.long, device=logits.device)
