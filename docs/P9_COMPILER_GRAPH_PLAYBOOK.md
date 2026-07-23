@@ -75,6 +75,33 @@ FlashAttention 仍使用原 `cu_seqlens`；直接调用 SDPA attention 且未提
 - `data/p10_compile_graph/vision_segment_ranges/guardrail_two_image_448_clean_e8eed9c.jsonl`
 - `data/p10_compile_graph/vision_segment_ranges/h2_video_16x448_clean_e8eed9c.jsonl`
 
+## 0.2 P10.2：单 payload prefill 不做空 concat
+
+H1 的八张图在一个请求内已经是单个连续 `pixel_values` tensor，但旧
+`_multimodal_inputs` 仍执行 `torch.cat([payload])`，先在 host 复制完整的
+`38,535,168 B`，再 pin memory 和 H2D。commit
+`79f631ef5d5260dd8bec416e259d26cb692373e1` 对单 chunk 直接复用原 tensor；
+多请求/多 chunk 仍保留原 concat，pinned nonblocking H2D 语义不变。
+
+同一张 RTX 5090 上的定向 staging microbenchmark：
+
+- 旧 `cat + pin + H2D` 中位数 `5.11 ms`；
+- 新 `pin + H2D` 中位数 `1.68 ms`；
+- pageable H2D 中位数 `2.90 ms`，虽然尾延迟更稳，但 H1 E2E 更差，因此被拒绝。
+
+clean 语义 NSYS 中，`runner.prepare_inputs` 的两个观测 range CPU 中位数
+`35.84 -> 15.77 ms`；传输仍为 `11` 次、`38,855,808 B`，stream sync 仍为 `4`，
+证明只删除 host copy。完整 prefill kernel busy 保持
+`170.502 -> 170.449 ms`。紧邻的 clean H1 warmup 2/repeat 5 对照中，TTFT 中位数
+`255.159 -> 246.532 ms`（`3.38%`），token SHA256 不变。E2E 分布受图像预处理
+波动影响，没有形成本项的正式收益 claim。
+
+主要证据：
+
+- `data/p10_compile_graph/prefill_staging/h1_baseline_repeat5_clean_35ebecc.jsonl`
+- `data/p10_compile_graph/prefill_staging/h1_single_chunk_fastpath_repeat5_clean_79f631e.jsonl`
+- `data/p10_compile_graph/prefill_staging/h1_single_chunk_semantic_clean_79f631e_analysis.json`
+
 ## 1. “优化到极致”的验收定义
 
 这里的“极致”不等于把所有 Python 函数都交给 compiler，也不等于把 kernel 数降到最少。
