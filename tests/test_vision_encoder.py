@@ -42,7 +42,7 @@ def test_vision_tensor_region_split_is_exact() -> None:
     torch.manual_seed(20260711)
     vision = VisionEncoder(config, dtype=torch.float32)
     pixels = torch.randn(16, 12)
-    grid_thw = torch.tensor([[1, 4, 4]], dtype=torch.long)
+    grid_thw = torch.tensor([[1, 2, 4], [1, 2, 4]], dtype=torch.long)
 
     reference_main, reference_deepstack = vision(pixels, grid_thw)
     tensor_inputs = vision.prepare_tensor_region_inputs(pixels, grid_thw)
@@ -54,12 +54,34 @@ def test_vision_tensor_region_split_is_exact() -> None:
         torch.equal(reference, actual)
         for reference, actual in zip(reference_deepstack, actual_deepstack)
     )
+    assert tensor_inputs[-1] == ((0, 8), (8, 16))
     tensor_shapes = [
         list(value.shape) if isinstance(value, torch.Tensor) else value for value in tensor_inputs
     ]
     print(f"vision tensor inputs: {tensor_shapes}")
     print(f"vision main output shape: {list(actual_main.shape)}")
     print("Vision dynamic/tensor region split max diff: 0.000000e+00 PASS")
+
+
+def test_vision_sdpa_precomputed_segment_ranges_match_fallback() -> None:
+    torch.manual_seed(20260723)
+    attention = ve.ViTAttention(
+        dim=16,
+        num_heads=4,
+        dtype=torch.float32,
+        attention_backend="sdpa",
+    )
+    hidden_states = torch.randn(12, 16)
+    cu_seqlens = torch.tensor([0, 4, 12], dtype=torch.int32)
+
+    reference = attention(hidden_states, cu_seqlens=cu_seqlens)
+    actual = attention(
+        hidden_states,
+        cu_seqlens=cu_seqlens,
+        segment_ranges=((0, 4), (4, 12)),
+    )
+
+    assert torch.equal(reference, actual)
 
 
 def test_visual_encoder_microbatch_preserves_payload_order() -> None:

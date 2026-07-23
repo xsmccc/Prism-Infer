@@ -243,6 +243,7 @@ class ViTAttention(nn.Module):
         sin: torch.Tensor = None,
         cu_seqlens: torch.Tensor | None = None,
         max_seqlen: int | None = None,
+        segment_ranges: tuple[tuple[int, int], ...] | None = None,
     ) -> torch.Tensor:
         """x: [N, 1152] or [B, N, 1152] → same shape.
 
@@ -300,9 +301,20 @@ class ViTAttention(nn.Module):
                 deterministic=True,
             )
             o = o_varlen.transpose(0, 1).unsqueeze(0)
-        elif cu_seqlens is not None and cu_seqlens.numel() > SINGLE_SEQUENCE_CU_SEQLENS_COUNT:
+        elif segment_ranges is not None and len(segment_ranges) > 1:
             outputs = []
-            for start, end in zip(cu_seqlens[:-1].tolist(), cu_seqlens[1:].tolist()):
+            for start, end in segment_ranges:
+                q_i = q[:, :, start:end, :]
+                k_i = k[:, :, start:end, :]
+                v_i = v[:, :, start:end, :]
+                outputs.append(
+                    F.scaled_dot_product_attention(q_i, k_i, v_i, is_causal=False, scale=self.scale)
+                )
+            o = torch.cat(outputs, dim=2)
+        elif cu_seqlens is not None and cu_seqlens.numel() > SINGLE_SEQUENCE_CU_SEQLENS_COUNT:
+            boundaries = cu_seqlens.tolist()
+            outputs = []
+            for start, end in zip(boundaries[:-1], boundaries[1:]):
                 q_i = q[:, :, start:end, :]
                 k_i = k[:, :, start:end, :]
                 v_i = v[:, :, start:end, :]
@@ -363,6 +375,7 @@ class ViTBlock(nn.Module):
         sin: torch.Tensor = None,
         cu_seqlens: torch.Tensor | None = None,
         max_seqlen: int | None = None,
+        segment_ranges: tuple[tuple[int, int], ...] | None = None,
     ) -> torch.Tensor:
         # Pre-norm + Attention + residual
         x = x + self.attn(
@@ -371,6 +384,7 @@ class ViTBlock(nn.Module):
             sin=sin,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
+            segment_ranges=segment_ranges,
         )
         # Pre-norm + MLP + residual
         x = x + self.mlp(self.norm2(x))
@@ -626,7 +640,14 @@ class VisionEncoder(nn.Module):
         self,
         pixel_values: torch.Tensor,
         grid_thw: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int]:
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        int,
+        tuple[tuple[int, int], ...],
+    ]:
         """准备 Vision tensor region 的输入。
 
         grid 驱动的位置插值、2D RoPE index 和分段边界包含 Python 动态控制流，
@@ -645,10 +666,17 @@ class VisionEncoder(nn.Module):
             grid_thw[:, 1] * grid_thw[:, 2],
             grid_thw[:, 0],
         )
-        max_seqlen = int(segment_lengths.max().item())
+        segment_lengths_list = segment_lengths.tolist()
+        max_seqlen = max(segment_lengths_list)
+        segment_ends: list[int] = []
+        segment_end = 0
+        for segment_length in segment_lengths_list:
+            segment_end += segment_length
+            segment_ends.append(segment_end)
+        segment_ranges = tuple(zip((0, *segment_ends[:-1]), segment_ends))
         cu_seqlens = segment_lengths.cumsum(dim=0, dtype=torch.int32)
         cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0).to(x.device)
-        return x, cos, sin, cu_seqlens, max_seqlen
+        return x, cos, sin, cu_seqlens, max_seqlen, segment_ranges
 
     def forward_tensor_region(
         self,
@@ -657,6 +685,7 @@ class VisionEncoder(nn.Module):
         sin: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        segment_ranges: tuple[tuple[int, int], ...],
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         """执行 ViT blocks、DeepStack mergers 和 main merger。
 
@@ -674,6 +703,7 @@ class VisionEncoder(nn.Module):
                 sin=sin,
                 cu_seqlens=cu_seqlens,
                 max_seqlen=max_seqlen,
+                segment_ranges=segment_ranges,
             )
             if layer_index in self.deepstack_visual_indexes:
                 merger_index = self.deepstack_visual_indexes.index(layer_index)
