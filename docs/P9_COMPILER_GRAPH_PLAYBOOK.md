@@ -1,9 +1,50 @@
 # P9 Compiler / CUDA Graph Pipeline Playbook
 
-> 状态：model-only CUDA Graph 的 BF16/scaled-FP8 × batch1/4 正式基线已完成；
-> NSYS 全流水线归因与 greedy full-step Graph 待完成（2026-07-20）
+> 状态：full-step CUDA Graph 已完成；P10 batch1 stateless compile + Graph 候选已在
+> RTX 5090 上通过 clean H1 与代表性 token-exact 验证（2026-07-23）
 > 目标：把 `torch.compile` 和 CUDA Graph 优化推进到完整推理 pipeline 的可证明边界，
 > 同时沉淀可复现的教学材料与面试问题链。
+
+## 0. P10 结论：编译更少，但覆盖完整 decode replay
+
+最终支持的 `compile_graph` 没有编译整个 decoder。NSYS 显示原始 full-step Graph 的
+decode kernel busy 中位数为 `10.119693 ms`，其中线性层/GEMV约占 `92.33%`；实验随后证明
+QKV和MLP交给Inductor会改变BF16 reduction order，并在短文本上造成逐token分叉。因此最终
+边界只包含两个已验证的无状态热点：
+
+- batch1 attention `o_proj` 由Inductor编译，逐bit保持原输出；
+- LM head先用动态activation scale、逐行weight scale的FP8 `_scaled_mm` 生成top-64候选，
+  再由两个Triton kernel使用原始BF16权重做FP32点积和确定性tie-break；
+- decoder、mutable KV、paged attention、QKV和MLP保留原精确路径；完整model forward、
+  candidate generation、rerank、greedy token与最小D2H仍处于同一个CUDA Graph replay。
+
+clean commit `6052205fd7e740aa166228155789c2e4ae069929` 在同一张
+`GPU-7f63f8b0-1027-d3bf-18b7-5102cbc9f2eb` RTX 5090、Torch 2.11/CUDA 13、同一模型快照和
+H1 8-image/128-output协议上的结果如下：
+
+| 系统 | TPOT median (ms) | Prism相对领先 |
+|---|---:|---:|
+| Prism `compile_graph` top-64 | **9.8510** | — |
+| Prism原full-step Graph | 10.3174 | **4.52%** |
+| SGLang/Triton | 10.3513 | **4.83%** |
+| vLLM | 10.5215 | **6.37%** |
+
+三次clean TPOT为`9.8508 / 9.8510 / 9.8786 ms`，128-token SHA256为
+`76ad1fb97daffe7dcbdec4300198350a5dac1341f09a78e312e55ae3376e14c6`，repeat内一致。
+短文本、单图、双图、16帧视频和H1均与原Graph基线逐token exact。最终NSYS node trace
+覆盖127个decode step：kernel busy中位数`9.670442 ms`、`384` kernels/step；原基线为
+`10.119693 ms`、`388` kernels/step。cold compile、一次性FP8 weight量化和Graph capture分别约
+`408.2 / 30.2 / 1044.1 ms`，不计入steady-state TPOT。
+
+主要证据：
+
+- `data/p10_compile_graph/stateless_candidate/h1_final_top64_repeat3_clean_6052205.jsonl`
+- `data/p10_compile_graph/stateless_candidate/h1_final_top64_semantic_nodes_clean_6052205_analysis.json`
+- `data/p10_compile_graph/correctness_matrix/*_compile_graph_final_top64.jsonl`
+- 同卡外部基线：`data/p10_compile_graph/current_env_external/`
+
+结论只适用于上述GPU UUID和冻结协议。batch大于1仍走原BF16投影/LM-head路径；top-64 recall
+已由代表性矩阵和H1证明，但不能外推为任意模型、采样策略或硬件上的无条件等价。
 
 ## 1. “优化到极致”的验收定义
 
@@ -75,7 +116,7 @@ CPU Graph replay range只是异步提交时间，不能当作完整 GPU step；G
 | model-only CUDA Graph | 当前强内部基线 | supported | 四个 formal cell 已完成；NSYS 归因中 |
 | greedy full-step CUDA Graph | decoder + LM head + argmax | pending | 主候选 |
 | pure compile subgraph | QKV/QK-Norm/M-RoPE | memory-safe、batch2分叉 | rejected evidence |
-| compile + full-step Graph | 相同DeviceBatch/capture边界 | pending | 只做一次正式候选 |
+| compile + full-step Graph | batch1无状态热点 + 完整Graph replay | supported | P10 clean H1领先外部基线4.83%–6.37% |
 
 任何 backend 超出支持的 batch/page/precision bucket 必须 startup fail closed，不能退回 eager
 后仍把记录标成 Graph/compile。
