@@ -46,6 +46,35 @@ H1 8-image/128-output协议上的结果如下：
 结论只适用于上述GPU UUID和冻结协议。batch大于1仍走原BF16投影/LM-head路径；top-64 recall
 已由代表性矩阵和H1证明，但不能外推为任意模型、采样策略或硬件上的无条件等价。
 
+## 0.1 P10.1：Vision 分段元数据只物化一次
+
+P10 decode 收口后，H1 prefill 的 NSYS 归因发现：SDPA 多图路径在每个 ViT attention
+层内对 CUDA `cu_seqlens` 调用两次 `.tolist()`。H1 使用两个 vision microbatch，
+因此 27 层会重复产生 `2 × 27 × 2 = 108` 次 device-to-host copy 和 stream sync。
+
+commit `e8eed9c2ba482c9a4ec365f4f10072114d718fda` 在每个 microbatch 的动态准备阶段一次性
+生成不可变 `segment_ranges`，并沿 `VisionEncoder -> ViTBlock -> ViTAttention` 传递。
+FlashAttention 仍使用原 `cu_seqlens`；直接调用 SDPA attention 且未提供预计算边界时，
+保留兼容回退。模型计算、权重、精度和 decode Graph 均未改变。
+
+同一 RTX 5090、同一模型快照和 H1 协议的 clean 证据：
+
+- prefill stream sync：`187 -> 79`，async memcpy：`217 -> 109`，均精确减少 `108`；
+- prefill kernel busy：`170.594 -> 170.502 ms`，kernel 数：`5020 -> 5018`，证明收益来自
+  删除 host/device 同步，而不是减少主要模型计算；
+- clean H1 warmup 2/repeat 3 TTFT 中位数：`271.409 -> 240.054 ms`，改善 `11.55%`；
+- clean H1 E2E 中位数：`1595.090 -> 1569.382 ms`，改善 `1.61%`；
+- decode TPOT 为 `9.8695 ms`，仍落在原 top-64 clean 波动范围内；128-token SHA256
+  保持 `76ad1fb97daffe7dcbdec4300198350a5dac1341f09a78e312e55ae3376e14c6`；
+- clean 双图与 16 帧视频 guardrail 也分别保持既有 token SHA256。
+
+主要证据：
+
+- `data/p10_compile_graph/vision_segment_ranges/h1_repeat3_clean_e8eed9c.jsonl`
+- `data/p10_compile_graph/vision_segment_ranges/h1_vision_segment_ranges_semantic_clean_e8eed9c_analysis.json`
+- `data/p10_compile_graph/vision_segment_ranges/guardrail_two_image_448_clean_e8eed9c.jsonl`
+- `data/p10_compile_graph/vision_segment_ranges/h2_video_16x448_clean_e8eed9c.jsonl`
+
 ## 1. “优化到极致”的验收定义
 
 这里的“极致”不等于把所有 Python 函数都交给 compiler，也不等于把 kernel 数降到最少。
