@@ -131,6 +131,50 @@ SwiGLU 激活 RMSE 为 `4.46e-4`。然而临时替换全部 36 层后，64-token
 - `data/p10_compile_graph/gate_up_fp8/layer0_real_decode_compile_probe_6d67dfa.json`
 - `data/p10_compile_graph/gate_up_fp8/guardrail_text_short_all_layers_probe_6d67dfa.json`
 
+## 0.4 P10.4：batch4 编译、MLP FP8 与视觉 FlashAttention 的止损边界
+
+clean `797c4bc` 的 H1 batch4 基线完整捕获 batch `1/2/3/4`，其中实际 replay 次数为
+`6/6/6/372`。128-token 四请求输出 repeat 内一致，SHA256 为
+`1e41d0c6b46b59018d634b2172fbfdc1e42637ece16a3e2d0c2ac24cf094e04f`；
+decode step 中位数 `11.9959 ms`，四路合计 decode throughput `326.43 token/s`。
+NSYS 的稳定 Graph replay CUDA 中位数约 `12.64 ms`（含 profiling overhead），
+kernel busy 约 `10.86–11.60 ms`。整个 capture 的 CUDA kernel 时间中，通用 BF16
+CUTLASS GEMM 占 `59.3%`、带 epilogue 的 MLP GEMM 占 `19.2%`、FlashAttention
+split-K 约占 `5.0%`；因此 batch4 的主导瓶颈是小批矩阵乘，不是 scheduler 或 KV。
+
+随后验证了三条看似自然但没有真实收益的扩展：
+
+1. 把动态 rowwise FP8 LM-head candidate generation 从 batch1 扩到 batch1–4，
+   同时保持 BF16-weight/FP32-dot top-64 精确重排。batch4 token SHA256 完全不变，
+   但 decode step 仅 `11.9959 -> 11.9916 ms`（`0.04%`），而冷 Graph capture
+   `692 -> 7510 ms`。再把 36 层 `o_proj` 的 Inductor 路径扩到 batch1–4 后，
+   decode step 为 `12.0040 ms`，反而慢 `0.07%`。两项均已完整回退。
+2. gate-up 的 1×128 blockwise FP8 scaling 在当前 Torch 2.11/CUDA 13 后端上不能用于
+   `(1,4096) × (4096,24576)`：fast accumulation 被 API 明确禁止，标准累加又在
+   `cublasLtMatmulAlgoGetHeuristic` 返回 `CUBLAS_STATUS_NOT_SUPPORTED`。改为只量化
+   decoder 尾部 4/8/12 层时，短文本 token hash 均保持；但零量化 eager 对照 TPOT
+   `25.838 ms`，最好的尾部 8 层仍为 `26.129 ms`，慢 `1.13%`，因此也不进入 Graph。
+3. 独立 `flash-attn` 未安装，但 vLLM bundled interface 提供兼容的 vision varlen
+   kernel。临时 fallback 通过 CUDA parity test，H1 128-token hash 也与 SDPA 相同；
+   紧邻 repeat3 的 TTFT 却是 vLLM FlashAttention `246.035 ms`、SDPA
+   `244.103 ms`，Flash 慢 `0.79%`。导入 fallback 已回退，避免无收益依赖耦合。
+
+这一轮的工程结论是：当前 batch1 `compile_graph` 边界不能机械外推到 batch4；
+BF16 CUTLASS 已经很好地覆盖 M=2–4，而 rowwise quantization、rerank 和新增 shape
+compile 抵消了 FP8 tensor-core 收益。后续若继续攻 batch4，应进入可度量的 GEMM
+kernel/量化算法研究，而不是扩大 Dynamo 捕获面。
+
+保留证据：
+
+- `data/p10_compile_graph/batch4/h1_b4_current_graph_repeat3_clean_797c4bc.jsonl`
+- `data/p10_compile_graph/batch4/h1_b4_semantic_v3_clean_797c4bc_analysis.json`
+- `data/p10_compile_graph/batch4/h1_b4_compile_graph_fp8_repeat3_v3_dirty.jsonl`
+- `data/p10_compile_graph/batch4/h1_b4_compile_graph_fp8_oproj_repeat3_dirty.jsonl`
+- `data/p10_compile_graph/gate_up_fp8/layer0_blockwise128_backend_rejection_797c4bc.json`
+- `data/p10_compile_graph/gate_up_fp8/guardrail_text_short_zero_layers_probe_797c4bc.json`
+- `data/p10_compile_graph/gate_up_fp8/guardrail_text_short_last{4,8,12}_layers_probe_797c4bc.json`
+- `data/p10_compile_graph/vision_flash/h1_{vllm_flash,sdpa}_repeat3_dirty.jsonl`
+
 ## 1. “优化到极致”的验收定义
 
 这里的“极致”不等于把所有 Python 函数都交给 compiler，也不等于把 kernel 数降到最少。
