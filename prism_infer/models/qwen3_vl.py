@@ -612,7 +612,6 @@ class Qwen3VLTextMLP(nn.Module):
                 packed.ndim == 2
                 and packed.is_cuda
                 and packed.dtype == torch.bfloat16
-                and packed.shape[0] <= 4
                 and not torch.compiler.is_compiling()
             ):
                 activated = fused_silu_mul(packed)

@@ -1,4 +1,4 @@
-"""Bit-exact fused SwiGLU activation for small-batch decode."""
+"""Bit-exact fused SwiGLU activation for decode and prefill."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ except ImportError:  # pragma: no cover - CPU-only environments
 
 SWIGLU_BLOCK_SIZE = 64
 SWIGLU_NUM_WARPS = 1
+PREFILL_SWIGLU_BLOCK_SIZE = 1024
+PREFILL_SWIGLU_NUM_WARPS = 8
 MAX_SWIGLU_BATCH = 4
 
 
@@ -65,11 +67,8 @@ def fused_silu_mul(packed: torch.Tensor) -> torch.Tensor:
         raise ValueError("fused SwiGLU requires CUDA BF16 input")
     if not packed.is_contiguous():
         raise ValueError("fused SwiGLU requires contiguous input")
-    if not 1 <= packed.shape[0] <= MAX_SWIGLU_BATCH:
-        raise ValueError(
-            f"fused SwiGLU supports batch sizes 1 through {MAX_SWIGLU_BATCH}, "
-            f"got {packed.shape[0]}"
-        )
+    if packed.shape[0] < 1:
+        raise ValueError("fused SwiGLU requires at least one row")
     if packed.shape[1] % 2:
         raise ValueError("fused SwiGLU requires an even packed feature dimension")
 
@@ -79,15 +78,26 @@ def fused_silu_mul(packed: torch.Tensor) -> torch.Tensor:
         dtype=packed.dtype,
         device=packed.device,
     )
-    _fused_swiglu_kernel[
-        (packed.shape[0], triton.cdiv(intermediate_size, SWIGLU_BLOCK_SIZE))
-    ](
-        packed,
-        output,
-        INTERMEDIATE_SIZE=intermediate_size,
-        BLOCK_SIZE=SWIGLU_BLOCK_SIZE,
-        num_warps=SWIGLU_NUM_WARPS,
-    )
+    if packed.shape[0] <= MAX_SWIGLU_BATCH:
+        _fused_swiglu_kernel[
+            (packed.shape[0], triton.cdiv(intermediate_size, SWIGLU_BLOCK_SIZE))
+        ](
+            packed,
+            output,
+            INTERMEDIATE_SIZE=intermediate_size,
+            BLOCK_SIZE=SWIGLU_BLOCK_SIZE,
+            num_warps=SWIGLU_NUM_WARPS,
+        )
+    else:
+        _fused_swiglu_kernel[
+            (packed.shape[0], triton.cdiv(intermediate_size, PREFILL_SWIGLU_BLOCK_SIZE))
+        ](
+            packed,
+            output,
+            INTERMEDIATE_SIZE=intermediate_size,
+            BLOCK_SIZE=PREFILL_SWIGLU_BLOCK_SIZE,
+            num_warps=PREFILL_SWIGLU_NUM_WARPS,
+        )
     return output
 
 

@@ -175,6 +175,49 @@ kernel/量化算法研究，而不是扩大 Dynamo 捕获面。
 - `data/p10_compile_graph/gate_up_fp8/guardrail_text_short_last{4,8,12}_layers_probe_797c4bc.json`
 - `data/p10_compile_graph/vision_flash/h1_{vllm_flash,sdpa}_repeat3_dirty.jsonl`
 
+## 0.5 P10.5：H2 归因与 bit-exact prefill SwiGLU
+
+H2 clean `96d7090` 的同卡 compile+Graph repeat3 为 prompt `1667`、output `128`，
+TPOT 中位数 `9.8535 ms`、TTFT 中位数 `250.106 ms`，输出 SHA256
+`4a61f1adb74d2c774edca95eb18f8f101f5a87e21c9846884045933bf208166f`。
+vLLM 0.25.1 虽得到 `10.5243 ms` TPOT，但只生成 `1665` 个 prompt token；首个差异发生
+在时间戳/视觉 special-token 顺序，因此按 manifest 合同只保留为诊断，不能写成 H2
+外部领先 claim。Prism 与 vLLM adapter 现都记录不泄漏 token 内容的
+`prompt_token_ids_sha256`，后续比较必须先通过 prompt identity。
+
+H2 NSYS 将 prefill 定位为 compute-bound：`177.820 ms` kernel busy 中，语言模型占
+`128.309 ms`，其中 BF16 线性投影占 `110.586 ms`（`86.2%`）。Vision 两个
+microbatch 共 `48.585 ms` kernel time、每个 14 次 stream sync；这些同步与 P10.3
+已否决的 grid-row 路径相同，不能因为 sync 数更少而重做。Torch 2.11
+Vision tensor-region 在严格精度配置下 steady latency `10.693 -> 7.603 ms`，但输出
+最大差异仍为 `0.515625`；进一步收缩到 vision RoPE 后为
+`0.0855 -> 0.0905 ms`，仍有 `0.0078125` 差异。两条 compiler 候选均不接入。
+
+真正合入的优化来自语言 prefill 的激活层。原实现只在 batch `1–4` decode 使用
+bit-exact Triton SwiGLU，prefill 每层仍分别启动 SiLU 和 BF16 multiply。新路径对大
+token 矩阵使用 1024-element/8-warp tile，并显式保留“SiLU 先舍入到 BF16，再乘 up”
+的 eager 舍入边界。真实 H2 `[1667, 24576]` 输入上，单层激活中位数
+`0.1268 -> 0.0740 ms`，逐元素完全相同；128/452/784/1667/4096 行矩阵也全部
+bit-exact。
+
+候选 H2 NSYS 中，语言模型 kernel 数 `2672 -> 2636`，GPU busy
+`128.417 -> 126.143 ms`（`-1.77%`）；完整 prefill kernel busy
+`177.820 -> 175.653 ms`。36 个原生 SiLU 与 36 个对应 multiply 合并为 36 个
+`_fused_swiglu_kernel`，同步与 memcpy 数不变。H1/H2 128-token 全流程分别保持原
+SHA256 `76ad1f...14c6` 与 `4a61f1...166f`。H2 TTFT 仍有已知双峰，因此不使用
+repeat7 中位数放大 claim；邻接候选/clean 的 min 和 max 均稳定前移约 `1.9 ms`，
+与 kernel 归因一致。
+
+主要证据：
+
+- `data/p10_compile_graph/h2_external/h2_prism_compile_graph_repeat3_clean_7b322ef.jsonl`
+- `data/p10_compile_graph/h2_external/h2_vllm_repeat3_7b322ef.jsonl`
+- `data/p10_compile_graph/h2_profile/h2_semantic_targets_clean_96d7090_analysis.json`
+- `data/p10_compile_graph/h2_vision_compile/vision_tensor_torch211_same_precision_clean_96d7090.json`
+- `data/p10_compile_graph/h2_vision_compile/vision_rotary_torch211_same_precision_dirty.json`
+- `data/p10_compile_graph/h2_vision_compile/h2_prefill_swiglu_{baseline_repeat7_clean_96d7090,repeat7_dirty}.jsonl`
+- `data/p10_compile_graph/prefill_swiglu/h2_prefill_swiglu_language_dirty_analysis.json`
+
 ## 1. “优化到极致”的验收定义
 
 这里的“极致”不等于把所有 Python 函数都交给 compiler，也不等于把 kernel 数降到最少。
