@@ -32,6 +32,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
+from prism_infer.analysis.p9_external_quality import (
+    VLLM_PROMPT_ADAPTERS,
+    adapt_vllm_prompt_text,
+)
 
 EXTERNAL_SCHEMA_VERSION = 2
 COMPARISON_PROFILES = ("diagnostic_matched", "best_stable")
@@ -182,6 +186,14 @@ def _build_vllm_prompts(
             tokenize=False,
             add_generation_prompt=True,
         )
+        if "video" in request:
+            prompt_text = adapt_vllm_prompt_text(
+                prompt_text,
+                modality="video",
+                vision_start_token=getattr(processor, "vision_start_token", ""),
+                media_token=getattr(processor, "video_token", ""),
+                vision_end_token=getattr(processor, "vision_end_token", ""),
+            )
         prompt: dict[str, Any] = {"prompt": prompt_text}
         if multi_modal_data:
             prompt["multi_modal_data"] = multi_modal_data
@@ -415,6 +427,11 @@ def main() -> None:
             "prompt_tokens": sum(prompt_token_counts),
             "prompt_tokens_per_request": prompt_token_counts,
             "prompt_token_ids_sha256": _canonical_sha256(audited_prompt_ids),
+            "prompt_adapters": {
+                modality: VLLM_PROMPT_ADAPTERS[modality]
+                for modality in ("image", "video")
+                if modality in limit_mm_per_prompt
+            },
             "max_tokens": args.max_tokens,
             "preprocessing_included_in_e2e": True,
             "traffic": "offline_closed_loop",
