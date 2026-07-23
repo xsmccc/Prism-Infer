@@ -275,6 +275,49 @@ GEMM，最快 Triton 候选约 `0.870 ms`，另有部分配置超过当前设备
 - `data/p10_compile_graph/prefill_add_rmsnorm/prefill_mlp_compile_rows1667_clean_35c156d.json`
 - `data/p10_compile_graph/prefill_add_rmsnorm/prefill_mlp_compile_rows1667_maxautotune_clean_35c156d.json`
 
+## 0.8 P10.8：共享 A tile 的 CUTLASS DualGemm-SwiGLU
+
+NCU 在当前 AutoDL 宿主机被 `RmProfilingAdminOnly: 1` 禁止读取硬件计数器，即使 root
+运行也返回 `ERR_NVGPUCTRPERM`。因此本轮保留失败证据，并改用 NSYS kernel 时间线、
+布局扫描和真实权重 microbenchmark 完成归因。gate/up projection 在 H2 的
+`1667 x 4096` 输入上是单个约 `1.526 ms` 的 CUTLASS extern GEMM；down projection
+约 `0.789 ms`。显式 cuBLASLt、转置布局以及 CUTLASS Python Operator API 均未同时满足
+bit-exact 与更快，继续扩大 `torch.compile` 覆盖也没有收益。
+
+最终实现为 SM120 专用的 CUTLASS DualGemm：两个 gate/up GEMM 共享同一个 A tile，
+epilogue 先分别舍入到 BF16，再计算 SiLU 和乘法，从而保持原有 BF16 舍入边界；不写回
+两个 `1667 x 12288` 中间张量。真实 layer-0 权重的 1667-row microbenchmark 为
+`1.5698 -> 1.4952 ms`（`-4.75%`），逐元素完全相同。范围扫描发现 960 rows 有稳定回退，
+因此 runtime 只对 rows `>= 1024`、固定 Qwen3-VL-8B shape、BF16 contiguous CUDA tensor
+启用；其他 shape、编译跟踪期、非 SM120 或缺少 CUTLASS 依赖时均 fail closed 到原路径。
+`PRISM_DISABLE_CUTLASS_DUAL_SWIGLU=1` 可做同提交基线。
+
+同一 clean commit `eb0e1d3`、同一进程内三个 H2 language-model range 的 feature-off/on
+严格对照为：
+
+| 指标（3 ranges 中位数） | feature off | DualGemm on | 变化 |
+|---|---:|---:|---:|
+| CPU range | 82.608 ms | 78.170 ms | -5.37% |
+| GPU busy | 123.536 ms | 121.367 ms | -1.76% |
+| GPU span | 133.884 ms | 129.040 ms | -3.62% |
+| kernel time | 123.428 ms | 121.266 ms | -1.75% |
+| kernels / range | 2222 | 2186 | -36 |
+
+原 gate/up GEMM 加 SwiGLU 的三个 range 累计时间为 `168.827 ms`，融合后为
+`161.609 ms`（`-4.28%`）。memcpy 与 stream synchronize 数量不变。feature-off/on
+输出均为 SHA256 `4a61f1...166f`，且各自相对 unprofiled token exact。H1 也保持
+`76ad1f...14c6`。H2 full-run TTFT 仍有已知双峰，本节不据此形成 E2E claim；当前结论
+限定为可重复的真实模型 microbenchmark 和完整 H2 language-model NSYS region。
+
+主要证据：
+
+- `data/p10_compile_graph/prefill_projection_ncu/cutlass_dual_swiglu_rows1667_dirty_e6410b3.json`
+- `data/p10_compile_graph/prefill_projection_ncu/cutlass_dual_swiglu_range_scan_dirty_e6410b3.json`
+- `data/p10_compile_graph/prefill_projection_ncu/{gate_up,down}_layout_scan_rows1667_clean_e6410b3.json`
+- `data/p10_compile_graph/cutlass_dual_swiglu/h2_repeat5_clean_eb0e1d3.jsonl`
+- `data/p10_compile_graph/cutlass_dual_swiglu/h2_language_{baseline_,}repeat3_clean_eb0e1d3_analysis.json`
+- `data/p10_compile_graph/cutlass_dual_swiglu/h2_semantic_{baseline_,}repeat3_clean_eb0e1d3.jsonl`
+
 ## 1. “优化到极致”的验收定义
 
 这里的“极致”不等于把所有 Python 函数都交给 compiler，也不等于把 kernel 数降到最少。
