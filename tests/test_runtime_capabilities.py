@@ -26,6 +26,7 @@ def _complete_capabilities() -> RuntimeCapabilities:
         compile_available=True,
         cuda_graph_available=True,
         fp8_e4m3fn_available=True,
+        scaled_mm_available=True,
         triton_available=True,
     )
 
@@ -92,6 +93,27 @@ def test_fp8_runtime_never_silently_falls_back_without_dtype_or_triton() -> None
     )
 
 
+def test_compile_graph_requires_fp8_scaled_mm_and_compile() -> None:
+    capabilities = replace(
+        _complete_capabilities(),
+        compile_available=False,
+        fp8_e4m3fn_available=False,
+        scaled_mm_available=False,
+    )
+
+    errors = runtime_capability_errors(
+        capabilities,
+        execution_backend="compile_graph",
+        compression_mode="off",
+    )
+
+    assert errors == (
+        "torch.compile is unavailable",
+        "compile_graph requires torch.float8_e4m3fn",
+        "compile_graph requires torch._scaled_mm",
+    )
+
+
 def test_core_capability_errors_include_version_and_required_apis() -> None:
     capabilities = replace(
         _complete_capabilities(),
@@ -120,4 +142,5 @@ def test_detected_capabilities_are_machine_readable() -> None:
 
     assert payload["torch_version"]
     assert isinstance(payload["torch_version_supported"], bool)
+    assert isinstance(payload["scaled_mm_available"], bool)
     assert isinstance(payload["triton_available"], bool)

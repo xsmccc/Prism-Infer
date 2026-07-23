@@ -26,6 +26,7 @@ import torch.distributed as dist  # 分布式通信 (NCCL)
 
 from prism_infer.analysis.schema_constants import (
     DECODE_COMPILE_KV_BOUNDARY,
+    DECODE_COMPILE_STATELESS_SUBGRAPH,
     DECODE_COMPILE_SUBGRAPH,
 )
 from prism_infer.observability import (
@@ -77,7 +78,11 @@ try:
     from prism_infer.models.qwen3 import Qwen3ForCausalLM  # Qwen3 纯文本模型 (legacy)
 except ImportError:
     Qwen3ForCausalLM = None  # VL 项目中纯文本模型可能不存在, 用 VL 版替代
-from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
+from prism_infer.models.qwen3_vl import (
+    Qwen3VLForCausalLM,
+    compile_decode_fp8_lm_head,
+    compile_decode_o_proj,
+)
 from prism_infer.models.model_registry import ModelFamily, resolve_model_family
 from prism_infer.models.qwen3_vl_architecture import MROPE_AXIS_COUNT
 from prism_infer.layers.sampler import (  # 采样器 (温度采样/贪婪)
@@ -172,6 +177,7 @@ class ModelRunner:
         self.cpu_kv_scale_cache: torch.Tensor | None = None
         self.cudagraph_capture_ms = 0.0
         self.decode_compile_first_call_ms = 0.0
+        self.decode_fp8_lm_head_quantization_ms = 0.0
         self.decode_compile_first_call_pending = False
         self.last_cudagraph_actual_batch_size: int | None = None
         self.last_cudagraph_replay_batch_size: int | None = None
@@ -455,32 +461,79 @@ class ModelRunner:
         return self.model(inputs.input_ids, inputs.position_ids)
 
     def _configure_decode_compile(self) -> None:
-        """按显式配置启用 attention-only decode compile preflight。"""
+        """Enable exactly one explicitly configured decode compile region."""
 
         region = self.config.decode_compile_region
         if region == "none":
             return
-        if region != "attention" or not self.is_vl_model:
-            raise RuntimeError("decode compile currently supports only Qwen3-VL attention")
+        if not self.is_vl_model:
+            raise RuntimeError("decode compile currently supports only Qwen3-VL")
         attention_layers = [layer.self_attn for layer in self.model.model.language_model.layers]
         if not attention_layers:
-            raise RuntimeError("decode attention compile found no decoder layers")
+            raise RuntimeError("decode compile found no decoder layers")
+        if region == "attention":
+            for attention in attention_layers:
+                attention.enable_decode_compile(
+                    mode=self.config.decode_compile_mode,
+                    emulate_precision_casts=(
+                        self.config.decode_compile_emulate_precision_casts
+                    ),
+                    force_same_precision=(self.config.decode_compile_force_same_precision),
+                )
+            self.decode_compile_first_call_pending = True
+            return
+        if region != "stateless":
+            raise RuntimeError(f"unsupported decode compile region: {region!r}")
+        compiled_o_proj = compile_decode_o_proj(
+            mode=self.config.decode_compile_mode,
+            emulate_precision_casts=self.config.decode_compile_emulate_precision_casts,
+            force_same_precision=self.config.decode_compile_force_same_precision,
+        )
         for attention in attention_layers:
-            attention.enable_decode_compile(
-                mode=self.config.decode_compile_mode,
-                emulate_precision_casts=(self.config.decode_compile_emulate_precision_casts),
-                force_same_precision=(self.config.decode_compile_force_same_precision),
-            )
-        self.decode_compile_first_call_pending = True
+            attention.enable_decode_o_proj_compile(compiled_o_proj)
+        torch.cuda.synchronize()
+        quantize_start = perf_counter()
+        fp8_lm_head_inputs = self.model.prepare_decode_fp8_greedy_lm_head()
+        torch.cuda.synchronize()
+        self.decode_fp8_lm_head_quantization_ms = (
+            perf_counter() - quantize_start
+        ) * 1000.0
+        compiled_fp8_lm_head = compile_decode_fp8_lm_head(
+            mode=self.config.decode_compile_mode,
+            emulate_precision_casts=self.config.decode_compile_emulate_precision_casts,
+            force_same_precision=self.config.decode_compile_force_same_precision,
+        )
+        self.model.enable_decode_fp8_greedy_lm_head_compile(compiled_fp8_lm_head)
+        probe = torch.zeros(
+            1,
+            attention_layers[0].o_proj.in_features,
+            device=attention_layers[0].o_proj.weight.device,
+            dtype=attention_layers[0].o_proj.weight.dtype,
+        )
+        torch.cuda.synchronize()
+        compile_start = perf_counter()
+        compiled_outputs = [
+            compiled_o_proj(probe, attention_layers[0].o_proj.weight),
+            compiled_fp8_lm_head(probe, *fp8_lm_head_inputs),
+        ]
+        torch.cuda.synchronize()
+        self.decode_compile_first_call_ms = (perf_counter() - compile_start) * 1000.0
+        del compiled_outputs, probe
+        torch.cuda.empty_cache()
 
     def compile_metadata(self) -> dict[str, object]:
         """返回 decode ``torch.compile`` 的可审计配置和 cold first call。"""
 
         enabled = self.config.decode_compile_region != "none"
+        region = self.config.decode_compile_region
+        subgraph = {
+            "attention": DECODE_COMPILE_SUBGRAPH,
+            "stateless": DECODE_COMPILE_STATELESS_SUBGRAPH,
+        }.get(region, "none")
         return {
             "enabled": enabled,
-            "region": ("decode_attention" if enabled else "none"),
-            "subgraph": DECODE_COMPILE_SUBGRAPH if enabled else "none",
+            "region": (f"decode_{region}" if enabled else "none"),
+            "subgraph": subgraph,
             "kv_cache_boundary": DECODE_COMPILE_KV_BOUNDARY if enabled else "none",
             "backend": "inductor" if enabled else "none",
             "mode": self.config.decode_compile_mode if enabled else "none",
@@ -491,6 +544,11 @@ class ModelRunner:
                 self.config.decode_compile_force_same_precision if enabled else False
             ),
             "first_call_ms": self.decode_compile_first_call_ms if enabled else 0.0,
+            "fp8_lm_head_quantization_ms": (
+                getattr(self, "decode_fp8_lm_head_quantization_ms", 0.0)
+                if region == "stateless"
+                else 0.0
+            ),
         }
 
     def warmup_model(self):

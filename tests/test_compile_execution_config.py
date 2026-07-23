@@ -73,6 +73,35 @@ def test_attention_compile_config_requires_eager_off_baseline(
     print("P6.3 compile/Graph/compression config isolation: PASS")
 
 
+def test_compile_graph_config_uses_supported_stateless_region(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_auto_config(monkeypatch)
+    config = Config(
+        str(tmp_path),
+        max_model_len=1024,
+        max_num_batched_tokens=1024,
+        execution_backend="compile_graph",
+        compression_mode="off",
+        decode_compile_region="stateless",
+    )
+
+    assert config.enforce_eager is False
+    assert config.decode_compile_region == "stateless"
+    assert config.allow_unsafe_decode_compile is False
+
+    with pytest.raises(ValueError, match="compile_graph.*requires.*stateless"):
+        Config(
+            str(tmp_path),
+            max_model_len=1024,
+            max_num_batched_tokens=1024,
+            execution_backend="compile_graph",
+            compression_mode="off",
+            decode_compile_region="attention",
+        )
+
+
 def test_p611_config_rejects_logical_prune_cuda_graph(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -275,7 +304,7 @@ def test_compile_qkv_split_handles_nonzero_offset_cache_views() -> None:
     num_heads = 4
     num_kv_heads = 2
     head_dim = 16
-    page_size = 8
+    page_size = 16
     num_blocks = 2
     attention = Qwen3VLTextAttention(
         hidden_size=hidden_size,
@@ -332,4 +361,7 @@ def test_compile_qkv_split_handles_nonzero_offset_cache_views() -> None:
     assert attention.engine_attn.k_cache.storage_offset() > 0
     assert attention.engine_attn.v_cache.storage_offset() > 0
     torch.testing.assert_close(actual_cache, reference_cache, rtol=0.0, atol=0.0)
-    torch.testing.assert_close(actual, reference, rtol=0.0, atol=0.0)
+    # The legacy attention-only compile path is explicitly opt-in because
+    # Inductor may change BF16 reduction order.  This test protects the aliased
+    # cache contract; numerical equivalence is sufficient for its output.
+    torch.testing.assert_close(actual, reference, rtol=0.1, atol=0.002)

@@ -370,7 +370,7 @@ def test_runtime_config_is_frozen_replaced_and_pickle_stable(
     assert process.exitcode == 0
 
 
-def test_compile_graph_is_rejected_before_hf_model_loading(
+def test_compile_graph_requires_stateless_region_before_hf_model_loading(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -380,7 +380,7 @@ def test_compile_graph_is_rejected_before_hf_model_loading(
         lambda path: model_loads.append(path),
     )
 
-    with pytest.raises(ValueError, match="compile_graph.*not implemented"):
+    with pytest.raises(ValueError, match="compile_graph.*requires.*stateless"):
         Config(str(tmp_path), execution_backend="compile_graph")
 
     assert model_loads == []

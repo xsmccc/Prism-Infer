@@ -29,6 +29,7 @@ class RuntimeCapabilities:
     compile_available: bool
     cuda_graph_available: bool
     fp8_e4m3fn_available: bool
+    scaled_mm_available: bool
     triton_available: bool
     triton_error: str | None = None
 
@@ -71,6 +72,7 @@ def detect_runtime_capabilities() -> RuntimeCapabilities:
             hasattr(torch.cuda, "CUDAGraph") and callable(getattr(torch.cuda, "graph", None))
         ),
         fp8_e4m3fn_available=hasattr(torch, "float8_e4m3fn"),
+        scaled_mm_available=callable(getattr(torch, "_scaled_mm", None)),
         triton_available=triton_available,
         triton_error=triton_error,
     )
@@ -123,11 +125,18 @@ def _backend_capability_errors(
     """Validate requirements owned by one explicitly selected backend."""
 
     errors: list[str] = []
-    if execution_backend == "cuda_graph":
+    if execution_backend in ("cuda_graph", "compile_graph"):
         if not capabilities.cuda_graph_available:
             errors.append("CUDA Graph APIs are unavailable")
         if not capabilities.triton_available:
             errors.append("CUDA Graph decode requires the Triton paged-attention backend")
+        if execution_backend == "compile_graph":
+            if not capabilities.compile_available:
+                errors.append("torch.compile is unavailable")
+            if not capabilities.fp8_e4m3fn_available:
+                errors.append("compile_graph requires torch.float8_e4m3fn")
+            if not capabilities.scaled_mm_available:
+                errors.append("compile_graph requires torch._scaled_mm")
     elif execution_backend == "compile":
         if not capabilities.compile_available:
             errors.append("torch.compile is unavailable")

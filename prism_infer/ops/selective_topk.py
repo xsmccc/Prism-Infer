@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover - CPU-only environments
 SELECTIVE_TOPK_TILE_SIZE = 1024
 SELECTIVE_TOPK_NUM_WARPS = 8
 MAX_SELECTIVE_TOPK_BATCH = 4
+SELECTIVE_RERANK_NUM_WARPS = 8
 
 
 if HAS_SELECTIVE_TOPK_TRITON:
@@ -101,6 +102,55 @@ if HAS_SELECTIVE_TOPK_TRITON:
             selected_global_ids.to(tl.int64),
         )
 
+    @triton.jit
+    def _selective_fp32_scores_kernel(
+        candidate_ids_ptr,
+        hidden_ptr,
+        weight_ptr,
+        scores_ptr,
+        HIDDEN_SIZE: tl.constexpr,
+        TOP_K: tl.constexpr,
+        BLOCK_SIZE: tl.constexpr,
+    ):
+        batch_id = tl.program_id(0)
+        candidate_offset = tl.program_id(1)
+        hidden_offsets = tl.arange(0, BLOCK_SIZE)
+        candidate_id = tl.load(
+            candidate_ids_ptr + batch_id * TOP_K + candidate_offset
+        )
+        hidden = tl.load(
+            hidden_ptr + batch_id * HIDDEN_SIZE + hidden_offsets,
+            mask=hidden_offsets < HIDDEN_SIZE,
+            other=0.0,
+        ).to(tl.float32)
+        weight = tl.load(
+            weight_ptr + candidate_id * HIDDEN_SIZE + hidden_offsets,
+            mask=hidden_offsets < HIDDEN_SIZE,
+            other=0.0,
+        ).to(tl.float32)
+        tl.store(
+            scores_ptr + batch_id * TOP_K + candidate_offset,
+            tl.sum(hidden * weight, axis=0),
+        )
+
+    @triton.jit
+    def _selective_fp32_winner_kernel(
+        candidate_ids_ptr,
+        scores_ptr,
+        output_ptr,
+        TOP_K: tl.constexpr,
+    ):
+        batch_id = tl.program_id(0)
+        offsets = tl.arange(0, TOP_K)
+        scores = tl.load(scores_ptr + batch_id * TOP_K + offsets)
+        candidate_ids = tl.load(candidate_ids_ptr + batch_id * TOP_K + offsets)
+        winning_score = tl.max(scores, axis=0)
+        # torch.argmax over the full vocabulary resolves exact ties toward the
+        # lowest token id, independent of the unsorted top-k candidate order.
+        tied_ids = tl.where(scores == winning_score, candidate_ids, 0x7FFFFFFF)
+        token_id = tl.min(tied_ids, axis=0)
+        tl.store(output_ptr + batch_id, token_id)
+
 
 def selective_topk_indices(logits: torch.Tensor, *, k: int) -> torch.Tensor:
     """Return the top-k BF16 vocabulary ids using two CUDA Graph-safe kernels."""
@@ -165,4 +215,77 @@ def selective_topk_indices(logits: torch.Tensor, *, k: int) -> torch.Tensor:
     return output_ids
 
 
-__all__ = ["HAS_SELECTIVE_TOPK_TRITON", "selective_topk_indices"]
+def rerank_greedy_candidates(
+    candidate_ids: torch.Tensor,
+    hidden_states: torch.Tensor,
+    weight: torch.Tensor,
+) -> torch.Tensor:
+    """Select one token with FP32 dots without materializing candidate embeddings."""
+
+    if not HAS_SELECTIVE_TOPK_TRITON:
+        raise RuntimeError("selective FP32 reranking requires Triton")
+    if candidate_ids.ndim != 2 or hidden_states.ndim != 2 or weight.ndim != 2:
+        raise ValueError("selective FP32 reranking expects rank-2 tensors")
+    if candidate_ids.dtype != torch.int64:
+        raise ValueError("selective FP32 reranking requires int64 candidate ids")
+    if hidden_states.dtype != torch.bfloat16 or weight.dtype != torch.bfloat16:
+        raise ValueError("selective FP32 reranking requires BF16 hidden states and weight")
+    if (
+        not candidate_ids.is_cuda
+        or candidate_ids.device != hidden_states.device
+        or hidden_states.device != weight.device
+    ):
+        raise ValueError("selective FP32 reranking requires one CUDA device")
+    if not candidate_ids.is_contiguous() or not hidden_states.is_contiguous():
+        raise ValueError("candidate ids and hidden states must be contiguous")
+    if not weight.is_contiguous():
+        raise ValueError("selective FP32 reranking requires contiguous model weight")
+    batch_size, top_k = candidate_ids.shape
+    if hidden_states.shape[0] != batch_size:
+        raise ValueError("candidate ids and hidden states must have the same batch size")
+    if weight.shape[1] != hidden_states.shape[1]:
+        raise ValueError("LM-head weight and hidden size must match")
+    if not 1 <= batch_size <= MAX_SELECTIVE_TOPK_BATCH:
+        raise ValueError("selective FP32 reranking supports batch sizes 1 through 4")
+    if top_k <= 0 or top_k & (top_k - 1):
+        raise ValueError("selective FP32 reranking candidate count must be a power of two")
+    if top_k > SELECTIVE_TOPK_TILE_SIZE:
+        raise ValueError(
+            f"selective FP32 reranking supports at most {SELECTIVE_TOPK_TILE_SIZE} candidates"
+        )
+
+    scores = torch.empty(
+        (batch_size, top_k),
+        dtype=torch.float32,
+        device=hidden_states.device,
+    )
+    output_ids = torch.empty(
+        (batch_size,),
+        dtype=torch.int64,
+        device=hidden_states.device,
+    )
+    _selective_fp32_scores_kernel[(batch_size, top_k)](
+        candidate_ids,
+        hidden_states,
+        weight,
+        scores,
+        HIDDEN_SIZE=hidden_states.shape[1],
+        TOP_K=top_k,
+        BLOCK_SIZE=triton.next_power_of_2(hidden_states.shape[1]),
+        num_warps=SELECTIVE_RERANK_NUM_WARPS,
+    )
+    _selective_fp32_winner_kernel[(batch_size,)](
+        candidate_ids,
+        scores,
+        output_ids,
+        TOP_K=top_k,
+        num_warps=1,
+    )
+    return output_ids
+
+
+__all__ = [
+    "HAS_SELECTIVE_TOPK_TRITON",
+    "rerank_greedy_candidates",
+    "selective_topk_indices",
+]

@@ -351,21 +351,27 @@ class ExecutionConfig:
                 f"paged_decode_block_n must be one of {supported}; "
                 f"got {self.paged_decode_block_n!r}"
             )
-        if self.compile_region not in ("none", "attention"):
+        if self.compile_region not in ("none", "attention", "stateless"):
             raise ValueError(
-                f"decode_compile_region must be 'none' or 'attention', got {self.compile_region!r}"
+                "decode_compile_region must be 'none', 'attention', or 'stateless', "
+                f"got {self.compile_region!r}"
             )
-        if self.compile_mode not in ("default", "reduce-overhead"):
+        if self.compile_mode not in (
+            "default",
+            "reduce-overhead",
+            "max-autotune-no-cudagraphs",
+        ):
             raise ValueError(
-                "decode_compile_mode must be 'default' or 'reduce-overhead', "
+                "unsupported decode_compile_mode "
                 f"got {self.compile_mode!r}"
             )
         if backend is ExecutionBackendName.COMPILE_GRAPH:
-            raise ValueError(
-                "execution backend 'compile_graph' is not implemented; "
-                "startup fallback is forbidden"
-            )
-        if backend is ExecutionBackendName.COMPILE:
+            if self.compile_region != "stateless":
+                raise ValueError(
+                    "execution backend 'compile_graph' requires "
+                    "decode_compile_region='stateless'"
+                )
+        elif backend is ExecutionBackendName.COMPILE:
             if self.compile_region != "attention":
                 raise ValueError(
                     "execution backend 'compile' currently requires "
@@ -475,7 +481,8 @@ class PrismConfig:
         )
         object.__setattr__(self, "quantization", resolved_quantization)
         if (
-            self.execution.backend is ExecutionBackendName.CUDA_GRAPH
+            self.execution.backend
+            in (ExecutionBackendName.CUDA_GRAPH, ExecutionBackendName.COMPILE_GRAPH)
             and not compression_mode_supports_cuda_graph(self.cache.compression_mode)
         ):
             raise ValueError(
@@ -484,16 +491,19 @@ class PrismConfig:
                 "metadata is not CUDA Graph safe"
             )
         if (
-            self.execution.backend is ExecutionBackendName.CUDA_GRAPH
+            self.execution.backend
+            in (ExecutionBackendName.CUDA_GRAPH, ExecutionBackendName.COMPILE_GRAPH)
             and self.scheduler.max_num_seqs > MAX_CUDA_GRAPH_BATCH_SIZE
         ):
             raise ValueError(
-                "execution backend 'cuda_graph' supports max_num_seqs <= "
+                f"execution backend {self.execution.backend.value!r} supports "
+                "max_num_seqs <= "
                 f"{MAX_CUDA_GRAPH_BATCH_SIZE}; got "
                 f"{self.scheduler.max_num_seqs}"
             )
         if (
-            self.execution.backend is ExecutionBackendName.COMPILE
+            self.execution.backend
+            in (ExecutionBackendName.COMPILE, ExecutionBackendName.COMPILE_GRAPH)
             and self.cache.compression_mode != COMPRESSION_OFF
         ):
             raise ValueError("P6.3 decode compile preflight requires compression_mode='off'")
@@ -599,7 +609,10 @@ class PrismConfig:
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"unsupported execution_backend: {explicit_backend!r}") from exc
             if "enforce_eager" in options:
-                expected_eager = backend is not ExecutionBackendName.CUDA_GRAPH
+                expected_eager = backend not in (
+                    ExecutionBackendName.CUDA_GRAPH,
+                    ExecutionBackendName.COMPILE_GRAPH,
+                )
                 if enforce_eager != expected_eager:
                     raise ValueError(
                         "enforce_eager conflicts with execution_backend: "
@@ -903,7 +916,10 @@ class Config:
 
     @property
     def enforce_eager(self) -> bool:
-        return self.execution_config.backend is not ExecutionBackendName.CUDA_GRAPH
+        return self.execution_config.backend not in (
+            ExecutionBackendName.CUDA_GRAPH,
+            ExecutionBackendName.COMPILE_GRAPH,
+        )
 
     @property
     def decode_compile_region(self) -> str:

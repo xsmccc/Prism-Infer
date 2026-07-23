@@ -86,6 +86,16 @@ def main() -> None:
     parser.add_argument("--num-kvcache-blocks", type=int, default=113)
     parser.add_argument("--kvcache-block-size", type=int, default=256)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
+    parser.add_argument(
+        "--execution-backend",
+        choices=("cuda_graph", "compile_graph"),
+        default="cuda_graph",
+    )
+    parser.add_argument(
+        "--compile-region",
+        choices=("stateless",),
+        default="stateless",
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -101,6 +111,11 @@ def main() -> None:
     llm = LLM(
         args.model,
         enforce_eager=False,
+        execution_backend=args.execution_backend,
+        decode_compile_region=(
+            args.compile_region if args.execution_backend == "compile_graph" else "none"
+        ),
+        decode_compile_mode="max-autotune-no-cudagraphs",
         compression_mode="off",
         tensor_parallel_size=1,
         max_model_len=args.max_model_len,
@@ -193,6 +208,7 @@ def main() -> None:
         git = collect_git_metadata(REPO_ROOT)
         gpu = collect_gpu_metadata().environment_dict()
         graph = llm.model_runner.cudagraph_metadata(1)
+        compile_metadata = llm.model_runner.compile_metadata()
         record = {
             "schema_version": 1,
             "record_type": "external_system_benchmark",
@@ -222,7 +238,7 @@ def main() -> None:
                 "kv_cache_capacity_tokens": args.num_kvcache_blocks * args.kvcache_block_size,
             },
             "backend": {
-                "execution": "cuda_graph",
+                "execution": args.execution_backend,
                 "attention": "vllm_flash_attn_paged_bf16",
                 "prefix_caching": False,
                 "chunked_prefill": False,
@@ -233,6 +249,7 @@ def main() -> None:
                 "fused_add_rmsnorm": True,
                 "packed_kv_projection": True,
                 "cuda_graph": graph,
+                "torch_compile": compile_metadata,
             },
             "workload": {
                 "manifest_name": manifest["name"],

@@ -62,7 +62,7 @@ def test_cudagraph_metadata_reports_capture_scope_and_selected_bucket() -> None:
     print(f"CUDA Graph execution metadata: {metadata}")
     assert metadata == {
         "enabled": True,
-        "capture_scope": "decode_model_forward",
+        "capture_scope": "decode_model_forward_logits_greedy",
         "capture_ms": 123.5,
         "batch_sizes": [1, 2, 3, 4, 5, 6, 7, 8],
         "requested_batch_size": 3,
@@ -113,6 +113,7 @@ def test_compile_metadata_reports_attention_region_and_cold_time() -> None:
         "emulate_precision_casts": True,
         "force_same_precision": True,
         "first_call_ms": 2345.0,
+        "fp8_lm_head_quantization_ms": 0.0,
     }
     print(f"attention compile metadata: {metadata} PASS")
 
@@ -139,5 +140,33 @@ def test_compile_metadata_reports_disabled_state() -> None:
         "emulate_precision_casts": False,
         "force_same_precision": False,
         "first_call_ms": 0.0,
+        "fp8_lm_head_quantization_ms": 0.0,
     }
     print(f"disabled compile metadata: {metadata} PASS")
+
+
+def test_compile_metadata_reports_stateless_fp8_candidate_path() -> None:
+    runner = object.__new__(ModelRunner)
+    runner.config = SimpleNamespace(
+        decode_compile_region="stateless",
+        decode_compile_mode="default",
+        decode_compile_emulate_precision_casts=True,
+        decode_compile_force_same_precision=True,
+    )
+    runner.decode_compile_first_call_ms = 812.0
+    runner.decode_fp8_lm_head_quantization_ms = 19.5
+
+    metadata = runner.compile_metadata()
+
+    assert metadata == {
+        "enabled": True,
+        "region": "decode_stateless",
+        "subgraph": "batch1_o_proj_fp8_candidate_lm_head_exact_rerank",
+        "kv_cache_boundary": "validated_runtime_store_and_paged_decode",
+        "backend": "inductor",
+        "mode": "default",
+        "emulate_precision_casts": True,
+        "force_same_precision": True,
+        "first_call_ms": 812.0,
+        "fp8_lm_head_quantization_ms": 19.5,
+    }

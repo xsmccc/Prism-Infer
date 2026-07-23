@@ -238,6 +238,19 @@ class CudaGraphExecutionBackend(ModelExecutionBackend):
                 delattr(runner, name)
 
 
+class CompileGraphExecutionBackend(CudaGraphExecutionBackend):
+    """Capture full decode around stateless compiled projection regions."""
+
+    name = ExecutionBackendName.COMPILE_GRAPH
+
+    def __init__(self, runner: "ModelRunner") -> None:
+        super().__init__(runner)
+        if runner.config.decode_compile_region != "stateless":
+            raise ValueError(
+                "compile_graph backend requires decode_compile_region='stateless'"
+            )
+
+
 def create_execution_backend(runner: "ModelRunner") -> ModelExecutionBackend:
     """Construct exactly one backend from the validated startup config."""
 
@@ -246,6 +259,7 @@ def create_execution_backend(runner: "ModelRunner") -> ModelExecutionBackend:
         ExecutionBackendName.EAGER: EagerExecutionBackend,
         ExecutionBackendName.COMPILE: CompileExecutionBackend,
         ExecutionBackendName.CUDA_GRAPH: CudaGraphExecutionBackend,
+        ExecutionBackendName.COMPILE_GRAPH: CompileGraphExecutionBackend,
     }
     try:
         implementation = implementations[backend]

@@ -29,7 +29,10 @@ from prism_infer.models.qwen3_vl_architecture import (
 from prism_infer.observability import is_trace_enabled, profile_region
 from prism_infer.ops.add_rmsnorm import fused_add_rmsnorm
 from prism_infer.ops.qk_rmsnorm import fused_qk_rmsnorm
-from prism_infer.ops.selective_topk import selective_topk_indices
+from prism_infer.ops.selective_topk import (
+    rerank_greedy_candidates,
+    selective_topk_indices,
+)
 from prism_infer.ops.swiglu import fused_silu_mul
 from prism_infer.utils.context import get_context
 from prism_infer.vision.backends import VisionAttentionBackendName
@@ -38,9 +41,82 @@ from prism_infer.vision.vision_encoder import VisionEncoder
 
 FLATTENED_TOKEN_FEATURES_RANK = 2
 SELECTIVE_FP32_LOGITS_TOP_K = 16
+# Row-scaled FP8 candidate generation needs a wider recall set; final ranking
+# still uses the original BF16 weight and FP32 dot products.
+FP8_SELECTIVE_FP32_LOGITS_TOP_K = 64
 BATCHED_TOKEN_FEATURES_RANK = 3
 MROPE_POSITION_MATRIX_RANK = 2
 POSITION_EMBEDDING_TENSOR_COUNT = 2
+
+
+def compile_decode_o_proj(
+    *,
+    mode: str,
+    emulate_precision_casts: bool,
+    force_same_precision: bool,
+):
+    """Build one bit-exact batch-one output-projection compiler."""
+
+    def output_projection(
+        hidden_states: torch.Tensor,
+        weight: torch.Tensor,
+    ) -> torch.Tensor:
+        return F.linear(hidden_states, weight)
+
+    compile_options = dict(torch._inductor.list_mode_options(mode))
+    compile_options["emulate_precision_casts"] = emulate_precision_casts
+    compile_options["force_same_precision"] = force_same_precision
+    return torch.compile(
+        output_projection,
+        backend="inductor",
+        fullgraph=True,
+        dynamic=False,
+        options=compile_options,
+    )
+
+
+def compile_decode_fp8_lm_head(
+    *,
+    mode: str,
+    emulate_precision_casts: bool,
+    force_same_precision: bool,
+):
+    """Compile dynamic FP8 activation scaling plus candidate LM-head projection."""
+
+    fp8_max = torch.finfo(torch.float8_e4m3fn).max
+
+    def candidate_projection(
+        hidden_states: torch.Tensor,
+        weight_fp8_t: torch.Tensor,
+        weight_scale: torch.Tensor,
+    ) -> torch.Tensor:
+        hidden_scale = (
+            hidden_states.float().abs().amax().clamp_min(1e-12) / fp8_max
+        ).reshape(1, 1)
+        hidden_fp8 = (
+            (hidden_states.float() / hidden_scale)
+            .clamp(-fp8_max, fp8_max)
+            .to(torch.float8_e4m3fn)
+        )
+        return torch._scaled_mm(
+            hidden_fp8,
+            weight_fp8_t,
+            scale_a=hidden_scale,
+            scale_b=weight_scale,
+            out_dtype=torch.bfloat16,
+            use_fast_accum=True,
+        )
+
+    compile_options = dict(torch._inductor.list_mode_options(mode))
+    compile_options["emulate_precision_casts"] = emulate_precision_casts
+    compile_options["force_same_precision"] = force_same_precision
+    return torch.compile(
+        candidate_projection,
+        backend="inductor",
+        fullgraph=True,
+        dynamic=False,
+        options=compile_options,
+    )
 
 
 def _cfg_get(config, *names, default=None):
@@ -196,6 +272,7 @@ class Qwen3VLTextAttention(nn.Module):
         self.k_norm = Qwen3VLTextRMSNorm(head_dim, eps=rms_norm_eps, dtype=dtype)
         self.engine_attn = Attention(num_heads, head_dim, self.scale, num_kv_heads)
         self._compiled_decode_qkv_forward = None
+        self._compiled_decode_o_proj = None
         self.fused_qk_rmsnorm_enabled = False
         self.fused_qk_mrope_enabled = False
         self.packed_kv_projection_enabled = False
@@ -365,7 +442,8 @@ class Qwen3VLTextAttention(nn.Module):
             and self.engine_attn.k_cache.numel()
             and self.engine_attn.k_cache.dtype == torch.bfloat16
         ):
-            q, k, v = self.qkv_proj(hidden_states).split(
+            packed_qkv = self.qkv_proj(hidden_states)
+            q, k, v = packed_qkv.split(
                 (self.q_size, self.kv_size, self.kv_size),
                 dim=-1,
             )
@@ -422,7 +500,17 @@ class Qwen3VLTextAttention(nn.Module):
     def _project_engine_output(self, output: torch.Tensor) -> torch.Tensor:
         """Apply the output projection outside the stateful cache boundary."""
 
-        return self.o_proj(output.contiguous().reshape(output.shape[0], -1))
+        flattened = output.contiguous().reshape(output.shape[0], -1)
+        if self._compiled_decode_o_proj is not None and flattened.shape[0] == 1:
+            return self._compiled_decode_o_proj(flattened, self.o_proj.weight)
+        return self.o_proj(flattened)
+
+    def enable_decode_o_proj_compile(self, compiled_o_proj) -> None:
+        """Bind a shared batch-one compiled GEMV without changing other buckets."""
+
+        if self._compiled_decode_o_proj is not None:
+            raise RuntimeError("decode output projection compile was already enabled")
+        self._compiled_decode_o_proj = compiled_o_proj
 
     def _prepare_engine_position_embeddings(
         self,
@@ -1188,6 +1276,9 @@ class Qwen3VLForCausalLM(nn.Module):
         # historical-reproduction mode; converting the full weight every decode
         # step is both slower and less numerically faithful to HF BF16 logits.
         self.logits_precision = "model"
+        self._compiled_decode_fp8_greedy_lm_head = None
+        self.register_buffer("_decode_lm_head_weight_fp8", None, persistent=False)
+        self.register_buffer("_decode_lm_head_weight_scale", None, persistent=False)
         if architecture.tie_word_embeddings:
             self.lm_head.weight = self.model.language_model.embed_tokens.weight
 
@@ -1256,18 +1347,39 @@ class Qwen3VLForCausalLM(nn.Module):
             and hidden_states.is_cuda
             and hidden_states.dtype in (torch.float16, torch.bfloat16)
         ):
-            logits = self.lm_head(hidden_states)
+            use_fp8_candidates = (
+                self._compiled_decode_fp8_greedy_lm_head is not None
+                and self._decode_lm_head_weight_fp8 is not None
+                and self._decode_lm_head_weight_scale is not None
+                and hidden_states.shape[0] == 1
+            )
+            if use_fp8_candidates:
+                logits = self._compiled_decode_fp8_greedy_lm_head(
+                    hidden_states,
+                    self._decode_lm_head_weight_fp8.t(),
+                    self._decode_lm_head_weight_scale,
+                )
+                candidate_count = FP8_SELECTIVE_FP32_LOGITS_TOP_K
+            else:
+                logits = self.lm_head(hidden_states)
+                candidate_count = SELECTIVE_FP32_LOGITS_TOP_K
             if logits.dtype == torch.bfloat16 and logits.shape[0] <= 4:
                 top_ids = selective_topk_indices(
                     logits,
-                    k=SELECTIVE_FP32_LOGITS_TOP_K,
+                    k=candidate_count,
                 )
             else:
                 top_ids = logits.topk(
-                    k=SELECTIVE_FP32_LOGITS_TOP_K,
+                    k=candidate_count,
                     dim=-1,
                     sorted=False,
                 ).indices
+            if use_fp8_candidates:
+                return rerank_greedy_candidates(
+                    top_ids,
+                    hidden_states,
+                    self.lm_head.weight,
+                )
             candidate_weights = F.embedding(top_ids, self.lm_head.weight)
             ranked_logits = torch.bmm(
                 candidate_weights.float(),
@@ -1276,3 +1388,39 @@ class Qwen3VLForCausalLM(nn.Module):
             winner = ranked_logits.argmax(dim=-1, keepdim=True)
             return top_ids.gather(-1, winner).squeeze(-1)
         return self.compute_logits(hidden_states).argmax(dim=-1)
+
+    @torch.no_grad()
+    def prepare_decode_fp8_greedy_lm_head(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """Quantize only candidate-generation weights; exact reranking stays BF16/FP32."""
+
+        if self._decode_lm_head_weight_fp8 is not None:
+            raise RuntimeError("decode FP8 LM head was already prepared")
+        if not callable(getattr(torch, "_scaled_mm", None)):
+            raise RuntimeError("decode FP8 LM head requires torch._scaled_mm")
+        weight = self.lm_head.weight
+        if not weight.is_cuda or weight.dtype != torch.bfloat16:
+            raise RuntimeError("decode FP8 LM head requires a CUDA BF16 model weight")
+        if torch.cuda.get_device_capability(weight.device) < (9, 0):
+            raise RuntimeError("decode FP8 LM head requires FP8 tensor-core hardware")
+        fp8_max = torch.finfo(torch.float8_e4m3fn).max
+        weight_scale = (
+            weight.float().abs().amax(dim=1, keepdim=True) / fp8_max
+        ).clamp_min(1e-12)
+        weight_fp8 = (
+            (weight.float() / weight_scale)
+            .clamp(-fp8_max, fp8_max)
+            .to(torch.float8_e4m3fn)
+        )
+        weight_scale = weight_scale.t().contiguous()
+        self._decode_lm_head_weight_fp8 = weight_fp8
+        self._decode_lm_head_weight_scale = weight_scale
+        return weight_fp8.t(), weight_scale
+
+    def enable_decode_fp8_greedy_lm_head_compile(self, compiled_lm_head) -> None:
+        """Bind compiled FP8 candidate projection after its persistent weight is ready."""
+
+        if self._compiled_decode_fp8_greedy_lm_head is not None:
+            raise RuntimeError("decode FP8 greedy LM head compile was already enabled")
+        if self._decode_lm_head_weight_fp8 is None:
+            raise RuntimeError("decode FP8 greedy LM head weight is not prepared")
+        self._compiled_decode_fp8_greedy_lm_head = compiled_lm_head
