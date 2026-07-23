@@ -26,9 +26,9 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 | KV trace 与视觉 token 分析 | 已验证 | trace 默认关闭，JSONL 可离线分析 |
 | content-aware visual KV physical compaction | 已验证 | BF16、keep=0.5 的 7-image lexical preflight 通过 |
 | unit-scale FP8 KV (`fp8_kv`) | 已实现、已拒绝 | direct cast 长输出质量未通过，只保留为失败基线 |
-| scaled FP8 KV (`scaled_fp8_kv`) | 正式质量门禁通过 | per-token/per-KV-head scale；allocated KV pool 为 BF16 的 `0.515625x` |
+| scaled FP8 KV (`scaled_fp8_kv`) | 质量、Graph、容量、显存已闭环 | per-token/per-KV-head scale；同容量 KV 为 BF16 的 `0.515625x`，同约 4 GiB budget 容量提升 `94.69%` |
 | packed MLP gate/up | 已验证、默认启用 | RTX 5090 TP1；8 个 clean offline cell 的 decode TPOT 改善 `0.483%–0.762%`，不声称稳定 E2E 加速 |
-| CUDA Graph decode hot path | H1 三引擎闭环 | RTX 5090、TP1、batch1、greedy、output128；Prism TPOT 中位数低于同协议 vLLM 与 SGLang |
+| compile + CUDA Graph decode hot path | H1/H2 三引擎闭环 | RTX 5090、TP1、batch1、greedy、output128；Prism BF16 与 scaled-FP8 TPOT 均低于同协议 vLLM/SGLang |
 | TP2 | 静态与 IPC preflight 完成 | 动态 correctness/performance 尚无两卡证据 |
 
 权威进度见 [ROADMAP](docs/ROADMAP.md)，允许和禁止使用的结论见
@@ -50,14 +50,12 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 - node-level Systems trace 定位到旧 logits 路径每步把完整 LM head 转为 FP32；改用
   模型精度后，logits CUDA median 从 `4.068 ms` 降至 `0.762 ms`，五类 workload
   TPOT 提升 `1.216x–1.280x`，torch allocator peak 减少 `2,230–2,317 MiB`。
-- 修复 prefill attention 后的冻结 H1 cell（RTX 5090、Qwen3-VL-8B、TP1、
-  batch1、greedy、8×448 图、prompt1618、output128）中，三次 fresh Prism
-  process 的 TPOT median-of-medians 为 `9.86201 ms`；同 prompt token IDs
-  （SHA256 `04205e...6b9`）下，SGLang 0.5.15.post1 为 `10.35021 ms`，
-  vLLM 0.25.1 为 `10.35082 ms`。Prism 的 TPOT latency 分别低 `4.717%` 和
-  `4.722%`，TTFT 分别低 `16.664%` 和 `24.879%`；相对 SGLang 的 E2E
-  仅低 `0.364%`，按近似持平报告。Prism 输出稳定为 `cf5318...3d2e`，内容正确描述
-  八张纯色图片。该结论只覆盖这一冻结 cell，不外推为全面排名。
+- clean `4779342` 的 H1/H2 三引擎冻结集使用同 GPU、同 prompt-token SHA256、
+  warmup2/repeat5、batch1、greedy output128。Prism BF16 的 H1/H2 TPOT 为
+  `9.8821/9.8680 ms`，SGLang 为 `10.3520/10.3689 ms`，vLLM 为
+  `10.5276/10.5278 ms`；Prism 相对 SGLang 低 `4.54%–4.83%`，相对 vLLM
+  低 `6.13%–6.27%`。H1 对 SGLang 的 E2E 只低 `0.07%`，按近似持平报告。
+  H2 的 vLLM marker 兼容与 SGLang 16 帧无损媒体输入都经过 prompt/hash 审计。
 - P7.3 的 9-cell engine-level online matrix 中，已完成请求均满足各 cell 预先声明的
   SLO；该结果没有 HTTP/gRPC 开销，也没有同条件 vLLM online goodput 对比。
 - packed gate/up 将 single-image Graph replay 的 linear kernels 从 `253` 降到 `217`、
@@ -67,13 +65,20 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 - P9-C 的 `scaled_fp8_kv` 在冻结的 DocVQA、MuirBench、MVBench
   development/final 六个正式 cell 中，相对 Prism BF16 均通过 non-inferiority gate；
   allocated KV pool 从 `1,509,949,440` B 降到 `778,567,680` B，节省
-  `48.4375%`。这不包含跨框架统一的 page-table/Python allocator 字节。
+  `48.4375%`。P10 的同容量进程 NVML 峰值从 `23,938` 降至 `21,966 MiB`，
+  实际下降 `8.24%`；同约 4 GiB KV budget 下 capacity 从 `28,928` 增至
+  `56,320` tokens，提升 `94.69%`。
+- 容量 profile 的 H1/H2 TPOT 为 `10.2363/10.2588 ms`，相对 SGLang 低
+  `1.06%–1.12%`、相对 vLLM 低 `2.55%–2.77%`。这说明容量接近翻倍后仍保持
+  受限场景 TPOT 优势，不说明 scaled-FP8 比 Prism BF16 更快；E2E 结论为 mixed。
 - 同 logical capacity、同 `0.515625x` allocated-KV-pool 比例下，vLLM 0.24.0
   per-token-head FP8 在 DocVQA/MuirBench 通过、MVBench development/final 未通过
   预注册稳定性门禁；其 MVBench accuracy 点估计反而更高。因此当前外部质量矩阵结论是
   **MIXED**，不是“Prism accuracy 显著高于 vLLM”，也不是完整物理显存 Pareto 胜出。
 
-完整口径、环境和 raw evidence 路径见 [PERFORMANCE_REPORT](docs/PERFORMANCE_REPORT.md)。
+最终口径、环境和 raw evidence 路径见
+[P10 最终结果](docs/P10_FINAL_RESULTS.md) 与
+[PERFORMANCE_REPORT](docs/PERFORMANCE_REPORT.md)。
 
 ## 架构
 
@@ -344,6 +349,7 @@ python -m pytest -q tests -s
 - [路线图](docs/ROADMAP.md)：阶段状态与下一执行顺序。
 - [验证合同](docs/VERIFICATION.md)：correctness、quality、performance 门禁。
 - [性能报告](docs/PERFORMANCE_REPORT.md)：benchmark contract、结果和 raw evidence。
+- [P10 最终结果](docs/P10_FINAL_RESULTS.md)：compile/Graph H1/H2 外部对比与 scaled-FP8 KV 显存/容量 Pareto。
 - [Claim Ledger](docs/CLAIMS.md)：允许、必须限定和禁止使用的结论。
 - [压缩报告](docs/COMPRESSION_REPORT.md) / [KV 分析报告](docs/KV_ANALYSIS_REPORT.md)。
 
@@ -353,8 +359,10 @@ python -m pytest -q tests -s
 - 不声称 visual compaction 让整张 GPU 或整个模型显存减半。
 - 不声称 unit-scale `fp8_kv` 已通过质量门禁，也不把 scaled-FP8 的限定结果泛化为
   “所有 FP8 都质量无损”。
-- 不声称已完成跨框架 page-table/allocator 全口径物理显存 Pareto，或 scaled-FP8
-  已带来正式 runtime speedup。
+- 不声称已完成跨框架 page-table/allocator 全口径物理显存 Pareto；Prism 内部的
+  process-NVML/KV bytes 已实测，但不能直接替代 vLLM/SGLang 的统一物理字节合同。
+- 不声称 scaled-FP8 比 Prism BF16 更快，也不把 KV-limited sequence 上限写成
+  online concurrency/goodput。
 - 不把 offline output tok/s 当作 online serving goodput。
 - 不把 packed MLP 的小幅 decode TPOT 收益写成 online goodput或稳定 E2E 加速。
 - 不声称已经验证 TP2、HTTP/gRPC、megakernel、PD 分离或投机解码。

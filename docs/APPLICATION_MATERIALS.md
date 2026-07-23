@@ -1,6 +1,6 @@
 # Prism-Infer 投递与面试材料
 
-> 更新日期：2026-07-19
+> 更新日期：2026-07-23
 > 使用规则：所有数字必须能回到 [CLAIMS](CLAIMS.md) 和对应证据；投递时选择与岗位
 > 匹配的 2–3 条，不要把本文件整段复制到一页简历。
 
@@ -10,14 +10,18 @@
 
 自实现 Qwen3-VL-8B 单机多模态推理引擎，在严格 HF 数值门禁上完成 Paged KV、
 CUDA Graph、continuous batching、KV trace 与 content-aware visual KV physical
-compaction、per-token/per-KV-head scaled FP8，并用 Systems trace闭环优化热点。
+compaction、per-token/per-KV-head scaled FP8，并用 `torch.compile`、CUDA Graph 与
+Systems trace 闭环优化 decode；冻结 H1/H2 中 BF16 TPOT 低于同协议 vLLM/SGLang，
+scaled-FP8 在约翻倍 KV capacity 下仍保持 TPOT 优势。
 
 ### English
 
 Built a single-node Qwen3-VL-8B multimodal inference engine with independently
 implemented model/vision execution, Paged KV, CUDA Graph decode, continuous batching,
 KV tracing, content-aware physical visual-KV compaction, and dynamically scaled FP8 KV,
-backed by layered HF correctness, standard multimodal quality, and systems-profiling gates.
+backed by layered HF correctness, standard multimodal quality, and systems-profiling gates;
+on two frozen batch-1 RTX 5090 workloads, its BF16 TPOT was lower than matched
+vLLM/SGLang baselines, while scaled-FP8 nearly doubled KV capacity within the same budget.
 
 ## 2. 推荐简历 bullets
 
@@ -32,7 +36,11 @@ backed by layered HF correctness, standard multimodal quality, and systems-profi
   ROUGE-L drop为 `0.003288/0.003710`。
 - 实现 per-token/per-KV-head scaled FP8 KV 全生命周期；冻结的 DocVQA、MuirBench、
   MVBench development/final 六项 formal quality gate 全 PASS，allocated KV pool降至
-  BF16的`0.515625x`。同容量vLLM FP8为4 PASS/2 FAIL，但全物理字节口径仍不可比。
+  BF16的`0.515625x`；同容量 NVML 进程峰值下降 `8.24%`，同约 4 GiB budget 的
+  capacity 提升 `94.69%`。
+- 将 scaled-FP8 KV 接入 batch1 `torch.compile + CUDA Graph` 正确路径；clean H1/H2
+  中 56,320-token capacity profile 的 TPOT 为 `10.2363/10.2588 ms`，相对
+  SGLang 低 `1.06%–1.12%`、相对 vLLM 低 `2.55%–2.77%`。
 - 用 Nsight Systems node trace定位每 token完整 LM-head BF16→FP32转换，将 logits
   CUDA median从 `4.068 ms`降至 `0.762 ms`；五类 workload TPOT提升
   `1.216x–1.280x`，allocator peak减少 `2,230–2,317 MiB`。
@@ -46,9 +54,9 @@ backed by layered HF correctness, standard multimodal quality, and systems-profi
   32-case Qwen GQA kernel correctness通过 independent SDPA reference，并通过
   tensorized slot mapping
   消除旧 visual gather的 `24,696` 次 async copy/stream sync。
-- 建立与 vLLM的 clean comparability gates；优化后 quality-qualified Prism compact
-  TPOT仍为 vLLM的 `1.34x–1.40x`，如实保留劣势并把下一热点定位到 Graph内
-  linear/GEMV，而非宣称“全面反超”。
+- 建立 H1/H2 三引擎 clean comparability gates；同提交、同 GPU、同 prompt hash、
+  warmup2/repeat5 下，Prism BF16 TPOT 为 `9.8821/9.8680 ms`，相对 SGLang
+  低 `4.54%–4.83%`、相对 vLLM 低 `6.13%–6.27%`；限定为 batch1 offline cell。
 - 实现HF-compatible gate/up packed projection；node trace确认每步linear
   `253→217`、总kernels `2,000→1,964`，8个clean多模态/COCO cell token exact且
   decode TPOT改善`0.483%–0.762%`，明确不扩写为E2E或online加速。
@@ -71,7 +79,11 @@ backed by layered HF correctness, standard multimodal quality, and systems-profi
   CUDA-Graph, mixed-modal, and long-output correctness gates.
 - Implemented per-token/per-KV-head scaled FP8 KV with coupled payload/scale lifecycle;
   passed all six frozen DocVQA, MuirBench, and MVBench quality cells while reducing the
-  allocated KV pool to `0.515625x` of BF16.
+  allocated KV pool to `0.515625x` of BF16, cutting same-capacity process NVML peak by
+  `8.24%` and increasing capacity by `94.69%` within the same ~4 GiB KV budget.
+- Integrated scaled-FP8 KV into a guarded `torch.compile` + CUDA Graph decode path;
+  on frozen H1/H2 cells, BF16 TPOT was `4.54%–4.83%` below SGLang and
+  `6.13%–6.27%` below vLLM, while the near-2x-capacity profile retained a bounded lead.
 - Designed content-aware physical visual-KV compaction with last-layer attention
   scoring, page reclamation, and decoupled logical M-RoPE/physical KV positions;
   reduced physical prompt tokens and active KV bytes to `0.535x/0.538x` while keeping
@@ -92,19 +104,23 @@ backed by layered HF correctness, standard multimodal quality, and systems-profi
 | online goodput fraction `1.0` | 单次 engine-level 9-cell正式运行，无网络/外部对比/置信区间 |
 | capacity `4.016x` | uniform+FP8质量FAIL，建议不放简历，只在失败复盘中讲 |
 | scaled FP8 `0.515625x` | allocated KV payload+scales，不是整卡显存，也不含跨框架统一的allocator/page-table字节 |
+| NVML peak `-8.24%` | Prism BF16→scaled 同容量、采样与 latency 分离，不是跨框架显存排名 |
+| capacity `+94.69%` | 固定约 4 GiB KV budget 的 token capacity，不是 online goodput |
+| BF16 TPOT 低 `4.54%–6.27%` | 只覆盖 RTX 5090、Qwen3-VL-8B、TP1、batch1、H1/H2、output128 offline Graph |
+| scaled TPOT 低 `1.06%–2.77%` | 与外部 BF16 baseline 比；不代表 scaled 比 Prism BF16 更快，E2E 有 mixed 单元 |
 
 ## 4. 60 秒自我介绍版本
 
-我做了一个 Qwen3-VL-8B 的轻量多模态推理引擎。项目重点不是把现成框架包一层，
-而是自己实现 Vision Encoder、M-RoPE、DeepStack、decoder、Paged KV和调度，再用 HF
-做分层数值参考。在这个 baseline上，我研究视觉 token的 KV行为，实现了真正回收
-page的 content-aware physical compaction；固定小型质量门禁下，active KV约降到一半，
-但短上下文延迟只提升约 2%，所以我没有夸大收益。系统优化上，我用 Nsight trace发现
-每个 decode token都在把整个 LM head转成 FP32，修复后 logits region从 4.1 ms降到
-0.76 ms，TPOT提升约 1.2–1.28 倍。最后我做了同条件 vLLM对比，Prism仍慢
-1.34–1.40 倍。P9 又把失败的 unit-scale FP8改成带独立K/V scale的完整路径，在三个
-标准多模态数据集的六个正式cell中全部通过质量门禁，同时把allocated KV pool降低
-48.4375%。我仍保留全物理字节不可比和external quality MIXED的边界，而不是只挑有利数字。
+我做了一个 Qwen3-VL-8B 的轻量多模态推理引擎，不是把现成框架包一层，而是自己实现
+Vision Encoder、M-RoPE、DeepStack、decoder、Paged KV和调度，再用 HF 做分层数值参考。
+系统优化上，我把有状态 KV 留在受审计的 runtime 边界，只用 `torch.compile` 优化
+batch1 无状态热点，再把 model forward、guarded LM-head candidate/exact rerank 和
+greedy decode 放进 CUDA Graph。最终在同一 RTX 5090、同 prompt hash、warmup2/repeat5
+的 H1/H2 中，BF16 TPOT 比 SGLang 低约 4.5%–4.8%，比 vLLM 低约 6.1%–6.3%。
+第二条线是 per-token/per-KV-head scaled-FP8 KV：三个标准多模态数据集的六个正式 cell
+全部通过质量门禁，同容量 KV bytes下降48.44%、进程NVML峰值下降8.24%；同约4 GiB
+budget容量提升94.69%，TPOT仍小幅领先两家外部baseline。我保留了E2E mixed、online
+尚未验证和content-aware组合缺少标准质量这些边界。
 
 ## 5. 5 分钟项目讲解结构
 
@@ -133,17 +149,21 @@ page的 content-aware physical compaction；固定小型质量门禁下，active
 - 找到每 token整张 LM-head cast，而不是凭 kernel名字猜。
 - 单变量修复、HF quality gate、五 workload、external baseline和full regression闭环。
 
-### 3:40–4:30：诚实的外部结论
+### 3:40–4:30：两条最终 profile
 
-- vLLM仍更快，Prism差距从约 `1.65–1.78x`缩到 `1.34–1.40x`。
-- compaction短 context只有小幅 TPOT收益，主要价值是active page/capacity语义。
-- scaled FP8 external quality是MIXED；不能把稳定性门禁改写成accuracy显著领先。
+- BF16 latency profile：H1/H2 TPOT 相对 SGLang 低 `4.54%–4.83%`，相对 vLLM
+  低 `6.13%–6.27%`。
+- scaled-FP8 capacity profile：同约 4 GiB budget 容量提升 `94.69%`，TPOT
+  仍小幅领先，但不比 Prism BF16 更快。
+- H1 BF16 对 SGLang E2E 近似持平，scaled E2E 有两个轻微负单元；不只报 TPOT
+  之外的有利数字。
 
 ### 4:30–5:00：下一步
 
-- 跨框架full-physical KV字节合同与Gate A判定；
-- 基于已恢复NCU/NSYS的full-step Graph和split-GQA/context kernel；
-- 建立真实网络 server后做 external online SLO。
+- 为 content-aware + scaled-FP8 组合补标准多模态质量矩阵；
+- 建立真实网络 server后做 external online SLO 与容量/并发 goodput；
+- 只在 profile 证明收益时研究 weight-only/outlier-correction kernel，不再扩展已失败的
+  GQA4 merge 或 split-K；
 - 获得合法双卡资源后再补TP2。
 
 ## 6. STAR 深挖故事

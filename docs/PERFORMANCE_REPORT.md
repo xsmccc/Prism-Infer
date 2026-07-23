@@ -1342,9 +1342,67 @@ margin，所以不能事后改判。对外结论必须是external quality `MIXED
 accuracy显著领先。完整逐项指标、fallback解释和artifact SHA256见
 `VERIFICATION.md` P9-C.1/P9-C.2。
 
-### 8.3 尚未形成的性能结论
+### 8.3 当时尚未形成的性能结论
 
 P9-C证明了scale lifecycle、质量和allocated-KV-pool收益，不自动证明TPOT、TTFT、
 E2E或online goodput改善。scaled-FP8正式runtime matrix、full-physical Gate A、细页
 allocator和`visual_compact_scaled_fp8`组合质量仍是独立门禁；在P9-D正式重复实验前，
 不得从kernel microbenchmark或单次smoke生成runtime speedup claim。
+
+上述内容是 P9-C 冻结时的边界。P10 已完成 scaled-FP8 runtime、Prism 内部
+process-NVML 和 H1/H2 三引擎对比；当前结论由下节取代。
+
+## 9. P10 最终 Compiler/Graph 与 scaled-FP8 KV Pareto
+
+完整合同、逐项结果、失败候选与 raw evidence 路径集中在
+[`P10_FINAL_RESULTS.md`](P10_FINAL_RESULTS.md)。本节只保留性能报告的最终摘要。
+
+### 9.1 同提交 H1/H2 三引擎冻结集
+
+clean `4779342`、RTX 5090 UUID `GPU-7f63...f2eb`、Qwen3-VL-8B、TP1、
+batch1、greedy output128、warmup2/repeat5、offline CUDA Graph：
+
+| Case | Prism BF16 | Prism scaled-FP8 | SGLang BF16 | vLLM BF16 |
+|---|---:|---:|---:|---:|
+| H1 TPOT | **9.8821 ms** | **10.2363 ms** | 10.3520 ms | 10.5276 ms |
+| H2 TPOT | **9.8680 ms** | **10.2588 ms** | 10.3689 ms | 10.5278 ms |
+
+同 case 的三引擎 prompt-token SHA256 exact；八个单元均 clean、同 GPU、
+warmup2/repeat5 且各自跨 repeat token exact。H2 额外完成：
+
+- vLLM marker-preservation adapter 后 prompt `1665→1667`，完整 prompt hash
+  与 Prism exact；
+- SGLang 以 FFV1 封装冻结 16 帧，24 fps，decode RGB 逐字节 exact，再得到相同
+  1,667-token prompt。
+
+Prism BF16 TPOT 相对 SGLang 低 `4.54%–4.83%`，相对 vLLM 低
+`6.13%–6.27%`。scaled-FP8 在同约 4 GiB KV budget、容量 56,320 tokens 时，
+TPOT 相对 SGLang 仍低 `1.06%–1.12%`，相对 vLLM 低 `2.55%–2.77%`。
+这是限定 cell 的 latency/capacity Pareto，不是全面框架排名。
+
+### 9.2 真实 KV、进程显存与容量
+
+独立 NVML 采样 artifact 不具备 latency headline 资格：
+
+| Profile | Capacity | KV pool | NVML process peak | Torch peak |
+|---|---:|---:|---:|---:|
+| BF16 113 blocks | 28,928 | 4,068.000 MiB | 23,938 MiB | 21,637.368 MiB |
+| scaled 113 blocks | 28,928 | 2,097.562 MiB | 21,966 MiB | 19,667.298 MiB |
+| scaled 220 blocks | 56,320 | 4,083.750 MiB | 23,952 MiB | 21,653.298 MiB |
+
+同容量的 KV bytes 节省 `48.4375%`，但整进程 NVML 峰值只下降 `8.24%`；
+同约 4 GiB KV budget 的 capacity 提升 `94.69%`，NVML 峰值只增加 `14 MiB`。
+H1/H2 的 KV-limited resident sequence 上限分别为 `16→31`、`14→27`；没有
+online goodput 实测，因此不能把上限写成真实并发翻倍。
+
+### 9.3 content-aware 组合与 kernel 止损
+
+`visual_compact_scaled_fp8` 在 H1/H2 将 physical prompt 降至
+`834/883`，active pages 都从 `7→4`，TPOT 为 `10.0199/10.0244 ms`。固定 pool
+NVML peak 不变，说明释放 page 增加 allocator capacity，不缩小已分配 tensor。
+组合路径没有标准三数据集质量矩阵，因此不进入 headline。
+
+NSYS 显示三类 BF16 weight GEMV 合计约 `7.734 ms/token`，scaled attention 约
+`0.888 ms/token`。GQA4 shared-KV merge 与 query-head split-K 在 H1/H2 context
+均慢约 `1.85x–1.90x`，context4096 仍慢约 `1.21x`；实现已撤销，失败 artifact
+保留。最终不以“kernel 数减少”或 microbenchmark 替代 full-engine 正收益。

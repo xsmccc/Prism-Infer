@@ -4450,6 +4450,130 @@ compileall 和 diff check PASS。完整测试集 JUnit 记录 `472 tests, 0 fail
 H1 scaled-FP8 eager/Graph traces；只有新的 host-inclusive timeline 才能继续判定 P9-009 是
 可重复 host gap、同步放大还是单次运行噪声。
 
+## P10 最终 Compiler/Graph 与 scaled-FP8 KV 闭环
+
+### P10.11 scaled-FP8 compile/Graph、显存与容量（PASS，2026-07-23）
+
+实现检查点：
+
+- `fd14939794062f4a8fa7ea1e03606a3b92283ced`：scaled-FP8 KV 接入
+  batch1 compile/Graph host staging；稳定 scale views 参与 replay；scaled decode
+  复用 packed QKV projection；
+- `59bb4ae20cef5adfd129f2adbcbe5db58400a237`：benchmark 增加当前进程
+  NVML sampling；采样 artifact 自动标记
+  `latency_headline_eligible=false`；
+- `79f92082aac2eaf77b33bd49ed4dd77a9b3e3e62`：
+  `visual_compact_scaled_fp8` 的 prompt physical token/page/byte/layout 审计。
+
+针对性代码门禁：
+
+```text
+scaled/Graph focused tests: 35 passed
+ruff: PASS
+compileall: PASS
+git diff --check: PASS
+```
+
+其中 `test_scaled_fp8_decode_uses_packed_qkv_projection` 明确防止 cache dtype
+把与 KV 存储无关的 projection 退回慢路径。
+
+独立 NVML 采样结果：
+
+| Profile | KV bytes | Capacity | NVML process peak | 判定 |
+|---|---:|---:|---:|:---:|
+| BF16 / 113 blocks | 4,265,607,168 B | 28,928 | 23,938 MiB | PASS |
+| scaled / 113 blocks | 2,199,453,696 B | 28,928 | 21,966 MiB | PASS |
+| scaled / 220 blocks | 4,282,122,240 B | 56,320 | 23,952 MiB | PASS |
+
+同容量 KV ratio 为 `0.515625`，NVML process peak 下降 `1,972 MiB / 8.24%`；
+同约 4 GiB budget 的 capacity 提升 `94.69%`。质量继续引用 P9-C 的六项 formal
+non-inferiority PASS，不重复运行 3,000 个样本来制造新数字。
+
+raw evidence：
+
+```text
+data/p10_memory_profile/final_clean_59bb4ae/
+data/p10_memory_profile/final_clean_79f9208/
+```
+
+content-aware 组合只通过 H1/H2 repeat stability、媒体语义检查和 physical
+layout 审计；标准 DocVQA/MuirBench/MVBench 组合质量为 NOT RUN，因此不进入
+最终 headline。
+
+### P10.12 H1/H2 三引擎同提交冻结集（PASS，2026-07-23）
+
+最终 benchmark commit：
+
+```text
+47793420b6796951a784b436946100011d4f75b1
+```
+
+共八个单元：
+
+```text
+Prism:  H1/H2 × {BF16 off, scaled_fp8_kv}
+vLLM:   H1/H2 × BF16
+SGLang: H1/H2 × BF16
+```
+
+统一门禁审计：
+
+| Gate | 结果 |
+|---|:---:|
+| commit 都为 `4779342` | 8/8 PASS |
+| clean Prism/harness/external source | 8/8 PASS |
+| GPU UUID exact | 8/8 PASS |
+| warmup2/repeat5 | 8/8 PASS |
+| 各框架内部 greedy output 跨 repeat exact | 8/8 PASS |
+| H1 prompt 1,618 / SHA256 `04205e...6b9` | 4/4 PASS |
+| H2 prompt 1,667 / SHA256 `a3241f...5b2` | 4/4 PASS |
+| SGLang H2 16 帧、24 fps、decoded RGB exact | PASS |
+
+最终 TPOT：
+
+| Case | Prism BF16 | Prism scaled | SGLang | vLLM |
+|---|---:|---:|---:|---:|
+| H1 | 9.882094 ms | 10.236350 ms | 10.352013 ms | 10.527582 ms |
+| H2 | 9.868043 ms | 10.258809 ms | 10.368874 ms | 10.527768 ms |
+
+BF16 相对 SGLang 的 TPOT latency 低 `4.54%/4.83%`，相对 vLLM 低
+`6.13%/6.27%`。scaled 相对 SGLang 低 `1.12%/1.06%`，相对 vLLM 低
+`2.77%/2.55%`。完整 TTFT/E2E 与 mixed 边界见
+`P10_FINAL_RESULTS.md`。
+
+vLLM H2 的失败证据与修复：
+
+- 修复前 framework parser 吃掉 outer vision markers，得到 1,665 tokens；
+- 两个缺失位置精确为 video block 的 `vision_start/vision_end`；
+- 复用已测试的 P9 external-quality adapter 后得到 1,667 tokens 与 exact hash；
+- adapter 单测 `2 passed, 26 deselected`，ruff/compileall PASS。
+
+SGLang H2 的失败证据与修复：
+
+1. 预解码 ndarray 路径产生无效 `[None]` metadata，正式探针失败；
+2. FFV1 路径首次把 `do_sample_frames` 重复传递，正式探针失败；
+3. 最终只传 `fps=24`，由 SGLang 自己完成 16 帧预处理；FFV1 round-trip
+   `exact=true / max_abs=0`，prompt hash exact。
+
+两次失败日志均保留，没有删除或改写。最终 raw evidence：
+
+```text
+data/p10_final_bounded_4779342/prism/
+data/p10_final_bounded_4779342/vllm/
+data/p10_final_bounded_4779342/sglang/
+data/p10_compile_graph/h2_external/
+```
+
+kernel 候选止损：
+
+```text
+data/p10_memory_profile/kernel_candidates/
+  rejected_gqa4_and_split_k_dirty_79f9208.jsonl
+```
+
+GQA4 merge 与 split-K 在 context 1,618/1,667 慢约 `1.85x–1.90x`，
+context4,096 仍慢约 `1.21x`；候选代码已完整撤销。最终工作树不包含负收益 kernel。
+
 ## 每次任务交付模板
 
 阶段级交付使用 `docs/STAGE_DELIVERY_TEMPLATE.md`，其中包含 requirement mapping、
