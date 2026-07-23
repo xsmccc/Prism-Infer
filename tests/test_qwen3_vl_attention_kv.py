@@ -7,25 +7,27 @@ try:
 except ImportError:
     pytest = None
 
-from prism_infer.layers.attention import HAS_FLASH_ATTN
+import prism_infer.layers.attention as attention_module
 from prism_infer.models.qwen3_vl import Qwen3VLTextAttention, Qwen3VLTextModel
 from prism_infer.utils.context import reset_context, set_context
 
 
 def _skip_if_needed() -> None:
-    if torch.cuda.is_available() and HAS_FLASH_ATTN:
+    if torch.cuda.is_available():
         return
-    message = "Qwen3-VL engine attention test requires CUDA and flash-attn"
+    message = "Qwen3-VL engine attention test requires CUDA"
     if pytest is not None:
         pytest.skip(message)
     raise SystemExit(f"SKIP: {message}")
 
 
 @pytest.mark.gpu
-def test_engine_attention_prefill_matches_full_sequence_and_writes_kv():
+def test_engine_attention_prefill_matches_full_sequence_and_writes_kv(monkeypatch):
     """flatten prefill attention 应对齐 full-sequence 路径并写入 paged KV cache。"""
 
     _skip_if_needed()
+    monkeypatch.setattr(attention_module, "HAS_FLASH_ATTN", False)
+    monkeypatch.setattr(attention_module, "HAS_VLLM_PAGED_FLASH_ATTN", False)
     torch.manual_seed(20260624)
     dtype = torch.bfloat16
     device = torch.device("cuda")

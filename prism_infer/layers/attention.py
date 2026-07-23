@@ -188,8 +188,67 @@ class Attention(nn.Module):
                     causal=True,
                     deterministic=True,
                 )
-        with profile_region("attention.prefill.sdpa"):
-            return F.scaled_dot_product_attention(q, k, v, is_causal=True, scale=self.scale)
+        if (
+            HAS_VLLM_PAGED_FLASH_ATTN
+            and q.is_cuda
+            and q.dtype in (torch.float16, torch.bfloat16)
+        ):
+            with profile_region("attention.prefill.vllm_flash_attn_varlen"):
+                return vllm_paged_flash_attn(
+                    q,
+                    k,
+                    v,
+                    max_seqlen_q=context.max_seqlen_q,
+                    cu_seqlens_q=context.cu_seqlens_q,
+                    max_seqlen_k=context.max_seqlen_k,
+                    cu_seqlens_k=context.cu_seqlens_k,
+                    softmax_scale=self.scale,
+                    causal=True,
+                    deterministic=True,
+                    fa_version=2,
+                )
+        return self._forward_prefill_sdpa(q, k, v, context)
+
+    def _forward_prefill_sdpa(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        context: Context,
+    ) -> torch.Tensor:
+        """Run variable-length flattened prefill through shape-correct SDPA."""
+
+        if context.cu_seqlens_q is None or context.cu_seqlens_k is None:
+            raise RuntimeError("SDPA prefill requires cu_seqlens_q/cu_seqlens_k")
+        if context.cu_seqlens_q.numel() != context.cu_seqlens_k.numel():
+            raise RuntimeError("SDPA prefill Q/K sequence counts must match")
+
+        outputs: list[torch.Tensor] = []
+        for sequence_index in range(context.cu_seqlens_q.numel() - 1):
+            query_start = int(context.cu_seqlens_q[sequence_index].item())
+            query_end = int(context.cu_seqlens_q[sequence_index + 1].item())
+            key_start = int(context.cu_seqlens_k[sequence_index].item())
+            key_end = int(context.cu_seqlens_k[sequence_index + 1].item())
+            if query_end - query_start != key_end - key_start:
+                raise RuntimeError(
+                    "contiguous SDPA prefill requires equal Q/K lengths; "
+                    "prefix and chunked prefill must use paged history"
+                )
+
+            query = q[query_start:query_end].transpose(0, 1).unsqueeze(0)
+            key = k[key_start:key_end].transpose(0, 1).unsqueeze(0)
+            value = v[key_start:key_end].transpose(0, 1).unsqueeze(0)
+            kwargs = {"is_causal": True, "scale": self.scale}
+            if query.is_cuda:
+                kwargs["enable_gqa"] = True
+            elif self.num_heads != self.num_kv_heads:
+                groups = self.num_heads // self.num_kv_heads
+                key = key.repeat_interleave(groups, dim=1)
+                value = value.repeat_interleave(groups, dim=1)
+            with profile_region("attention.prefill.sdpa_varlen"):
+                output = F.scaled_dot_product_attention(query, key, value, **kwargs)
+            outputs.append(output.squeeze(0).transpose(0, 1))
+        return torch.cat(outputs, dim=0)
 
     def _forward_decode(
         self,
