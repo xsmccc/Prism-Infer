@@ -7,15 +7,22 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import statistics
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event, Thread
 from time import perf_counter
 from typing import Any
 
 import torch
 import transformers
+
+try:
+    import pynvml
+except ImportError:
+    pynvml = None
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -73,6 +80,89 @@ def _add_request(llm: LLM, request: dict[str, Any], sampling: SamplingParams) ->
     raise ValueError(f"unsupported request type: {request_type!r}")
 
 
+class _ProcessDeviceMemorySampler:
+    """Sample driver-accounted GPU memory for this fresh benchmark process."""
+
+    def __init__(self, *, device_index: int = 0, interval_ms: float = 10.0) -> None:
+        if pynvml is None:
+            raise RuntimeError(
+                "--sample-process-memory requires the nvidia-ml-py/pynvml package"
+            )
+        self.device_index = device_index
+        self.interval_ms = interval_ms
+        self._stop = Event()
+        self._thread: Thread | None = None
+        self._handle = None
+        self._samples = 0
+        self._initial_bytes = 0
+        self._peak_bytes = 0
+        self._final_bytes = 0
+        self._failure: BaseException | None = None
+        self._record: dict[str, Any] | None = None
+
+    def _read_process_bytes(self) -> int:
+        used_bytes = 0
+        for process in pynvml.nvmlDeviceGetComputeRunningProcesses(self._handle):
+            if process.pid != os.getpid():
+                continue
+            value = process.usedGpuMemory
+            if isinstance(value, int) and 0 <= value < (1 << 63):
+                used_bytes += value
+        return used_bytes
+
+    def _sample(self) -> int:
+        value = self._read_process_bytes()
+        self._samples += 1
+        self._peak_bytes = max(self._peak_bytes, value)
+        return value
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_ms / 1000.0):
+            try:
+                self._sample()
+            except BaseException as exc:  # surfaced synchronously by stop()
+                self._failure = exc
+                self._stop.set()
+
+    def start(self) -> None:
+        pynvml.nvmlInit()
+        self._handle = pynvml.nvmlDeviceGetHandleByIndex(self.device_index)
+        self._initial_bytes = self._sample()
+        self._thread = Thread(
+            target=self._run,
+            name="prism-nvml-memory-sampler",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> dict[str, Any]:
+        if self._thread is None:
+            if self._record is None:
+                raise RuntimeError("process device memory sampler was not started")
+            return self._record
+        self._stop.set()
+        self._thread.join()
+        try:
+            self._final_bytes = self._sample()
+        finally:
+            pynvml.nvmlShutdown()
+            self._thread = None
+        if self._failure is not None:
+            raise RuntimeError("NVML process-memory sampling failed") from self._failure
+        mib = 1024 * 1024
+        self._record = {
+            "measurement": "NVML compute-process usedGpuMemory",
+            "scope": "post-LLM-init through warmup and measured generation",
+            "device_index": self.device_index,
+            "sampling_interval_ms": self.interval_ms,
+            "samples": self._samples,
+            "after_llm_init_mib": self._initial_bytes / mib,
+            "peak_serving_mib": self._peak_bytes / mib,
+            "after_benchmark_mib": self._final_bytes / mib,
+        }
+        return self._record
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
@@ -117,6 +207,14 @@ def main() -> None:
         help=(
             "retain an SM120 block-4 FP8-weight copy and use the fused "
             "batch-one decode gate-up/SwiGLU kernel"
+        ),
+    )
+    parser.add_argument(
+        "--sample-process-memory",
+        action="store_true",
+        help=(
+            "sample driver-accounted memory for this process with NVML; "
+            "use dedicated memory artifacts rather than latency headlines"
         ),
     )
     parser.add_argument("--output", required=True)
@@ -177,6 +275,11 @@ def main() -> None:
         if args.compression_mode == "off"
         else "prism_triton_paged_scaled_fp8"
     )
+    process_memory_sampler = (
+        _ProcessDeviceMemorySampler() if args.sample_process_memory else None
+    )
+    if process_memory_sampler is not None:
+        process_memory_sampler.start()
 
     def run_once() -> tuple[list[list[int]], list[int], float, float, float]:
         requests = materialize_requests(case, repo_root=REPO_ROOT)
@@ -251,6 +354,9 @@ def main() -> None:
         if any(prompt_ids != prompt_token_runs[0] for prompt_ids in prompt_token_runs[1:]):
             raise RuntimeError("Prism prompt token ids changed across measured repeats")
         audited_prompt_ids = prompt_token_runs[0]
+        process_device_memory = (
+            None if process_memory_sampler is None else process_memory_sampler.stop()
+        )
 
         git = collect_git_metadata(REPO_ROOT)
         gpu = collect_gpu_metadata().environment_dict()
@@ -333,6 +439,8 @@ def main() -> None:
                 "warmup": args.warmup,
                 "repeat": args.repeat,
                 "cuda_profiler_range": args.cuda_profiler_range,
+                "nvml_process_sampling_enabled": args.sample_process_memory,
+                "latency_headline_eligible": not args.sample_process_memory,
                 "explicit_per_step_cuda_synchronize": False,
                 "token_arrival_boundary": "step_result_return_after_sampled_token_d2h",
                 "decode_tpot_scope": "first_to_last_token_divided_by_output_intervals",
@@ -353,6 +461,7 @@ def main() -> None:
                 "allocated": _stats(allocated_mb),
                 "reserved": _stats(reserved_mb),
                 "peak_allocated": _stats(peak_allocated_mb),
+                "process_device": process_device_memory,
             },
         }
         output_path = Path(args.output)
@@ -360,6 +469,8 @@ def main() -> None:
         output_path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps(record, indent=2, sort_keys=True))
     finally:
+        if process_memory_sampler is not None:
+            process_memory_sampler.stop()
         llm.exit()
 
 
