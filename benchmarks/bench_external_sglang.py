@@ -15,6 +15,8 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Iterator
 
+import cv2
+import numpy as np
 import pynvml
 import torch
 from PIL import Image
@@ -22,6 +24,7 @@ from transformers import AutoProcessor
 
 from sglang.srt.entrypoints.engine import Engine
 from sglang.srt.managers.io_struct import GenerateReqInput
+from sglang.srt.utils.video_decoder import VideoDecoderWrapper
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +35,7 @@ from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
 
 
 EXTERNAL_SCHEMA_VERSION = 2
+DEFAULT_VIDEO_FPS = 24.0
 
 
 def _stats(values: list[float]) -> dict[str, int | float]:
@@ -78,7 +82,54 @@ def _image(spec: dict[str, Any]) -> Image.Image:
     return loaded
 
 
-def _materialize(case: dict[str, Any]) -> list[dict[str, Any]]:
+def _stage_lossless_video(
+    frames: list[Image.Image],
+    *,
+    path: Path,
+    fps: float,
+) -> dict[str, Any]:
+    arrays = np.stack([np.asarray(frame) for frame in frames])
+    height, width = arrays.shape[1:3]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"FFV1"),
+        fps,
+        (width, height),
+    )
+    if not writer.isOpened():
+        raise RuntimeError("OpenCV could not create the lossless FFV1 video")
+    try:
+        for frame in arrays:
+            writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+    finally:
+        writer.release()
+
+    with VideoDecoderWrapper(str(path), device="cpu") as decoder:
+        decoded = decoder.get_frames_at(list(range(len(decoder))))
+        decoded_fps = decoder.avg_fps
+    if decoded.shape != arrays.shape or not np.array_equal(decoded, arrays):
+        raise RuntimeError("SGLang video staging changed the frozen RGB frames")
+    if decoded_fps != fps:
+        raise RuntimeError(f"SGLang video staging changed fps: {decoded_fps} != {fps}")
+    return {
+        "codec": "ffv1",
+        "container": "matroska",
+        "frames": len(frames),
+        "fps": fps,
+        "height": height,
+        "width": width,
+        "decoded_rgb_sha256": hashlib.sha256(decoded.tobytes()).hexdigest(),
+        "file_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "decoded_exact": True,
+    }
+
+
+def _materialize(
+    case: dict[str, Any],
+    *,
+    video_staging_path: Path,
+) -> list[dict[str, Any]]:
     requests: list[dict[str, Any]] = []
     for request in case["requests"]:
         request_type = request["type"]
@@ -86,9 +137,29 @@ def _materialize(case: dict[str, Any]) -> list[dict[str, Any]]:
             images = [_image(request["image"])]
         elif request_type == "images":
             images = [_image(spec) for spec in request["images"]]
+        elif request_type == "video":
+            frames = [_image(spec) for spec in request["frames"]]
+            fps = float(request.get("fps", DEFAULT_VIDEO_FPS))
+            if not math.isfinite(fps) or fps <= 0:
+                raise ValueError(f"video fps must be finite and positive: {fps}")
+            staging = _stage_lossless_video(
+                frames,
+                path=video_staging_path,
+                fps=fps,
+            )
+            requests.append(
+                {
+                    "type": request_type,
+                    "prompt": request["prompt"],
+                    "video": str(video_staging_path),
+                    "fps": fps,
+                    "video_staging": staging,
+                }
+            )
+            continue
         else:
             raise ValueError(
-                "SGLang P6 adapter currently supports image/image_file/images only; "
+                "SGLang P6 adapter supports image/image_file/images/video only; "
                 f"got {request_type!r}"
             )
         requests.append({"type": request_type, "prompt": request["prompt"], "images": images})
@@ -98,7 +169,10 @@ def _materialize(case: dict[str, Any]) -> list[dict[str, Any]]:
 def _prompts(processor: Any, requests: list[dict[str, Any]]) -> list[str]:
     result: list[str] = []
     for request in requests:
-        content = [{"type": "image", "image": image} for image in request["images"]]
+        if "video" in request:
+            content = [{"type": "video", "video": request["video"]}]
+        else:
+            content = [{"type": "image", "image": image} for image in request["images"]]
         content.append({"type": "text", "text": request["prompt"]})
         result.append(
             processor.apply_chat_template(
@@ -121,6 +195,7 @@ def _generate_stream_with_prompt_ids(
     *,
     prompt: str,
     image_data: Any,
+    video_data: Any,
     sampling_params: dict[str, Any],
 ) -> Iterator[dict[str, Any]]:
     """Run the public Engine request path while auditing post-tokenization IDs."""
@@ -128,6 +203,7 @@ def _generate_stream_with_prompt_ids(
     request = GenerateReqInput(
         text=prompt,
         image_data=image_data,
+        video_data=video_data,
         sampling_params=sampling_params,
         stream=True,
         return_prompt_token_ids=True,
@@ -163,12 +239,26 @@ def main() -> None:
     case = next((item for item in manifest["cases"] if item["id"] == args.case), None)
     if case is None:
         raise ValueError(f"case not found: {args.case}")
-    requests = _materialize(case)
+    output_path = Path(args.output)
+    requests = _materialize(
+        case,
+        video_staging_path=output_path.with_suffix(".video.mkv"),
+    )
     if len(requests) != 1:
         raise ValueError("SGLang streaming P6 adapter currently requires one request")
     processor = AutoProcessor.from_pretrained(args.model, local_files_only=True)
     prompts = _prompts(processor, requests)
-    image_data = [request["images"] for request in requests]
+    image_data = [request.get("images") for request in requests]
+    video_data = [request.get("video") for request in requests]
+    mm_process_config = (
+        {
+            "video": {
+                "fps": requests[0]["fps"],
+            }
+        }
+        if video_data[0] is not None
+        else {}
+    )
 
     pynvml.nvmlInit()
     engine = Engine(
@@ -188,6 +278,7 @@ def main() -> None:
         enable_request_time_stats_logging=True,
         stream_interval=1,
         random_seed=0,
+        mm_process_config=mm_process_config,
     )
     sampling = {
         "temperature": 0.0,
@@ -208,7 +299,12 @@ def main() -> None:
         stream = _generate_stream_with_prompt_ids(
             engine,
             prompt=prompts[0],
-            image_data=(image_data[0][0] if len(image_data[0]) == 1 else image_data[0]),
+            image_data=(
+                None
+                if image_data[0] is None
+                else (image_data[0][0] if len(image_data[0]) == 1 else image_data[0])
+            ),
+            video_data=video_data[0],
             sampling_params=sampling,
         )
         final_output: dict[str, Any] | None = None
@@ -307,6 +403,11 @@ def main() -> None:
                 "prompt_tokens": sum(prompt_tokens),
                 "prompt_tokens_per_request": prompt_tokens,
                 "prompt_token_ids_sha256": _sha256(audited_prompt_ids),
+                "media_identity": [
+                    request["video_staging"]
+                    for request in requests
+                    if "video_staging" in request
+                ],
                 "max_tokens": args.max_tokens,
                 "preprocessing_included_in_e2e": True,
                 "traffic": "offline_closed_loop",
@@ -341,7 +442,7 @@ def main() -> None:
                 "process_used": _stats(process_memory),
             },
         }
-        Path(args.output).write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+        output_path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps(record, indent=2, sort_keys=True))
     finally:
         engine.shutdown()
