@@ -24,6 +24,8 @@ dependencies = [
 [project.optional-dependencies]
 blackwell = [
     "vllm==0.25.1",
+    "ninja>=1.11",
+    "nvidia-cutlass==4.2.0.0",
 ]
 quality = [
     "opencv-python-headless==4.10.0.84",
@@ -43,6 +45,9 @@ Issues = "https://github.com/xsmccc/Prism-Infer/issues"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["prism_infer*"]
+
+[tool.setuptools.package-data]
+prism_infer = ["ops/csrc/*.cu"]
 
 [tool.pytest.ini_options]
 minversion = "8.1"

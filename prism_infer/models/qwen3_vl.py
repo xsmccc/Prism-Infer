@@ -31,6 +31,7 @@ from prism_infer.ops.add_rmsnorm import (
     fused_add_rmsnorm,
     fused_add_rmsnorm_prefill,
 )
+from prism_infer.ops.cutlass_swiglu import maybe_cutlass_dual_swiglu
 from prism_infer.ops.qk_rmsnorm import fused_qk_rmsnorm
 from prism_infer.ops.selective_topk import (
     rerank_greedy_candidates,
@@ -610,17 +611,19 @@ class Qwen3VLTextMLP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.projection_mode == "packed":
-            packed = self.gate_up_proj(x)
-            if (
-                packed.ndim == 2
-                and packed.is_cuda
-                and packed.dtype == torch.bfloat16
-                and not torch.compiler.is_compiling()
-            ):
-                activated = fused_silu_mul(packed)
-            else:
-                gate, up = packed.chunk(2, dim=-1)
-                activated = F.silu(gate) * up
+            activated = maybe_cutlass_dual_swiglu(x, self.gate_up_proj.weight)
+            if activated is None:
+                packed = self.gate_up_proj(x)
+                if (
+                    packed.ndim == 2
+                    and packed.is_cuda
+                    and packed.dtype == torch.bfloat16
+                    and not torch.compiler.is_compiling()
+                ):
+                    activated = fused_silu_mul(packed)
+                else:
+                    gate, up = packed.chunk(2, dim=-1)
+                    activated = F.silu(gate) * up
         else:
             gate = self.gate_proj(x)
             up = self.up_proj(x)
