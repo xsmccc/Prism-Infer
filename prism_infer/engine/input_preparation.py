@@ -272,7 +272,8 @@ class ModelInputPreparer:
         def concatenate(chunks: list[torch.Tensor]) -> torch.Tensor | None:
             if not chunks:
                 return None
-            return torch.cat(chunks, dim=0).pin_memory().cuda(non_blocking=True)
+            values = chunks[0] if len(chunks) == 1 else torch.cat(chunks, dim=0)
+            return values.pin_memory().cuda(non_blocking=True)
 
         return {
             "pixel_values": concatenate(host.pixel_value_chunks),
