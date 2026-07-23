@@ -31,6 +31,10 @@ from prism_infer.ops.add_rmsnorm import (
     fused_add_rmsnorm,
     fused_add_rmsnorm_prefill,
 )
+from prism_infer.ops.block4_gate_up import (
+    block4_gate_up_swiglu,
+    compress_block4_gate_up_weight,
+)
 from prism_infer.ops.cutlass_swiglu import maybe_cutlass_dual_swiglu
 from prism_infer.ops.qk_rmsnorm import (
     fused_qk_rmsnorm,
@@ -314,11 +318,25 @@ class Qwen3VLTextAttention(nn.Module):
         compile_options["emulate_precision_casts"] = emulate_precision_casts
         compile_options["force_same_precision"] = force_same_precision
         self._compiled_decode_qkv_forward = torch.compile(
-            self._forward_engine_qkv,
+            self._forward_engine_decode_qkv,
             backend="inductor",
             fullgraph=True,
             dynamic=False,
             options=compile_options,
+        )
+
+    def _forward_engine_decode_qkv(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: tuple | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Pure decode QKV entry point for fullgraph compilation."""
+
+        return self._forward_engine_qkv(
+            hidden_states,
+            position_embeddings,
+            store_kv=False,
+            is_prefill=False,
         )
 
     def forward(
@@ -439,9 +457,12 @@ class Qwen3VLTextAttention(nn.Module):
         position_embeddings: tuple | None,
         *,
         store_kv: bool = False,
+        is_prefill: bool | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Pure QKV/QK-Norm/M-RoPE region shared by eager and compile."""
 
+        if is_prefill is None:
+            is_prefill = get_context().is_prefill
         num_tokens = hidden_states.shape[0]
         packed_decode = self.packed_kv_projection_enabled and num_tokens == 1
         if (
@@ -466,9 +487,8 @@ class Qwen3VLTextAttention(nn.Module):
         k = k.view(num_tokens, self.num_kv_heads, self.head_dim)
         v = v.view(num_tokens, self.num_kv_heads, self.head_dim)
         fused_mrope = False
-        context = get_context()
         prefill_qk = None
-        if context.is_prefill and position_embeddings is not None:
+        if is_prefill and position_embeddings is not None:
             cos, sin = position_embeddings
             prefill_qk = maybe_fused_qk_rmsnorm_prefill(
                 q,
@@ -486,7 +506,7 @@ class Qwen3VLTextAttention(nn.Module):
             self.fused_qk_rmsnorm_enabled
             and q.is_cuda
             and not torch.compiler.is_compiling()
-            and not context.is_prefill
+            and not is_prefill
             and q.shape[0] <= 4
         ):
             fused_positions = {}
@@ -627,9 +647,32 @@ class Qwen3VLTextMLP(nn.Module):
             intermediate_size,
         )
         self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False, dtype=dtype)
+        self.register_buffer(
+            "_decode_gate_up_weight_fp8",
+            None,
+            persistent=False,
+        )
+        self.register_buffer(
+            "_decode_gate_up_scales",
+            None,
+            persistent=False,
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.projection_mode == "packed":
+        use_block4_decode = (
+            self._decode_gate_up_weight_fp8 is not None
+            and self._decode_gate_up_scales is not None
+            and x.ndim == 2
+            and x.shape[0] == 1
+            and not torch.compiler.is_compiling()
+        )
+        if use_block4_decode:
+            activated = block4_gate_up_swiglu(
+                x,
+                self._decode_gate_up_weight_fp8,
+                self._decode_gate_up_scales,
+            )
+        elif self.projection_mode == "packed":
             activated = maybe_cutlass_dual_swiglu(x, self.gate_up_proj.weight)
             if activated is None:
                 packed = self.gate_up_proj(x)
@@ -648,6 +691,24 @@ class Qwen3VLTextMLP(nn.Module):
             up = self.up_proj(x)
             activated = F.silu(gate) * up
         return self.down_proj(activated)
+
+    @torch.no_grad()
+    def prepare_decode_block4_gate_up(self) -> int:
+        """Materialize the SM120 decode-only compressed projection."""
+
+        if self.projection_mode != "packed":
+            raise RuntimeError("block-4 gate-up requires packed projection mode")
+        if self._decode_gate_up_weight_fp8 is not None:
+            raise RuntimeError("block-4 gate-up weight was already prepared")
+        weight_fp8, scales = compress_block4_gate_up_weight(
+            self.gate_up_proj.weight
+        )
+        self._decode_gate_up_weight_fp8 = weight_fp8
+        self._decode_gate_up_scales = scales
+        return (
+            weight_fp8.numel() * weight_fp8.element_size()
+            + scales.numel() * scales.element_size()
+        )
 
     def _apply(self, fn, recurse: bool = True):
         super()._apply(fn, recurse=recurse)
@@ -1452,6 +1513,40 @@ class Qwen3VLForCausalLM(nn.Module):
         self._decode_lm_head_weight_fp8 = weight_fp8
         self._decode_lm_head_weight_scale = weight_scale
         return weight_fp8.t(), weight_scale
+
+    @torch.no_grad()
+    def prepare_decode_block4_gate_up(self) -> int:
+        """Prepare every decoder layer's compressed batch-one MLP projection."""
+
+        layers = list(self.model.language_model.layers)
+        required_bytes = sum(
+            (
+                layer.mlp.gate_up_proj.weight.numel()
+                + layer.mlp.gate_up_proj.weight.numel() // 4 * 2
+            )
+            for layer in layers
+        )
+        free_bytes, _ = torch.cuda.mem_get_info(
+            self.model.language_model.embed_tokens.weight.device
+        )
+        reserve_bytes = 2 * 1024**3
+        if free_bytes < required_bytes + reserve_bytes:
+            raise RuntimeError(
+                "decode block-4 gate-up requires enough free memory to retain "
+                "the BF16 prefill weights, compressed decode weights and a "
+                f"2 GiB runtime reserve; free={free_bytes}, "
+                f"required={required_bytes + reserve_bytes}"
+            )
+        compressed_bytes = sum(
+            layer.mlp.prepare_decode_block4_gate_up()
+            for layer in layers
+        )
+        if compressed_bytes != required_bytes:
+            raise RuntimeError(
+                "decode block-4 gate-up compressed byte accounting mismatch: "
+                f"expected={required_bytes}, actual={compressed_bytes}"
+            )
+        return compressed_bytes
 
     def enable_decode_fp8_greedy_lm_head_compile(self, compiled_lm_head) -> None:
         """Bind compiled FP8 candidate projection after its persistent weight is ready."""

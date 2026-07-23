@@ -102,6 +102,35 @@ def test_compile_graph_config_uses_supported_stateless_region(
         )
 
 
+def test_block4_gate_up_requires_explicit_graph_backend(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SM120 decode kernel must never look enabled on an inactive backend."""
+
+    _patch_auto_config(monkeypatch)
+    valid = Config(
+        str(tmp_path),
+        max_model_len=1024,
+        max_num_batched_tokens=1024,
+        execution_backend="compile_graph",
+        decode_compile_region="stateless",
+        mlp_projection_mode="packed",
+        enable_decode_block4_gate_up=True,
+    )
+    assert valid.enable_decode_block4_gate_up is True
+
+    with pytest.raises(ValueError, match="requires a CUDA Graph backend"):
+        Config(
+            str(tmp_path),
+            max_model_len=1024,
+            max_num_batched_tokens=1024,
+            execution_backend="eager",
+            mlp_projection_mode="packed",
+            enable_decode_block4_gate_up=True,
+        )
+
+
 def test_p611_config_rejects_logical_prune_cuda_graph(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

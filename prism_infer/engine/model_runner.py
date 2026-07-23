@@ -178,6 +178,8 @@ class ModelRunner:
         self.cudagraph_capture_ms = 0.0
         self.decode_compile_first_call_ms = 0.0
         self.decode_fp8_lm_head_quantization_ms = 0.0
+        self.decode_block4_gate_up_bytes = 0
+        self.decode_block4_gate_up_quantization_ms = 0.0
         self.decode_compile_first_call_pending = False
         self.last_cudagraph_actual_batch_size: int | None = None
         self.last_cudagraph_replay_batch_size: int | None = None
@@ -254,6 +256,16 @@ class ModelRunner:
             with _model_initialization_defaults(self.model_dtype):
                 self._create_model(hf_config)
                 load_model(self.model, self.config.model)
+                if self.is_vl_model and self.config.enable_decode_block4_gate_up:
+                    torch.cuda.synchronize()
+                    quantize_start = perf_counter()
+                    self.decode_block4_gate_up_bytes = (
+                        self.model.prepare_decode_block4_gate_up()
+                    )
+                    torch.cuda.synchronize()
+                    self.decode_block4_gate_up_quantization_ms = (
+                        perf_counter() - quantize_start
+                    ) * 1000.0
                 self.sampler = Sampler()
                 self.execution_backend = create_execution_backend(self)
                 self.execution_backend.warmup()
@@ -548,6 +560,25 @@ class ModelRunner:
                 getattr(self, "decode_fp8_lm_head_quantization_ms", 0.0)
                 if region == "stateless"
                 else 0.0
+            ),
+        }
+
+    def block4_gate_up_metadata(self) -> dict[str, object]:
+        """Return the explicit decode-only compressed MLP configuration."""
+
+        enabled = self.config.enable_decode_block4_gate_up
+        return {
+            "enabled": enabled,
+            "weight_format": "fp8_e4m3fn_group4" if enabled else "model",
+            "scale_dtype": "float16" if enabled else "none",
+            "activation_dtype": "bfloat16" if enabled else "model",
+            "group_size": 4 if enabled else 0,
+            "fused_epilogue": "swiglu" if enabled else "none",
+            "compressed_weight_bytes": (
+                self.decode_block4_gate_up_bytes if enabled else 0
+            ),
+            "quantization_ms": (
+                self.decode_block4_gate_up_quantization_ms if enabled else 0.0
             ),
         }
 

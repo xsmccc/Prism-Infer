@@ -104,6 +104,14 @@ def main() -> None:
             "captures generation without model load and warmup"
         ),
     )
+    parser.add_argument(
+        "--enable-decode-block4-gate-up",
+        action="store_true",
+        help=(
+            "retain an SM120 block-4 FP8-weight copy and use the fused "
+            "batch-one decode gate-up/SwiGLU kernel"
+        ),
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -141,6 +149,7 @@ def main() -> None:
         enable_fused_qk_mrope=True,
         enable_fused_add_rmsnorm=True,
         enable_packed_kv_projection=True,
+        enable_decode_block4_gate_up=args.enable_decode_block4_gate_up,
         vision_attention_backend="sdpa",
     )
     sampling = SamplingParams(
@@ -227,6 +236,7 @@ def main() -> None:
         gpu = collect_gpu_metadata().environment_dict()
         graph = llm.model_runner.cudagraph_metadata(1)
         compile_metadata = llm.model_runner.compile_metadata()
+        block4_gate_up = llm.model_runner.block4_gate_up_metadata()
         record = {
             "schema_version": 1,
             "record_type": "external_system_benchmark",
@@ -266,6 +276,7 @@ def main() -> None:
                 "fused_qk_mrope": True,
                 "fused_add_rmsnorm": True,
                 "packed_kv_projection": True,
+                "decode_block4_gate_up": block4_gate_up,
                 "cuda_graph": graph,
                 "torch_compile": compile_metadata,
             },
