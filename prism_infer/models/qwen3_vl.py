@@ -32,7 +32,10 @@ from prism_infer.ops.add_rmsnorm import (
     fused_add_rmsnorm_prefill,
 )
 from prism_infer.ops.cutlass_swiglu import maybe_cutlass_dual_swiglu
-from prism_infer.ops.qk_rmsnorm import fused_qk_rmsnorm
+from prism_infer.ops.qk_rmsnorm import (
+    fused_qk_rmsnorm,
+    maybe_fused_qk_rmsnorm_prefill,
+)
 from prism_infer.ops.selective_topk import (
     rerank_greedy_candidates,
     selective_topk_indices,
@@ -463,11 +466,27 @@ class Qwen3VLTextAttention(nn.Module):
         k = k.view(num_tokens, self.num_kv_heads, self.head_dim)
         v = v.view(num_tokens, self.num_kv_heads, self.head_dim)
         fused_mrope = False
-        if (
+        context = get_context()
+        prefill_qk = None
+        if context.is_prefill and position_embeddings is not None:
+            cos, sin = position_embeddings
+            prefill_qk = maybe_fused_qk_rmsnorm_prefill(
+                q,
+                k,
+                self.q_norm.weight,
+                self.k_norm.weight,
+                eps=float(self.q_norm.eps),
+                cos=cos,
+                sin=sin,
+            )
+        if prefill_qk is not None:
+            q, k = prefill_qk
+            fused_mrope = True
+        elif (
             self.fused_qk_rmsnorm_enabled
             and q.is_cuda
             and not torch.compiler.is_compiling()
-            and not get_context().is_prefill
+            and not context.is_prefill
             and q.shape[0] <= 4
         ):
             fused_positions = {}
