@@ -35,6 +35,7 @@ from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
 
 EXTERNAL_SCHEMA_VERSION = 2
 COMPARISON_PROFILES = ("diagnostic_matched", "best_stable")
+DEFAULT_VIDEO_FPS = 24.0
 
 
 def _percentile(values: list[float], fraction: float) -> float:
@@ -135,6 +136,9 @@ def _materialize_case(case: dict[str, Any]) -> list[dict[str, Any]]:
             item["images"] = [_synthetic_image(spec) for spec in request["images"]]
         elif request_type == "video":
             item["video"] = [_synthetic_image(spec) for spec in request["frames"]]
+            item["fps"] = float(request.get("fps", DEFAULT_VIDEO_FPS))
+            if not math.isfinite(item["fps"]) or item["fps"] <= 0.0:
+                raise ValueError(f"video fps must be finite and positive: {item['fps']}")
         elif request_type != "text":
             raise ValueError(f"unsupported request type: {request_type!r}")
         requests.append(item)
@@ -160,7 +164,7 @@ def _build_vllm_prompts(
             content.append({"type": "video", "video": request["video"]})
             frames = request["video"]
             frame_count = len(frames)
-            fps = 2.0
+            fps = request["fps"]
             # vLLM 0.24.0 的 Qwen3-VL parser 要求内存视频携带 HF metadata。
             multi_modal_data["video"] = (
                 np.stack([np.asarray(frame) for frame in frames]),
@@ -283,7 +287,7 @@ def main() -> None:
         float,
         list[float],
         list[float],
-        list[int],
+        list[list[int]],
     ]:
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.synchronize()
@@ -295,7 +299,7 @@ def main() -> None:
         token_ids = [list(output.outputs[0].token_ids) for output in outputs]
         ttft_ms: list[float] = []
         tpot_ms: list[float] = []
-        prompt_token_counts: list[int] = []
+        prompt_token_ids: list[list[int]] = []
         for output, generated in zip(outputs, token_ids, strict=True):
             if output.metrics is None:
                 raise RuntimeError("vLLM RequestOutput.metrics is unavailable")
@@ -306,8 +310,8 @@ def main() -> None:
                     float(output.metrics.last_token_ts - output.metrics.first_token_ts),
                 )
                 tpot_ms.append(decode_seconds * 1000.0 / (len(generated) - 1))
-            prompt_token_counts.append(len(output.prompt_token_ids or []))
-        return token_ids, elapsed_ms, ttft_ms, tpot_ms, prompt_token_counts
+            prompt_token_ids.append(list(output.prompt_token_ids or []))
+        return token_ids, elapsed_ms, ttft_ms, tpot_ms, prompt_token_ids
 
     for _ in range(args.warmup):
         run_once()
@@ -320,13 +324,14 @@ def main() -> None:
     allocated_mb: list[float] = []
     reserved_mb: list[float] = []
     peak_allocated_mb: list[float] = []
-    prompt_token_counts: list[int] = []
+    prompt_token_runs: list[list[list[int]]] = []
     if args.cuda_profiler_range:
         torch.cuda.cudart().cudaProfilerStart()
     try:
         for _ in range(args.repeat):
-            tokens, elapsed, request_ttft, request_tpot, prompt_token_counts = run_once()
+            tokens, elapsed, request_ttft, request_tpot, prompt_token_ids = run_once()
             token_runs.append(tokens)
+            prompt_token_runs.append(prompt_token_ids)
             e2e_ms.append(elapsed)
             ttft_ms.extend(request_ttft)
             tpot_ms.extend(request_tpot)
@@ -340,6 +345,10 @@ def main() -> None:
             torch.cuda.cudart().cudaProfilerStop()
     if any(tokens != token_runs[0] for tokens in token_runs[1:]):
         raise RuntimeError("vLLM greedy token ids changed across measured repeats")
+    if any(prompt_ids != prompt_token_runs[0] for prompt_ids in prompt_token_runs[1:]):
+        raise RuntimeError("vLLM prompt token ids changed across measured repeats")
+    audited_prompt_ids = prompt_token_runs[0]
+    prompt_token_counts = [len(token_ids) for token_ids in audited_prompt_ids]
 
     git = collect_git_metadata(REPO_ROOT)
     gpu_metadata = collect_gpu_metadata().environment_dict()
@@ -405,6 +414,7 @@ def main() -> None:
             "num_requests": len(requests),
             "prompt_tokens": sum(prompt_token_counts),
             "prompt_tokens_per_request": prompt_token_counts,
+            "prompt_token_ids_sha256": _canonical_sha256(audited_prompt_ids),
             "max_tokens": args.max_tokens,
             "preprocessing_included_in_e2e": True,
             "traffic": "offline_closed_loop",

@@ -141,13 +141,13 @@ def main() -> None:
         ignore_eos=True,
     )
 
-    def run_once() -> tuple[list[list[int]], int, float, float, float]:
+    def run_once() -> tuple[list[list[int]], list[int], float, float, float]:
         requests = materialize_requests(case, repo_root=REPO_ROOT)
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
         started = perf_counter()
         request_id = _add_request(llm, requests[0], sampling)
-        prompt_count = llm.scheduler.waiting[-1].num_prompt_tokens
+        prompt_token_ids = list(llm.scheduler.waiting[-1].prompt_token_ids)
         preprocessing_finished = perf_counter()
         arrivals: list[float] = []
         final_tokens: list[int] | None = None
@@ -173,7 +173,7 @@ def main() -> None:
         tpot_ms = (arrivals[-1] - arrivals[0]) * 1000.0 / (len(arrivals) - 1)
         return (
             [final_tokens],
-            prompt_count,
+            prompt_token_ids,
             (finished - started) * 1000.0,
             ttft_ms,
             tpot_ms,
@@ -183,7 +183,7 @@ def main() -> None:
         for _ in range(args.warmup):
             run_once()
         token_runs: list[list[list[int]]] = []
-        prompt_tokens: list[int] = []
+        prompt_token_runs: list[list[int]] = []
         e2e_ms: list[float] = []
         ttft_ms: list[float] = []
         tpot_ms: list[float] = []
@@ -192,9 +192,9 @@ def main() -> None:
         reserved_mb: list[float] = []
         peak_allocated_mb: list[float] = []
         for _ in range(args.repeat):
-            tokens, prompt_count, elapsed, ttft, tpot = run_once()
+            tokens, prompt_token_ids, elapsed, ttft, tpot = run_once()
             token_runs.append(tokens)
-            prompt_tokens.append(prompt_count)
+            prompt_token_runs.append(prompt_token_ids)
             e2e_ms.append(elapsed)
             ttft_ms.append(ttft)
             tpot_ms.append(tpot)
@@ -204,6 +204,9 @@ def main() -> None:
             peak_allocated_mb.append(torch.cuda.max_memory_allocated() / 1024 / 1024)
         if any(tokens != token_runs[0] for tokens in token_runs[1:]):
             raise RuntimeError("Prism greedy token ids changed across measured repeats")
+        if any(prompt_ids != prompt_token_runs[0] for prompt_ids in prompt_token_runs[1:]):
+            raise RuntimeError("Prism prompt token ids changed across measured repeats")
+        audited_prompt_ids = prompt_token_runs[0]
 
         git = collect_git_metadata(REPO_ROOT)
         gpu = collect_gpu_metadata().environment_dict()
@@ -257,7 +260,8 @@ def main() -> None:
                 "case_id": case["id"],
                 "request_types": [request["type"] for request in case["requests"]],
                 "num_requests": 1,
-                "prompt_tokens": prompt_tokens[-1],
+                "prompt_tokens": len(audited_prompt_ids),
+                "prompt_token_ids_sha256": _sha256([audited_prompt_ids]),
                 "max_tokens": args.max_tokens,
                 "traffic": "offline_closed_loop",
             },
