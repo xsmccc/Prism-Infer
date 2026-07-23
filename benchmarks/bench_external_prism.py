@@ -96,6 +96,14 @@ def main() -> None:
         choices=("stateless",),
         default="stateless",
     )
+    parser.add_argument(
+        "--cuda-profiler-range",
+        action="store_true",
+        help=(
+            "wrap measured repeats in cudaProfilerStart/Stop so Nsight "
+            "captures generation without model load and warmup"
+        ),
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -191,17 +199,24 @@ def main() -> None:
         allocated_mb: list[float] = []
         reserved_mb: list[float] = []
         peak_allocated_mb: list[float] = []
-        for _ in range(args.repeat):
-            tokens, prompt_token_ids, elapsed, ttft, tpot = run_once()
-            token_runs.append(tokens)
-            prompt_token_runs.append(prompt_token_ids)
-            e2e_ms.append(elapsed)
-            ttft_ms.append(ttft)
-            tpot_ms.append(tpot)
-            throughput.append(sum(len(row) for row in tokens) / (elapsed / 1000.0))
-            allocated_mb.append(torch.cuda.memory_allocated() / 1024 / 1024)
-            reserved_mb.append(torch.cuda.memory_reserved() / 1024 / 1024)
-            peak_allocated_mb.append(torch.cuda.max_memory_allocated() / 1024 / 1024)
+        if args.cuda_profiler_range:
+            torch.cuda.cudart().cudaProfilerStart()
+        try:
+            for _ in range(args.repeat):
+                tokens, prompt_token_ids, elapsed, ttft, tpot = run_once()
+                token_runs.append(tokens)
+                prompt_token_runs.append(prompt_token_ids)
+                e2e_ms.append(elapsed)
+                ttft_ms.append(ttft)
+                tpot_ms.append(tpot)
+                throughput.append(sum(len(row) for row in tokens) / (elapsed / 1000.0))
+                allocated_mb.append(torch.cuda.memory_allocated() / 1024 / 1024)
+                reserved_mb.append(torch.cuda.memory_reserved() / 1024 / 1024)
+                peak_allocated_mb.append(torch.cuda.max_memory_allocated() / 1024 / 1024)
+        finally:
+            if args.cuda_profiler_range:
+                torch.cuda.synchronize()
+                torch.cuda.cudart().cudaProfilerStop()
         if any(tokens != token_runs[0] for tokens in token_runs[1:]):
             raise RuntimeError("Prism greedy token ids changed across measured repeats")
         if any(prompt_ids != prompt_token_runs[0] for prompt_ids in prompt_token_runs[1:]):
@@ -268,6 +283,7 @@ def main() -> None:
             "measurement": {
                 "warmup": args.warmup,
                 "repeat": args.repeat,
+                "cuda_profiler_range": args.cuda_profiler_range,
                 "explicit_per_step_cuda_synchronize": False,
                 "token_arrival_boundary": "step_result_return_after_sampled_token_d2h",
                 "decode_tpot_scope": "first_to_last_token_divided_by_output_intervals",
