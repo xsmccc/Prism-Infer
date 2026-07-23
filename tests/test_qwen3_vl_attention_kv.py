@@ -21,6 +21,49 @@ def _skip_if_needed() -> None:
     raise SystemExit(f"SKIP: {message}")
 
 
+def test_scaled_fp8_decode_uses_packed_qkv_projection(monkeypatch):
+    """KV storage dtype must not split the independent decode QKV projection."""
+
+    torch.manual_seed(20260723)
+    attn = Qwen3VLTextAttention(
+        hidden_size=64,
+        num_heads=4,
+        num_kv_heads=2,
+        head_dim=16,
+        dtype=torch.float32,
+    ).eval()
+    attn.packed_kv_projection_enabled = True
+    attn.engine_attn.k_cache = torch.empty(
+        1,
+        1,
+        2,
+        16,
+        dtype=torch.float8_e4m3fn,
+    )
+    hidden = torch.randn(1, 64)
+    packed_calls = 0
+    packed_forward = attn.qkv_proj.forward
+
+    def counted_packed_forward(value):
+        nonlocal packed_calls
+        packed_calls += 1
+        return packed_forward(value)
+
+    def forbid_split_q_projection(_value):
+        raise AssertionError("scaled-FP8 decode fell back to split Q projection")
+
+    monkeypatch.setattr(attn.qkv_proj, "forward", counted_packed_forward)
+    monkeypatch.setattr(attn.q_proj, "forward", forbid_split_q_projection)
+
+    with torch.inference_mode():
+        q, k, v = attn._forward_engine_qkv(hidden, None, is_prefill=False)
+
+    assert packed_calls == 1
+    assert q.shape == (1, 4, 16)
+    assert k.shape == (1, 2, 16)
+    assert v.shape == (1, 2, 16)
+
+
 @pytest.mark.gpu
 def test_engine_attention_prefill_matches_full_sequence_and_writes_kv(monkeypatch):
     """flatten prefill attention 应对齐 full-sequence 路径并写入 paged KV cache。"""

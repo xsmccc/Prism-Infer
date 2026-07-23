@@ -102,6 +102,32 @@ def test_compile_graph_config_uses_supported_stateless_region(
         )
 
 
+@pytest.mark.parametrize(
+    "compression_mode",
+    ("scaled_fp8_kv", "visual_compact_scaled_fp8"),
+)
+def test_compile_graph_config_allows_graph_safe_scaled_kv(
+    compression_mode: str,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stateless compiled projections do not own or functionalize KV state."""
+
+    _patch_auto_config(monkeypatch)
+    config = Config(
+        str(tmp_path),
+        max_model_len=1024,
+        max_num_batched_tokens=1024,
+        execution_backend="compile_graph",
+        compression_mode=compression_mode,
+        decode_compile_region="stateless",
+    )
+
+    assert config.execution_backend == "compile_graph"
+    assert config.compression_mode == compression_mode
+    assert config.decode_compile_region == "stateless"
+
+
 def test_block4_gate_up_requires_explicit_graph_backend(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

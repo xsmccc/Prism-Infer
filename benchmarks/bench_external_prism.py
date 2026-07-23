@@ -29,6 +29,7 @@ from benchmarks.harness import (
     materialize_requests,
 )
 from prism_infer import LLM, SamplingParams
+from prism_infer.engine.kv_quantization import kv_cache_storage_bytes
 
 
 def _percentile(values: list[float], fraction: float) -> float:
@@ -92,6 +93,12 @@ def main() -> None:
         default="cuda_graph",
     )
     parser.add_argument(
+        "--compression-mode",
+        choices=("off", "scaled_fp8_kv"),
+        default="off",
+        help="physical KV storage profile; scaled FP8 includes FP32 token-head scales",
+    )
+    parser.add_argument(
         "--compile-region",
         choices=("stateless",),
         default="stateless",
@@ -117,6 +124,11 @@ def main() -> None:
 
     if args.warmup < 0 or args.repeat < 1 or args.max_tokens < 2:
         raise SystemExit("warmup >= 0, repeat >= 1 and max-tokens >= 2 are required")
+    if args.enable_decode_block4_gate_up and args.compression_mode != "off":
+        raise SystemExit(
+            "the memory profile forbids the duplicate block4 decode weight "
+            "when compression-mode is not off"
+        )
 
     manifest_path = Path(args.manifest)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -132,7 +144,7 @@ def main() -> None:
             args.compile_region if args.execution_backend == "compile_graph" else "none"
         ),
         decode_compile_mode="max-autotune-no-cudagraphs",
-        compression_mode="off",
+        compression_mode=args.compression_mode,
         tensor_parallel_size=1,
         max_model_len=args.max_model_len,
         max_num_batched_tokens=args.max_num_batched_tokens,
@@ -156,6 +168,14 @@ def main() -> None:
         temperature=0.0,
         max_tokens=args.max_tokens,
         ignore_eos=True,
+    )
+    kv_cache = llm.model_runner.kv_cache
+    kv_scale_cache = llm.model_runner.kv_scale_cache
+    kv_storage = kv_cache_storage_bytes(kv_cache, kv_scale_cache)
+    attention_backend = (
+        "vllm_flash_attn_paged_bf16"
+        if args.compression_mode == "off"
+        else "prism_triton_paged_scaled_fp8"
     )
 
     def run_once() -> tuple[list[list[int]], list[int], float, float, float]:
@@ -263,11 +283,14 @@ def main() -> None:
                 "max_model_len": args.max_model_len,
                 "max_num_batched_tokens": args.max_num_batched_tokens,
                 "max_num_seqs": args.max_num_seqs,
-                "kv_cache_capacity_tokens": args.num_kvcache_blocks * args.kvcache_block_size,
+                "kv_cache_capacity_tokens": (
+                    llm.model_runner.num_kvcache_blocks * args.kvcache_block_size
+                ),
             },
             "backend": {
                 "execution": args.execution_backend,
-                "attention": "vllm_flash_attn_paged_bf16",
+                "attention": attention_backend,
+                "compression": args.compression_mode,
                 "prefix_caching": False,
                 "chunked_prefill": False,
                 "logits_precision": "selective_fp32",
@@ -279,6 +302,21 @@ def main() -> None:
                 "decode_block4_gate_up": block4_gate_up,
                 "cuda_graph": graph,
                 "torch_compile": compile_metadata,
+            },
+            "kv_cache": {
+                "compression": args.compression_mode,
+                "block_size": args.kvcache_block_size,
+                "blocks": llm.model_runner.num_kvcache_blocks,
+                "capacity_tokens": (
+                    llm.model_runner.num_kvcache_blocks * args.kvcache_block_size
+                ),
+                "payload_dtype": str(kv_cache.dtype),
+                "scale_dtype": (
+                    "none" if kv_scale_cache is None else str(kv_scale_cache.dtype)
+                ),
+                "payload_bytes": kv_storage.payload,
+                "scale_bytes": kv_storage.scales,
+                "total_bytes": kv_storage.total,
             },
             "workload": {
                 "manifest_name": manifest["name"],

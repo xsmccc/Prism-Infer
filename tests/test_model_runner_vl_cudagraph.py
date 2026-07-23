@@ -4,7 +4,10 @@ from types import SimpleNamespace
 
 import torch
 
+from prism_infer.engine.contracts import BatchPhase
 from prism_infer.engine.model_runner import ModelRunner
+from prism_infer.engine.sequence import Sequence
+from prism_infer.sampling_params import SamplingParams
 
 
 def test_cudagraph_decode_positions_normalize_text_and_vl_shapes() -> None:
@@ -47,6 +50,62 @@ def test_cudagraph_batch_sizes_cover_non_standard_max_bs() -> None:
         print(f"max_bs={max_bs}, graph_bs={got}")
         assert got == expected
     print("ModelRunner CUDA Graph batch size coverage: PASS")
+
+
+def test_scaled_fp8_batch_one_reuses_graph_host_staging() -> None:
+    """Scaled KV has stable payload/scale addresses and can use the B1 fast path."""
+
+    runner = object.__new__(ModelRunner)
+    runner.world_size = 1
+    runner.block_size = 4
+    runner.uses_token_head_scales = True
+    runner.kv_scale_cache = torch.zeros(2, 1, 1)
+    runner.config = SimpleNamespace(
+        compression_mode="scaled_fp8_kv",
+        enable_visual_pruning_shadow=False,
+        kvcache_block_size=4,
+        paged_decode_block_n=256,
+    )
+    packed_model_inputs = torch.zeros(4, dtype=torch.int64)
+    packed_decode_metadata = torch.full((6,), -1, dtype=torch.int32)
+    runner.graph_vars = {
+        1: {
+            "host_packed_model_inputs_numpy": packed_model_inputs.numpy(),
+            "host_packed_decode_metadata_numpy": packed_decode_metadata.numpy(),
+            "host_packed_model_inputs": packed_model_inputs,
+            "host_packed_decode_metadata": packed_decode_metadata,
+            "host_input_ids": packed_model_inputs[:1],
+            "host_positions": packed_model_inputs[1:].view(3, 1),
+            "host_slot_mapping": packed_decode_metadata[:1],
+            "host_context_lens": packed_decode_metadata[1:2],
+            "host_decode_max_context_len": packed_decode_metadata[3:4],
+            "host_block_tables": packed_decode_metadata[4:].view(1, 2),
+        }
+    }
+    seq = Sequence(
+        [10, 11],
+        SamplingParams(temperature=0.0, max_tokens=8),
+        block_size=4,
+        request_id=0,
+    )
+    seq.block_table = [3]
+    plan = SimpleNamespace(
+        phase=BatchPhase.DECODE,
+        batch_size=1,
+        sequences=(seq,),
+        sequence_ids=(seq.seq_id,),
+        scheduled_token_counts=(1,),
+    )
+
+    batch = runner.prepare_single_greedy_decode_cudagraph(plan)
+
+    assert batch is not None
+    assert batch.attention_context.compression_metadata is not None
+    assert batch.attention_context.compression_metadata.mode == "scaled_fp8_kv"
+    assert batch.kv_scale_views[0].data_ptr() == runner.kv_scale_cache[0].data_ptr()
+    assert batch.kv_scale_views[1].data_ptr() == runner.kv_scale_cache[1].data_ptr()
+    assert packed_model_inputs.tolist() == [11, 1, 1, 1]
+    assert packed_decode_metadata.tolist() == [13, 2, 2, 2, 3, -1]
 
 
 def test_cudagraph_metadata_reports_capture_scope_and_selected_bucket() -> None:

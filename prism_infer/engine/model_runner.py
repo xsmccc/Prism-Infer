@@ -1202,17 +1202,18 @@ class ModelRunner:
         """Fill persistent Graph host buffers for the latency-critical B1 path.
 
         General decode preparation intentionally materializes immutable staging
-        tensors.  For TP=1, compression-off, greedy batch-one replay, the Graph
-        already owns stable pinned buffers and ``sampled_tokens.tolist()`` makes
-        each step sequential.  Reusing those buffers avoids two small tensor
-        allocations, a second host copy, and repeated Context/DeviceBatch setup.
+        tensors.  For TP=1, dense BF16 or scaled-FP8 KV, greedy batch-one replay,
+        the Graph already owns stable pinned buffers and
+        ``sampled_tokens.tolist()`` makes each step sequential.  Reusing those
+        buffers avoids two small tensor allocations, a second host copy, and
+        repeated Context/DeviceBatch setup.
         """
 
         if (
             plan.phase is not BatchPhase.DECODE
             or plan.batch_size != 1
             or self.world_size != 1
-            or self.config.compression_mode != "off"
+            or self.config.compression_mode not in ("off", "scaled_fp8_kv")
             or getattr(self.config, "enable_visual_pruning_shadow", False)
             or is_trace_enabled()
             or 1 not in getattr(self, "graph_vars", {})
@@ -1252,6 +1253,7 @@ class ModelRunner:
             )
             host_packed_model_inputs = graph_vars["host_packed_model_inputs"]
             host_packed_decode_metadata = graph_vars["host_packed_decode_metadata"]
+            scale_cache = self._bound_gpu_scale_cache()
             context = Context(
                 is_prefill=False,
                 slot_mapping=graph_vars["host_slot_mapping"],
@@ -1276,7 +1278,9 @@ class ModelRunner:
                 temperatures=None,
                 execution_bucket=1,
                 sampling_mode="greedy",
-                kv_scale_views=(),
+                kv_scale_views=(
+                    () if scale_cache is None else (scale_cache[0], scale_cache[1])
+                ),
             )
             cache = (seq.seq_id, device_batch)
             self._single_greedy_decode_batch_cache = cache

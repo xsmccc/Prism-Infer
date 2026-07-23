@@ -465,11 +465,7 @@ class Qwen3VLTextAttention(nn.Module):
             is_prefill = get_context().is_prefill
         num_tokens = hidden_states.shape[0]
         packed_decode = self.packed_kv_projection_enabled and num_tokens == 1
-        if (
-            packed_decode
-            and self.engine_attn.k_cache.numel()
-            and self.engine_attn.k_cache.dtype == torch.bfloat16
-        ):
+        if packed_decode and self.engine_attn.k_cache.numel():
             packed_qkv = self.qkv_proj(hidden_states)
             q, k, v = packed_qkv.split(
                 (self.q_size, self.kv_size, self.kv_size),

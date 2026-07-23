@@ -507,11 +507,12 @@ class PrismConfig:
                 f"{self.scheduler.max_num_seqs}"
             )
         if (
-            self.execution.backend
-            in (ExecutionBackendName.COMPILE, ExecutionBackendName.COMPILE_GRAPH)
+            self.execution.backend is ExecutionBackendName.COMPILE
             and self.cache.compression_mode != COMPRESSION_OFF
         ):
-            raise ValueError("P6.3 decode compile preflight requires compression_mode='off'")
+            raise ValueError(
+                "P6.3 attention compile preflight requires compression_mode='off'"
+            )
         if self.execution.block4_gate_up:
             if self.model.mlp_projection_mode != "packed":
                 raise ValueError(
