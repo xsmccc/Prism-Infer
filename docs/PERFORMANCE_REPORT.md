@@ -1,8 +1,38 @@
 # Prism-Infer 性能报告
 
-> 更新日期: 2026-07-19
-> 当前阶段: P9-C scaled-FP8 quality complete；P9-D runtime optimization pending
+> 更新日期: 2026-07-23
+> 当前阶段: P10.10 prefill correctness 修复、三引擎重测与正确 trace 完成
 > 报告性质: 包含 dirty validation 与 clean formal evidence；每节单独标注结论边界
+
+## 0. 当前发布结论与历史更正
+
+旧 P9-D/P10 H1 `76ad1f...14c6` 与 H2 `4a61f1...166f` 虽 repeat 内稳定，但来自
+错误解释 flattened prefill tensor 的 SDPA fallback；H1 实际生成与八张图片无关的
+Python 代码。所有依赖这两个 hash 的 full-engine semantic claim 和旧三引擎排名
+从 2026-07-23 起撤销。局部 kernel A/B 若只比较同一旧路径，仍可保留为实现研究，
+但不能单独证明当前端到端正确。
+
+commit `26deccd` 改用 vLLM bundled varlen FlashAttention，并加入 shape-correct
+per-sequence SDPA fallback。修复后的 H1 三引擎都记录到完全相同的 1618 个
+post-tokenization IDs（SHA256 `04205e...6b9`）。三个 fresh process 的
+median-of-medians 为：
+
+| 系统 | TPOT (ms) | TTFT (ms) | E2E (ms) |
+|---|---:|---:|---:|
+| Prism | **9.86201** | **235.842** | **1592.171** |
+| SGLang 0.5.15.post1 | 10.35021 | 283.001 | 1597.990 |
+| vLLM 0.25.1 | 10.35082 | 313.950 | 1629.136 |
+
+Prism 的 TPOT latency 分别低 `4.717%/4.722%`，TTFT 分别低
+`16.664%/24.879%`；相对 vLLM E2E 低 `2.269%`，相对 SGLang E2E 仅低
+`0.364%`，后者按近似持平处理。Prism 输出 `cf5318...3d2e` 正确描述输入颜色，
+H2 输出 `47b090...94a8` 正确描述蓝色到青绿色的连续变化。
+
+clean `af8dce7` NSYS 将后续边界定位为 decode GEMV：108 次/step、约
+`7.733 ms/step`、占 graph kernel time `79.95%`。安全的 top-k 分层归并最多只省
+`3–5 μs/token`；FA2 split override、自研 Triton paged decode 与 FA3/SM120 路径均
+经实测拒绝。下一阶段若要获得可见提升，应研究带 exact residual/outlier correction
+的低比特权重投影，并继续用语义输出而非单一 hash 做门禁。
 
 ## 1. 结论边界
 

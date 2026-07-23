@@ -8,6 +8,14 @@ trace 和视觉 KV 物理压缩主路径。
 Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不作为模型 forward
 或 engine wrapper。当前仓库是研究原型，不是带 HTTP/gRPC 接口的生产 serving 系统。
 
+> **2026-07-23 correctness 更正：**旧 P9-D/P10 文档中的 H1 输出
+> `76ad1f...14c6` 虽然 repeat 内 token hash 一致，但内容与八张输入图无关，不能作为
+> 语义正确或外部领先证据。根因是当前 Torch 2.11 环境没有独立 `flash-attn` 时，
+> flattened `[tokens, heads, dim]` 被直接传给 SDPA，attention 维度解释错误。
+> commit `26deccd` 已改用 vLLM bundled varlen FlashAttention，并加入形状正确的
+> per-sequence SDPA fallback。下文的当前三引擎数字均来自修复后的语义正确运行；
+> 旧 hash 与旧排名只保留为历史失效记录。
+
 ## 当前能力与状态
 
 | 能力 | 状态 | 当前边界 |
@@ -42,12 +50,14 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 - node-level Systems trace 定位到旧 logits 路径每步把完整 LM head 转为 FP32；改用
   模型精度后，logits CUDA median 从 `4.068 ms` 降至 `0.762 ms`，五类 workload
   TPOT 提升 `1.216x–1.280x`，torch allocator peak 减少 `2,230–2,317 MiB`。
-- P9-D 的冻结 H1 CUDA Graph cell（RTX 5090、Qwen3-VL-8B、TP1、batch1、
-  greedy、output128）中，clean Prism TPOT 中位数为 `10.32784 ms`，同协议
-  SGLang 0.5.15.post1 为 `10.37246 ms`，vLLM 0.25.1 为 `10.52829 ms`；
-  Prism 分别领先约 `0.430%` 与 `1.904%`。另 3 个 fresh Prism process 均低于
-  SGLang 中位数，128-token 输出 hash 完全一致。该结论只覆盖这一冻结 cell，
-  不外推为 Prism 全面超过两个框架。
+- 修复 prefill attention 后的冻结 H1 cell（RTX 5090、Qwen3-VL-8B、TP1、
+  batch1、greedy、8×448 图、prompt1618、output128）中，三次 fresh Prism
+  process 的 TPOT median-of-medians 为 `9.86201 ms`；同 prompt token IDs
+  （SHA256 `04205e...6b9`）下，SGLang 0.5.15.post1 为 `10.35021 ms`，
+  vLLM 0.25.1 为 `10.35082 ms`。Prism 的 TPOT latency 分别低 `4.717%` 和
+  `4.722%`，TTFT 分别低 `16.664%` 和 `24.879%`；相对 SGLang 的 E2E
+  仅低 `0.364%`，按近似持平报告。Prism 输出稳定为 `cf5318...3d2e`，内容正确描述
+  八张纯色图片。该结论只覆盖这一冻结 cell，不外推为全面排名。
 - P7.3 的 9-cell engine-level online matrix 中，已完成请求均满足各 cell 预先声明的
   SLO；该结果没有 HTTP/gRPC 开销，也没有同条件 vLLM online goodput 对比。
 - packed gate/up 将 single-image Graph replay 的 linear kernels 从 `253` 降到 `217`、
@@ -105,10 +115,12 @@ docs/           # 路线图、验证合同、报告、claim ledger
 
 ```text
 GPU: NVIDIA GeForce RTX 5090 32 GB
-CUDA: 12.8
+GPU UUID: GPU-7f63f8b0-1027-d3bf-18b7-5102cbc9f2eb
+Driver: 580.105.08
+CUDA: 13.0
 Python: 3.12.3
-PyTorch: 2.6.0a0+ecf3bae40a.nv25.01
-Transformers: 5.13.0
+PyTorch: 2.11.0+cu130
+Transformers: 5.14.1
 Model revision: 0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
 Model dtype / TP: BF16 / 1
 ```

@@ -1,9 +1,54 @@
 # Prism-Infer 验证标准
 
-> 修订日期: 2026-07-22
+> 修订日期: 2026-07-23
 > 目的: 统一记录每个阶段的验证命令、PASS 标准和禁止行为。所有完成声明必须能追溯到本文件中的命令或等价验证输出。
 
-## P9-D H1 three-engine closure（PASS，2026-07-22）
+## P10.10 prefill attention correctness 与三引擎重测（PASS，2026-07-23）
+
+旧 P9-D/P10 H1 输出 `76ad1f...14c6` 只证明同一错误路径 repeat 内稳定，生成内容是
+与图片无关的 Python 代码，**不满足语义 correctness**。该输出及基于它的
+`0.430%/1.904%` 外部排名从本节起全部作废。
+
+根因位于 `Attention._forward_prefill`：当前环境 `HAS_FLASH_ATTN=False`，
+而旧 fallback 把 flattened `[tokens, heads, head_dim]` 直接传给
+`scaled_dot_product_attention`，SDPA 将 heads/tokens 维度解释错误。commit
+`26deccd` 的修复为：
+
+- 连续 CUDA BF16/FP16 prefill 优先使用 vLLM bundled
+  `flash_attn_varlen_func`；
+- 无 FlashAttention 时按 sequence 切分并转成 SDPA 的
+  `[batch, heads, tokens, dim]`，同时显式处理 GQA；
+- GPU regression 强制关闭两种 Flash backend，覆盖真实 fallback。
+
+验证证据：
+
+- `python -m pytest -q tests/test_qwen3_vl_attention_kv.py -k prefill`：
+  `2 passed`；Ruff、compileall 与 diff check 均通过。
+- H1 三个 clean fresh Prism process：
+  `data/p10_compile_graph/final_correct/h1_prism_repeat5_{r1,r2,r3}_clean_26deccd.jsonl`。
+  TPOT process medians 为 `9.86201 / 9.85017 / 9.86463 ms`，
+  median-of-medians `9.86201 ms`；输出 hash 稳定为 `cf5318...3d2e`，文本正确描述
+  八张纯色图片。
+- H2：
+  `data/p10_compile_graph/final_correct/h2_prism_repeat3_clean_26deccd.jsonl`，
+  TPOT `9.85293 ms`、TTFT `241.485 ms`、E2E `1564.197 ms`，输出
+  `47b090...94a8` 正确描述蓝色到青绿色的连续变化。
+- SGLang 与 vLLM 都重新在三个 fresh process 中审计 post-tokenization IDs；
+  H1 prompt 均为 1618 tokens、SHA256
+  `04205e4593a1c294efa78f78462246266c6469d59decbe161973aeba757786b9`。
+  SGLang TPOT/TTFT/E2E median-of-medians 为
+  `10.35021 / 283.001 / 1597.990 ms`，vLLM 为
+  `10.35082 / 313.950 / 1629.136 ms`。
+
+允许结论：在上述 RTX 5090 UUID、模型快照和冻结 H1 协议中，Prism 的 TPOT latency
+相对 SGLang/vLLM 分别低 `4.717%/4.722%`，TTFT 分别低
+`16.664%/24.879%`，相对 vLLM E2E 低 `2.269%`；相对 SGLang E2E 只低
+`0.364%`，报告为近似持平。禁止外推到其他模型、batch、硬件或 online serving。
+
+## P9-D H1 three-engine closure（历史记录，已被 P10.10 作废）
+
+本节保留原始审计轨迹，但其 output hash 后经语义检查判定无效，不能再用于 README、
+简历、面试或性能排名。
 
 冻结范围：RTX 5090（UUID `GPU-e783aa8f-d1a7-fd67-fcdc-51eca9ea0953`）、
 Qwen3-VL-8B 指定 snapshot、TP1、batch1、greedy、8 张 448 图、prompt 1618、
@@ -31,8 +76,8 @@ output128、warmup2、BF16 KV logical capacity `28,928`、offline CUDA Graph。
 - 针对 engine contracts、scheduler swap tables 与 P9 architecture contracts 的
   focused regression 为 `38 passed`。
 
-允许结论：Prism 在上述冻结 H1 cell 中稳定超过 vLLM 与 SGLang。禁止外推为
-Prism 在全部模型、batch、硬件、online serving 或 workload 上全面超过两个框架。
+历史结论状态：**撤销**。旧数据只可用于说明错误路径的 repeat 稳定性，不能说明
+模型语义正确，也不能说明 Prism 超过 vLLM 或 SGLang。
 
 ## 全局规则
 

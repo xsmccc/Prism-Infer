@@ -5,6 +5,51 @@
 > 目标：把 `torch.compile` 和 CUDA Graph 优化推进到完整推理 pipeline 的可证明边界，
 > 同时沉淀可复现的教学材料与面试问题链。
 
+> **Correctness supersession（2026-07-23）：**本文件 0–0.9 节中的 H1
+> `76ad1f...14c6` 与 H2 `4a61f1...166f` 是错误 flattened-SDPA prefill 路径的稳定
+> 输出，不能证明多模态语义正确。各节的 component-level exact A/B、kernel timing
+> 和局部实现证据仍可作为同路径研究记录，但旧 full-engine hash 与外部排名已被
+> P10.10 取代。
+
+## 0.10 P10.10：先修正语义，再重新闭环 compile + Graph
+
+当前 Torch 2.11 环境没有独立 `flash-attn`，但有 vLLM bundled FlashAttention。
+旧代码没有使用 bundled varlen prefill backend，而是把 flattened
+`[tokens, heads, head_dim]` 直接交给 SDPA；SDPA 因此沿错误维度计算 attention。
+这解释了为什么所有优化开关关闭、eager 与 legacy MLP 仍生成同一段无关 Python
+代码，也解释了为什么旧 token-hash 门禁没有发现问题。
+
+commit `26deccd` 把连续 CUDA BF16/FP16 prefill 路由到 bundled varlen
+FlashAttention，并实现 shape-correct per-sequence SDPA fallback。强制关闭两个
+Flash backend 的 GPU regression 为 `2 passed`。修复后的 H1/H2 输出分别稳定为
+`cf5318...3d2e` 与 `47b090...94a8`，前者正确描述八张纯色图片，后者正确描述
+蓝色向青绿色的渐变。
+
+同一 prompt-token SHA256、三个 fresh process 的 H1 median-of-medians：
+
+| 系统 | TPOT (ms) | TTFT (ms) | E2E (ms) |
+|---|---:|---:|---:|
+| Prism `compile_graph` | **9.86201** | **235.842** | **1592.171** |
+| SGLang 0.5.15.post1 | 10.35021 | 283.001 | 1597.990 |
+| vLLM 0.25.1 | 10.35082 | 313.950 | 1629.136 |
+
+Prism TPOT latency 相对 SGLang/vLLM 分别低 `4.717%/4.722%`，TTFT 分别低
+`16.664%/24.879%`。相对 SGLang E2E 只低 `0.364%`，因此按近似持平报告。
+
+修复后的 NSYS（clean `af8dce7`）显示 decode 仍由 108 个 cuBLAS GEMV/step 主导：
+约 `7.733 ms/step`、占 graph kernel time `79.95%`；gate-up/down/QKV 三种 launch
+分别约 `119.6/63.8/31.4 μs/layer`，已经接近 BF16 权重带宽上限。selective top-k
+merge 的 exact 分层扫描最多只省 `3–5 μs/token`，FA2 split 强制与自研 Triton
+paged decode 都更慢且改变 BF16 归并结果，均不合入。若继续扩大领先，下一条有可信
+杠杆的路线是带精确残差/异常值校正的 weight-only 投影研究，而不是扩大 Dynamo
+捕获面或堆叠小 launch 调参。
+
+主要证据：
+
+- `data/p10_compile_graph/final_correct/`
+- `data/p10_compile_graph/final_correct_profile/h2_fixed_nodes_clean_af8dce7.*`
+- `data/p10_compile_graph/final_prefill/h1_{sglang,vllm}_*`
+
 ## 0. P10 结论：编译更少，但覆盖完整 decode replay
 
 最终支持的 `compile_graph` 没有编译整个 decoder。NSYS 显示原始 full-step Graph 的
