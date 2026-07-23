@@ -252,6 +252,29 @@ output 与 materialized sum 均逐元素相同。
 - `data/p10_compile_graph/prefill_add_rmsnorm/h2_semantic_clean_12c1eda_analysis.json`
 - `data/p10_compile_graph/prefill_add_rmsnorm/h2_language_clean_12c1eda_analysis.json`
 
+## 0.7 P10.7：完整 prefill MLP 的 TorchInductor 止损边界
+
+在 SwiGLU 与 add-RMSNorm 融合后，使用真实 layer-0 MLP、H2 的 `1667 x 4096`
+BF16 输入重新评估完整 MLP 编译。TorchInductor 同时启用
+`emulate_precision_casts=True` 与 `force_same_precision=True`，默认模式和
+`max-autotune-no-cudagraphs` 均与 eager 逐元素相同，但没有稳态收益：
+
+- default：`2.3458 -> 2.3876 ms`（慢 `1.78%`），cold compile `1.216 s`；
+- max-autotune：`2.3465 -> 2.3908 ms`（慢 `1.89%`），cold compile `4.246 s`。
+
+autotune 对 `1667x4096 @ 4096x24576` 的 gate/up projection 仍选择约
+`1.496 ms` 的 extern GEMM，最快 Triton 候选约 `2.352 ms`；对
+`1667x12288 @ 12288x4096` 的 down projection 也选择约 `0.778 ms` 的 extern
+GEMM，最快 Triton 候选约 `0.870 ms`，另有部分配置超过当前设备的 shared-memory
+上限。由此确认：当前瓶颈不是可以靠扩大 `torch.compile` 覆盖面消掉的 Python
+开销；下一步应先用 NCU 检查 extern GEMM 的 tensor-core 利用率，再决定是否值得
+实现保留 BF16 舍入边界的 CUTLASS fused epilogue。该候选不进入 runtime。
+
+主要证据：
+
+- `data/p10_compile_graph/prefill_add_rmsnorm/prefill_mlp_compile_rows1667_clean_35c156d.json`
+- `data/p10_compile_graph/prefill_add_rmsnorm/prefill_mlp_compile_rows1667_maxautotune_clean_35c156d.json`
+
 ## 1. “优化到极致”的验收定义
 
 这里的“极致”不等于把所有 Python 函数都交给 compiler，也不等于把 kernel 数降到最少。
