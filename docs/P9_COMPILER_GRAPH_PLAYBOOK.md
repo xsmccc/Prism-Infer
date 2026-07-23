@@ -318,6 +318,62 @@ epilogue 先分别舍入到 BF16，再计算 SiLU 和乘法，从而保持原有
 - `data/p10_compile_graph/cutlass_dual_swiglu/h2_language_{baseline_,}repeat3_clean_eb0e1d3_analysis.json`
 - `data/p10_compile_graph/cutlass_dual_swiglu/h2_semantic_{baseline_,}repeat3_clean_eb0e1d3.jsonl`
 
+## 0.9 P10.9：保留 native mean 的 prefill Q/K Norm-M-RoPE
+
+DualGemm 合入后的 H2 top-k 仍包含大量 Q/K RMSNorm 与 M-RoPE elementwise/copy launch。
+直接复用 decode 单 pass reduction 会改变 native mean 的 reduction tree，因此本轮沿用
+P10.6 的精确策略：一个 Triton kernel 同时为 Q/K 物化 FP32 square，Q/K 各自继续调用
+PyTorch native mean，第二个 Triton kernel 融合 rsqrt、normalize、BF16 weight 和
+M-RoPE。每次乘法与加法都显式保留原有 RN-BF16 边界。
+
+真实 `32 Q heads / 8 K heads / head_dim 128` microbenchmark 逐元素完全相同：
+
+- 1618 rows：`0.2538 -> 0.1460 ms`（`-42.48%`）；
+- 1667 rows：`0.2551 -> 0.1447 ms`（`-43.29%`）。
+
+runtime 只在 prefill、rows `>= 1024`、canonical head shape、contiguous BF16 CUDA
+Q/K/cos/sin 且非 compiler tracing 时启用；其他情况回到原路径。
+`PRISM_DISABLE_PREFILL_QK_RMSNORM=1` 提供同提交基线。
+
+同一 clean commit `7dfef15` 的 H2 feature-off/on、三个 language-model ranges 对照为：
+
+| 指标（3 ranges 中位数） | feature off | fused Q/K on | 变化 |
+|---|---:|---:|---:|
+| CPU range | 77.907 ms | 64.313 ms | -17.45% |
+| GPU busy | 121.292 ms | 118.281 ms | -2.48% |
+| GPU span | 129.055 ms | 124.798 ms | -3.30% |
+| kernel time | 121.185 ms | 118.175 ms | -2.48% |
+| kernels / range | 2186 | 1394 | -792 |
+
+memcpy 与 stream synchronize 数量仍为 `10/6`。feature-off/on H2 输出均为
+SHA256 `4a61f1...166f`，相对 unprofiled token exact；H1 128-token 输出也保持
+`76ad1f...14c6`。本项只形成 language-model region claim，不使用有冷编译与双峰噪声的
+单次 TTFT 形成 E2E claim。
+
+同轮拒绝了四条看似合理的 projection/launch 候选：
+
+- packed prefill QKV microbenchmark 快约 `10.6%`，H1 hash 保持，但 H2 分叉为
+  `4e784c...5ca8`，完整撤回；
+- 双输出 K/V DualGemm 在 1618/1667 rows 比两个原生 GEMM 慢约 `18%–19%`，且不 exact；
+- down projection `addmm` epilogue 稍慢，并产生约 321 万个 BF16 差异；
+- 把 Q/K square 合成一个超大 reduction buffer 虽 exact，却把候选从约 `0.145 ms`
+  降级到 `0.180–0.184 ms`，未提交。
+
+CUTLASS DualGemm tile/stage/swizzle 小矩阵也确认当前 `128x64x32 / 3-stage /
+swizzle-2` 是 H1/H2 shape 上最稳的配置；2-stage 不满足该实现的模板约束。没有根据
+单一 1667-row 的亚百分比噪声改动生产 tile。
+
+主要证据：
+
+- `data/p10_compile_graph/prefill_qk_fusion/qk_rmsnorm_mrope_probe_dirty_8f8e14a.json`
+- `data/p10_compile_graph/prefill_qk_fusion/h2_language_{baseline,candidate}_repeat3_clean_7dfef15_analysis.json`
+- `data/p10_compile_graph/prefill_qk_fusion/h2_semantic_{baseline,candidate}_repeat3_clean_7dfef15.jsonl`
+- `data/p10_compile_graph/prefill_projection_ncu/qkv_layout_scan_rows1667_clean_8f8e14a.json`
+- `data/p10_compile_graph/cutlass_dual_swiglu/{dual_tile_tune,dual_stage2_tune}_dirty_8f8e14a.json`
+- `data/p10_compile_graph/cutlass_dual_swiglu/dual_kv_probe_dirty_8f8e14a.json`
+- `data/p10_compile_graph/prefill_projection_ncu/down_residual_epilogue_rows1667_clean_8f8e14a.json`
+- `data/p10_compile_graph/prefill_qk_fusion/qk_combined_variance_dirty_7dfef15.json`
+
 ## 1. “优化到极致”的验收定义
 
 这里的“极致”不等于把所有 Python 函数都交给 compiler，也不等于把 kernel 数降到最少。
