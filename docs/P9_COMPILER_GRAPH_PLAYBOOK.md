@@ -102,6 +102,35 @@ clean 语义 NSYS 中，`runner.prepare_inputs` 的两个观测 range CPU 中位
 - `data/p10_compile_graph/prefill_staging/h1_single_chunk_fastpath_repeat5_clean_79f631e.jsonl`
 - `data/p10_compile_graph/prefill_staging/h1_single_chunk_semantic_clean_79f631e_analysis.json`
 
+## 0.3 P10.3：两条“profile 更漂亮”但不能合并的候选
+
+继续清理 vision 元数据时，候选把每个 microbatch 的 grid Python rows 只物化一次，
+并在 CPU 构造 cu-seqlens。NSYS 中 prefill stream sync `79 -> 11`、async memcpy
+`109 -> 39`，vision 内 sync `71 -> 3`，kernel busy 保持约 `170.4 ms`。但紧邻
+repeat9 A/B 的普通 H1 TTFT 中位数是候选 `251.454 ms`、clean 基线 `231.075 ms`，
+候选反而慢 `8.82%`。它已完整回退，没有为了 sync 数字而牺牲真实 latency。
+
+packed gate-up 则暴露了一个真实但尚不满足 correctness 的 kernel 窗口。第一层真实
+batch1 decode activation/weight 上，编译后的动态 FP8 `_scaled_mm` 中位数
+`0.0787 ms`，比 BF16 GEMV `0.1218 ms` 快 `35.4%`；未编译 FP8 路径为
+`0.1615 ms`，说明收益依赖 `torch.compile` 融合 activation scale 与量化。单层
+SwiGLU 激活 RMSE 为 `4.46e-4`。然而临时替换全部 36 层后，64-token 短文本在第
+2 个生成 token 就从基线 token `358` 分叉为 `11`，因此没有进入 supported 路径。
+
+这两项分别证明：
+
+- CUDA API/sync 数下降不是端到端收益的充分条件；
+- FP8 gate-up 的速度上限值得继续研究，但必须先有可证明的 outlier/residual
+  correction，不能用近似输出污染当前 token-exact 主结果。
+
+保留证据：
+
+- `data/p10_compile_graph/vision_grid_rows/h1_grid_rows_repeat9_dirty.jsonl`
+- `data/p10_compile_graph/vision_grid_rows/h1_grid_rows_baseline_repeat9_clean_6d67dfa.jsonl`
+- `data/p10_compile_graph/vision_grid_rows/h1_grid_rows_semantic_dirty_analysis.json`
+- `data/p10_compile_graph/gate_up_fp8/layer0_real_decode_compile_probe_6d67dfa.json`
+- `data/p10_compile_graph/gate_up_fp8/guardrail_text_short_all_layers_probe_6d67dfa.json`
+
 ## 1. “优化到极致”的验收定义
 
 这里的“极致”不等于把所有 Python 函数都交给 compiler，也不等于把 kernel 数降到最少。
