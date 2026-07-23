@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import Any, Iterator
 
 import pynvml
 import torch
@@ -21,9 +21,17 @@ from PIL import Image
 from transformers import AutoProcessor
 
 from sglang.srt.entrypoints.engine import Engine
+from sglang.srt.managers.io_struct import GenerateReqInput
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
+
+
+EXTERNAL_SCHEMA_VERSION = 2
 
 
 def _stats(values: list[float]) -> dict[str, int | float]:
@@ -108,6 +116,30 @@ def _nvml_compute_memory_mib() -> float:
     return sum(process.usedGpuMemory for process in processes) / 1024 / 1024
 
 
+def _generate_stream_with_prompt_ids(
+    engine: Engine,
+    *,
+    prompt: str,
+    image_data: Any,
+    sampling_params: dict[str, Any],
+) -> Iterator[dict[str, Any]]:
+    """Run the public Engine request path while auditing post-tokenization IDs."""
+
+    request = GenerateReqInput(
+        text=prompt,
+        image_data=image_data,
+        sampling_params=sampling_params,
+        stream=True,
+        return_prompt_token_ids=True,
+    )
+    generator = engine.tokenizer_manager.generate_request(request, None)
+    while True:
+        try:
+            yield engine.loop.run_until_complete(generator.__anext__())
+        except StopAsyncIteration:
+            return
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
@@ -163,14 +195,21 @@ def main() -> None:
         "ignore_eos": True,
     }
 
-    def run_once() -> tuple[list[list[int]], list[int], float, list[float], list[float]]:
+    def run_once() -> tuple[
+        list[list[int]],
+        list[int],
+        list[list[int]],
+        float,
+        list[float],
+        list[float],
+    ]:
         torch.cuda.synchronize()
         started = perf_counter()
-        stream = engine.generate(
+        stream = _generate_stream_with_prompt_ids(
+            engine,
             prompt=prompts[0],
             image_data=(image_data[0][0] if len(image_data[0]) == 1 else image_data[0]),
             sampling_params=sampling,
-            stream=True,
         )
         final_output: dict[str, Any] | None = None
         arrival_times: list[float] = []
@@ -188,6 +227,7 @@ def main() -> None:
             raise RuntimeError("SGLang stream returned no output tokens")
         token_ids = [list(final_output["output_ids"])]
         prompt_tokens = [int(final_output["meta_info"]["prompt_tokens"])]
+        prompt_token_ids = [list(final_output["prompt_token_ids"])]
         ttft_ms = [(arrival_times[0] - started) * 1000.0]
         if len(arrival_times) < 2:
             raise RuntimeError("SGLang TPOT measurement requires at least two output tokens")
@@ -196,7 +236,7 @@ def main() -> None:
             * 1000.0
             / (len(arrival_times) - 1)
         ]
-        return token_ids, prompt_tokens, elapsed_ms, ttft_ms, tpot_ms
+        return token_ids, prompt_tokens, prompt_token_ids, elapsed_ms, ttft_ms, tpot_ms
 
     try:
         for _ in range(args.warmup):
@@ -208,9 +248,11 @@ def main() -> None:
         throughput: list[float] = []
         process_memory: list[float] = []
         prompt_tokens: list[int] = []
+        prompt_token_runs: list[list[list[int]]] = []
         for _ in range(args.repeat):
-            tokens, prompt_tokens, elapsed, ttft, tpot = run_once()
+            tokens, prompt_tokens, prompt_token_ids, elapsed, ttft, tpot = run_once()
             token_runs.append(tokens)
+            prompt_token_runs.append(prompt_token_ids)
             e2e_ms.append(elapsed)
             ttft_ms.extend(ttft)
             tpot_ms.extend(tpot)
@@ -218,9 +260,16 @@ def main() -> None:
             process_memory.append(_nvml_compute_memory_mib())
         if any(tokens != token_runs[0] for tokens in token_runs[1:]):
             raise RuntimeError("SGLang greedy outputs changed across repeats")
+        if any(ids != prompt_token_runs[0] for ids in prompt_token_runs[1:]):
+            raise RuntimeError("SGLang prompt token IDs changed across repeats")
+        audited_prompt_ids = prompt_token_runs[0]
+        if [len(ids) for ids in audited_prompt_ids] != prompt_tokens:
+            raise RuntimeError("SGLang prompt token count disagrees with audited token IDs")
 
+        git = collect_git_metadata(REPO_ROOT)
+        gpu_metadata = collect_gpu_metadata().environment_dict()
         record = {
-            "schema_version": 1,
+            "schema_version": EXTERNAL_SCHEMA_VERSION,
             "record_type": "external_system_benchmark",
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "environment": {
@@ -231,11 +280,7 @@ def main() -> None:
                 "torch": torch.__version__,
                 "transformers": importlib.metadata.version("transformers"),
                 "cuda": torch.version.cuda,
-                "gpu": torch.cuda.get_device_name(0),
-                "gpu_uuid": pynvml.nvmlDeviceGetUUID(
-                    pynvml.nvmlDeviceGetHandleByIndex(0)
-                ),
-                "driver": pynvml.nvmlSystemGetDriverVersion(),
+                **gpu_metadata,
             },
             "model": {
                 "path": args.model,
@@ -261,6 +306,7 @@ def main() -> None:
                 "num_requests": len(requests),
                 "prompt_tokens": sum(prompt_tokens),
                 "prompt_tokens_per_request": prompt_tokens,
+                "prompt_token_ids_sha256": _sha256(audited_prompt_ids),
                 "max_tokens": args.max_tokens,
                 "preprocessing_included_in_e2e": True,
                 "traffic": "offline_closed_loop",
@@ -273,7 +319,10 @@ def main() -> None:
             },
             "protocol": {
                 "name": "p9_external_sglang_offline_v2",
-                "command": list(sys.argv),
+                "harness_git_commit": git.commit,
+                "harness_git_dirty": git.dirty,
+                "framework_source_dirty": False,
+                "command": [sys.executable, *sys.argv],
                 "process_scope": "fresh_process_per_case_and_backend",
             },
             "correctness": {
