@@ -184,10 +184,18 @@ def main() -> None:
     )
     parser.add_argument(
         "--compression-mode",
-        choices=("off", "scaled_fp8_kv"),
+        choices=("off", "scaled_fp8_kv", "visual_compact_scaled_fp8"),
         default="off",
         help="physical KV storage profile; scaled FP8 includes FP32 token-head scales",
     )
+    parser.add_argument("--visual-pruning-keep-ratio", type=float, default=0.5)
+    parser.add_argument("--visual-pruning-min-keep-tokens", type=int, default=32)
+    parser.add_argument(
+        "--visual-pruning-strategy",
+        choices=("uniform", "attention"),
+        default="attention",
+    )
+    parser.add_argument("--visual-pruning-attention-last-n-layers", type=int, default=1)
     parser.add_argument(
         "--compile-region",
         choices=("stateless",),
@@ -252,6 +260,12 @@ def main() -> None:
         kvcache_block_size=args.kvcache_block_size,
         enable_chunked_prefill=False,
         enable_prefix_caching=False,
+        visual_pruning_keep_ratio=args.visual_pruning_keep_ratio,
+        visual_pruning_min_keep_tokens=args.visual_pruning_min_keep_tokens,
+        visual_pruning_strategy=args.visual_pruning_strategy,
+        visual_pruning_attention_last_n_layers=(
+            args.visual_pruning_attention_last_n_layers
+        ),
         logits_precision="selective_fp32",
         mlp_projection_mode="packed",
         paged_decode_block_n=256,
@@ -270,18 +284,60 @@ def main() -> None:
     kv_cache = llm.model_runner.kv_cache
     kv_scale_cache = llm.model_runner.kv_scale_cache
     kv_storage = kv_cache_storage_bytes(kv_cache, kv_scale_cache)
-    attention_backend = (
-        "vllm_flash_attn_paged_bf16"
-        if args.compression_mode == "off"
-        else "prism_triton_paged_scaled_fp8"
-    )
+    if args.compression_mode == "off":
+        attention_backend = "vllm_flash_attn_paged_bf16"
+    elif args.compression_mode == "scaled_fp8_kv":
+        attention_backend = "prism_triton_paged_scaled_fp8"
+    else:
+        attention_backend = "prism_triton_paged_visual_compact_scaled_fp8"
     process_memory_sampler = (
         _ProcessDeviceMemorySampler() if args.sample_process_memory else None
     )
     if process_memory_sampler is not None:
         process_memory_sampler.start()
 
-    def run_once() -> tuple[list[list[int]], list[int], float, float, float]:
+    def prompt_kv_snapshot(sequence) -> dict[str, Any]:
+        dense_blocks = math.ceil(sequence.num_prompt_tokens / sequence.block_size)
+        active_blocks = len(sequence.block_table)
+        layout = sequence.kv_layout
+        if layout is None:
+            physical_tokens = sequence.num_prompt_tokens
+            layout_record = {
+                "mode": "dense",
+                "logical_context_len": sequence.num_prompt_tokens,
+                "physical_kv_len": sequence.num_prompt_tokens,
+                "block_table": list(sequence.block_table),
+                "compression_record": {},
+            }
+        else:
+            physical_tokens = layout.compressed_prompt_kv_len
+            layout_record = layout.to_record(block_table=sequence.block_table)
+            layout_record["logical_context_len"] = sequence.num_prompt_tokens
+            layout_record["physical_kv_len"] = physical_tokens
+        payload_block_bytes = kv_storage.payload // llm.model_runner.num_kvcache_blocks
+        scale_block_bytes = kv_storage.scales // llm.model_runner.num_kvcache_blocks
+        block_bytes = payload_block_bytes + scale_block_bytes
+        return {
+            "logical_prompt_tokens": sequence.num_prompt_tokens,
+            "physical_prompt_tokens": physical_tokens,
+            "physical_token_ratio": physical_tokens / sequence.num_prompt_tokens,
+            "dense_prompt_blocks": dense_blocks,
+            "active_prompt_blocks": active_blocks,
+            "released_prompt_blocks": dense_blocks - active_blocks,
+            "active_block_ratio": active_blocks / dense_blocks,
+            "dense_prompt_bytes": dense_blocks * block_bytes,
+            "active_prompt_bytes": active_blocks * block_bytes,
+            "layout": layout_record,
+        }
+
+    def run_once() -> tuple[
+        list[list[int]],
+        list[int],
+        dict[str, Any],
+        float,
+        float,
+        float,
+    ]:
         requests = materialize_requests(case, repo_root=REPO_ROOT)
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
@@ -291,9 +347,12 @@ def main() -> None:
         preprocessing_finished = perf_counter()
         arrivals: list[float] = []
         final_tokens: list[int] | None = None
+        completed_prompt_kv: dict[str, Any] | None = None
         while not llm.is_finished():
             step = llm.step_result()
             arrived = perf_counter()
+            if step.plan.is_prefill and completed_prompt_kv is None:
+                completed_prompt_kv = prompt_kv_snapshot(step.plan.sequences[0])
             emitted = [token for token in step.execution.token_ids if token is not None]
             if len(emitted) != 1:
                 raise RuntimeError(f"expected one emitted token per step, got {emitted}")
@@ -304,6 +363,8 @@ def main() -> None:
         finished = perf_counter()
         if final_tokens is None:
             raise RuntimeError("Prism request completed without a final output")
+        if completed_prompt_kv is None:
+            raise RuntimeError("Prism request completed without a prompt KV snapshot")
         if len(arrivals) != len(final_tokens) or len(arrivals) < 2:
             raise RuntimeError(
                 f"token arrivals/output mismatch: arrivals={len(arrivals)} "
@@ -314,6 +375,7 @@ def main() -> None:
         return (
             [final_tokens],
             prompt_token_ids,
+            completed_prompt_kv,
             (finished - started) * 1000.0,
             ttft_ms,
             tpot_ms,
@@ -324,6 +386,7 @@ def main() -> None:
             run_once()
         token_runs: list[list[list[int]]] = []
         prompt_token_runs: list[list[int]] = []
+        prompt_kv_runs: list[dict[str, Any]] = []
         e2e_ms: list[float] = []
         ttft_ms: list[float] = []
         tpot_ms: list[float] = []
@@ -335,9 +398,10 @@ def main() -> None:
             torch.cuda.cudart().cudaProfilerStart()
         try:
             for _ in range(args.repeat):
-                tokens, prompt_token_ids, elapsed, ttft, tpot = run_once()
+                tokens, prompt_token_ids, prompt_kv, elapsed, ttft, tpot = run_once()
                 token_runs.append(tokens)
                 prompt_token_runs.append(prompt_token_ids)
+                prompt_kv_runs.append(prompt_kv)
                 e2e_ms.append(elapsed)
                 ttft_ms.append(ttft)
                 tpot_ms.append(tpot)
@@ -353,6 +417,30 @@ def main() -> None:
             raise RuntimeError("Prism greedy token ids changed across measured repeats")
         if any(prompt_ids != prompt_token_runs[0] for prompt_ids in prompt_token_runs[1:]):
             raise RuntimeError("Prism prompt token ids changed across measured repeats")
+
+        def stable_prompt_kv(snapshot: dict[str, Any]) -> dict[str, Any]:
+            stable = dict(snapshot)
+            stable_layout = dict(stable["layout"])
+            stable_layout.pop("block_table", None)
+            compression_record = dict(stable_layout["compression_record"])
+            for allocation_field in (
+                "batch_index",
+                "seq_id",
+                "old_block_table",
+                "new_block_table",
+                "released_block_ids",
+            ):
+                compression_record.pop(allocation_field, None)
+            stable_layout["compression_record"] = compression_record
+            stable["layout"] = stable_layout
+            return stable
+
+        expected_prompt_kv = stable_prompt_kv(prompt_kv_runs[0])
+        if any(
+            stable_prompt_kv(prompt_kv) != expected_prompt_kv
+            for prompt_kv in prompt_kv_runs[1:]
+        ):
+            raise RuntimeError("Prism prompt KV layout changed across measured repeats")
         audited_prompt_ids = prompt_token_runs[0]
         process_device_memory = (
             None if process_memory_sampler is None else process_memory_sampler.stop()
@@ -405,6 +493,15 @@ def main() -> None:
                 "fused_qk_mrope": True,
                 "fused_add_rmsnorm": True,
                 "packed_kv_projection": True,
+                "visual_compaction": {
+                    "enabled": args.compression_mode == "visual_compact_scaled_fp8",
+                    "keep_ratio": args.visual_pruning_keep_ratio,
+                    "min_keep_tokens": args.visual_pruning_min_keep_tokens,
+                    "strategy": args.visual_pruning_strategy,
+                    "attention_last_n_layers": (
+                        args.visual_pruning_attention_last_n_layers
+                    ),
+                },
                 "decode_block4_gate_up": block4_gate_up,
                 "cuda_graph": graph,
                 "torch_compile": compile_metadata,
@@ -424,6 +521,7 @@ def main() -> None:
                 "scale_bytes": kv_storage.scales,
                 "total_bytes": kv_storage.total,
             },
+            "prompt_kv": prompt_kv_runs[0],
             "workload": {
                 "manifest_name": manifest["name"],
                 "manifest_sha256": _sha256(manifest),
