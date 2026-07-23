@@ -1,4 +1,4 @@
-"""Bit-exact fused residual add and RMSNorm for Qwen3-VL decode."""
+"""Bit-exact fused residual add and RMSNorm for Qwen3-VL."""
 
 from __future__ import annotations
 
@@ -23,6 +23,8 @@ ADD_RMSNORM_XBLOCK = 1
 ADD_RMSNORM_NUM_WARPS = 8
 SUPPORTED_ADD_RMSNORM_HIDDEN_SIZE = 4096
 MAX_EXACT_ADD_RMSNORM_BATCH = 4
+PREFILL_ADD_RMSNORM_BLOCK_SIZE = 1024
+PREFILL_ADD_RMSNORM_NUM_WARPS = 8
 
 
 if HAS_ADD_RMSNORM_TRITON:
@@ -57,6 +59,49 @@ if HAS_ADD_RMSNORM_TRITON:
         output = (normalized * weight).to(tl.bfloat16).to(tl.float32)
 
         tl.store(added_ptr + addresses, added, mask=valid)
+        tl.store(output_ptr + addresses, output, mask=valid)
+
+    @triton.jit
+    def _add_square_kernel(
+        x_ptr,
+        residual_ptr,
+        added_ptr,
+        squared_ptr,
+        HIDDEN_SIZE: tl.constexpr,
+        BLOCK_SIZE: tl.constexpr,
+    ):
+        row = tl.program_id(0)
+        block = tl.program_id(1)
+        columns = block * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        valid = columns < HIDDEN_SIZE
+        addresses = row * HIDDEN_SIZE + columns
+        x = tl.load(x_ptr + addresses, mask=valid, other=0.0).to(tl.float32)
+        residual = tl.load(residual_ptr + addresses, mask=valid, other=0.0).to(tl.float32)
+        added = (x + residual).to(tl.bfloat16).to(tl.float32)
+        tl.store(added_ptr + addresses, added, mask=valid)
+        tl.store(squared_ptr + addresses, added * added, mask=valid)
+
+    @triton.jit
+    def _normalize_weight_kernel(
+        added_ptr,
+        variance_ptr,
+        weight_ptr,
+        output_ptr,
+        HIDDEN_SIZE: tl.constexpr,
+        EPS: tl.constexpr,
+        BLOCK_SIZE: tl.constexpr,
+    ):
+        row = tl.program_id(0)
+        block = tl.program_id(1)
+        columns = block * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        valid = columns < HIDDEN_SIZE
+        addresses = row * HIDDEN_SIZE + columns
+        added = tl.load(added_ptr + addresses, mask=valid, other=0.0).to(tl.float32)
+        variance = tl.load(variance_ptr + row)
+        inverse_rms = libdevice.rsqrt(variance + EPS)
+        normalized = (added * inverse_rms).to(tl.bfloat16).to(tl.float32)
+        weight = tl.load(weight_ptr + columns, mask=valid, other=0.0).to(tl.float32)
+        output = (normalized * weight).to(tl.bfloat16)
         tl.store(output_ptr + addresses, output, mask=valid)
 
 
@@ -119,4 +164,74 @@ def fused_add_rmsnorm(
     return output, added
 
 
-__all__ = ["HAS_ADD_RMSNORM_TRITON", "fused_add_rmsnorm"]
+def fused_add_rmsnorm_prefill(
+    x: torch.Tensor,
+    residual: torch.Tensor,
+    weight: torch.Tensor,
+    *,
+    eps: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Fuse elementwise work while retaining PyTorch's native row reduction."""
+
+    if not HAS_ADD_RMSNORM_TRITON:
+        raise RuntimeError("prefill fused add RMSNorm requires Triton")
+    if x.ndim != 2 or residual.ndim != 2 or x.shape != residual.shape:
+        raise ValueError("prefill fused add RMSNorm requires matching rank-2 inputs")
+    if x.shape[0] < 1:
+        raise ValueError("prefill fused add RMSNorm requires at least one row")
+    if not x.is_cuda or x.device != residual.device:
+        raise ValueError("prefill fused add RMSNorm requires one CUDA device")
+    if x.dtype != torch.bfloat16 or residual.dtype != torch.bfloat16:
+        raise ValueError("prefill fused add RMSNorm requires BF16 inputs")
+    if x.shape[1] != SUPPORTED_ADD_RMSNORM_HIDDEN_SIZE:
+        raise ValueError(
+            "prefill fused add RMSNorm supports hidden_size="
+            f"{SUPPORTED_ADD_RMSNORM_HIDDEN_SIZE}, got {x.shape[1]}"
+        )
+    if not x.is_contiguous() or not residual.is_contiguous():
+        raise ValueError("prefill fused add RMSNorm requires contiguous inputs")
+    if (
+        tuple(weight.shape) != (x.shape[1],)
+        or weight.device != x.device
+        or weight.dtype != x.dtype
+        or not weight.is_contiguous()
+    ):
+        raise ValueError("weight must be contiguous BF16 on the input device")
+    if not isinstance(eps, float) or not math.isfinite(eps) or eps <= 0.0:
+        raise ValueError(f"eps must be a positive finite float, got {eps!r}")
+
+    added = torch.empty_like(x)
+    squared = torch.empty_like(x, dtype=torch.float32)
+    grid = (
+        x.shape[0],
+        triton.cdiv(x.shape[1], PREFILL_ADD_RMSNORM_BLOCK_SIZE),
+    )
+    _add_square_kernel[grid](
+        x,
+        residual,
+        added,
+        squared,
+        HIDDEN_SIZE=x.shape[1],
+        BLOCK_SIZE=PREFILL_ADD_RMSNORM_BLOCK_SIZE,
+        num_warps=PREFILL_ADD_RMSNORM_NUM_WARPS,
+    )
+    variance = squared.mean(-1, keepdim=True)
+    output = torch.empty_like(x)
+    _normalize_weight_kernel[grid](
+        added,
+        variance,
+        weight,
+        output,
+        HIDDEN_SIZE=x.shape[1],
+        EPS=eps,
+        BLOCK_SIZE=PREFILL_ADD_RMSNORM_BLOCK_SIZE,
+        num_warps=PREFILL_ADD_RMSNORM_NUM_WARPS,
+    )
+    return output, added
+
+
+__all__ = [
+    "HAS_ADD_RMSNORM_TRITON",
+    "fused_add_rmsnorm",
+    "fused_add_rmsnorm_prefill",
+]

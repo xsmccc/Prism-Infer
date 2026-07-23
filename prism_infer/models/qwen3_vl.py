@@ -27,7 +27,10 @@ from prism_infer.models.qwen3_vl_architecture import (
     Qwen3VLTextArchitecture,
 )
 from prism_infer.observability import is_trace_enabled, profile_region
-from prism_infer.ops.add_rmsnorm import fused_add_rmsnorm
+from prism_infer.ops.add_rmsnorm import (
+    fused_add_rmsnorm,
+    fused_add_rmsnorm_prefill,
+)
 from prism_infer.ops.qk_rmsnorm import fused_qk_rmsnorm
 from prism_infer.ops.selective_topk import (
     rerank_greedy_candidates,
@@ -694,19 +697,22 @@ class Qwen3VLTextDecoderLayer(nn.Module):
         hidden_states = residual + hidden_states
         return hidden_states
 
-    def forward_decode_fused_add_rmsnorm(
+    def forward_fused_add_rmsnorm(
         self,
         hidden_states: torch.Tensor,
         residual: torch.Tensor | None,
         position_embeddings: tuple | None,
+        *,
+        prefill: bool,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Carry residual state so both decoder adds fuse with the following norm."""
 
+        fused_op = fused_add_rmsnorm_prefill if prefill else fused_add_rmsnorm
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
         else:
-            hidden_states, residual = fused_add_rmsnorm(
+            hidden_states, residual = fused_op(
                 hidden_states,
                 residual,
                 self.input_layernorm.weight,
@@ -717,7 +723,7 @@ class Qwen3VLTextDecoderLayer(nn.Module):
             position_embeddings=position_embeddings,
             attention_mask=None,
         )
-        hidden_states, residual = fused_add_rmsnorm(
+        hidden_states, residual = fused_op(
             hidden_states,
             residual,
             self.post_attention_layernorm.weight,
@@ -863,23 +869,29 @@ class Qwen3VLTextModel(nn.Module):
                 position_ids = position_ids[:, None, :]
             position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
-        use_fused_add_rmsnorm = (
+        fused_add_rmsnorm_base = (
             self.fused_add_rmsnorm_enabled
             and hidden_states.ndim == FLATTENED_TOKEN_FEATURES_RANK
             and hidden_states.is_cuda
             and not torch.compiler.is_compiling()
-            and not get_context().is_prefill
-            and hidden_states.shape[0] <= 4
             and attention_mask is None
-            and deepstack_visual_embeds is None
+        )
+        is_prefill = fused_add_rmsnorm_base and get_context().is_prefill
+        use_fused_add_rmsnorm = fused_add_rmsnorm_base and (
+            is_prefill
+            or (
+                hidden_states.shape[0] <= 4
+                and deepstack_visual_embeds is None
+            )
         )
         residual = None
         for layer_idx, layer in enumerate(self.layers):
             if use_fused_add_rmsnorm:
-                hidden_states, residual = layer.forward_decode_fused_add_rmsnorm(
+                hidden_states, residual = layer.forward_fused_add_rmsnorm(
                     hidden_states,
                     residual,
                     position_embeddings,
+                    prefill=is_prefill,
                 )
             else:
                 hidden_states = layer(
@@ -891,6 +903,9 @@ class Qwen3VLTextModel(nn.Module):
             # DeepStack 注入: 在 layers 0, 1, 2 之后 (HF L835-L840)
             # deepstack_visual_embeds 是 list of 3, 对应 layer 0,1,2
             if deepstack_visual_embeds is not None and layer_idx < len(deepstack_visual_embeds):
+                if use_fused_add_rmsnorm:
+                    hidden_states = hidden_states + residual
+                    residual = None
                 hidden_states = self._deepstack_process(
                     hidden_states,
                     visual_pos_masks,
@@ -898,7 +913,8 @@ class Qwen3VLTextModel(nn.Module):
                 )
 
         if use_fused_add_rmsnorm:
-            hidden_states, _ = fused_add_rmsnorm(
+            fused_op = fused_add_rmsnorm_prefill if is_prefill else fused_add_rmsnorm
+            hidden_states, _ = fused_op(
                 hidden_states,
                 residual,
                 self.norm.weight,

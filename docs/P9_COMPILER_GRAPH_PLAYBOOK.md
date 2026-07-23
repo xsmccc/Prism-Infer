@@ -220,6 +220,38 @@ repeat7 中位数形成 E2E 收益 claim；本项只报告可重复的激活、l
 - `data/p10_compile_graph/prefill_swiglu/h2_prefill_swiglu_repeat7_clean_1633833.jsonl`
 - `data/p10_compile_graph/prefill_swiglu/h2_prefill_swiglu_language_clean_1633833_analysis.json`
 
+## 0.6 P10.6：保留原生 reduction 的 prefill add-RMSNorm
+
+SwiGLU 合入后，language prefill 仍有 145 组 RMSNorm 相关 cast、pow、reduction 和
+multiply kernel。直接把现有 decode 单-pass Triton add-RMSNorm 放宽到 prefill 虽可
+把 1667-row microbenchmark 降低约 76%，但随机矩阵出现 109 个 BF16 元素差异，
+最大差异 `0.015625`。root cause 是 Triton `tl.sum` 与 PyTorch native mean 的并行
+reduction 顺序不同，因此该直接扩展被拒绝。
+
+最终路径只融合 reduction 两侧的 elementwise 工作：
+
+1. `_add_square_kernel` 同时物化 BF16 residual sum 和 FP32 square；
+2. 继续调用 PyTorch native row mean，保留原 reduction 顺序；
+3. `_normalize_weight_kernel` 融合 rsqrt、normalize 的 BF16 舍入边界和 weight multiply。
+
+前三层 DeepStack 注入前显式物化 residual sum 并重置 carry，后续层继续复用原
+residual-carry 结构。1618/1667-row microbenchmark 分别
+`0.0928 -> 0.0559 ms`（`-39.8%`）和 `0.1005 -> 0.0548 ms`（`-45.5%`），
+output 与 materialized sum 均逐元素相同。
+
+相对 clean `1633833` 的 SwiGLU 基线，H2 language-model NSYS 显示 CPU range
+`89.446 -> 79.402 ms`、GPU busy `126.123 -> 123.415 ms`、CUDA event region
+`135.228 -> 131.068 ms`，kernel 数 `2636 -> 2222`；完整 prefill kernel busy
+`175.801 -> 172.673 ms`。memcpy 与 stream sync 不变。text、H1、H2 的输出 SHA256
+分别保持 `7928eb...661e`、`76ad1f...14c6`、`4a61f1...166f`，各自 repeat 内一致。
+
+主要证据：
+
+- `data/p10_compile_graph/prefill_swiglu/h2_prefill_add_rmsnorm_repeat5_dirty.jsonl`
+- `data/p10_compile_graph/prefill_swiglu/{text,h1}_prefill_add_rmsnorm_repeat3_dirty.jsonl`
+- `data/p10_compile_graph/prefill_swiglu/h2_prefill_add_rmsnorm_semantic_dirty_analysis.json`
+- `data/p10_compile_graph/prefill_swiglu/h2_prefill_add_rmsnorm_language_dirty_analysis.json`
+
 ## 1. “优化到极致”的验收定义
 
 这里的“极致”不等于把所有 Python 函数都交给 compiler，也不等于把 kernel 数降到最少。
