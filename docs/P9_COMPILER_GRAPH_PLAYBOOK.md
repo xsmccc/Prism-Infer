@@ -240,17 +240,17 @@ residual-carry 结构。1618/1667-row microbenchmark 分别
 output 与 materialized sum 均逐元素相同。
 
 相对 clean `1633833` 的 SwiGLU 基线，H2 language-model NSYS 显示 CPU range
-`89.446 -> 79.402 ms`、GPU busy `126.123 -> 123.415 ms`、CUDA event region
-`135.228 -> 131.068 ms`，kernel 数 `2636 -> 2222`；完整 prefill kernel busy
-`175.801 -> 172.673 ms`。memcpy 与 stream sync 不变。text、H1、H2 的输出 SHA256
+`89.446 -> 80.203 ms`、GPU busy `126.123 -> 123.469 ms`、CUDA event region
+`135.228 -> 131.576 ms`，kernel 数 `2636 -> 2222`；完整 prefill kernel busy
+`175.801 -> 172.662 ms`。memcpy 与 stream sync 不变。text、H1、H2 的输出 SHA256
 分别保持 `7928eb...661e`、`76ad1f...14c6`、`4a61f1...166f`，各自 repeat 内一致。
 
 主要证据：
 
-- `data/p10_compile_graph/prefill_swiglu/h2_prefill_add_rmsnorm_repeat5_dirty.jsonl`
+- `data/p10_compile_graph/prefill_add_rmsnorm/h2_repeat5_clean_12c1eda.jsonl`
 - `data/p10_compile_graph/prefill_swiglu/{text,h1}_prefill_add_rmsnorm_repeat3_dirty.jsonl`
-- `data/p10_compile_graph/prefill_swiglu/h2_prefill_add_rmsnorm_semantic_dirty_analysis.json`
-- `data/p10_compile_graph/prefill_swiglu/h2_prefill_add_rmsnorm_language_dirty_analysis.json`
+- `data/p10_compile_graph/prefill_add_rmsnorm/h2_semantic_clean_12c1eda_analysis.json`
+- `data/p10_compile_graph/prefill_add_rmsnorm/h2_language_clean_12c1eda_analysis.json`
 
 ## 1. “优化到极致”的验收定义
 
