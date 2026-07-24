@@ -1044,6 +1044,7 @@ class Qwen3VLModel(nn.Module):
         vision_attention_backend: VisionAttentionBackendName | str = (
             VisionAttentionBackendName.SDPA
         ),
+        enable_vision_tensor_cudagraph: bool = False,
     ):
         super().__init__()
         architecture = (
@@ -1067,6 +1068,7 @@ class Qwen3VLModel(nn.Module):
             vision_config,
             dtype=dtype,
             attention_backend=vision_attention_backend,
+            enable_tensor_cudagraph=enable_vision_tensor_cudagraph,
         )
         self.language_model = (
             Qwen3VLTextModel.from_config(
@@ -1339,6 +1341,7 @@ class Qwen3VLForCausalLM(nn.Module):
         vision_attention_backend: VisionAttentionBackendName | str = (
             VisionAttentionBackendName.SDPA
         ),
+        enable_vision_tensor_cudagraph: bool = False,
     ):
         # Backward compatibility: Qwen3VLForCausalLM(torch.bfloat16)
         if isinstance(config, torch.dtype):
@@ -1361,6 +1364,7 @@ class Qwen3VLForCausalLM(nn.Module):
             mlp_projection_mode=mlp_projection_mode,
             vision_encoder_microbatch_patches=vision_encoder_microbatch_patches,
             vision_attention_backend=vision_attention_backend,
+            enable_vision_tensor_cudagraph=enable_vision_tensor_cudagraph,
         )
         architecture = self.model.architecture
         hidden_size = architecture.text.hidden_size

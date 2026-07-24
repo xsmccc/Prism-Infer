@@ -261,6 +261,7 @@ class MultimodalConfig:
     max_vision_patches_per_batch: int = DEFAULT_MAX_VISION_PATCHES_PER_BATCH
     vision_encoder_microbatch_patches: int = DEFAULT_VISION_ENCODER_MICROBATCH_PATCHES
     vision_attention_backend: VisionAttentionBackendName | str = VisionAttentionBackendName.SDPA
+    enable_vision_tensor_cudagraph: bool = False
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -281,6 +282,10 @@ class MultimodalConfig:
             raise ValueError(
                 "max_vision_patches_per_batch must be >= vision_encoder_microbatch_patches"
             )
+        _boolean(
+            self.enable_vision_tensor_cudagraph,
+            name="enable_vision_tensor_cudagraph",
+        )
         object.__setattr__(
             self,
             "vision_attention_backend",
@@ -552,6 +557,7 @@ class PrismConfig:
             "max_vision_patches_per_batch": "max_vision_patches_per_batch",
             "vision_encoder_microbatch_patches": ("vision_encoder_microbatch_patches"),
             "vision_attention_backend": "vision_attention_backend",
+            "enable_vision_tensor_cudagraph": ("enable_vision_tensor_cudagraph"),
         }
         cache_fields = {
             "gpu_memory_utilization": "gpu_memory_utilization",
@@ -861,6 +867,10 @@ class Config:
     @property
     def vision_attention_backend(self) -> VisionAttentionBackendName:
         return self.multimodal_config.vision_attention_backend
+
+    @property
+    def enable_vision_tensor_cudagraph(self) -> bool:
+        return self.multimodal_config.enable_vision_tensor_cudagraph
 
     @property
     def max_num_batched_tokens(self) -> int:

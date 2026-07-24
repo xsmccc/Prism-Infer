@@ -228,6 +228,14 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--enable-vision-tensor-cudagraph",
+        action="store_true",
+        help=(
+            "capture exact fixed-shape Vision transformer tensor regions and "
+            "replay them after the first warmup request"
+        ),
+    )
+    parser.add_argument(
         "--sample-process-memory",
         action="store_true",
         help=(
@@ -284,6 +292,7 @@ def main() -> None:
         enable_fused_add_rmsnorm=True,
         enable_packed_kv_projection=True,
         enable_decode_block4_gate_up=args.enable_decode_block4_gate_up,
+        enable_vision_tensor_cudagraph=args.enable_vision_tensor_cudagraph,
         vision_attention_backend="sdpa",
     )
     sampling = SamplingParams(
@@ -500,6 +509,9 @@ def main() -> None:
         graph = llm.model_runner.cudagraph_metadata(1)
         compile_metadata = llm.model_runner.compile_metadata()
         block4_gate_up = llm.model_runner.block4_gate_up_metadata()
+        vision_tensor_cudagraph = (
+            llm.model_runner.vision_tensor_cudagraph_metadata()
+        )
         record = {
             "schema_version": 1,
             "record_type": "external_system_benchmark",
@@ -552,6 +564,7 @@ def main() -> None:
                     ),
                 },
                 "decode_block4_gate_up": block4_gate_up,
+                "vision_tensor_cudagraph": vision_tensor_cudagraph,
                 "cuda_graph": graph,
                 "torch_compile": compile_metadata,
             },

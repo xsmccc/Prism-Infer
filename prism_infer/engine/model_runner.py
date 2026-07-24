@@ -216,6 +216,9 @@ class ModelRunner:
                 mlp_projection_mode=self.config.mlp_projection_mode,
                 vision_encoder_microbatch_patches=(self.config.vision_encoder_microbatch_patches),
                 vision_attention_backend=self.config.vision_attention_backend,
+                enable_vision_tensor_cudagraph=(
+                    self.config.enable_vision_tensor_cudagraph
+                ),
             )
             self.model.logits_precision = self.config.logits_precision
             for layer in self.model.model.language_model.layers:
@@ -581,6 +584,17 @@ class ModelRunner:
                 self.decode_block4_gate_up_quantization_ms if enabled else 0.0
             ),
         }
+
+    def vision_tensor_cudagraph_metadata(self) -> dict[str, object]:
+        """Return fixed-shape Vision tensor-region Graph captures."""
+
+        if not self.is_vl_model:
+            return {
+                "enabled": False,
+                "capture_count": 0,
+                "captures": [],
+            }
+        return self.model.model.visual.tensor_cudagraph_metadata()
 
     def warmup_model(self):
         """热身: 用最大尺寸输入跑一次模型, 触发 CUDA kernel 编译/分配"""

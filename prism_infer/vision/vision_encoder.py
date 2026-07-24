@@ -10,7 +10,9 @@
   Output: (main_features [196, 4096], [ds0, ds1, ds2] each [196, 4096])
 """
 
+from dataclasses import dataclass
 from math import isqrt
+from time import perf_counter
 
 import torch
 import torch.nn as nn
@@ -42,10 +44,29 @@ except ImportError:
     HAS_VISION_FLASH_ATTN = False
 
 
+@dataclass
+class _VisionTensorCUDAGraphEntry:
+    graph: torch.cuda.CUDAGraph
+    static_x: torch.Tensor
+    static_cos: torch.Tensor
+    static_sin: torch.Tensor
+    static_cu_seqlens: torch.Tensor
+    static_main: torch.Tensor
+    static_deepstack: list[torch.Tensor]
+    max_seqlen: int
+    segment_ranges: tuple[tuple[int, int], ...]
+    capture_ms: float
+    capture_net_allocated_delta_bytes: int
+    capture_net_reserved_delta_bytes: int
+    replay_count: int = 0
+
+
 UNBATCHED_ATTENTION_TENSOR_RANK = 3
 VISION_TOKEN_MATRIX_RANK = 2
 SINGLE_SEQUENCE_CU_SEQLENS_COUNT = 2
 QKV_PROJECTION_COUNT = 3
+MIN_VISION_TENSOR_CUDAGRAPH_PATCHES = 2048
+MAX_VISION_TENSOR_CUDAGRAPH_SHAPES = 8
 
 
 def _config_dtype(config: object | None) -> torch.dtype:
@@ -451,6 +472,7 @@ class VisionEncoder(nn.Module):
         dtype: torch.dtype | None = None,
         *,
         attention_backend: VisionAttentionBackendName | str = VisionAttentionBackendName.SDPA,
+        enable_tensor_cudagraph: bool = False,
     ):
         super().__init__()
         # Backward compatibility: VisionEncoder(torch.bfloat16)
@@ -464,6 +486,19 @@ class VisionEncoder(nn.Module):
         if not isinstance(dtype, torch.dtype):
             raise TypeError(f"vision dtype must be torch.dtype, got {dtype!r}")
         self.attention_backend = normalize_vision_attention_backend(attention_backend)
+        if not isinstance(enable_tensor_cudagraph, bool):
+            raise TypeError(
+                "enable_tensor_cudagraph must be bool, got "
+                f"{enable_tensor_cudagraph!r}"
+            )
+        self.enable_tensor_cudagraph = enable_tensor_cudagraph
+        self._tensor_cudagraph_pool = None
+        self._tensor_cudagraph_cache: dict[
+            tuple[object, ...],
+            _VisionTensorCUDAGraphEntry,
+        ] = {}
+        self._tensor_cudagraph_small_shape_fallbacks = 0
+        self._tensor_cudagraph_capacity_fallbacks = 0
 
         architecture = (
             Qwen3VLVisionArchitecture.canonical()
@@ -678,7 +713,7 @@ class VisionEncoder(nn.Module):
         cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0).to(x.device)
         return x, cos, sin, cu_seqlens, max_seqlen, segment_ranges
 
-    def forward_tensor_region(
+    def _forward_tensor_region_eager(
         self,
         x: torch.Tensor,
         cos: torch.Tensor,
@@ -711,6 +746,213 @@ class VisionEncoder(nn.Module):
 
         main = self.merger(x)
         return main, deepstack_features
+
+    @staticmethod
+    def _tensor_cudagraph_key(
+        x: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
+        segment_ranges: tuple[tuple[int, int], ...],
+    ) -> tuple[object, ...]:
+        return (
+            x.device.type,
+            x.device.index,
+            x.dtype,
+            tuple(x.shape),
+            tuple(x.stride()),
+            cos.dtype,
+            tuple(cos.shape),
+            tuple(cos.stride()),
+            sin.dtype,
+            tuple(sin.shape),
+            tuple(sin.stride()),
+            cu_seqlens.dtype,
+            tuple(cu_seqlens.shape),
+            tuple(cu_seqlens.stride()),
+            max_seqlen,
+            segment_ranges,
+        )
+
+    def _capture_tensor_cudagraph(
+        self,
+        x: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
+        segment_ranges: tuple[tuple[int, int], ...],
+    ) -> _VisionTensorCUDAGraphEntry:
+        static_x = x.clone()
+        static_cos = cos.clone()
+        static_sin = sin.clone()
+        static_cu_seqlens = cu_seqlens.clone()
+        static_inputs = (
+            static_x,
+            static_cos,
+            static_sin,
+            static_cu_seqlens,
+            max_seqlen,
+            segment_ranges,
+        )
+
+        current_stream = torch.cuda.current_stream(x.device)
+        warmup_stream = torch.cuda.Stream(device=x.device)
+        warmup_stream.wait_stream(current_stream)
+        with torch.cuda.stream(warmup_stream):
+            for _ in range(3):
+                self._forward_tensor_region_eager(*static_inputs)
+        current_stream.wait_stream(warmup_stream)
+        torch.cuda.synchronize(x.device)
+
+        if self._tensor_cudagraph_pool is None:
+            self._tensor_cudagraph_pool = torch.cuda.graph_pool_handle()
+        allocated_before = torch.cuda.memory_allocated(x.device)
+        reserved_before = torch.cuda.memory_reserved(x.device)
+        graph = torch.cuda.CUDAGraph()
+        capture_started = perf_counter()
+        with torch.cuda.graph(graph, pool=self._tensor_cudagraph_pool):
+            static_main, static_deepstack = self._forward_tensor_region_eager(
+                *static_inputs
+            )
+        torch.cuda.synchronize(x.device)
+        capture_ms = (perf_counter() - capture_started) * 1000.0
+
+        return _VisionTensorCUDAGraphEntry(
+            graph=graph,
+            static_x=static_x,
+            static_cos=static_cos,
+            static_sin=static_sin,
+            static_cu_seqlens=static_cu_seqlens,
+            static_main=static_main,
+            static_deepstack=static_deepstack,
+            max_seqlen=max_seqlen,
+            segment_ranges=segment_ranges,
+            capture_ms=capture_ms,
+            capture_net_allocated_delta_bytes=(
+                torch.cuda.memory_allocated(x.device) - allocated_before
+            ),
+            capture_net_reserved_delta_bytes=(
+                torch.cuda.memory_reserved(x.device) - reserved_before
+            ),
+        )
+
+    def forward_tensor_region(
+        self,
+        x: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
+        segment_ranges: tuple[tuple[int, int], ...],
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        if not self.enable_tensor_cudagraph or torch.compiler.is_compiling():
+            return self._forward_tensor_region_eager(
+                x,
+                cos,
+                sin,
+                cu_seqlens,
+                max_seqlen,
+                segment_ranges,
+            )
+        if x.device.type != "cuda":
+            raise RuntimeError("Vision tensor CUDA Graph requires CUDA inputs")
+        if x.shape[0] < MIN_VISION_TENSOR_CUDAGRAPH_PATCHES:
+            self._tensor_cudagraph_small_shape_fallbacks += 1
+            return self._forward_tensor_region_eager(
+                x,
+                cos,
+                sin,
+                cu_seqlens,
+                max_seqlen,
+                segment_ranges,
+            )
+
+        key = self._tensor_cudagraph_key(
+            x,
+            cos,
+            sin,
+            cu_seqlens,
+            max_seqlen,
+            segment_ranges,
+        )
+        entry = self._tensor_cudagraph_cache.get(key)
+        if entry is None:
+            if (
+                len(self._tensor_cudagraph_cache)
+                >= MAX_VISION_TENSOR_CUDAGRAPH_SHAPES
+            ):
+                self._tensor_cudagraph_capacity_fallbacks += 1
+                return self._forward_tensor_region_eager(
+                    x,
+                    cos,
+                    sin,
+                    cu_seqlens,
+                    max_seqlen,
+                    segment_ranges,
+                )
+            entry = self._capture_tensor_cudagraph(
+                x,
+                cos,
+                sin,
+                cu_seqlens,
+                max_seqlen,
+                segment_ranges,
+            )
+            self._tensor_cudagraph_cache[key] = entry
+        else:
+            entry.static_x.copy_(x)
+            entry.static_cos.copy_(cos)
+            entry.static_sin.copy_(sin)
+            entry.static_cu_seqlens.copy_(cu_seqlens)
+            entry.graph.replay()
+            entry.replay_count += 1
+
+        # Graph outputs live in shared static storage. Clone before another
+        # shape replays the shared pool or the caller mutates the returned data.
+        return (
+            entry.static_main.clone(),
+            [value.clone() for value in entry.static_deepstack],
+        )
+
+    def tensor_cudagraph_metadata(self) -> dict[str, object]:
+        captures = []
+        for entry in self._tensor_cudagraph_cache.values():
+            captures.append(
+                {
+                    "x_shape": list(entry.static_x.shape),
+                    "x_dtype": str(entry.static_x.dtype),
+                    "cos_shape": list(entry.static_cos.shape),
+                    "cu_seqlens_shape": list(entry.static_cu_seqlens.shape),
+                    "max_seqlen": entry.max_seqlen,
+                    "segment_ranges": [
+                        list(segment_range)
+                        for segment_range in entry.segment_ranges
+                    ],
+                    "capture_ms": entry.capture_ms,
+                    "capture_net_allocated_delta_bytes": (
+                        entry.capture_net_allocated_delta_bytes
+                    ),
+                    "capture_net_reserved_delta_bytes": (
+                        entry.capture_net_reserved_delta_bytes
+                    ),
+                    "replay_count": entry.replay_count,
+                }
+            )
+        return {
+            "enabled": self.enable_tensor_cudagraph,
+            "capture_count": len(captures),
+            "min_patches": MIN_VISION_TENSOR_CUDAGRAPH_PATCHES,
+            "max_cached_shapes": MAX_VISION_TENSOR_CUDAGRAPH_SHAPES,
+            "small_shape_fallbacks": (
+                self._tensor_cudagraph_small_shape_fallbacks
+            ),
+            "capacity_fallbacks": self._tensor_cudagraph_capacity_fallbacks,
+            "shared_pool": self._tensor_cudagraph_pool is not None,
+            "output_policy": "clone_after_capture_or_replay",
+            "captures": captures,
+        }
 
     def forward(
         self, pixel_values: torch.Tensor, grid_thw: torch.Tensor
