@@ -10,9 +10,15 @@ import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event, Thread
 
 import torch
 import transformers
+
+try:
+    import pynvml
+except ImportError:  # pragma: no cover - formal environment provides NVML
+    pynvml = None
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +56,85 @@ P12_ONLINE_MODES = (
     "visual_compact_scaled_fp8_compile_graph",
 )
 H3_PROFILES = ("primary", "conditional_video")
+
+
+class _DeviceProcessMemorySampler:
+    """Sample total compute-process memory on the benchmark's dedicated GPU."""
+
+    def __init__(self, *, device_index: int = 0, interval_ms: float = 10.0) -> None:
+        if pynvml is None:
+            raise RuntimeError("NVML process-memory sampling requires nvidia-ml-py")
+        self.device_index = device_index
+        self.interval_ms = interval_ms
+        self._stop = Event()
+        self._thread: Thread | None = None
+        self._handle = None
+        self._samples = 0
+        self._initial_bytes = 0
+        self._peak_bytes = 0
+        self._final_bytes = 0
+        self._pids: set[int] = set()
+        self._failure: BaseException | None = None
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None
+
+    def _sample(self) -> int:
+        used_bytes = 0
+        for process in pynvml.nvmlDeviceGetComputeRunningProcesses(self._handle):
+            value = process.usedGpuMemory
+            if isinstance(value, int) and 0 <= value < (1 << 63):
+                used_bytes += value
+                self._pids.add(int(process.pid))
+        self._samples += 1
+        self._peak_bytes = max(self._peak_bytes, used_bytes)
+        return used_bytes
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_ms / 1000.0):
+            try:
+                self._sample()
+            except BaseException as exc:
+                self._failure = exc
+                self._stop.set()
+
+    def start(self) -> None:
+        pynvml.nvmlInit()
+        self._handle = pynvml.nvmlDeviceGetHandleByIndex(self.device_index)
+        self._initial_bytes = self._sample()
+        self._thread = Thread(
+            target=self._run,
+            name="prism-device-process-memory-sampler",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> dict[str, object]:
+        if self._thread is None:
+            raise RuntimeError("NVML process-memory sampler was not started")
+        self._stop.set()
+        self._thread.join()
+        try:
+            self._final_bytes = self._sample()
+        finally:
+            pynvml.nvmlShutdown()
+            self._thread = None
+        if self._failure is not None:
+            raise RuntimeError("NVML process-memory sampling failed") from self._failure
+        mib = 1024 * 1024
+        return {
+            "measurement": "NVML total compute-process usedGpuMemory",
+            "scope": "post-LLM-init through warmup and measured generation",
+            "dedicated_gpu_required": True,
+            "device_index": self.device_index,
+            "sampling_interval_ms": self.interval_ms,
+            "samples": self._samples,
+            "observed_pids": sorted(self._pids),
+            "after_llm_init_mib": self._initial_bytes / mib,
+            "peak_serving_mib": self._peak_bytes / mib,
+            "after_benchmark_mib": self._final_bytes / mib,
+        }
 
 
 def _arrival_offsets(
@@ -666,6 +751,8 @@ def main() -> None:
     )
     mode = MODE_SPECS[args.mode]
     llm = _build_engine(args)
+    process_memory_sampler = _DeviceProcessMemorySampler()
+    process_memory_sampler.start()
     try:
         if args.warmup_requests:
             warmup_payloads = payloads[: args.warmup_requests]
@@ -694,6 +781,7 @@ def main() -> None:
         )
         run = OnlineServingSession(llm).run(requests)
         torch.cuda.synchronize()
+        process_device_memory = process_memory_sampler.stop()
         run_record = run.to_record()
         _annotate_request_classes(run_record, request_classes)
         class_slos, class_slo_source = _load_class_slos(
@@ -791,6 +879,8 @@ def main() -> None:
                 ),
             },
             "memory": {
+                "process_device": process_device_memory,
+                "torch_allocator_is_headline_eligible": True,
                 "allocated_mib": torch.cuda.memory_allocated() / (1024**2),
                 "reserved_mib": torch.cuda.memory_reserved() / (1024**2),
                 "peak_allocated_mib": (torch.cuda.max_memory_allocated() / (1024**2)),
@@ -818,6 +908,11 @@ def main() -> None:
         }
         validate_online_benchmark_record(record)
     finally:
+        if process_memory_sampler.running:
+            try:
+                process_memory_sampler.stop()
+            except Exception:
+                pass
         llm.exit()
 
     rendered = json.dumps(record, ensure_ascii=False, sort_keys=True)

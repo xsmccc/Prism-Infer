@@ -46,6 +46,7 @@ with this environment.
 | `max_num_seqs` limited only each batch, not resident running requests. | With a 24-page pressure pool, 12 requests became resident, causing page rotation and inter-token gaps near 1.3 seconds. | Enforce the limit on resident running plus swapped-in requests. A cap sweep showed 8 is the useful operating point; 4 over-queues. |
 | A resident cap of 4 looked attractive for decode but damaged TTFT. | Versus the old scheduler, TPOT p50 improved 55.46%, but TTFT p50 regressed 238%. | Reject cap 4 as over-conservative; retain the failed candidate as evidence for the latency tradeoff. |
 | Parent-process Torch memory was zero for vLLM V1. | EngineCore owns the CUDA allocations in a child process. | Sample total NVML compute-process memory on the dedicated GPU and record all observed PIDs. |
+| Prism reported Torch allocator memory while external adapters reported NVML process memory. | The values have different scopes, so a cross-framework peak-VRAM comparison would be invalid even though both are measured in MiB. | Add the same 10 ms dedicated-GPU NVML compute-process sampler to Prism; keep allocator numbers as diagnostics only. |
 | Previous external numbers were offline closed-loop results. | They did not include Poisson arrivals or controller queueing and therefore could not support an H3 goodput claim. | Added in-process online adapters with identical class/arrival schedules and audited prompt-token hashes. |
 | The first SGLang online smoke produced a different global prompt hash. | Image, H1, and H2 hashes were already exact, but the text prompt had 21 tokens instead of 13 because the adapter applied a chat template that vLLM does not apply to text-only H3. | Pass the frozen text prompt directly while retaining chat-template handling for multimodal inputs, then rerun the identity check. |
 
@@ -86,6 +87,19 @@ The clean 20-request vLLM adapter validation has:
 - NVML process memory: 22,680 MiB after initialization and 23,670 MiB peak
   while serving.
 
+The fixed-pool comparison separates storage capacity from total process
+memory:
+
+| System | KV format | Accounted KV bytes | Physical KV-token capacity |
+| --- | --- | ---: | ---: |
+| vLLM | BF16 | 4,294,967,296 | about 29,127 |
+| SGLang | BF16 | 4,265,607,168 theoretical | 28,928 |
+| Prism | scaled FP8 | 4,282,122,240 including scales | 56,320 |
+
+Prism therefore has about 1.94x the physical KV-token capacity at approximately
+the same pool size. This is a capacity result, not by itself a total-process
+memory result; the latter uses the common NVML sampler.
+
 The 20-request run is an adapter/protocol validation only. It is not a formal
 claim because H3 requires 600 completed requests and repeated seeds.
 
@@ -112,8 +126,33 @@ numbers validate the adapter only and are not a formal SGLang result.
 
 ## Formal results
 
-The low-load vLLM SLO source is complete. Prism and loaded-rate external rows
-remain pending completion of the clean fixed-memory matrix.
+The first clean Prism rate-1 run completed 600/600 requests with no rejection.
+Its trace hash, prompt-token hash, and SLO-file hash match vLLM. It reached
+60.588 output tokens/s and 59.478 SLO-goodput tokens/s (589/600 requests).
+Applying the same frozen SLOs to the vLLM source run gives 59.681 goodput
+tokens/s (591/600), so Prism is 0.34% lower at low load.
+
+| Class | Prism TTFT p50 (ms) | vLLM TTFT p50 (ms) | Prism TPOT p50 (ms) | vLLM TPOT p50 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Text | 43.575 | 33.991 | 11.069 | 10.521 |
+| Single image | 67.170 | 98.079 | 11.425 | 10.632 |
+| H1 eight images | 233.663 | 270.549 | 11.376 | 10.548 |
+| H2 video | 274.286 | 292.300 | 11.598 | 10.544 |
+
+Prism therefore improves single-image, H1, and H2 TTFT by 31.5%, 13.6%, and
+6.2%, respectively, while text TTFT and TPOT remain behind. This is a useful
+mechanism result, not yet the loaded-rate headline.
+
+The rate-1 run also recorded 180 effective reclaim events and 480 released
+pages: 360 from 120 H1 requests and 120 from 60 H2 requests. Dense visual
+prompts required 1,440 pages; compaction reduced them to 960 physical pages
+and dropped 112,860 visual KV tokens under the previously validated quality
+policy. Decode CUDA Graph replayed 25,043 times and Vision Tensor Graph
+captured three shapes with no capacity fallback.
+
+Loaded-rate Prism and external rows remain pending completion of the clean
+fixed-memory matrix. The rate-1 Prism artifact predates the common NVML
+sampler, so it is not used for a cross-framework peak-VRAM headline.
 
 ## Claim boundary
 
