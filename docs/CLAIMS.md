@@ -8,7 +8,9 @@
 > 历史 P9-D H1 点 `c11b6e9` 已因语义错误撤销
 > 当前 P10.10 correctness/three-engine 点: `26deccd`
 > 当前 P10 最终 benchmark 点: `4779342`
-> 更新日期: 2026-07-23
+> 当前 P11 Vision Graph 点: `c20fd8d`
+> 当前 P11 模态自适应压缩点: `a4a06b3`
+> 更新日期: 2026-07-24
 
 本表区分“已实现”“已验证”和“性能占优”。README、简历和面试中的数字必须能
 追溯到本表及对应 raw evidence。
@@ -51,6 +53,9 @@
 | Prism scaled FP8 通过冻结的标准多模态质量门禁 | clean `5ada892`；DocVQA/MuirBench/MVBench development/final | 6/6 formal non-inferiority PASS；allocated KV pool 为 BF16 的 `0.515625x`，节省 `48.4375%` |
 | 同容量 vLLM FP8 外部质量矩阵结果为 MIXED | clean `3ec90a5`；vLLM 0.24.0 per-token-head FP8；semantic input exact | DocVQA/MuirBench 4 cell PASS，MVBench development/final FAIL；Prism scaled FP8 同六 cell PASS |
 | H2 已形成三引擎可比 cell | clean `4779342`；16×448、24 fps、prompt1667 | vLLM outer-marker adapter 后 prompt IDs exact；SGLang FFV1 解码 16 帧 RGB 逐字节 exact，三引擎 H2 prompt SHA256 均为 `a3241f...5b2` |
+| 重型 Vision tensor CUDA Graph 减少 H1 host launch/gap | clean `c20fd8d`；RTX 5090 UUID `GPU-1bf4...2ba7`；H1 repeat9/output128 | H1 engine TTFT `244.035 -> 229.270 ms`（-6.05%），token exact；NSYS Runtime API `5,025 -> 1,185`、GPU kernels 均为 `2,312`；H2 engine TTFT `+1.23%`，不声称加速 |
+| 模态自适应 visual compaction + scaled-FP8 通过三项 formal development gate | clean `4bc2094/a4a06b3`；image/mixed floor768、video-only floor256、keep0.6 | DocVQA `0.924640 -> 0.925308`、MuirBench `0.69 -> 0.69`、MVBench `0.608247 -> 0.608247`，三项 PASS；MVBench 97/97 output exact |
+| 视觉压缩释放页可被后续请求真实复用 | clean `a4a06b3`；H1 batch2/output128、11 blocks、page256 | 每请求 `7 -> 4` prompt pages；首请求释放 `[1,0,5]` 并被第二请求 prefill 使用；dense decode 全部 batch1，compact 378/384 步为 batch2；该受限 cell requests/s `+58.83%` |
 | ~~旧 P9-D H1 排名~~ | clean `c11b6e9`，输出 `76ad1f...14c6` | **已撤销**：repeat hash 稳定但内容与图片无关，不构成语义 correctness 或性能发布证据 |
 
 ## 必须带限制的结论
@@ -77,7 +82,8 @@
 | 同约 4 GiB budget capacity 提升 `94.69%` | 是 KV token/page 容量，不是实测 online concurrency/goodput；H1/H2 resident sequence 数只可作为 KV-limited 上限 |
 | Prism scaled FP8 的六项 formal gate 全 PASS，vLLM FP8 为四 PASS/两 FAIL | 结论是预注册稳定性门禁结果；vLLM MVBench accuracy 点估计实际更高，不能声称 Prism accuracy 显著领先 |
 | H1/H2 中 Prism TPOT/TTFT 低于 vLLM 与 SGLang | 只覆盖 RTX 5090 UUID `GPU-7f63...f2eb`、指定 Qwen3-VL-8B snapshot、TP1、batch1、greedy、output128、offline CUDA Graph；H1 BF16 对 SGLang E2E 仅低 `0.07%`，scaled E2E 有两个轻微负单元；不是 online、batch 扩展、多模型或跨硬件的全面排名 |
-| content-aware + scaled-FP8 的 H1/H2 TPOT 约 `10.02 ms` | 只有 prompt compaction、repeat stability 与受限语义检查；尚无标准 DocVQA/MuirBench/MVBench 组合质量，不能进入外部 headline |
+| 模态自适应 visual compaction + scaled-FP8 的三项 formal development gate PASS | DocVQA/MuirBench 与 MVBench 分别绑定 clean `4bc2094/a4a06b3`；不是完整 development/final 六格矩阵；短单图因 768 floor 可能完全不裁剪；合成 H1 compact 输出不与 dense token-exact |
+| 11-page H1 batch2 中 compact requests/s 提升 `58.83%` | 是容量受限、offline closed-loop 的页复用实验，收益来自并发 decode 与 scaled-FP8 组合；不是单请求 TPOT、网络 online goodput 或通用吞吐提升 |
 
 ## 当前禁止的结论
 

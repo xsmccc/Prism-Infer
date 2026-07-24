@@ -24,7 +24,7 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 | Qwen3-VL full logits / PPL | 已验证 | text 与 VL 路径相对 HF reference 有 strict gate |
 | Paged KV、chunked prefill、continuous batching | 已验证 | engine-level arrival/SLO harness，不是网络 server |
 | KV trace 与视觉 token 分析 | 已验证 | trace 默认关闭，JSONL 可离线分析 |
-| content-aware visual KV physical compaction | 已验证 | BF16、keep=0.5 的 7-image lexical preflight 通过 |
+| 模态自适应 visual KV physical compaction | 标准质量与动态页复用已验证 | image/mixed floor768、video-only floor256、keep0.6；DocVQA/MuirBench/MVBench formal development PASS |
 | unit-scale FP8 KV (`fp8_kv`) | 已实现、已拒绝 | direct cast 长输出质量未通过，只保留为失败基线 |
 | scaled FP8 KV (`scaled_fp8_kv`) | 质量、Graph、容量、显存已闭环 | per-token/per-KV-head scale；同容量 KV 为 BF16 的 `0.515625x`，同约 4 GiB budget 容量提升 `94.69%` |
 | packed MLP gate/up | 已验证、默认启用 | RTX 5090 TP1；8 个 clean offline cell 的 decode TPOT 改善 `0.483%–0.762%`，不声称稳定 E2E 加速 |
@@ -75,9 +75,20 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
   per-token-head FP8 在 DocVQA/MuirBench 通过、MVBench development/final 未通过
   预注册稳定性门禁；其 MVBench accuracy 点估计反而更高。因此当前外部质量矩阵结论是
   **MIXED**，不是“Prism accuracy 显著高于 vLLM”，也不是完整物理显存 Pareto 胜出。
+- P11 的模态自适应组合策略使用 `keep=0.6`、image/mixed floor768、video-only
+  floor256。DocVQA/MuirBench/MVBench development 分别为 `200/200/97` 个 paired
+  样本，三项 formal gate 全 PASS；MVBench 97/97 output token exact。
+- H1 batch2 仅给 11 个 KV pages 时，dense 路径只能 batch1 decode；compact
+  路径把每请求 prompt 从 7 页降到 4 页，第一页表释放的 `[1,0,5]` 被第二请求
+  prefill 复用，378/384 decode steps 进入 batch2。该容量受限 cell 的 requests/s
+  提升 `58.83%`，不外推为通用 online goodput。
+- 重型 Vision tensor CUDA Graph 在 clean H1 中保持 token exact，engine TTFT
+  从 `244.035` 降至 `229.270 ms`（-6.05%）；H2 未观察到可靠加速，单图默认
+  fallback eager。
 
 最终口径、环境和 raw evidence 路径见
-[P10 最终结果](docs/P10_FINAL_RESULTS.md) 与
+[P10 最终结果](docs/P10_FINAL_RESULTS.md)、
+[P11 结果](docs/P11_MULTIMODAL_COMPACTION_RESULTS.md) 与
 [PERFORMANCE_REPORT](docs/PERFORMANCE_REPORT.md)。
 
 ## 架构
@@ -350,6 +361,7 @@ python -m pytest -q tests -s
 - [验证合同](docs/VERIFICATION.md)：correctness、quality、performance 门禁。
 - [性能报告](docs/PERFORMANCE_REPORT.md)：benchmark contract、结果和 raw evidence。
 - [P10 最终结果](docs/P10_FINAL_RESULTS.md)：compile/Graph H1/H2 外部对比与 scaled-FP8 KV 显存/容量 Pareto。
+- [P11 结果](docs/P11_MULTIMODAL_COMPACTION_RESULTS.md)：Vision Graph、模态自适应视觉 KV 正式质量与动态页复用。
 - [Claim Ledger](docs/CLAIMS.md)：允许、必须限定和禁止使用的结论。
 - [压缩报告](docs/COMPRESSION_REPORT.md) / [KV 分析报告](docs/KV_ANALYSIS_REPORT.md)。
 

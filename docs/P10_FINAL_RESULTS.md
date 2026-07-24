@@ -1,5 +1,9 @@
 # P10 最终结果：Compiler/Graph 低延迟与 scaled-FP8 KV 容量
 
+> **后续状态：**本文第 5 节记录的是 2026-07-23 的冻结状态。组合压缩的
+> DocVQA/MuirBench/MVBench development 质量与动态页复用已在 P11 补齐，见
+> [P11 结果](P11_MULTIMODAL_COMPACTION_RESULTS.md)；P10 的历史数字不回写。
+>
 > 冻结 benchmark commit：`47793420b6796951a784b436946100011d4f75b1`
 >
 > 日期：2026-07-23
