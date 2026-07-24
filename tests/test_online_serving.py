@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from prism_infer.analysis.online_serving import (
     ONLINE_BENCHMARK_SCHEMA_VERSION,
@@ -15,6 +16,7 @@ from prism_infer.engine.llm_engine import LLMEngine
 from prism_infer.engine.metrics import EngineMetrics
 from prism_infer.engine.online import OnlineRequest, OnlineServingSession
 from prism_infer.engine.scheduler import Scheduler
+from prism_infer.engine.sequence import Sequence
 from prism_infer.sampling_params import SamplingParams
 
 
@@ -219,6 +221,79 @@ def test_online_session_preserves_arrival_and_continuous_batching() -> None:
     record["summary"] = {**summary, "counts": {**summary["counts"], "good": 0}}
     with pytest.raises(ValueError, match="does not match"):
         validate_online_benchmark_record(record)
+
+
+def test_visual_prefill_guard_preserves_text_admission_and_bounds_visual_delay() -> None:
+    clock = _FakeClock()
+    config = SimpleNamespace(
+        max_num_seqs=4,
+        max_num_batched_tokens=16,
+        max_model_len=32,
+        enable_chunked_prefill=True,
+        max_chunk_size=16,
+        max_queue_size=None,
+        max_consecutive_prefill_batches=1,
+        min_decode_batches_between_visual_prefills=2,
+        max_vision_patches_per_batch=16,
+        eos=-1,
+        num_kvcache_blocks=32,
+        kvcache_block_size=4,
+        num_cpu_blocks=8,
+        enable_prefix_caching=False,
+    )
+    scheduler = Scheduler(config, clock_ns=clock)
+    sampling = SamplingParams(max_tokens=8, ignore_eos=True)
+    decode_seq = Sequence(
+        [1, 2],
+        sampling,
+        block_size=4,
+        request_id=0,
+    )
+    scheduler.add(decode_seq)
+    first_prefill = scheduler.schedule()
+    decode_seq.num_computed_tokens = decode_seq.num_prompt_tokens
+    scheduler.postprocess(first_prefill, (10,))
+
+    visual_seq = Sequence(
+        [1, 99, 2],
+        sampling,
+        block_size=4,
+        request_id=1,
+        pixel_values=torch.ones((4, 2)),
+        image_grid_thw=torch.tensor([[1, 2, 2]]),
+        image_token_id=99,
+        image_token_count=1,
+    )
+    text_seq = Sequence(
+        [3, 4],
+        sampling,
+        block_size=4,
+        request_id=2,
+    )
+    scheduler.add(visual_seq)
+    scheduler.add(text_seq)
+
+    first_decode = scheduler.schedule()
+    assert not first_decode.is_prefill
+    scheduler.postprocess(first_decode, (11,))
+
+    text_prefill = scheduler.schedule()
+    assert text_prefill.is_prefill
+    assert text_prefill.sequences == (text_seq,)
+    text_seq.num_computed_tokens = text_seq.num_prompt_tokens
+    scheduler.postprocess(text_prefill, (12,))
+
+    second_decode = scheduler.schedule()
+    assert not second_decode.is_prefill
+    scheduler.postprocess(second_decode, (13, 14))
+
+    visual_prefill = scheduler.schedule()
+    assert visual_prefill.is_prefill
+    assert visual_prefill.sequences == (visual_seq,)
+    metrics = scheduler.metrics_snapshot()
+    assert metrics["visual_prefill_deferrals"] == 1
+    assert metrics["text_prefill_bypasses"] == 1
+    assert metrics["max_decode_batches_between_visual_prefills"] == 2
 
 
 def test_online_schema_v2_requires_projection_mode() -> None:

@@ -238,6 +238,7 @@ class SchedulerConfig:
     scheduler_policy: str = "fcfs"
     max_queue_size: int | None = None
     max_consecutive_prefill_batches: int = 1
+    min_decode_batches_between_visual_prefills: int = 0
 
     def __post_init__(self) -> None:
         _positive_int(
@@ -250,6 +251,15 @@ class SchedulerConfig:
             self.max_consecutive_prefill_batches,
             name="max_consecutive_prefill_batches",
         )
+        if (
+            isinstance(self.min_decode_batches_between_visual_prefills, bool)
+            or not isinstance(self.min_decode_batches_between_visual_prefills, int)
+            or self.min_decode_batches_between_visual_prefills < 0
+        ):
+            raise ValueError(
+                "min_decode_batches_between_visual_prefills must be a "
+                "non-negative integer"
+            )
         _boolean(
             self.enable_chunked_prefill,
             name="enable_chunked_prefill",
@@ -593,6 +603,9 @@ class PrismConfig:
             "scheduler_policy": "scheduler_policy",
             "max_queue_size": "max_queue_size",
             "max_consecutive_prefill_batches": ("max_consecutive_prefill_batches"),
+            "min_decode_batches_between_visual_prefills": (
+                "min_decode_batches_between_visual_prefills"
+            ),
         }
         execution_fields = {
             "decode_compile_region": "compile_region",
@@ -912,6 +925,10 @@ class Config:
     @property
     def max_consecutive_prefill_batches(self) -> int:
         return self.scheduler_config.max_consecutive_prefill_batches
+
+    @property
+    def min_decode_batches_between_visual_prefills(self) -> int:
+        return self.scheduler_config.min_decode_batches_between_visual_prefills
 
     @property
     def gpu_memory_utilization(self) -> float:

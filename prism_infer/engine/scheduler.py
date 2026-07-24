@@ -111,6 +111,21 @@ class Scheduler:
         ):
             raise ValueError("max_vision_patches_per_batch must be a positive integer")
         self.max_vision_patches_per_batch = vision_patch_budget
+        visual_prefill_decode_guard = getattr(
+            config,
+            "min_decode_batches_between_visual_prefills",
+            0,
+        )
+        if (
+            isinstance(visual_prefill_decode_guard, bool)
+            or not isinstance(visual_prefill_decode_guard, int)
+            or visual_prefill_decode_guard < 0
+        ):
+            raise ValueError(
+                "min_decode_batches_between_visual_prefills must be a "
+                "non-negative integer"
+            )
+        self.min_decode_batches_between_visual_prefills = visual_prefill_decode_guard
         self.eos = config.eos
         self.clock_ns = clock_ns
         self.block_manager: KVCacheManager = kv_manager or BlockManager(
@@ -135,6 +150,7 @@ class Scheduler:
         self.cancelled: deque[Sequence] = deque()
         self.requests: dict[int, Sequence] = {}
         self.consecutive_prefill_batches = 0
+        self.decode_batches_since_visual_prefill = 0
         self.admitted_requests = 0
         self.rejected_requests = 0
         self.cancelled_requests = 0
@@ -148,6 +164,9 @@ class Scheduler:
         self.peak_active = 0
         self.peak_gpu_kv_blocks = 0
         self.peak_cpu_kv_blocks = 0
+        self.visual_prefill_deferrals = 0
+        self.text_prefill_bypasses = 0
+        self.max_decode_batches_between_visual_prefills = 0
 
     def is_finished(self) -> bool:
         return not self.waiting and not self.running and not self.swapped
@@ -218,6 +237,11 @@ class Scheduler:
             "peak_active": self.peak_active,
             "peak_gpu_kv_blocks": self.peak_gpu_kv_blocks,
             "peak_cpu_kv_blocks": self.peak_cpu_kv_blocks,
+            "visual_prefill_deferrals": self.visual_prefill_deferrals,
+            "text_prefill_bypasses": self.text_prefill_bypasses,
+            "max_decode_batches_between_visual_prefills": (
+                self.max_decode_batches_between_visual_prefills
+            ),
         }
 
     def reset_metrics(self) -> None:
@@ -227,6 +251,7 @@ class Scheduler:
         self.rejected.clear()
         self.cancelled.clear()
         self.consecutive_prefill_batches = 0
+        self.decode_batches_since_visual_prefill = 0
         for name in (
             "admitted_requests",
             "rejected_requests",
@@ -241,6 +266,9 @@ class Scheduler:
             "peak_active",
             "peak_gpu_kv_blocks",
             "peak_cpu_kv_blocks",
+            "visual_prefill_deferrals",
+            "text_prefill_bypasses",
+            "max_decode_batches_between_visual_prefills",
         ):
             setattr(self, name, 0)
 
@@ -266,7 +294,12 @@ class Scheduler:
             ),
         )
 
-    def _collect_running_prefills(self, batch: _PrefillBatchBuilder) -> None:
+    def _collect_running_prefills(
+        self,
+        batch: _PrefillBatchBuilder,
+        *,
+        allow_visual: bool,
+    ) -> None:
         if not self.enable_chunked_prefill:
             return
         # Continue prior chunks before admitting new work. Decode requests
@@ -282,6 +315,8 @@ class Scheduler:
             )
             if candidate is None:
                 break
+            if not allow_visual and candidate.vision_patches:
+                continue
             if not batch.accepts(candidate):
                 continue
             batch.add(candidate)
@@ -320,22 +355,39 @@ class Scheduler:
         except BaseException:
             self.block_manager.deallocate(seq)
             raise
-        self.waiting.popleft()
+        if seq is not self.waiting[0] and candidate.vision_patches == 0:
+            self.text_prefill_bypasses += 1
+        self.waiting.remove(seq)
         self.running.append(seq)
         return candidate
 
-    def _admit_waiting_prefills(self, batch: _PrefillBatchBuilder) -> None:
+    def _admit_waiting_prefills(
+        self,
+        batch: _PrefillBatchBuilder,
+        *,
+        allow_visual: bool,
+    ) -> None:
         while (
             self.waiting
             and len(self.running) < self.max_num_seqs
             and batch.has_sequence_capacity
             and not batch.requires_dedicated_batch
         ):
-            seq = self.waiting[0]
-            candidate = self._prefill_candidate(
-                seq,
-                available_tokens=batch.available_tokens,
-            )
+            selected: tuple[Sequence, _PrefillCandidate] | None = None
+            for seq in tuple(self.waiting):
+                candidate = self._prefill_candidate(
+                    seq,
+                    available_tokens=batch.available_tokens,
+                )
+                if candidate is None:
+                    break
+                if not allow_visual and candidate.vision_patches:
+                    continue
+                selected = (seq, candidate)
+                break
+            if selected is None:
+                break
+            seq, candidate = selected
             if candidate is None or not self.block_manager.can_allocate(seq):
                 break
             if not batch.accepts(candidate):
@@ -347,14 +399,24 @@ class Scheduler:
             )
             batch.add(allocated)
 
-    def _prefill_plan(self) -> BatchPlan | None:
+    def _prefill_plan(
+        self,
+        *,
+        allow_visual: bool = True,
+    ) -> BatchPlan | None:
         batch = _PrefillBatchBuilder(
             max_tokens=self.max_num_batched_tokens,
             max_sequences=self.max_num_seqs,
             max_vision_patches=self.max_vision_patches_per_batch,
         )
-        self._collect_running_prefills(batch)
-        self._admit_waiting_prefills(batch)
+        self._collect_running_prefills(
+            batch,
+            allow_visual=allow_visual,
+        )
+        self._admit_waiting_prefills(
+            batch,
+            allow_visual=allow_visual,
+        )
         if not batch.sequences:
             return None
         return BatchPlan(
@@ -364,6 +426,29 @@ class Scheduler:
             policy_name=self.policy.name,
             created_ns=self.clock_ns(),
         )
+
+    def _has_schedulable_visual_prefill(self) -> bool:
+        for seq in self.running:
+            if seq.status is not RequestState.PREFILLING:
+                continue
+            candidate = self._prefill_candidate(
+                seq,
+                available_tokens=self.max_num_batched_tokens,
+            )
+            if candidate is not None and candidate.vision_patches:
+                return True
+        if len(self.running) >= self.max_num_seqs:
+            return False
+        for seq in self.waiting:
+            candidate = self._prefill_candidate(
+                seq,
+                available_tokens=self.max_num_batched_tokens,
+            )
+            if candidate is None:
+                break
+            if candidate.vision_patches and self.block_manager.can_allocate(seq):
+                return True
+        return False
 
     def _decode_plan(self) -> BatchPlan:
         # The latency-critical offline/interactive path has one resident
@@ -470,13 +555,29 @@ class Scheduler:
             has_decode=has_decode,
             consecutive_prefill_batches=self.consecutive_prefill_batches,
         ):
-            prefill_plan = self._prefill_plan()
+            defer_visual = (
+                has_decode
+                and self.min_decode_batches_between_visual_prefills > 0
+                and self.decode_batches_since_visual_prefill
+                < self.min_decode_batches_between_visual_prefills
+                and self._has_schedulable_visual_prefill()
+            )
+            if defer_visual:
+                self.visual_prefill_deferrals += 1
+            prefill_plan = self._prefill_plan(allow_visual=not defer_visual)
             if prefill_plan is not None:
                 self.consecutive_prefill_batches += 1
+                if prefill_plan.num_scheduled_vision_patches:
+                    self.decode_batches_since_visual_prefill = 0
                 self._observe_state()
                 return prefill_plan
         plan = self._decode_plan()
         self.consecutive_prefill_batches = 0
+        self.decode_batches_since_visual_prefill += 1
+        self.max_decode_batches_between_visual_prefills = max(
+            self.max_decode_batches_between_visual_prefills,
+            self.decode_batches_since_visual_prefill,
+        )
         return plan
 
     def preempt(

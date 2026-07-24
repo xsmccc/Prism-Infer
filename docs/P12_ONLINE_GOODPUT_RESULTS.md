@@ -45,10 +45,14 @@ with this environment.
 | A 512-token prefill chunk rejected H1/H2. | H1 has about 1,582 visual placeholders and H2 about 1,633; the visual encoder payload is atomic at this boundary. | Use a 2,048-token chunk. This is a multimodal scheduling constraint, not a KV-capacity failure. |
 | `max_num_seqs` limited only each batch, not resident running requests. | With a 24-page pressure pool, 12 requests became resident, causing page rotation and inter-token gaps near 1.3 seconds. | Enforce the limit on resident running plus swapped-in requests. A cap sweep showed 8 is the useful operating point; 4 over-queues. |
 | A resident cap of 4 looked attractive for decode but damaged TTFT. | Versus the old scheduler, TPOT p50 improved 55.46%, but TTFT p50 regressed 238%. | Reject cap 4 as over-conservative; retain the failed candidate as evidence for the latency tradeoff. |
+| Reducing the resident cap from 8 to 6 lowered TPOT but queued short text requests. | On the same 20-request rate-4 trace, TPOT p50 improved from 24.74 to 22.60 ms, but throughput fell from 233.54 to 226.76 tokens/s, TTFT p50 rose from 69.81 to 247.22 ms, and goodput fell from 58.39 to 56.69 tokens/s. | Reject cap 6. A single global concurrency cap cannot resolve class-dependent prefill/decode interference. |
 | Parent-process Torch memory was zero for vLLM V1. | EngineCore owns the CUDA allocations in a child process. | Sample total NVML compute-process memory on the dedicated GPU and record all observed PIDs. |
 | Prism reported Torch allocator memory while external adapters reported NVML process memory. | The values have different scopes, so a cross-framework peak-VRAM comparison would be invalid even though both are measured in MiB. | Add the same 10 ms dedicated-GPU NVML compute-process sampler to Prism; keep allocator numbers as diagnostics only. |
 | Previous external numbers were offline closed-loop results. | They did not include Poisson arrivals or controller queueing and therefore could not support an H3 goodput claim. | Added in-process online adapters with identical class/arrival schedules and audited prompt-token hashes. |
 | The first SGLang online smoke produced a different global prompt hash. | Image, H1, and H2 hashes were already exact, but the text prompt had 21 tokens instead of 13 because the adapter applied a chat template that vLLM does not apply to text-only H3. | Pass the frozen text prompt directly while retaining chat-template handling for multimodal inputs, then rerun the identity check. |
+| The first visual-guard sweep exited before touching the GPU. | The command omitted `benchmarks/workloads/p9_headline.json`, so the default manifest did not contain the frozen H3 contract. | Keep the fail-closed error as evidence, add the explicit manifest, and rerun without treating the failed launch as a measurement. |
+| A size-tiered guard initially starved H1/H2. | Single-image and heavy-visual prefills shared one decode-progress counter; every single-image prefill reset the heavy request's progress, pushing H1 TTFT to 2.1--2.6 seconds. | Prototype independent progress counters, verify that starvation disappears, then reject the tiered policy anyway because frequent single-image prefills reduce goodput. |
+| Deadline promotion reduced single-image queue time but moved failures to TPOT. | With guard 32, 200--350 ms single-image deadlines caused extra visual interruptions; TPOT returned to 20.61--23.32 ms and goodput fell to 65.86--98.89 tokens/s. | Remove deadline/tier complexity from production code. Keep only the uniform guard whose end-to-end result is positive. |
 
 ## Scheduler pressure result
 
@@ -71,6 +75,50 @@ request across four requests, and H2 released two pages per request across two
 requests. Compaction decisions reduced 48 dense pages to 32 physical pages for
 the affected requests. Text and single-image no-op decisions did not claim
 releases.
+
+After adding common NVML sampling, a clean same-commit A/B isolated compaction
+from scaled-FP8 KV quantization. Both runs used cap 8, the same 20-request
+trace, and the same 24-page pool:
+
+| Mode | Peak GPU pages | Swap/preemptions | Output tok/s | SLO goodput tok/s | TTFT p50 (ms) | H1 TTFT p50 (ms) | NVML peak (MiB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Scaled FP8 only | 24 | 1 | 231.720 | 46.344 | 72.089 | 323.046 | 20,818 |
+| Scaled FP8 + visual compaction | 22 | 0 | 233.539 | 58.385 | 69.808 | 254.892 | 20,732 |
+
+Compaction eliminated the swap, improved H1 TTFT by 21.1%, improved overall
+TTFT by 3.16%, and increased throughput by 0.78%. The 25.98% goodput increase
+is caused by one additional request meeting both SLOs in a 20-request sample,
+so it is explicitly a pressure-mechanism result rather than a formal goodput
+claim.
+
+## Visual-prefill guard tuning
+
+The loaded trace showed that a global resident cap cannot control prefill
+interference. The retained candidate instead requires a configurable number
+of decode batches between visual prefill batches while allowing text prefill
+to bypass deferred visual work. The setting is disabled by default and emits
+deferral/bypass counters.
+
+All rows below use the identical 20-request rate-4 trace, 220 scaled-FP8 pages,
+cap 8, the frozen class SLO file, and dirty tuning builds. They select a
+candidate; they are not formal claims.
+
+| Candidate | Output tok/s | SLO goodput tok/s | Good requests | TTFT p50 (ms) | TPOT p50 (ms) | Decision |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| No visual guard | 233.54 | 58.39 | 5/20 | 69.81 | 24.74 | Baseline |
+| Uniform guard 8 | 232.99 | 58.25 | 5/20 | 76.26 | 24.73 | Reject: no effect |
+| Uniform guard 16 | 232.52 | 69.76 | 6/20 | 80.65 | 23.54 | Reject: TPOT still over SLO |
+| Uniform guard 32 | 224.62 | 123.54 | 11/20 | 336.00 | 19.65 | Retain for formal validation |
+| Guard 32, cap 12 | 222.69 | 100.21 | 9/20 | 407.50 | 19.59 | Reject: more concurrency does not help |
+| Guard 32, cap 16 | 222.54 | 100.14 | 9/20 | 411.50 | 19.53 | Reject: same batches, lower goodput |
+| Tiered single/heavy guard | 176.83--230.35 | 56.77--131.89 | 5--14/20 | 83.80--257.50 | 17.46--23.34 | Reject: either heavy TTFT starvation or frequent interruption |
+| Guard 32 plus deadline promotion | 219.54--221.05 | 65.86--98.89 | 6--9/20 | 267.70--448.40 | 20.61--23.32 | Reject: shifts TTFT failures to TPOT |
+
+Uniform guard 32 reduces the number of visual prefill batches from ten to
+seven by coalescing queued visual work. Its small-sample goodput is 111.6%
+higher than the unguarded run, but raw throughput is 3.8% lower and
+single-image TTFT moves toward its SLO. It therefore needs the full clean
+600-request run before any headline claim.
 
 ## External protocol audit
 
@@ -154,6 +202,23 @@ Loaded-rate Prism and external rows remain pending completion of the clean
 fixed-memory matrix. The rate-1 Prism artifact predates the common NVML
 sampler, so it is not used for a cross-framework peak-VRAM headline.
 
+The first clean fixed-memory rate-4 comparison identified the remaining
+bottleneck:
+
+| System | Output tok/s | SLO-good requests | SLO goodput tok/s | TTFT p50 (ms) | TPOT p50 (ms) | NVML peak (MiB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| vLLM | 241.489 | 527/600 | 212.108 | 81.890 | 14.350 | 23,874 |
+| Prism | 239.607 | 163/600 | 65.093 | 249.920 | 23.840 | 24,456 |
+
+Prism is only 0.78% behind in raw output throughput and retains the 1.94x KV
+capacity advantage, but is 69.31% behind in SLO goodput. Batch traces show
+7,123 decode batches at a 14.13 ms median plus 520 prefill batches: text and
+single-image prefills take about 41 and 56 ms, while H1/H2 atomic visual
+prefills take roughly 180--210 ms. The FCFS policy permits a prefill after one
+decode batch, so loaded visual arrivals repeatedly interrupt token delivery.
+This is a scheduler-interference problem, not evidence that the decode kernels
+or KV compression lost raw throughput.
+
 ## Claim boundary
 
 - Do not compare the 24-page Prism pressure diagnostic with vLLM's 4 GiB run
@@ -170,10 +235,13 @@ sampler, so it is not used for a cross-framework peak-VRAM headline.
 The concise story is: profiling showed that multimodal KV compression was not
 enough by itself. Under a small page pool the scheduler admitted too many
 resident requests, so reclaimed pages were immediately rotated among twelve
-sequences and decode developed long gaps. I fixed the resident-admission
-semantics, swept the cap, rejected an over-conservative cap of four, and kept
-eight because it improved both TTFT and TPOT on the identical trace. I then
-rebuilt the comparison around output-token goodput under class-specific SLOs,
-audited prompt-token identity across frameworks, and measured child-process
-GPU memory correctly. This connects a page-level optimization to an
-arrival-driven system result without hiding queueing or changing the workload.
+sequences and decode developed long gaps. I fixed resident admission and then
+found a second bottleneck at fixed memory: 180--210 ms atomic visual prefills
+repeatedly interrupted 14 ms decode batches. A modality-aware guard coalesces
+visual work while text prefills bypass it. I rejected global cap reduction,
+larger caps, size tiers, and deadline promotion using same-trace data rather
+than retaining knobs that only move failures between TTFT and TPOT. The
+comparison uses output-token goodput under frozen class-specific SLOs, exact
+prompt/arrival hashes, and common NVML process memory. This connects page-level
+compaction to arrival-driven scheduling without hiding queueing or changing
+the workload.
