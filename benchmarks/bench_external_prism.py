@@ -10,6 +10,7 @@ import math
 import os
 import statistics
 import sys
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, Thread
@@ -36,7 +37,12 @@ from benchmarks.harness import (
     materialize_requests,
 )
 from prism_infer import LLM, SamplingParams
+from prism_infer.analysis.performance_profile import (
+    performance_profile,
+    validate_performance_profile_record,
+)
 from prism_infer.engine.kv_quantization import kv_cache_storage_bytes
+from prism_infer.observability import profile_region
 
 
 def _percentile(values: list[float], fraction: float) -> float:
@@ -210,6 +216,10 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--profile-output",
+        help="write semantic CPU/CUDA regions for the measured repeats",
+    )
+    parser.add_argument(
         "--enable-decode-block4-gate-up",
         action="store_true",
         help=(
@@ -337,12 +347,20 @@ def main() -> None:
         float,
         float,
         float,
+        float,
+        float,
+        float,
+        float,
     ]:
-        requests = materialize_requests(case, repo_root=REPO_ROOT)
+        materialize_started = perf_counter()
+        with profile_region("request.materialize", cuda=False):
+            requests = materialize_requests(case, repo_root=REPO_ROOT)
+        materialize_finished = perf_counter()
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
         started = perf_counter()
-        request_id = _add_request(llm, requests[0], sampling)
+        with profile_region("request.add", cuda=False):
+            request_id = _add_request(llm, requests[0], sampling)
         prompt_token_ids = list(llm.scheduler.waiting[-1].prompt_token_ids)
         preprocessing_finished = perf_counter()
         arrivals: list[float] = []
@@ -379,6 +397,10 @@ def main() -> None:
             (finished - started) * 1000.0,
             ttft_ms,
             tpot_ms,
+            (materialize_finished - materialize_started) * 1000.0,
+            (preprocessing_finished - started) * 1000.0,
+            (finished - materialize_started) * 1000.0,
+            (arrivals[0] - materialize_started) * 1000.0,
         )
 
     try:
@@ -394,25 +416,52 @@ def main() -> None:
         allocated_mb: list[float] = []
         reserved_mb: list[float] = []
         peak_allocated_mb: list[float] = []
-        if args.cuda_profiler_range:
-            torch.cuda.cudart().cudaProfilerStart()
-        try:
-            for _ in range(args.repeat):
-                tokens, prompt_token_ids, prompt_kv, elapsed, ttft, tpot = run_once()
-                token_runs.append(tokens)
-                prompt_token_runs.append(prompt_token_ids)
-                prompt_kv_runs.append(prompt_kv)
-                e2e_ms.append(elapsed)
-                ttft_ms.append(ttft)
-                tpot_ms.append(tpot)
-                throughput.append(sum(len(row) for row in tokens) / (elapsed / 1000.0))
-                allocated_mb.append(torch.cuda.memory_allocated() / 1024 / 1024)
-                reserved_mb.append(torch.cuda.memory_reserved() / 1024 / 1024)
-                peak_allocated_mb.append(torch.cuda.max_memory_allocated() / 1024 / 1024)
-        finally:
+        materialization_ms: list[float] = []
+        request_preprocessing_ms: list[float] = []
+        full_e2e_ms: list[float] = []
+        full_ttft_ms: list[float] = []
+        profile_context = (
+            performance_profile(
+                metadata={
+                    "git_commit": collect_git_metadata(REPO_ROOT).commit,
+                    "gpu": collect_gpu_metadata().environment_dict(),
+                    "case_id": case["id"],
+                    "execution_backend": args.execution_backend,
+                    "compression_mode": args.compression_mode,
+                    "warmup_before_profile": args.warmup,
+                    "profile_repeat": args.repeat,
+                    "max_tokens": args.max_tokens,
+                },
+                cuda_timing=True,
+            )
+            if args.profile_output is not None
+            else nullcontext()
+        )
+        with profile_context as profile_session:
             if args.cuda_profiler_range:
-                torch.cuda.synchronize()
-                torch.cuda.cudart().cudaProfilerStop()
+                torch.cuda.cudart().cudaProfilerStart()
+            try:
+                for _ in range(args.repeat):
+                    result = run_once()
+                    tokens, prompt_token_ids, prompt_kv, elapsed, ttft, tpot = result[:6]
+                    token_runs.append(tokens)
+                    prompt_token_runs.append(prompt_token_ids)
+                    prompt_kv_runs.append(prompt_kv)
+                    e2e_ms.append(elapsed)
+                    ttft_ms.append(ttft)
+                    tpot_ms.append(tpot)
+                    materialization_ms.append(result[6])
+                    request_preprocessing_ms.append(result[7])
+                    full_e2e_ms.append(result[8])
+                    full_ttft_ms.append(result[9])
+                    throughput.append(sum(len(row) for row in tokens) / (elapsed / 1000.0))
+                    allocated_mb.append(torch.cuda.memory_allocated() / 1024 / 1024)
+                    reserved_mb.append(torch.cuda.memory_reserved() / 1024 / 1024)
+                    peak_allocated_mb.append(torch.cuda.max_memory_allocated() / 1024 / 1024)
+            finally:
+                if args.cuda_profiler_range:
+                    torch.cuda.synchronize()
+                    torch.cuda.cudart().cudaProfilerStop()
         if any(tokens != token_runs[0] for tokens in token_runs[1:]):
             raise RuntimeError("Prism greedy token ids changed across measured repeats")
         if any(prompt_ids != prompt_token_runs[0] for prompt_ids in prompt_token_runs[1:]):
@@ -538,10 +587,24 @@ def main() -> None:
                 "repeat": args.repeat,
                 "cuda_profiler_range": args.cuda_profiler_range,
                 "nvml_process_sampling_enabled": args.sample_process_memory,
-                "latency_headline_eligible": not args.sample_process_memory,
+                "semantic_profile_enabled": args.profile_output is not None,
+                "latency_headline_eligible": (
+                    not args.sample_process_memory
+                    and args.profile_output is None
+                    and not args.cuda_profiler_range
+                ),
                 "explicit_per_step_cuda_synchronize": False,
                 "token_arrival_boundary": "step_result_return_after_sampled_token_d2h",
                 "decode_tpot_scope": "first_to_last_token_divided_by_output_intervals",
+                "legacy_end_to_end_scope": (
+                    "request_preprocessing_plus_engine; excludes request.materialize"
+                ),
+                "full_end_to_end_scope": (
+                    "request.materialize_plus_request_preprocessing_plus_engine"
+                ),
+                "full_ttft_scope": (
+                    "request.materialize_start_to_first_sampled_token_return"
+                ),
             },
             "correctness": {
                 "outputs_identical_across_repeats": True,
@@ -552,6 +615,10 @@ def main() -> None:
                 "end_to_end": _stats(e2e_ms),
                 "engine_ttft": _stats(ttft_ms),
                 "decode_tpot": _stats(tpot_ms),
+                "request_materialization": _stats(materialization_ms),
+                "request_preprocessing": _stats(request_preprocessing_ms),
+                "full_end_to_end": _stats(full_e2e_ms),
+                "full_ttft": _stats(full_ttft_ms),
             },
             "throughput": {"e2e_output_tokens_per_s": _stats(throughput)},
             "memory_mb": {
@@ -566,6 +633,22 @@ def main() -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps(record, indent=2, sort_keys=True))
+        if args.profile_output is not None:
+            if profile_session is None:
+                raise RuntimeError("semantic profile session was not created")
+            profile_session.metadata["correctness"] = {
+                "outputs_identical_across_profiled_repeats": True,
+                "output_sha256": _sha256(token_runs[0]),
+                "prompt_token_ids_sha256": _sha256([audited_prompt_ids]),
+            }
+            profile_record = profile_session.to_record()
+            validate_performance_profile_record(profile_record)
+            profile_path = Path(args.profile_output)
+            profile_path.parent.mkdir(parents=True, exist_ok=True)
+            profile_path.write_text(
+                json.dumps(profile_record, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
     finally:
         if process_memory_sampler is not None:
             process_memory_sampler.stop()
