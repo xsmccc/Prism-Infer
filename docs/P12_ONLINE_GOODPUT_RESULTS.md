@@ -52,7 +52,11 @@ with this environment.
 | The first SGLang online smoke produced a different global prompt hash. | Image, H1, and H2 hashes were already exact, but the text prompt had 21 tokens instead of 13 because the adapter applied a chat template that vLLM does not apply to text-only H3. | Pass the frozen text prompt directly while retaining chat-template handling for multimodal inputs, then rerun the identity check. |
 | The first visual-guard sweep exited before touching the GPU. | The command omitted `benchmarks/workloads/p9_headline.json`, so the default manifest did not contain the frozen H3 contract. | Keep the fail-closed error as evidence, add the explicit manifest, and rerun without treating the failed launch as a measurement. |
 | A size-tiered guard initially starved H1/H2. | Single-image and heavy-visual prefills shared one decode-progress counter; every single-image prefill reset the heavy request's progress, pushing H1 TTFT to 2.1--2.6 seconds. | Prototype independent progress counters, verify that starvation disappears, then reject the tiered policy anyway because frequent single-image prefills reduce goodput. |
-| Deadline promotion reduced single-image queue time but moved failures to TPOT. | With guard 32, 200--350 ms single-image deadlines caused extra visual interruptions; TPOT returned to 20.61--23.32 ms and goodput fell to 65.86--98.89 tokens/s. | Remove deadline/tier complexity from production code. Keep only the uniform guard whose end-to-end result is positive. |
+| Deadline promotion reduced single-image queue time but moved failures to TPOT. | With guard 32, 200--350 ms single-image deadlines caused extra visual interruptions; TPOT returned to 20.61--23.32 ms and goodput fell to 65.86--98.89 tokens/s. | Remove deadline/tier complexity. It moves failures between TTFT and TPOT instead of eliminating atomic prefill stalls. |
+| Uniform guard 32 looked strong on 20 requests but failed at the frozen 600-request horizon. | The short run reached 123.54 goodput tokens/s, but the clean full run reached only 61.84, 5.0% below the unguarded Prism result, as queued visual work accumulated. | Reject the fixed cadence. Candidate selection and the formal horizon must remain separate gates. |
+| Backlog-adaptive cadence looked strong on the bursty 100-request prefix but collapsed in steady state. | Base 64 moved goodput from 15.62 to 94.48 tokens/s on 100 requests, then reached only 6.96 on 600; base 32 reached 4.99 as peak pending visual work grew to 23. | Reject cadence control entirely. A scalar interval cannot balance an atomic 180--210 ms prefill against approximately 14 ms decode; the execution boundary must change. |
+| The generic summary uses the CLI's default 500/50 ms SLO, not the frozen per-class SLOs. | The guard-32 artifact reports 313 generic-good requests, while the four class-aware counts sum to 157 and produce the actual 61.84 headline goodput. | Compute every headline from `class_aware_summary`; use `summary` only for latency and raw-throughput fields. |
+| `terminal_failures` is a structured object, so its mapping length is not a failure count. | The object has three keys (`count`, `by_reason`, and `requests`) even when `count` is zero. | Read the explicit `count` field. Treat schema-aware parsing as part of the benchmark protocol. |
 
 ## Scheduler pressure result
 
@@ -91,10 +95,10 @@ is caused by one additional request meeting both SLOs in a 20-request sample,
 so it is explicitly a pressure-mechanism result rather than a formal goodput
 claim.
 
-## Visual-prefill guard tuning
+## Visual-prefill cadence experiments
 
 The loaded trace showed that a global resident cap cannot control prefill
-interference. The retained candidate instead requires a configurable number
+interference. The first candidate requires a configurable number
 of decode batches between visual prefill batches while allowing text prefill
 to bypass deferred visual work. The setting is disabled by default and emits
 deferral/bypass counters.
@@ -108,7 +112,7 @@ candidate; they are not formal claims.
 | No visual guard | 233.54 | 58.39 | 5/20 | 69.81 | 24.74 | Baseline |
 | Uniform guard 8 | 232.99 | 58.25 | 5/20 | 76.26 | 24.73 | Reject: no effect |
 | Uniform guard 16 | 232.52 | 69.76 | 6/20 | 80.65 | 23.54 | Reject: TPOT still over SLO |
-| Uniform guard 32 | 224.62 | 123.54 | 11/20 | 336.00 | 19.65 | Retain for formal validation |
+| Uniform guard 32 | 224.62 | 123.54 | 11/20 | 336.00 | 19.65 | Select, then reject in formal validation |
 | Guard 32, cap 12 | 222.69 | 100.21 | 9/20 | 407.50 | 19.59 | Reject: more concurrency does not help |
 | Guard 32, cap 16 | 222.54 | 100.14 | 9/20 | 411.50 | 19.53 | Reject: same batches, lower goodput |
 | Tiered single/heavy guard | 176.83--230.35 | 56.77--131.89 | 5--14/20 | 83.80--257.50 | 17.46--23.34 | Reject: either heavy TTFT starvation or frequent interruption |
@@ -117,8 +121,52 @@ candidate; they are not formal claims.
 Uniform guard 32 reduces the number of visual prefill batches from ten to
 seven by coalescing queued visual work. Its small-sample goodput is 111.6%
 higher than the unguarded run, but raw throughput is 3.8% lower and
-single-image TTFT moves toward its SLO. It therefore needs the full clean
-600-request run before any headline claim.
+single-image TTFT moves toward its SLO. The clean 600-request validation
+rejected it:
+
+| Prism policy | Output tok/s | Class-aware good requests | SLO goodput tok/s | TTFT p50 (ms) | TPOT p50 (ms) | Queue p50 (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Unguarded | 239.607 | 163/600 | 65.093 | 249.920 | 23.840 | not recorded |
+| Fixed guard 32 | 236.337 | 157/600 | 61.842 | 456.550 | 21.405 | 288.960 |
+
+The fixed guard lowers raw throughput by 1.36% and class-aware goodput by
+5.0%. It improves TPOT but allows visual requests to accumulate, so it is not
+retained.
+
+A second candidate makes cadence backlog-aware:
+`effective_interval = ceil(base_interval / pending_visual_prefills)`. Text
+prefills may still bypass deferred visual requests. This keeps long decode
+runs when visual pressure is low but releases visual batches faster when the
+queue grows. The 100-request selection runs use the same rate-4 seed and
+settings; they are dirty candidate-selection evidence, not formal claims:
+
+| Base interval | Output tok/s | Class-aware good requests | SLO goodput tok/s | TTFT p50 (ms) | TPOT p50 (ms) | Queue p50 (ms) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 223.142 | 7/100 | 15.620 | 571.768 | 28.808 | 408.344 |
+| 32 | 238.114 | 37/100 | 88.102 | 318.537 | 21.644 | 154.511 |
+| 48 | 236.519 | 34/100 | 80.416 | 381.376 | 21.766 | 208.679 |
+| 64 | 236.189 | 40/100 | 94.476 | 404.065 | 20.752 | 239.710 |
+
+Base 64 is selected because it has the best class-aware goodput and is the
+only candidate whose overall TPOT p50 is below the approximately 21 ms frozen
+class limits. Relative to interval 0 on this bursty prefix, it improves raw
+throughput by 5.85% and goodput by 6.05x.
+
+The full horizon rejects the adaptive policy:
+
+| Base interval | Output tok/s | Class-aware good requests | SLO goodput tok/s | TTFT p50 (ms) | TPOT p50 (ms) | Queue p50 (ms) | Peak pending visual |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 64 | 232.116 | 18/600 | 6.963 | 1,349.332 | 29.182 | 1,155.589 | 18 |
+| 32 | 230.264 | 13/600 | 4.989 | 2,147.446 | 31.612 | 2,038.355 | 23 |
+
+At base 64, backlog lowers the effective interval to four decode batches, but
+visual work still accumulates. Base 32 lowers it to two and releases visual
+prefills more often; this both grows the queue further and fragments decode,
+so TTFT and TPOT fail together. Both runs complete 600/600 requests with zero
+terminal failures, exact formal trace/prompt/SLO hashes, and the same 24,456
+MiB NVML peak. They are dirty diagnostic runs because a clean rerun is
+unnecessary after a decisive rejection. All cadence code and its unit test are
+removed from the retained implementation.
 
 ## External protocol audit
 
@@ -172,6 +220,13 @@ multimodal prefill Graph. The smoke reached 219.621 output tokens/s and
 197.659 SLO-goodput tokens/s with 9/10 requests meeting both limits. These
 numbers validate the adapter only and are not a formal SGLang result.
 
+The clean SGLang rate-4 run then completed the full 600-request H3 schedule
+with the exact formal trace, prompt, and SLO hashes. It used SGLang
+0.5.15.post1, Torch 2.11 with CUDA 13.0, BF16 KV, decode CUDA Graph sizes
+1/2/4/8, and no multimodal prefill Graph. It reached 241.447 output tokens/s,
+196.779 class-aware goodput tokens/s (489/600), and a 23,560 MiB NVML peak.
+Its 4,265,607,168-byte theoretical KV pool holds 28,928 BF16 tokens.
+
 ## Formal results
 
 The first clean Prism rate-1 run completed 600/600 requests with no rejection.
@@ -189,7 +244,7 @@ tokens/s (591/600), so Prism is 0.34% lower at low load.
 
 Prism therefore improves single-image, H1, and H2 TTFT by 31.5%, 13.6%, and
 6.2%, respectively, while text TTFT and TPOT remain behind. This is a useful
-mechanism result, not yet the loaded-rate headline.
+low-load mechanism result, separate from the loaded-rate headline.
 
 The rate-1 run also recorded 180 effective reclaim events and 480 released
 pages: 360 from 120 H1 requests and 120 from 60 H2 requests. Dense visual
@@ -198,26 +253,53 @@ and dropped 112,860 visual KV tokens under the previously validated quality
 policy. Decode CUDA Graph replayed 25,043 times and Vision Tensor Graph
 captured three shapes with no capacity fallback.
 
-Loaded-rate Prism and external rows remain pending completion of the clean
-fixed-memory matrix. The rate-1 Prism artifact predates the common NVML
-sampler, so it is not used for a cross-framework peak-VRAM headline.
+The rate-1 Prism artifact predates the common NVML sampler, so it is not used
+for a cross-framework peak-VRAM headline.
 
-The first clean fixed-memory rate-4 comparison identified the remaining
-bottleneck:
+The clean fixed-memory rate-4 matrix identifies the remaining bottleneck:
 
-| System | Output tok/s | SLO-good requests | SLO goodput tok/s | TTFT p50 (ms) | TPOT p50 (ms) | NVML peak (MiB) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| vLLM | 241.489 | 527/600 | 212.108 | 81.890 | 14.350 | 23,874 |
-| Prism | 239.607 | 163/600 | 65.093 | 249.920 | 23.840 | 24,456 |
+| System | Output tok/s | Class-aware good requests | SLO goodput tok/s | NVML peak (MiB) | Physical KV tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| vLLM | 241.489 | 527/600 | 212.108 | 23,874 | about 29,127 |
+| SGLang | 241.447 | 489/600 | 196.779 | 23,560 | 28,928 |
+| Prism | 239.607 | 163/600 | 65.093 | 24,456 | 56,320 |
 
-Prism is only 0.78% behind in raw output throughput and retains the 1.94x KV
-capacity advantage, but is 69.31% behind in SLO goodput. Batch traces show
-7,123 decode batches at a 14.13 ms median plus 520 prefill batches: text and
-single-image prefills take about 41 and 56 ms, while H1/H2 atomic visual
-prefills take roughly 180--210 ms. The FCFS policy permits a prefill after one
-decode batch, so loaded visual arrivals repeatedly interrupt token delivery.
-This is a scheduler-interference problem, not evidence that the decode kernels
-or KV compression lost raw throughput.
+Prism is only 0.78% behind vLLM and 0.76% behind SGLang in raw output
+throughput and retains 1.93x/1.95x their physical KV-token capacity. It is,
+however, 69.31%/66.92% behind in SLO goodput and uses 582/896 MiB more total
+process memory. This is not a loaded-rate win.
+
+There is one bounded multimodal latency characteristic worth retaining:
+Prism's H1 and H2 TTFT p50 are 288.260 and 289.730 ms versus SGLang's 311.659
+and 591.749 ms, improvements of 7.5% and 51.0%. Prism is slower on text and
+single-image classes, so these numbers cannot be generalized to overall
+goodput.
+
+Batch traces show 7,123 decode batches at a 14.13 ms median plus 520 prefill
+batches: text and single-image prefills take about 41 and 56 ms, while H1/H2
+atomic visual prefills take roughly 180--210 ms. The FCFS policy permits a
+prefill after one decode batch, so loaded visual arrivals repeatedly interrupt
+token delivery. This is a scheduler-interference problem, not evidence that
+the decode kernels or KV compression lost raw throughput.
+
+## Evidence ledger
+
+All rate-4 formal artifacts use arrival trace
+`105fa73b203c42dc61b96be60d367b7b567cc78ccd4183ca9193280fffdf4235`,
+prompt-token hash
+`c65975c1b1a3f97dadf1bf4caa199bf7b9dcdf930f38fbfb1679f7e6b37ba79a`,
+and frozen SLO hash
+`b3ea6f7e20d48b49053f5f7aef26e124e2f23bf6cbe05968c26b61e90c2442b2`.
+
+| Artifact | SHA256 | Status |
+| --- | --- | --- |
+| `data/p12_online/formal/p12_class_slo_vllm_r1_ce72f63.json` | `b3ea6f7e20d48b49053f5f7aef26e124e2f23bf6cbe05968c26b61e90c2442b2` | Frozen SLO source |
+| `data/p12_online/formal/vllm_conditional_r4_s20260717_clean_921de81.json` | `d7548224e0a2a7659bed68c92a76525cad6dceb702dec5f80ab48abd9e4ec308` | Clean external baseline |
+| `data/p12_online/formal/sglang_conditional_r4_s20260717_clean_e883de5.json` | `85f368b27b75377ed5d0d2edb236c69c68eab1497e23ecb208b32b24ecf80bd3` | Clean external baseline |
+| `data/p12_online/formal/prism_visual_compact_scaled_fp8_r4_s20260717_clean_921de81.json` | `b4f9707889a14decbaa1ca4bd51c984f8e115dab8a62405d11963f8c3a742024` | Retained Prism baseline |
+| `data/p12_online/formal/prism_visual_guard32_scaled_fp8_r4_s20260717_clean_e883de5.json` | `e6026aa4dcbb3482f0e8ab674fa8bb739de3d7a294e5bb63ac654c70ebe7fd35` | Clean rejected fixed cadence |
+| `data/p12_online/tuning/prism_adaptive64_fp8_r4_s20260717_dirty.json` | `92f1e812d41e230930069c48f555f22efdb0e00f18ca0659b9778c038019dfc1` | Dirty rejected adaptive cadence |
+| `data/p12_online/tuning/prism_adaptive32_fp8_r4_s20260717_dirty.json` | `bdbf198404de84679e8034bd3fac215b665384feb5f0ff9dd66ded3b89a8f57c` | Dirty rejected recovery experiment |
 
 ## Claim boundary
 
@@ -235,13 +317,43 @@ or KV compression lost raw throughput.
 The concise story is: profiling showed that multimodal KV compression was not
 enough by itself. Under a small page pool the scheduler admitted too many
 resident requests, so reclaimed pages were immediately rotated among twelve
-sequences and decode developed long gaps. I fixed resident admission and then
-found a second bottleneck at fixed memory: 180--210 ms atomic visual prefills
-repeatedly interrupted 14 ms decode batches. A modality-aware guard coalesces
-visual work while text prefills bypass it. I rejected global cap reduction,
-larger caps, size tiers, and deadline promotion using same-trace data rather
-than retaining knobs that only move failures between TTFT and TPOT. The
-comparison uses output-token goodput under frozen class-specific SLOs, exact
-prompt/arrival hashes, and common NVML process memory. This connects page-level
-compaction to arrival-driven scheduling without hiding queueing or changing
-the workload.
+sequences and decode developed long gaps. I fixed resident admission and
+verified that compaction eliminated a swap and improved H1 TTFT by 21.1% under
+pressure.
+
+At fixed memory, the bottleneck changed: 180--210 ms atomic visual prefills
+repeatedly interrupted roughly 14 ms decode batches. I tested global
+concurrency caps, fixed visual cadence, size tiers, deadlines, and a
+backlog-adaptive cadence. Short traces made several policies look attractive,
+but the 600-request horizon exposed queue accumulation or TPOT regressions. I
+removed policies that merely moved failures between TTFT and TPOT rather than
+keeping extra knobs.
+
+The external conclusion is deliberately bounded. Prism matches raw throughput
+within 0.8% while providing about 1.94x KV-token capacity and faster H1/H2 TTFT
+than SGLang, but it does not beat vLLM or SGLang loaded goodput. The next
+high-value architecture step is to split or overlap multimodal prefill so that
+the scheduler can preempt at a finer boundary; another FCFS cadence constant
+cannot remove a 180--210 ms atomic region.
+
+Useful interview follow-ups:
+
+- **Why did KV quantization not improve TPOT?** It increases resident-token
+  capacity and avoids page pressure, but decode still reads model weights and
+  is interrupted by atomic prefills. Capacity and token cadence are different
+  bottlenecks.
+- **Why not claim lower total VRAM?** The fixed KV pool holds about 1.94x more
+  tokens, but Prism's measured process peak is higher because weights, compiler
+  artifacts, and Graph pools are also resident. The honest claim is KV
+  capacity, not total-process memory.
+- **Why did the 20-request guard result fail?** It did not reach steady queue
+  pressure. At 600 requests, deferred visual work accumulated and later
+  releases damaged both TTFT and TPOT. This is why candidate selection and
+  formal validation are separate.
+- **What evidence proves compiler/Graph paths ran?** The artifacts record the
+  Inductor region and mode, decode Graph capture sizes and replay counts, and
+  three Vision Tensor Graph shapes with no capacity fallback.
+- **What would be implemented next?** Chunked or phase-decomposed vision
+  prefill with explicit decode-priority scheduling, followed by a stream/event
+  overlap experiment only if profiling proves kernels can overlap without
+  memory-bandwidth contention.

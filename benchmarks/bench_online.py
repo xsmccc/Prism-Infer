@@ -627,9 +627,6 @@ def _build_engine(args: argparse.Namespace):
         enable_prefix_caching=args.enable_prefix_caching,
         max_queue_size=args.max_queue_size,
         max_consecutive_prefill_batches=(args.max_consecutive_prefill_batches),
-        min_decode_batches_between_visual_prefills=(
-            args.min_decode_batches_between_visual_prefills
-        ),
         visual_pruning_keep_ratio=args.visual_pruning_keep_ratio,
         visual_pruning_min_keep_tokens=args.visual_pruning_min_keep_tokens,
         visual_pruning_video_min_keep_tokens=(
@@ -680,15 +677,6 @@ def main() -> None:
     parser.add_argument("--max-chunk-size", type=int, default=512)
     parser.add_argument("--max-queue-size", type=int)
     parser.add_argument("--max-consecutive-prefill-batches", type=int, default=1)
-    parser.add_argument(
-        "--min-decode-batches-between-visual-prefills",
-        type=int,
-        default=0,
-        help=(
-            "defer visual prefill while decode is active until this many "
-            "decode batches have run; text prefills may bypass deferred visual work"
-        ),
-    )
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     parser.add_argument("--num-kvcache-blocks", type=int, default=16)
     parser.add_argument("--kvcache-block-size", type=int, default=256)
@@ -873,9 +861,6 @@ def main() -> None:
                 "max_chunk_size": args.max_chunk_size,
                 "max_queue_size": args.max_queue_size,
                 "max_consecutive_prefill_batches": (args.max_consecutive_prefill_batches),
-                "min_decode_batches_between_visual_prefills": (
-                    args.min_decode_batches_between_visual_prefills
-                ),
                 "num_kvcache_blocks": args.num_kvcache_blocks,
                 "kvcache_block_size": args.kvcache_block_size,
                 "enable_prefix_caching": args.enable_prefix_caching,
