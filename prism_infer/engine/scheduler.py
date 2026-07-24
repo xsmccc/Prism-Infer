@@ -325,7 +325,12 @@ class Scheduler:
         return candidate
 
     def _admit_waiting_prefills(self, batch: _PrefillBatchBuilder) -> None:
-        while self.waiting and batch.has_sequence_capacity and not batch.requires_dedicated_batch:
+        while (
+            self.waiting
+            and len(self.running) < self.max_num_seqs
+            and batch.has_sequence_capacity
+            and not batch.requires_dedicated_batch
+        ):
             seq = self.waiting[0]
             candidate = self._prefill_candidate(
                 seq,
@@ -394,7 +399,11 @@ class Scheduler:
         swap_out_map: list[tuple[int, int]] = []
         scheduled: list[Sequence] = []
 
-        while self.swapped and self.block_manager.can_swap_in(self.swapped[0]):
+        while (
+            self.swapped
+            and len(self.running) < self.max_num_seqs
+            and self.block_manager.can_swap_in(self.swapped[0])
+        ):
             seq = self.swapped.popleft()
             pairs = self.block_manager.swap_in(seq)
             swap_in_map.extend(pairs)

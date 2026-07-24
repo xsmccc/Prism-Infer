@@ -185,6 +185,45 @@ def test_scheduler_emits_named_plan_and_advances_fsm() -> None:
         assert scheduler.is_finished()
 
 
+def test_scheduler_caps_gpu_resident_sequences_at_max_num_seqs() -> None:
+    scheduler = Scheduler(
+        _scheduler_config(
+            max_num_seqs=2,
+            num_kvcache_blocks=8,
+        )
+    )
+    sampling = SamplingParams(temperature=0.0, max_tokens=3, ignore_eos=True)
+    sequences = [
+        _sequence([index] * 4, sampling)
+        for index in range(1, 5)
+    ]
+    for seq in sequences:
+        scheduler.add(seq)
+
+    prefill = scheduler.schedule()
+    assert prefill.sequences == tuple(sequences[:2])
+    assert len(scheduler.running) == 2
+    assert list(scheduler.waiting) == sequences[2:]
+    scheduler.postprocess(prefill, [11, 12])
+
+    first_decode = scheduler.schedule()
+    assert first_decode.phase is BatchPhase.DECODE
+    scheduler.postprocess(first_decode, [13, 14])
+
+    # Prefill is policy-eligible again, but no new request may become GPU
+    # resident until one of the two existing decoders leaves.
+    second_decode = scheduler.schedule()
+    assert second_decode.phase is BatchPhase.DECODE
+    assert second_decode.sequences == tuple(sequences[:2])
+    assert len(scheduler.running) == 2
+    assert list(scheduler.waiting) == sequences[2:]
+    scheduler.postprocess(second_decode, [15, 16])
+
+    next_prefill = scheduler.schedule()
+    assert next_prefill.sequences == tuple(sequences[2:])
+    assert scheduler.metrics_snapshot()["peak_running"] == 2
+
+
 def test_scheduler_bounds_aggregate_vision_patches_and_isolates_oversized_request() -> None:
     def image_sequence(patches: int) -> Sequence:
         return _sequence(
