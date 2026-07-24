@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""Run vLLM on the frozen P9 H3 online mixed-multimodal protocol."""
+"""Run SGLang on the frozen P9 H3 online mixed-multimodal protocol."""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import importlib.metadata
 import json
 import random
 import sys
 import time
-from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, Thread
 from typing import Any
 
 import torch
+from sglang.srt.entrypoints.engine import Engine
+from sglang.srt.managers.io_struct import GenerateReqInput
 from transformers import AutoProcessor
-from vllm import LLM, SamplingParams
 
 try:
     import pynvml
@@ -30,10 +31,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from benchmarks.bench_external_vllm import (
-    _build_vllm_prompts,
-    _effective_backend,
-    _materialize_case,
+from benchmarks.bench_external_sglang import (
+    DEFAULT_VIDEO_FPS,
+    _image,
+    _prompts,
+    _stage_lossless_video,
 )
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
 from prism_infer.analysis.online_serving import summarize_distribution
@@ -86,7 +88,7 @@ class _DeviceProcessMemorySampler:
         self._initial_bytes = self._sample()
         self._thread = Thread(
             target=self._run,
-            name="vllm-device-process-memory-sampler",
+            name="sglang-device-process-memory-sampler",
             daemon=True,
         )
         self._thread.start()
@@ -173,11 +175,64 @@ def _smooth_weighted_period(
     return tuple(period)
 
 
+def _materialize_case(
+    case: dict[str, Any],
+    *,
+    video_staging_dir: Path,
+) -> list[dict[str, Any]]:
+    requests = []
+    for index, request in enumerate(case["requests"]):
+        request_type = request["type"]
+        if request_type == "text":
+            requests.append(
+                {
+                    "type": request_type,
+                    "prompt": request["prompt"],
+                    "images": [],
+                }
+            )
+            continue
+        if request_type in ("image", "image_file"):
+            images = [_image(request["image"])]
+        elif request_type == "images":
+            images = [_image(spec) for spec in request["images"]]
+        elif request_type == "video":
+            frames = [_image(spec) for spec in request["frames"]]
+            fps = float(request.get("fps", DEFAULT_VIDEO_FPS))
+            staging_path = video_staging_dir / f"{case['id']}-{index}.mkv"
+            staging = _stage_lossless_video(
+                frames,
+                path=staging_path,
+                fps=fps,
+            )
+            requests.append(
+                {
+                    "type": request_type,
+                    "prompt": request["prompt"],
+                    "video": str(staging_path),
+                    "fps": fps,
+                    "video_staging": staging,
+                }
+            )
+            continue
+        else:
+            raise ValueError(f"unsupported SGLang H3 request type: {request_type!r}")
+        requests.append(
+            {
+                "type": request_type,
+                "prompt": request["prompt"],
+                "images": images,
+            }
+        )
+    return requests
+
+
 def _h3_schedule(
     manifest: dict[str, Any],
     *,
     profile: str,
     count: int,
+    video_staging_dir: Path,
 ) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
     h3 = manifest["p9_protocol"]["headline"]["H3"]
     field = "primary_classes" if profile == "primary" else "conditional_video_classes"
@@ -187,7 +242,10 @@ def _h3_schedule(
     request_by_class = {}
     for item in classes:
         case_id = item["case_id"]
-        requests = _materialize_case(case_by_id[case_id])
+        requests = _materialize_case(
+            case_by_id[case_id],
+            video_staging_dir=video_staging_dir,
+        )
         if len(requests) != 1:
             raise ValueError(f"H3 class must materialize one request: {case_id}")
         request_by_class[case_id] = requests[0]
@@ -234,89 +292,94 @@ def _protocol_conformance(
     }
 
 
-def _finish_reason(output: Any) -> str:
-    reason = output.outputs[0].finish_reason
-    value = str(getattr(reason, "value", reason))
+def _finish_reason(output: dict[str, Any]) -> str:
+    reason = output["meta_info"].get("finish_reason")
+    if isinstance(reason, dict):
+        value = str(reason.get("type", ""))
+    else:
+        value = str(getattr(reason, "value", reason or ""))
     return "eos" if value == "stop" else value
 
 
-def _run_arrivals(
-    engine: Any,
+async def _run_arrivals_async(
+    engine: Engine,
     processor: Any,
     requests: list[dict[str, Any]],
     request_classes: list[str],
     offsets_s: list[float],
-    sampling: SamplingParams,
+    sampling: dict[str, Any],
     *,
     key_prefix: str,
 ) -> dict[str, Any]:
     if not (len(requests) == len(request_classes) == len(offsets_s)):
         raise ValueError("request, class and arrival schedules must have equal lengths")
-    pending = deque(range(len(requests)))
     started = time.perf_counter()
-    observed_submit: dict[str, float] = {}
-    first_token: dict[str, float] = {}
-    finished: dict[str, float] = {}
-    latest_outputs: dict[str, Any] = {}
+    active = 0
     peak_inflight = 0
 
-    while pending or engine.has_unfinished_requests():
-        now = time.perf_counter()
-        while pending and offsets_s[pending[0]] <= now - started:
-            index = pending.popleft()
-            request_id = f"{key_prefix}-{index:05d}"
-            prompt = _build_vllm_prompts(processor, [requests[index]])[0]
-            intended_wall_arrival = time.time() - (time.perf_counter() - started)
-            intended_wall_arrival += offsets_s[index]
-            engine.add_request(
-                request_id,
-                prompt,
-                sampling,
-                arrival_time=intended_wall_arrival,
-            )
-            observed_submit[request_id] = time.perf_counter()
-        peak_inflight = max(
-            peak_inflight,
-            len(observed_submit) - len(finished),
-        )
-        if engine.has_unfinished_requests():
-            outputs = engine.step()
-            observed = time.perf_counter()
-            for output in outputs:
-                request_id = output.request_id
-                latest_outputs[request_id] = output
-                if output.outputs and output.outputs[0].token_ids:
-                    first_token.setdefault(request_id, observed)
-                if output.finished:
-                    finished[request_id] = observed
-            continue
-        if pending:
-            wait_s = max(0.0, started + offsets_s[pending[0]] - time.perf_counter())
-            if wait_s:
-                time.sleep(wait_s)
-
-    completed = time.perf_counter()
-    records = []
-    prompt_ids = []
-    output_ids = []
-    for index, (case_id, offset_s) in enumerate(
-        zip(request_classes, offsets_s, strict=True)
-    ):
-        request_id = f"{key_prefix}-{index:05d}"
-        output = latest_outputs[request_id]
-        generated = list(output.outputs[0].token_ids)
-        prompt_token_ids = list(output.prompt_token_ids or [])
-        prompt_ids.append(prompt_token_ids)
-        output_ids.append(generated)
+    async def run_one(index: int) -> tuple[dict[str, Any], list[int], list[int]]:
+        nonlocal active, peak_inflight
+        request = requests[index]
+        case_id = request_classes[index]
+        offset_s = offsets_s[index]
         arrival = started + offset_s
-        first = first_token[request_id]
-        end = finished[request_id]
-        metrics = output.metrics
-        queue_ms = None
-        if metrics is not None and metrics.scheduled_ts and metrics.queued_ts:
-            queue_ms = max(0.0, (metrics.scheduled_ts - metrics.queued_ts) * 1000.0)
-        records.append(
-            {
+        wait_s = max(0.0, arrival - time.perf_counter())
+        if wait_s:
+            await asyncio.sleep(wait_s)
+        request_id = f"{key_prefix}-{index:05d}"
+        prompt = (
+            request["prompt"]
+            if request["type"] == "text"
+            else _prompts(processor, [request])[0]
+        )
+        image_data = request.get("images")
+        if image_data:
+            image_data = image_data[0] if len(image_data) == 1 else image_data
+        else:
+            image_data = None
+        observed_submit = time.perf_counter()
+        active += 1
+        peak_inflight = max(peak_inflight, active)
+        obj = GenerateReqInput(
+            text=prompt,
+            image_data=image_data,
+            video_data=request.get("video"),
+            sampling_params=sampling,
+            stream=True,
+            return_prompt_token_ids=True,
+            rid=request_id,
+        )
+        generator = engine.tokenizer_manager.generate_request(obj, None)
+        output: dict[str, Any] | None = None
+        token_arrivals: list[float] = []
+        observed_tokens = 0
+        try:
+            async for chunk in generator:
+                observed = time.perf_counter()
+                output = chunk
+                current_tokens = len(chunk["output_ids"])
+                if current_tokens < observed_tokens:
+                    raise RuntimeError(
+                        f"SGLang output token count regressed for {request_id}"
+                    )
+                token_arrivals.extend(
+                    [observed] * (current_tokens - observed_tokens)
+                )
+                observed_tokens = current_tokens
+        finally:
+            active -= 1
+        finished = time.perf_counter()
+        if output is None or not token_arrivals:
+            raise RuntimeError(f"SGLang returned no output tokens for {request_id}")
+        generated = list(output["output_ids"])
+        prompt_token_ids = list(output.get("prompt_token_ids") or [])
+        if len(prompt_token_ids) != int(output["meta_info"]["prompt_tokens"]):
+            raise RuntimeError(
+                f"SGLang prompt token audit disagrees for {request_id}"
+            )
+        first = token_arrivals[0]
+        queue_s = output["meta_info"].get("queue_time")
+        record = {
                 "request_id": request_id,
                 "request_class": case_id,
                 "finish_reason": _finish_reason(output),
@@ -324,20 +387,27 @@ def _run_arrivals(
                 "output_tokens": len(generated),
                 "token_ids": generated,
                 "arrival_offset_s": offset_s,
-                "controller_submit_delay_ms": (
-                    observed_submit[request_id] - arrival
-                )
-                * 1000.0,
-                "queue_ms": queue_ms,
+                "controller_submit_delay_ms": (observed_submit - arrival) * 1000.0,
+                "queue_ms": (
+                    None if queue_s is None else max(0.0, float(queue_s) * 1000.0)
+                ),
                 "ttft_ms": (first - arrival) * 1000.0,
                 "tpot_ms": (
                     0.0
                     if len(generated) <= 1
-                    else (end - first) * 1000.0 / (len(generated) - 1)
+                    else (finished - first) * 1000.0 / (len(generated) - 1)
                 ),
-                "latency_ms": (end - arrival) * 1000.0,
+                "latency_ms": (finished - arrival) * 1000.0,
             }
-        )
+        return record, prompt_token_ids, generated
+
+    results = await asyncio.gather(
+        *(run_one(index) for index in range(len(requests)))
+    )
+    completed = time.perf_counter()
+    records = [record for record, _, _ in results]
+    prompt_ids = [prompt_ids for _, prompt_ids, _ in results]
+    output_ids = [output_ids for _, _, output_ids in results]
     return {
         "started_perf_counter_s": started,
         "finished_perf_counter_s": completed,
@@ -347,10 +417,33 @@ def _run_arrivals(
         "output_token_ids": output_ids,
         "controller": {
             "peak_inflight": peak_inflight,
-            "submitted": len(observed_submit),
-            "completed": len(finished),
+            "submitted": len(records),
+            "completed": len(records),
         },
     }
+
+
+def _run_arrivals(
+    engine: Engine,
+    processor: Any,
+    requests: list[dict[str, Any]],
+    request_classes: list[str],
+    offsets_s: list[float],
+    sampling: dict[str, Any],
+    *,
+    key_prefix: str,
+) -> dict[str, Any]:
+    return engine.loop.run_until_complete(
+        _run_arrivals_async(
+            engine,
+            processor,
+            requests,
+            request_classes,
+            offsets_s,
+            sampling,
+            key_prefix=key_prefix,
+        )
+    )
 
 
 def _summarize_by_class(
@@ -494,42 +587,6 @@ def _load_class_slos(
     }
 
 
-def _write_slo_record(
-    path: Path,
-    *,
-    record: dict[str, Any],
-    output_path: Path,
-) -> None:
-    classes = {}
-    for case_id, summary in record["class_summary"]["by_class"].items():
-        classes[case_id] = {
-            "ttft_ms": 5.0 * float(summary["latency_ms"]["ttft_ms"]["p50"]),
-            "tpot_ms": 2.0 * float(summary["latency_ms"]["tpot_ms"]["p50"]),
-        }
-    source_sha256 = hashlib.sha256(output_path.read_bytes()).hexdigest()
-    slo_record = {
-        "schema_version": 1,
-        "record_type": "p12_class_slo",
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "source": {
-            "framework": "vllm",
-            "framework_version": record["environment"]["framework_version"],
-            "online_record": str(output_path.resolve()),
-            "online_record_sha256": source_sha256,
-            "request_rate_per_s": record["arrival"]["request_rate_per_s"],
-            "profile": record["workload"]["h3_contract"]["profile"],
-            "ttft_formula": "5 * vllm_best_stable_low_load_p50_by_class",
-            "tpot_formula": "2 * vllm_best_stable_low_load_p50_by_class",
-        },
-        "classes": classes,
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(slo_record, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
@@ -546,15 +603,15 @@ def main() -> None:
     parser.add_argument("--warmup-requests", type=int, default=10)
     parser.add_argument("--max-tokens", type=int, default=64)
     parser.add_argument("--max-model-len", type=int, default=4096)
-    parser.add_argument("--max-num-batched-tokens", type=int, default=16384)
     parser.add_argument("--max-num-seqs", type=int, default=8)
-    parser.add_argument("--kv-cache-memory-bytes", type=int, default=4294967296)
-    parser.add_argument("--block-size", type=int, default=256)
-    parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
-    parser.add_argument("--attention-backend", default="FLASH_ATTN")
+    parser.add_argument("--max-total-tokens", type=int, default=28928)
+    parser.add_argument("--mem-fraction-static", type=float, default=0.8)
+    parser.add_argument("--chunked-prefill-size", type=int, default=-1)
+    parser.add_argument("--attention-backend", default="triton")
+    parser.add_argument("--mm-attention-backend", default="triton_attn")
+    parser.add_argument("--enforce-eager", action="store_true")
     parser.add_argument("--formal", action="store_true")
     parser.add_argument("--class-slo-file")
-    parser.add_argument("--slo-output")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     if args.requests <= 0 or args.warmup_requests < 0 or args.max_tokens < 2:
@@ -564,10 +621,12 @@ def main() -> None:
 
     manifest_path = Path(args.manifest)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    output_path = Path(args.output)
     requests, request_classes, h3_contract = _h3_schedule(
         manifest,
         profile=args.h3_profile,
         count=args.requests,
+        video_staging_dir=output_path.parent / "sglang_staging",
     )
     offsets_s = _arrival_offsets(
         args.requests,
@@ -581,11 +640,6 @@ def main() -> None:
         raise SystemExit(
             "--formal requires a clean harness and the complete frozen H3 contract"
         )
-    if args.slo_output and (
-        not args.formal
-        or args.request_rate != min(h3_contract["request_rates_per_second"])
-    ):
-        raise SystemExit("--slo-output requires a formal lowest-rate H3 run")
     class_slos = None
     class_slo_audit = None
     if args.class_slo_file:
@@ -594,56 +648,46 @@ def main() -> None:
             expected_classes=set(request_classes),
             expected_profile=args.h3_profile,
         )
-    elif (
-        args.formal
-        and args.request_rate != min(h3_contract["request_rates_per_second"])
-    ):
-        raise SystemExit(
-            "formal loaded-rate H3 runs require --class-slo-file"
-        )
+    elif args.formal:
+        raise SystemExit("formal SGLang H3 runs require --class-slo-file")
 
     processor = AutoProcessor.from_pretrained(args.model, local_files_only=True)
-    image_limit = max(
-        (len(request.get("images", [])) for request in requests),
-        default=0,
-    )
-    video_limit = max(
-        (1 if "video" in request else 0 for request in requests),
-        default=0,
-    )
-    limit_mm_per_prompt = {
-        modality: limit
-        for modality, limit in (("image", image_limit), ("video", video_limit))
-        if limit > 0
+    video_fps = {
+        float(request["fps"]) for request in requests if "video" in request
     }
-    llm = LLM(
-        model=args.model,
-        dtype="bfloat16",
-        tensor_parallel_size=1,
-        max_model_len=args.max_model_len,
-        max_num_seqs=args.max_num_seqs,
-        max_num_batched_tokens=args.max_num_batched_tokens,
-        gpu_memory_utilization=args.gpu_memory_utilization,
-        kv_cache_memory_bytes=args.kv_cache_memory_bytes,
-        block_size=args.block_size,
-        enforce_eager=False,
-        enable_prefix_caching=False,
-        mm_processor_cache_gb=0,
-        limit_mm_per_prompt=limit_mm_per_prompt,
-        attention_config={"backend": args.attention_backend},
-        enable_chunked_prefill=True,
-        async_scheduling=True,
-        disable_log_stats=False,
-        seed=0,
+    if len(video_fps) > 1:
+        raise ValueError(f"SGLang H3 requires one global video fps: {video_fps}")
+    mm_process_config = (
+        {"video": {"fps": next(iter(video_fps))}}
+        if video_fps
+        else {}
     )
-    engine = llm.llm_engine
+    engine = Engine(
+        model_path=args.model,
+        dtype="bfloat16",
+        tp_size=1,
+        context_length=args.max_model_len,
+        max_total_tokens=args.max_total_tokens,
+        mem_fraction_static=args.mem_fraction_static,
+        max_running_requests=args.max_num_seqs,
+        chunked_prefill_size=args.chunked_prefill_size,
+        disable_cuda_graph=args.enforce_eager,
+        cuda_graph_max_bs_decode=args.max_num_seqs,
+        disable_radix_cache=True,
+        attention_backend=args.attention_backend,
+        mm_attention_backend=args.mm_attention_backend,
+        enable_request_time_stats_logging=True,
+        stream_interval=1,
+        random_seed=0,
+        mm_process_config=mm_process_config,
+    )
     process_memory_sampler = _DeviceProcessMemorySampler()
     process_memory_sampler.start()
-    sampling = SamplingParams(
-        temperature=0.0,
-        max_tokens=args.max_tokens,
-        ignore_eos=True,
-    )
+    sampling = {
+        "temperature": 0.0,
+        "max_new_tokens": args.max_tokens,
+        "ignore_eos": True,
+    }
     warmup_requests = [
         requests[index % len(requests)]
         for index in range(args.warmup_requests)
@@ -680,11 +724,24 @@ def main() -> None:
         record["finish_reason"] not in TERMINAL_FINISH_REASONS
         for record in run["requests"]
     ):
-        raise RuntimeError("vLLM online run contains a non-completed request")
+        raise RuntimeError("SGLang online run contains a non-completed request")
 
-    effective_backend = _effective_backend(llm, enforce_eager=False)
-    vllm_config = engine.vllm_config
     model_config_path = Path(args.model) / "config.json"
+    model_config = json.loads(model_config_path.read_text(encoding="utf-8"))
+    text_config = model_config.get("text_config", model_config)
+    head_dim = int(
+        text_config.get(
+            "head_dim",
+            int(text_config["hidden_size"]) // int(text_config["num_attention_heads"]),
+        )
+    )
+    kv_bytes_per_token = (
+        int(text_config["num_hidden_layers"])
+        * 2
+        * int(text_config["num_key_value_heads"])
+        * head_dim
+        * 2
+    )
     prompt_audit = _prompt_audit(run.pop("prompt_token_ids"), request_classes)
     output_token_ids = run.pop("output_token_ids")
     class_summary = _summarize_by_class(run, class_slos=class_slos)
@@ -700,8 +757,8 @@ def main() -> None:
             "harness_git_dirty": git.dirty,
         },
         "environment": {
-            "framework": "vllm",
-            "framework_version": importlib.metadata.version("vllm"),
+            "framework": "sglang",
+            "framework_version": importlib.metadata.version("sglang"),
             "framework_source": "installed_wheel",
             "python": sys.version.split()[0],
             "torch": torch.__version__,
@@ -717,8 +774,9 @@ def main() -> None:
             ),
             "dtype": "torch.bfloat16",
             "max_model_len": args.max_model_len,
-            "max_num_batched_tokens": args.max_num_batched_tokens,
             "max_num_seqs": args.max_num_seqs,
+            "max_total_tokens": args.max_total_tokens,
+            "mem_fraction_static": args.mem_fraction_static,
         },
         "workload": {
             "manifest": manifest["name"],
@@ -742,14 +800,17 @@ def main() -> None:
             ),
         },
         "backend": {
-            **effective_backend,
+            "execution": "eager" if args.enforce_eager else "cuda_graph",
             "attention": args.attention_backend,
-            "block_size": args.block_size,
+            "mm_attention": args.mm_attention_backend,
+            "chunked_prefill": args.chunked_prefill_size > 0,
+            "chunked_prefill_size": args.chunked_prefill_size,
             "prefix_caching": False,
-            "mm_processor_cache_gb": 0,
-            "kv_cache_memory_bytes_requested": args.kv_cache_memory_bytes,
-            "kv_cache_memory_bytes_effective": (
-                vllm_config.cache_config.kv_cache_memory_bytes
+            "cuda_graph_max_bs_decode": args.max_num_seqs,
+            "kv_cache_capacity_tokens": args.max_total_tokens,
+            "kv_cache_bytes_per_token_theoretical": kv_bytes_per_token,
+            "kv_cache_memory_bytes_theoretical": (
+                args.max_total_tokens * kv_bytes_per_token
             ),
         },
         "memory": {
@@ -766,18 +827,11 @@ def main() -> None:
         "run": run,
         "class_summary": class_summary,
     }
-    output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(record, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    if args.slo_output:
-        _write_slo_record(
-            Path(args.slo_output),
-            record=record,
-            output_path=output_path,
-        )
     print(
         json.dumps(
             {
@@ -798,6 +852,7 @@ def main() -> None:
             sort_keys=True,
         )
     )
+    engine.shutdown()
 
 
 if __name__ == "__main__":
