@@ -246,6 +246,54 @@ MODE_SPECS = {
         compression="visual_compact_scaled_fp8",
         enforce_eager=False,
     ),
+    "bf16_compile_graph": ModeSpec(
+        name="bf16_compile_graph",
+        execution="compile_graph",
+        attention=(
+            "prefill_sdpa_decode_fused_norms_mrope_"
+            "packed_kv_bf16_paged_bn256"
+        ),
+        compression="off",
+        enforce_eager=False,
+        decode_compile_region="stateless",
+        logits_precision="selective_fp32",
+        paged_decode_block_n=256,
+        fused_qk_rmsnorm=True,
+        fused_qk_mrope=True,
+        fused_add_rmsnorm=True,
+        packed_kv_projection=True,
+    ),
+    "scaled_fp8_kv_compile_graph": ModeSpec(
+        name="scaled_fp8_kv_compile_graph",
+        execution="compile_graph",
+        attention="prefill_sdpa_decode_fused_norms_mrope_packed_kv_fp8_paged_bn256",
+        compression="scaled_fp8_kv",
+        enforce_eager=False,
+        decode_compile_region="stateless",
+        logits_precision="selective_fp32",
+        paged_decode_block_n=256,
+        fused_qk_rmsnorm=True,
+        fused_qk_mrope=True,
+        fused_add_rmsnorm=True,
+        packed_kv_projection=True,
+    ),
+    "visual_compact_scaled_fp8_compile_graph": ModeSpec(
+        name="visual_compact_scaled_fp8_compile_graph",
+        execution="compile_graph",
+        attention=(
+            "prefill_sdpa_decode_fused_norms_mrope_"
+            "packed_kv_compact_scaled_fp8_paged_bn256"
+        ),
+        compression="visual_compact_scaled_fp8",
+        enforce_eager=False,
+        decode_compile_region="stateless",
+        logits_precision="selective_fp32",
+        paged_decode_block_n=256,
+        fused_qk_rmsnorm=True,
+        fused_qk_mrope=True,
+        fused_add_rmsnorm=True,
+        packed_kv_projection=True,
+    ),
 }
 
 
