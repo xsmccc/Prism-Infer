@@ -1115,8 +1115,17 @@ def compare_quality_artifacts(
         raise ValueError("quality comparison baseline mode must be off")
     if candidate_mode == COMPRESSION_OFF:
         raise ValueError("quality comparison candidate mode must differ from off")
-    baseline_common = {key: value for key, value in baseline_contract.items() if key != "mode"}
-    candidate_common = {key: value for key, value in candidate_contract.items() if key != "mode"}
+    compression_specific_fields = {"mode", "compression_config"}
+    baseline_common = {
+        key: value
+        for key, value in baseline_contract.items()
+        if key not in compression_specific_fields
+    }
+    candidate_common = {
+        key: value
+        for key, value in candidate_contract.items()
+        if key not in compression_specific_fields
+    }
     if baseline_common != candidate_common:
         raise ValueError("quality pair run contracts differ beyond compression mode")
     if baseline["environment"] != candidate["environment"]:
@@ -1152,6 +1161,10 @@ def compare_quality_artifacts(
         "scope": baseline_contract["scope"],
         "baseline_mode": baseline_mode,
         "candidate_mode": candidate_mode,
+        "candidate_compression_config": candidate_contract.get(
+            "compression_config",
+            {},
+        ),
         "samples": len(baseline_samples),
         "protocol_sha256": protocol_sha256,
         "evaluator_sha256": canonical_json_sha256(evaluator),

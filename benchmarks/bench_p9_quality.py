@@ -52,6 +52,12 @@ from prism_infer.analysis.p9_video_sampling import (
 )
 from prism_infer.engine.compression import SUPPORTED_COMPRESSION_MODES
 from prism_infer.engine.kv_quantization import kv_cache_storage_bytes
+from prism_infer.engine.visual_pruning import (
+    DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS,
+    DEFAULT_VISUAL_PRUNING_KEEP_RATIO,
+    DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
+    DEFAULT_VISUAL_PRUNING_STRATEGY,
+)
 from prism_infer.engine.vl_inputs import (
     ImageInputs,
     prepare_image_inputs,
@@ -73,6 +79,7 @@ def _build_llm(
     model: str,
     mode: str,
     runtime: Mapping[str, Any],
+    compression_config: Mapping[str, Any],
 ) -> LLM:
     return LLM(
         model,
@@ -90,6 +97,14 @@ def _build_llm(
         enable_prefix_caching=runtime["enable_prefix_caching"],
         image_max_pixels=runtime["image_max_pixels"],
         video_max_pixels=runtime["video_max_pixels"],
+        visual_pruning_keep_ratio=compression_config["visual_pruning_keep_ratio"],
+        visual_pruning_min_keep_tokens=(
+            compression_config["visual_pruning_min_keep_tokens"]
+        ),
+        visual_pruning_strategy=compression_config["visual_pruning_strategy"],
+        visual_pruning_attention_last_n_layers=(
+            compression_config["visual_pruning_attention_last_n_layers"]
+        ),
     )
 
 
@@ -212,6 +227,26 @@ def main() -> None:
     parser.add_argument("--dataset", choices=DATASET_IDS, required=True)
     parser.add_argument("--subset", choices=("development", "final"), default="development")
     parser.add_argument("--mode", choices=sorted(SUPPORTED_COMPRESSION_MODES), required=True)
+    parser.add_argument(
+        "--visual-pruning-keep-ratio",
+        type=float,
+        default=DEFAULT_VISUAL_PRUNING_KEEP_RATIO,
+    )
+    parser.add_argument(
+        "--visual-pruning-min-keep-tokens",
+        type=int,
+        default=DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
+    )
+    parser.add_argument(
+        "--visual-pruning-strategy",
+        choices=("uniform", "attention"),
+        default=DEFAULT_VISUAL_PRUNING_STRATEGY,
+    )
+    parser.add_argument(
+        "--visual-pruning-attention-last-n-layers",
+        type=int,
+        default=DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS,
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--evaluator", type=Path, default=DEFAULT_EVALUATOR)
     parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL)
@@ -258,11 +293,20 @@ def main() -> None:
         raise SystemExit("formal quality runs require a clean evaluator commit")
     runtime = evaluator["runtime"]
     evaluator_dataset = evaluator["datasets"][args.dataset]
+    compression_config = {
+        "visual_pruning_keep_ratio": args.visual_pruning_keep_ratio,
+        "visual_pruning_min_keep_tokens": args.visual_pruning_min_keep_tokens,
+        "visual_pruning_strategy": args.visual_pruning_strategy,
+        "visual_pruning_attention_last_n_layers": (
+            args.visual_pruning_attention_last_n_layers
+        ),
+    }
     run_contract = {
         "dataset": args.dataset,
         "subset": args.subset,
         "scope": scope,
         "mode": args.mode,
+        "compression_config": compression_config,
         "model": str(Path(args.model).resolve()),
         "model_revision": evaluator["model"]["revision"],
         "git": git,
@@ -323,7 +367,12 @@ def main() -> None:
 
     llm: LLM | None = None
     try:
-        llm = _build_llm(args.model, args.mode, runtime)
+        llm = _build_llm(
+            args.model,
+            args.mode,
+            runtime,
+            compression_config,
+        )
         output_artifact["environment"] = {
             "gpu": torch.cuda.get_device_name(0),
             "torch": torch.__version__,
