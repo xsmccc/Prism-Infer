@@ -161,6 +161,7 @@ def test_visual_pruning_shadow_metadata_records_prefill_decisions():
     assert metadata.visual_pruning_config == {
         "keep_ratio": 0.5,
         "min_keep_tokens": 1,
+        "video_min_keep_tokens": None,
         "strategy": "uniform",
         "attention_last_n_layers": 1,
     }
@@ -256,6 +257,7 @@ def test_attention_pruning_active_prefill_defers_runtime_decision():
     assert metadata.visual_pruning_config == {
         "keep_ratio": 0.5,
         "min_keep_tokens": 1,
+        "video_min_keep_tokens": None,
         "strategy": "attention",
         "attention_last_n_layers": 2,
     }

@@ -30,6 +30,7 @@ from prism_infer.engine.visual_pruning import (
     DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS,
     DEFAULT_VISUAL_PRUNING_KEEP_RATIO,
     DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
+    DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS,
     DEFAULT_VISUAL_PRUNING_STRATEGY,
     VisualPruningConfig,
 )
@@ -139,6 +140,9 @@ class CacheConfig:
     enable_visual_pruning_shadow: bool = False
     visual_pruning_keep_ratio: float = DEFAULT_VISUAL_PRUNING_KEEP_RATIO
     visual_pruning_min_keep_tokens: int = DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS
+    visual_pruning_video_min_keep_tokens: int | None = (
+        DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS
+    )
     visual_pruning_strategy: str = DEFAULT_VISUAL_PRUNING_STRATEGY
     visual_pruning_attention_last_n_layers: int = DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS
 
@@ -203,6 +207,11 @@ class CacheConfig:
             self.visual_pruning_min_keep_tokens,
             name="visual_pruning_min_keep_tokens",
         )
+        if self.visual_pruning_video_min_keep_tokens is not None:
+            _positive_int(
+                self.visual_pruning_video_min_keep_tokens,
+                name="visual_pruning_video_min_keep_tokens",
+            )
         _positive_int(
             self.visual_pruning_attention_last_n_layers,
             name="visual_pruning_attention_last_n_layers",
@@ -214,6 +223,7 @@ class CacheConfig:
         VisualPruningConfig(
             keep_ratio=keep_ratio,
             min_keep_tokens=self.visual_pruning_min_keep_tokens,
+            video_min_keep_tokens=self.visual_pruning_video_min_keep_tokens,
             strategy=self.visual_pruning_strategy,
             attention_last_n_layers=self.visual_pruning_attention_last_n_layers,
         )
@@ -569,6 +579,9 @@ class PrismConfig:
             "enable_visual_pruning_shadow": "enable_visual_pruning_shadow",
             "visual_pruning_keep_ratio": "visual_pruning_keep_ratio",
             "visual_pruning_min_keep_tokens": "visual_pruning_min_keep_tokens",
+            "visual_pruning_video_min_keep_tokens": (
+                "visual_pruning_video_min_keep_tokens"
+            ),
             "visual_pruning_strategy": "visual_pruning_strategy",
             "visual_pruning_attention_last_n_layers": ("visual_pruning_attention_last_n_layers"),
         }
@@ -935,6 +948,10 @@ class Config:
     @property
     def visual_pruning_min_keep_tokens(self) -> int:
         return self.cache_config.visual_pruning_min_keep_tokens
+
+    @property
+    def visual_pruning_video_min_keep_tokens(self) -> int | None:
+        return self.cache_config.visual_pruning_video_min_keep_tokens
 
     @property
     def visual_pruning_strategy(self) -> str:

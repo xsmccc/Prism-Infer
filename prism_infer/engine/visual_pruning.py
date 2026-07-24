@@ -23,6 +23,7 @@ import torch.distributed as dist
 
 DEFAULT_VISUAL_PRUNING_KEEP_RATIO = 0.6
 DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS = 32
+DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS: int | None = None
 DEFAULT_VISUAL_PRUNING_STRATEGY = "uniform"
 DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS = 1
 ATTENTION_TOKEN_HEAD_TENSOR_RANK = 3
@@ -36,6 +37,7 @@ class VisualPruningConfig:
 
     keep_ratio: float = DEFAULT_VISUAL_PRUNING_KEEP_RATIO
     min_keep_tokens: int = DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS
+    video_min_keep_tokens: int | None = DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS
     strategy: str = DEFAULT_VISUAL_PRUNING_STRATEGY
     attention_last_n_layers: int = DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS
 
@@ -44,6 +46,11 @@ class VisualPruningConfig:
             raise ValueError(f"keep_ratio must be in (0, 1], got {self.keep_ratio}")
         if self.min_keep_tokens < 1:
             raise ValueError(f"min_keep_tokens must be >= 1, got {self.min_keep_tokens}")
+        if self.video_min_keep_tokens is not None and self.video_min_keep_tokens < 1:
+            raise ValueError(
+                "video_min_keep_tokens must be >= 1 or None, got "
+                f"{self.video_min_keep_tokens}"
+            )
         if self.strategy not in ("uniform", "score", "attention"):
             raise ValueError(f"unsupported strategy: {self.strategy!r}")
         if self.attention_last_n_layers < 1:
@@ -221,6 +228,7 @@ class PruningDecision:
     dropped_visual_tokens: int
     keep_ratio_target: float
     keep_ratio_actual: float
+    effective_min_keep_tokens: int
     strategy: str
     visual_token_spans: tuple[VisualTokenSpan, ...]
     kept_token_indices: tuple[int, ...]
@@ -239,6 +247,7 @@ class PruningDecision:
             "dropped_visual_tokens": self.dropped_visual_tokens,
             "keep_ratio_target": self.keep_ratio_target,
             "keep_ratio_actual": self.keep_ratio_actual,
+            "effective_min_keep_tokens": self.effective_min_keep_tokens,
             "strategy": self.strategy,
             "physical_compaction": self.physical_compaction,
             "visual_token_spans": [span.to_record() for span in self.visual_token_spans],
@@ -371,12 +380,30 @@ def _visual_token_indices(spans: tuple[VisualTokenSpan, ...]) -> tuple[int, ...]
     return tuple(indices)
 
 
-def _target_keep_count(total_visual_tokens: int, config: VisualPruningConfig) -> int:
+def _effective_min_keep_tokens(
+    spans: tuple[VisualTokenSpan, ...],
+    config: VisualPruningConfig,
+) -> int:
+    if (
+        spans
+        and all(span.modality == VIDEO_MODALITY for span in spans)
+        and config.video_min_keep_tokens is not None
+    ):
+        return config.video_min_keep_tokens
+    return config.min_keep_tokens
+
+
+def _target_keep_count(
+    total_visual_tokens: int,
+    *,
+    min_keep_tokens: int,
+    config: VisualPruningConfig,
+) -> int:
     if total_visual_tokens <= 0:
         return 0
-    if total_visual_tokens <= config.min_keep_tokens:
+    if total_visual_tokens <= min_keep_tokens:
         return total_visual_tokens
-    target = max(config.min_keep_tokens, ceil(total_visual_tokens * config.keep_ratio))
+    target = max(min_keep_tokens, ceil(total_visual_tokens * config.keep_ratio))
     return min(total_visual_tokens, target)
 
 
@@ -444,7 +471,12 @@ def compute_pruning_decision(
     if total_visual_tokens == 0:
         return None
 
-    target_keep = _target_keep_count(total_visual_tokens, config)
+    effective_min_keep_tokens = _effective_min_keep_tokens(spans, config)
+    target_keep = _target_keep_count(
+        total_visual_tokens,
+        min_keep_tokens=effective_min_keep_tokens,
+        config=config,
+    )
     if config.strategy == "uniform":
         kept_token_indices = _uniform_keep_indices(visual_token_indices, target_keep)
     elif config.strategy == "score":
@@ -480,6 +512,7 @@ def compute_pruning_decision(
         dropped_visual_tokens=dropped_count,
         keep_ratio_target=config.keep_ratio,
         keep_ratio_actual=actual_ratio,
+        effective_min_keep_tokens=effective_min_keep_tokens,
         strategy=config.strategy,
         visual_token_spans=spans,
         kept_token_indices=kept_token_indices,

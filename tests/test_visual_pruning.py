@@ -67,6 +67,43 @@ def test_uniform_pruning_decision_records_keep_and_drop_counts():
     print("visual pruning uniform decision: PASS")
 
 
+def test_video_min_keep_tokens_only_applies_to_video_only_sequences():
+    """Video requests may use a lower floor without weakening image retention."""
+
+    image_seq = Sequence(
+        [1, *([99] * 10), 2],
+        block_size=256,
+        request_id=1,
+        image_token_id=99,
+        image_token_count=10,
+    )
+    video_seq = Sequence(
+        [1, *([98] * 10), 2],
+        block_size=256,
+        request_id=2,
+        video_token_id=98,
+        video_token_count=10,
+    )
+    config = VisualPruningConfig(
+        keep_ratio=0.5,
+        min_keep_tokens=8,
+        video_min_keep_tokens=2,
+    )
+
+    image_decision = compute_pruning_decision(image_seq, config)
+    video_decision = compute_pruning_decision(video_seq, config)
+
+    assert image_decision is not None
+    assert video_decision is not None
+    assert image_decision.effective_min_keep_tokens == 8
+    assert image_decision.kept_visual_tokens == 8
+    assert video_decision.effective_min_keep_tokens == 2
+    assert video_decision.kept_visual_tokens == 5
+    assert image_decision.to_record()["effective_min_keep_tokens"] == 8
+    assert video_decision.to_record()["effective_min_keep_tokens"] == 2
+    print("visual pruning modality-aware retention floors: PASS")
+
+
 def test_score_pruning_requires_scores_for_all_visual_tokens():
     """Score strategy must fail loudly instead of falling back to uniform."""
 

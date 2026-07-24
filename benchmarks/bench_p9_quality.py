@@ -56,6 +56,7 @@ from prism_infer.engine.visual_pruning import (
     DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS,
     DEFAULT_VISUAL_PRUNING_KEEP_RATIO,
     DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
+    DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS,
     DEFAULT_VISUAL_PRUNING_STRATEGY,
 )
 from prism_infer.engine.vl_inputs import (
@@ -100,6 +101,9 @@ def _build_llm(
         visual_pruning_keep_ratio=compression_config["visual_pruning_keep_ratio"],
         visual_pruning_min_keep_tokens=(
             compression_config["visual_pruning_min_keep_tokens"]
+        ),
+        visual_pruning_video_min_keep_tokens=(
+            compression_config["visual_pruning_video_min_keep_tokens"]
         ),
         visual_pruning_strategy=compression_config["visual_pruning_strategy"],
         visual_pruning_attention_last_n_layers=(
@@ -238,6 +242,11 @@ def main() -> None:
         default=DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
     )
     parser.add_argument(
+        "--visual-pruning-video-min-keep-tokens",
+        type=int,
+        default=DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS,
+    )
+    parser.add_argument(
         "--visual-pruning-strategy",
         choices=("uniform", "attention"),
         default=DEFAULT_VISUAL_PRUNING_STRATEGY,
@@ -296,6 +305,9 @@ def main() -> None:
     compression_config = {
         "visual_pruning_keep_ratio": args.visual_pruning_keep_ratio,
         "visual_pruning_min_keep_tokens": args.visual_pruning_min_keep_tokens,
+        "visual_pruning_video_min_keep_tokens": (
+            args.visual_pruning_video_min_keep_tokens
+        ),
         "visual_pruning_strategy": args.visual_pruning_strategy,
         "visual_pruning_attention_last_n_layers": (
             args.visual_pruning_attention_last_n_layers

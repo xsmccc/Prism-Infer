@@ -16,6 +16,7 @@ from prism_infer.engine.visual_pruning import (
     DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS,
     DEFAULT_VISUAL_PRUNING_KEEP_RATIO,
     DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
+    DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS,
     DEFAULT_VISUAL_PRUNING_STRATEGY,
     VisualPruningConfig,
     compute_pruning_decision,
@@ -176,6 +177,16 @@ def build_visual_pruning_config(config) -> VisualPruningConfig:
                 "visual_pruning_min_keep_tokens",
                 DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
             )
+        ),
+        video_min_keep_tokens=(
+            None
+            if getattr(
+                config,
+                "visual_pruning_video_min_keep_tokens",
+                DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS,
+            )
+            is None
+            else int(config.visual_pruning_video_min_keep_tokens)
         ),
         strategy=str(
             getattr(
