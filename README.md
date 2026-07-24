@@ -29,6 +29,8 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 | scaled FP8 KV (`scaled_fp8_kv`) | 质量、Graph、容量、显存已闭环 | per-token/per-KV-head scale；同容量 KV 为 BF16 的 `0.515625x`，同约 4 GiB budget 容量提升 `94.69%` |
 | packed MLP gate/up | 已验证、默认启用 | RTX 5090 TP1；8 个 clean offline cell 的 decode TPOT 改善 `0.483%–0.762%`，不声称稳定 E2E 加速 |
 | compile + CUDA Graph decode hot path | H1/H2 三引擎闭环 | RTX 5090、TP1、batch1、greedy、output128；Prism BF16 与 scaled-FP8 TPOT 均低于同协议 vLLM/SGLang |
+| arrival-driven external H3 | 正式闭环、loaded goodput 未胜出 | 600 requests、Poisson、四类 conditional-video mix；raw throughput 距 vLLM/SGLang 不到 0.8%，但 SLO goodput 明显落后 |
+| phase-decomposed multimodal prefill | 已实现原型、已拒绝并删除 | H1 单请求 exact 且最大执行段缩短；同 trace loaded goodput/TTFT/TPOT 未通过保留门槛 |
 | TP2 | 静态与 IPC preflight 完成 | 动态 correctness/performance 尚无两卡证据 |
 
 权威进度见 [ROADMAP](docs/ROADMAP.md)，允许和禁止使用的结论见
@@ -85,10 +87,22 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 - 重型 Vision tensor CUDA Graph 在 clean H1 中保持 token exact，engine TTFT
   从 `244.035` 降至 `229.270 ms`（-6.05%）；H2 未观察到可靠加速，单图默认
   fallback eager。
+- P12 的 600-request rate-4 conditional-video H3 中，vLLM/SGLang/Prism raw
+  throughput 为 `241.489/241.447/239.607 tok/s`；Prism 在约相同 4 GiB KV
+  budget 下保留 `56,320` tokens，约为两家 BF16 pool 的 `1.93x/1.95x`，但
+  class-aware goodput 仅 `65.093 tok/s`，明显低于 `212.108/196.779 tok/s`。
+  该结果说明容量与 loaded token cadence 是不同瓶颈，不构成 online 胜出。
+- P13 实现了独立 VISION、缓存 visual/DeepStack embedding、chunked language
+  prefill 与 BF16 prefill workspace 原型。H1 1024 chunk 保持 64-token exact，
+  将 mixed trace 的 prefill max 从 `446.229` 降至 `119.489 ms`，但同 trace
+  class-aware goodput 从 `21.569` 降至 `14.197 tok/s`（-34.18%），TTFT p50
+  `+16.5%`、TPOT p50 `+1.98%`，所以候选代码已删除，只保留失败证据。
 
 最终口径、环境和 raw evidence 路径见
 [P10 最终结果](docs/P10_FINAL_RESULTS.md)、
 [P11 结果](docs/P11_MULTIMODAL_COMPACTION_RESULTS.md) 与
+[P12 Online 结果](docs/P12_ONLINE_GOODPUT_RESULTS.md)、
+[P13 Phase Prefill 结果](docs/P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md) 与
 [PERFORMANCE_REPORT](docs/PERFORMANCE_REPORT.md)。
 
 ## 架构
@@ -362,6 +376,9 @@ python -m pytest -q tests -s
 - [性能报告](docs/PERFORMANCE_REPORT.md)：benchmark contract、结果和 raw evidence。
 - [P10 最终结果](docs/P10_FINAL_RESULTS.md)：compile/Graph H1/H2 外部对比与 scaled-FP8 KV 显存/容量 Pareto。
 - [P11 结果](docs/P11_MULTIMODAL_COMPACTION_RESULTS.md)：Vision Graph、模态自适应视觉 KV 正式质量与动态页复用。
+- [P12 Online 结果](docs/P12_ONLINE_GOODPUT_RESULTS.md)：600-request 多模态 arrival/SLO goodput 与 vLLM/SGLang 固定协议对比。
+- [P13 Phase Prefill 结果](docs/P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md)：可调度多模态 prefill 原型、correctness 问题、loaded 否决与删除。
+- [秋招最终交付](docs/FINAL_DELIVERY.md)：项目定位、最终数字、简历 bullets、面试主线和交付边界。
 - [Claim Ledger](docs/CLAIMS.md)：允许、必须限定和禁止使用的结论。
 - [压缩报告](docs/COMPRESSION_REPORT.md) / [KV 分析报告](docs/KV_ANALYSIS_REPORT.md)。
 
@@ -376,6 +393,9 @@ python -m pytest -q tests -s
 - 不声称 scaled-FP8 比 Prism BF16 更快，也不把 KV-limited sequence 上限写成
   online concurrency/goodput。
 - 不把 offline output tok/s 当作 online serving goodput。
+- 不声称 Prism 的 loaded H3 goodput 已超过 vLLM/SGLang；正式 rate-4 结果明确落后。
+- 不声称 phase-decomposed multimodal prefill 已保留或带来 online 加速；该原型已因
+  loaded 退化删除。
 - 不把 packed MLP 的小幅 decode TPOT 收益写成 online goodput或稳定 E2E 加速。
 - 不声称已经验证 TP2、HTTP/gRPC、megakernel、PD 分离或投机解码。
 - 不声称 NVFP4 或权重/激活量化已经实现、验证或优于 BF16。

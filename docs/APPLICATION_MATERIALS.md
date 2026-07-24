@@ -1,6 +1,6 @@
 # Prism-Infer 投递与面试材料
 
-> 更新日期：2026-07-23
+> 更新日期：2026-07-24
 > 使用规则：所有数字必须能回到 [CLAIMS](CLAIMS.md) 和对应证据；投递时选择与岗位
 > 匹配的 2–3 条，不要把本文件整段复制到一页简历。
 
@@ -71,6 +71,9 @@ vLLM/SGLang baselines, while scaled-FP8 nearly doubled KV capacity within the sa
   已完成请求全部满足各 cell预声明SLO。
 - 实现 canonical Paged KV layout、post-prefill physical compaction、page回收和
   decode append，覆盖 mixed text/image/video、pickle/swap/CoW与keep-all invariants。
+- 构建600-request Poisson多模态H3与vLLM/SGLang同协议online对比，统一
+  prompt/arrival/SLO hash、TTFT/TPOT/goodput/NVML；定位loaded瓶颈为原子visual
+  prefill，并因同trace goodput/median退化删除phase-decomposed候选。
 
 ### 2.4 English bullets
 
@@ -108,6 +111,8 @@ vLLM/SGLang baselines, while scaled-FP8 nearly doubled KV capacity within the sa
 | capacity `+94.69%` | 固定约 4 GiB KV budget 的 token capacity，不是 online goodput |
 | BF16 TPOT 低 `4.54%–6.27%` | 只覆盖 RTX 5090、Qwen3-VL-8B、TP1、batch1、H1/H2、output128 offline Graph |
 | scaled TPOT 低 `1.06%–2.77%` | 与外部 BF16 baseline 比；不代表 scaled 比 Prism BF16 更快，E2E 有 mixed 单元 |
+| rate-4 raw throughput距外部不到`0.8%` | loaded goodput仍低`66.92%–69.31%`，不能写成online胜出 |
+| phase prefill max `446.229→119.489 ms` | 1024候选class-aware goodput`-34.18%`且已删除，只能作为失败复盘 |
 
 ## 4. 60 秒自我介绍版本
 
@@ -120,7 +125,9 @@ greedy decode 放进 CUDA Graph。最终在同一 RTX 5090、同 prompt hash、w
 第二条线是 per-token/per-KV-head scaled-FP8 KV：三个标准多模态数据集的六个正式 cell
 全部通过质量门禁，同容量 KV bytes下降48.44%、进程NVML峰值下降8.24%；同约4 GiB
 budget容量提升94.69%，TPOT仍小幅领先两家外部baseline。我保留了E2E mixed、online
-尚未验证和content-aware组合缺少标准质量这些边界。
+loaded goodput未胜出和TP2/网络server尚未验证这些边界。600-request rate-4 H3里，
+Prism raw throughput距vLLM/SGLang不到0.8%，但goodput明显落后；我把它归因到长
+visual prefill，并用被否决的phase-chunk原型证明缩短单次阻塞不等于系统加速。
 
 ## 5. 5 分钟项目讲解结构
 
@@ -161,7 +168,10 @@ budget容量提升94.69%，TPOT仍小幅领先两家外部baseline。我保留�
 ### 4:30–5:00：下一步
 
 - 为 content-aware + scaled-FP8 组合补标准多模态质量矩阵；
-- 建立真实网络 server后做 external online SLO 与容量/并发 goodput；
+- 建立真实网络 server后，在 P12 同 trace 基础上重做包含 frontend/network 的
+  external online SLO 与容量/并发 goodput；
+- P13 已证伪当前phase-decomposed chunk方案；只在profile证明stream可重叠且不受
+  memory-bandwidth竞争时，再研究异步vision/language pipeline；
 - 只在 profile 证明收益时研究 weight-only/outlier-correction kernel，不再扩展已失败的
   GQA4 merge 或 split-K；
 - 获得合法双卡资源后再补TP2。
@@ -225,6 +235,33 @@ decode TPOT改善`0.483%–0.762%`。
 benchmark和回归风险。不到1%、在记录cell中方向一致的decode收益也必须与不稳定的
 vision-prefill E2E分开表达。
 
+### 6.4 Phase-decomposed prefill：缩短阻塞但系统更慢
+
+**Situation**：P12 rate-4 H3 中 Prism raw throughput距vLLM/SGLang不到`0.8%`，
+但goodput明显落后；trace显示H1/H2 visual prefill约`180–210 ms`，decode约`14 ms`。
+
+**Task**：把视觉编码与语言prefill拆成可调度阶段，在不牺牲correctness的前提下降低
+decode head-of-line blocking。
+
+**Action**：
+
+1. 实现独立VISION stage，缓存main/DeepStack embeddings，并将image language
+   prefill切为512/1024-token chunks。
+2. H2第4个token分叉后，定位到chunked prefill读取永久FP8 KV history；增加约
+   `228–234 MiB` BF16 prefill-only workspace。
+3. H2仍因完整/分块FlashAttention shape的低margin舍入分叉，改为确定性video
+   atomic fallback。
+4. mixed H3暴露image绕过VISION的admission bug，补混合队列invariant后再跑同trace
+   loaded gate。
+
+**Result**：H1 1024 chunk保持64-token exact，mixed prefill max
+`446.229→119.489 ms`；但60-request同trace class-aware goodput
+`21.569→14.197 tok/s`（-34.18%）、TTFT p50`+16.5%`、TPOT p50`+1.98%`，
+没有进入600-request formal，候选代码全部删除。
+
+**Reflection**：可抢占粒度、总GPU work和steady-state queue是三个不同指标；
+“最大kernel/阶段更短”不是系统优化的充分条件。
+
 ## 7. 高频面试问题
 
 ### 为什么不用 vLLM直接改？
@@ -282,9 +319,10 @@ COW、swap、compaction和Graph生命周期；它在冻结的六个标准质量c
 
 ### 当前最大的技术债是什么？
 
-TP2没有合法双卡动态证据；跨框架page-table/allocator字节尚不可比；scaled FP8还没有
-正式runtime speedup；online只有engine harness、没有网络server。每项都有明确恢复命令
-和禁止claim。
+loaded H3 goodput仍受长visual prefill干扰，P13当前phase-chunk设计已经被同trace否决；
+online仍是in-process harness而非网络server；TP2没有合法双卡动态证据；跨框架
+page-table/allocator字节尚不可比；scaled FP8目标是容量而非已证明的runtime speedup。
+每项都有明确证据和禁止claim。
 
 ## 8. 作品集页面建议
 
@@ -315,7 +353,8 @@ E2E → external”的完整证据链。
   `0.483%–0.762%`。”
 - “scaled FP8在冻结三数据集的六个formal cell中全PASS，allocated KV pool为BF16的
   `0.515625x`；external quality matrix为MIXED。”
-- “优化后仍慢于vLLM 1.34x–1.40x，并继续定位Graph内热点。”
+- “冻结batch1 H1/H2中TPOT小幅低于vLLM/SGLang，但rate-4 loaded H3 goodput仍明显
+  落后，并已用P12/P13定位与证伪调度候选。”
 
 ### 必须避免
 
@@ -341,6 +380,9 @@ E2E → external”的完整证据链。
 | claim边界 | [CLAIMS](CLAIMS.md) |
 | 未完成项 | [KNOWN_ISSUES](KNOWN_ISSUES.md) |
 | 外部复现 | [REPRODUCIBILITY](REPRODUCIBILITY.md) |
+| 600-request online closure | [P12_ONLINE_GOODPUT_RESULTS](P12_ONLINE_GOODPUT_RESULTS.md) |
+| phase-prefill 否决 | [P13_PHASE_DECOMPOSED_PREFILL_RESULTS](P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md) |
+| 秋招最终交付 | [FINAL_DELIVERY](FINAL_DELIVERY.md) |
 
 投递前最后检查：数字、commit和边界是否仍与这些权威文档一致；如果后续 P7.5复跑改变
 结论，先更新 claim ledger，再更新本材料。

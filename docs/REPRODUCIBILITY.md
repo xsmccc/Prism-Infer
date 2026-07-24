@@ -1,6 +1,6 @@
 # Prism-Infer 复现实验手册
 
-> 更新日期：2026-07-20
+> 更新日期：2026-07-24
 > 目标：让安装、correctness、quality 和 performance 证据分别可复现，禁止用低层
 > smoke 替代高层门禁。
 
@@ -485,7 +485,60 @@ stderr。只有 manifest 同时满足 `status=completed`、全部 comparability 
 `formal_eligible=true`、token exact、同 UUID 前后 idle/release，才能进入后续 NSYS/NCU
 归因。一次 run 失败时保留整个失败 cell，不手工删 outlier。
 
-## 12. 证据保存与验收
+## 12. P12 online H3 与 P13 rejected evidence
+
+P12 的 headline 不是离线单请求 latency，而是冻结到达流上的 class-aware online
+结果。必须固定 `conditional_video` trace、`seed=20260717`、`60` 或 `600` 个请求、
+`warmup=10`、`output=64`、相同 class SLO，并分别保留 raw throughput、SLO goodput、
+queue、TTFT、TPOT、E2E、KV 容量和 NVML 峰值。Prism 的 600-request rate=4 正式命令为：
+
+```bash
+python benchmarks/bench_online.py \
+  --model "$PRISM_MODEL_PATH" \
+  --manifest benchmarks/workloads/p9_headline.json \
+  --h3-profile conditional_video \
+  --mode visual_compact_scaled_fp8_compile_graph \
+  --requests 600 --arrival-process poisson --request-rate 4 \
+  --seed 20260717 --warmup-requests 10 --max-tokens 64 \
+  --max-model-len 4096 --max-num-batched-tokens 4096 \
+  --max-num-seqs 8 --max-chunk-size 2048 \
+  --max-consecutive-prefill-batches 1 \
+  --num-kvcache-blocks 220 --kvcache-block-size 256 \
+  --disable-prefix-caching \
+  --visual-pruning-keep-ratio 0.6 \
+  --visual-pruning-min-keep-tokens 768 \
+  --visual-pruning-video-min-keep-tokens 256 \
+  --visual-pruning-strategy uniform \
+  --mlp-projection-mode packed \
+  --enable-vision-tensor-cudagraph \
+  --class-slo-file data/p12_online/formal/p12_class_slo_vllm_r1_ce72f63.json \
+  --output data/p12_online/repro/prism_conditional_r4.json
+```
+
+外部基线分别使用 `benchmarks/bench_online_vllm.py` 与
+`benchmarks/bench_online_sglang.py`。先以 vLLM rate=1 生成一次冻结的 class SLO
+文件，再把同一文件传给三套系统的 rate=4 命令；外部基线还必须固定相同 model、
+manifest、trace、seed、warmup、output length、4 GiB KV budget 和 attention backend。
+vLLM 使用 `--kv-cache-memory-bytes 4294967296 --block-size 256`，SGLang 使用
+`--max-total-tokens 28928`；完整环境与正式输出见
+[`P12_ONLINE_GOODPUT_RESULTS.md`](P12_ONLINE_GOODPUT_RESULTS.md)。
+
+验收时读取 `class_aware_summary`，不能用不区分请求类别的 generic summary 代替；
+同时检查 `terminal_failures.count`、token correctness、GPU UUID、commit/dirty state
+和运行结束后的显存释放。P12 正式结论绑定 runtime artifacts 内嵌的 clean
+`921de81/e883de5` 协议点及文档列出的 SHA256；`96f46c4` 是汇总这些证据并删除
+负收益 cadence 代码后的 closure 文档点，不能替代运行时 commit。
+
+P13 的 phase-decomposed/chunked multimodal prefill 是 rejected candidate：H1
+单请求能保持 64-token exact，但冻结 H3 rate=4、60-request 候选选择中，
+`phase=512/1024` 的 class-aware goodput 分别下降 `100%/34.18%`；辅助的 generic
+goodput req/s 也分别下降 `78.24%/8.16%`，均未达到进入 600-request formal gate
+的条件。该实现已从工作树撤回，当前 HEAD 不提供开关，禁止把它写成已交付优化。
+原始诊断保存在服务器 gitignored 的
+`data/p13_phase/tuning/`；结果、命令、候选快照位置和 artifact hash 见
+[`P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md`](P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md)。
+
+## 13. 证据保存与验收
 
 `data/` 默认 gitignored。每次正式复现至少保存：
 

@@ -1,6 +1,6 @@
 # Prism-Infer 项目路线图
 
-> 修订日期: 2026-07-19
+> 修订日期: 2026-07-24
 > 目标模型: Qwen3-VL-8B-Instruct
 > 项目目标: 面向 Qwen3-VL 的跨层多模态推理 Runtime；把视觉 KV 保留、物理 Paged-KV 压缩、scaled FP8、Compiler/CUDA Graph、调度与优化 Kernel 接成可验证系统。
 
@@ -15,6 +15,17 @@ Prism-Infer 的交付目标不是单个 demo，而是一套可验证、可复现
 - 输出可复现实验、技术报告、README 和面试/投递材料。
 
 ## 当前真实状态
+
+**交付冻结状态（2026-07-24）**：P12 已在同一冻结 H3 到达流、class SLO 与约
+4 GiB KV 预算下完成 Prism/vLLM/SGLang 的 600-request 外部 online 对比。Prism 的
+raw output throughput 与两套基线相差小于 0.8%，scaled-FP8 KV capacity 为
+`56,320` tokens，但 SLO goodput 明显落后；瓶颈归因到不可抢占的
+`180–210 ms` multimodal prefill。P13 的 phase-decomposed/chunked 候选经
+60-request selection gate 后被拒绝：`phase=1024` 的 class-aware goodput 回退
+34.18%，因此没有保留运行时代码，也没有执行 600-request formal。项目现已按
+“有正结果、有边界、有负结果”
+的秋招研究工程冻结，详见 `P12_ONLINE_GOODPUT_RESULTS.md`、
+`P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md` 与 `FINAL_DELIVERY.md`。
 
 | 领域 | 状态 | 说明 |
 |---|---|---|
@@ -32,7 +43,9 @@ Prism-Infer 的交付目标不是单个 demo，而是一套可验证、可复现
 | 系统性能优化 | P6.12-C BF16 content-aware 主线已完成并冻结 | 默认 last-layer attention scorer 在 7 张固定 COCO 图片、35 条 caption reference 上通过当前 lexical task gate：token-F1/ROUGE-L drop 为 `0.003288/0.003710`；7-image aggregate physical token/active-byte ratio 为 `0.535x/0.538x`。COCO batch4稳定性能 cell为 `0.536x/0.571x`。freeze tag 为 `p6.12-content-aware-kv`。这不是标准 COCO accuracy；P6 的 unit-scale FP8 失败，P9-C scaled FP8 已另行通过正式质量门禁；TP仍未验证，RTX counter缺口已在P9关闭。 |
 | 单机性能与外部对标 | P7.0-P7.5 已完成 | online engine、external protocol、logits优化、Graph replay分析与 packed gate/up 均闭环；8 个 clean offline cell 的 packed decode TPOT 改善 `0.483%–0.762%`，不声称稳定 E2E 加速。 |
 | 项目交付 | P8 PASS | README、技术报告、复现手册、Known Issues、投递材料、fresh editable install、完整8B demo与当前主线 full regression 均已验收。 |
-| 秋招旗舰化 | P9-A/P9-B PASS；P9-C quality complete | scaled FP8 内部 6/6 formal PASS；vLLM external quality matrix 为 4 PASS/2 FAIL（MIXED）；全物理 Gate A 与 runtime Gate B 未完成。 |
+| 秋招旗舰化 | P9–P12 已冻结 | scaled FP8 内部 6/6 formal PASS；vLLM external quality matrix 为 4 PASS/2 FAIL（MIXED）；P10 full-physical capacity/memory 与 P12 online external matrix 已完成。 |
+| Online serving 对比 | P12 COMPLETE，存在明确边界 | 600-request rate=4 外部 H3 对比完成；raw throughput 接近基线、KV 容量领先，但 SLO goodput 落后，禁止声称 online 胜出。 |
+| Phase-decomposed prefill | P13 REJECTED | 单请求 correctness 可保留，但冻结 H3 goodput 回退，候选已撤回，只保留可审计失败证据。 |
 | 当前硬件 | 单卡主线可用；TP2 未验证 | 当前租约仅分配 GPU0。管理员开放 NCU/NSYS 权限后可观察到宿主机其他设备，但可见不等于已分配；此前跨 GPU1 的实验作废。 |
 
 ## 阶段门禁总览
@@ -807,10 +820,11 @@ CUDA Graph、counter-driven kernel、多模态调度和薄 serving 闭环。完�
 - [x] P9-D Compiler/Graph/Kernel：完成 compression-off 与 scaled-FP8 的
   `torch.compile` + CUDA Graph 正确路径、H1/H2 full-pipeline 归因，以及 profile-driven
   kernel 候选闭环；GQA4/split-K 负结果保留，不为“有 kernel”而合入回退。
-- [ ] P9-E 调度/服务/外部对比：H1/H2 单卡离线 best-stable matrix 已完成；thin
-  OpenAI-compatible streaming server、H3 online goodput 与 SLO 仍是独立后续工作。
-- [ ] P9-F 2026-08-06 前完成 release/push 与最终复现包；技术报告、claims 和简历故事
-  已按 P10 结果更新，之后不再扩大主线 scope。
+- [x] P9-E 调度/服务/外部对比：H1/H2 单卡离线 best-stable matrix 与 P12 H3
+  process-level online external matrix 均已完成；未实现网络 endpoint，且不声称
+  online goodput 胜出。
+- [x] P9-F 最终复现包、claims、简历故事、失败候选与交付清单已冻结；push 仍是用户
+  授权动作，不作为本地交付正确性的前置条件。
 
 ### 当前状态
 
@@ -837,19 +851,29 @@ CUDA Graph、counter-driven kernel、多模态调度和薄 serving 闭环。完�
   结论限定为预注册 H1/H2 单卡离线 workload。
 - content-aware logical→physical compaction 在 H1/H2 将 active pages 从 `7` 降至 `4`，
   但固定 KV pool 下 NVML 不变且尚未通过标准质量矩阵，因此只保留为下一研究候选。
+- P12 closure `96f46c4` 汇总的 clean runtime artifacts `921de81/e883de5` 中，
+  rate=4、600-request Prism raw output throughput 为 `239.607 tok/s`，与
+  vLLM/SGLang 相差不足 0.8%；但 SLO goodput 仅
+  `65.093 tok/s`，显著落后两套基线。该差距已归因到不可抢占 multimodal prefill，
+  不能用 raw throughput 或 H1/H2 单请求 TTFT 掩盖。
+- P13 对上述阻塞实现了可撤回的 phase-decomposed 原型并完成 correctness/机制/60-request
+  selection gate；`phase=512/1024` 的 class-aware goodput 分别回退
+  `100%/34.18%`，候选已拒绝。
 - P9 单卡主线不等待 TP2。任何 Torch/CUDA/NCCL 升级必须先单独决策，不能污染 P8
   已验证环境。
 
 ## 下一步执行顺序
 
-当前应优先执行:
+当前没有必须继续扩张的主线优化。秋招投递以 `FINAL_DELIVERY.md` 的冻结叙事为准。
+后续只有在新增资源或明确研究目标时才开启新阶段：
 
-1. 冻结 P10 的 H1/H2 latency 与 scaled-FP8 memory/capacity 两条最终结论，完成
-   release/push；不重复运行已经冻结的质量和外部 matrix。
-2. 若继续研究 content-aware physical compaction，先补标准质量 gate 和动态 allocator
-   的真实 NVML 下降；达不到这两项就不形成 headline。
-3. 只有用户要把项目扩展到在线 serving 时，才接 thin server、并发 goodput/H3 SLO；
-   只有 profile 再次证明权重 GEMV 是可行动瓶颈时，才启动 weight-only 候选。
-4. TP2 在获得真实双卡租约后单独开展，不把单卡结果外推为 TP 结论。
+1. 若继续攻 online goodput，必须重新设计可抢占边界或视觉计算调度；P13 的机械切块
+   不能直接复活，候选先过 60-request selection gate，再进入 600-request formal。
+2. 若继续 content-aware physical compaction，先补标准质量 gate 和动态 allocator
+   的真实 NVML 下降；达不到两项就不形成 headline。
+3. 网络 endpoint、TP2 和 weight-only quantization 都是独立扩展，不属于当前交付缺口；
+   TP2 只在获得真实双卡租约后开展。
+4. 已冻结结果不通过删除 outlier、改 SLO 或只选有利场景重写；任何公开 push 仍需用户
+   明确授权。
 
 P3/P4/P4.5/P5 已建立多模态 FP baseline、KV trace、KV 语义硬化、logical pruning 和 FP8 storage baseline。P6 只允许在统一 benchmark 和固定外部版本下形成性能 claim；没有真实 megakernel实现或 launch-bound 证据时，不开展 megakernel 对比。

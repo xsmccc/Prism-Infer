@@ -10,6 +10,9 @@
 > 当前 P10 最终 benchmark 点: `4779342`
 > 当前 P11 Vision Graph 点: `c20fd8d`
 > 当前 P11 模态自适应压缩点: `a4a06b3`
+> 当前 P12 online closure 文档点: `96f46c4`；正式 rate-4 runtime artifacts:
+> `921de81/e883de5`
+> P13 phase-prefill 候选: dirty selection evidence，已拒绝并从 retained source 删除
 > 更新日期: 2026-07-24
 
 本表区分“已实现”“已验证”和“性能占优”。README、简历和面试中的数字必须能
@@ -56,6 +59,10 @@
 | 重型 Vision tensor CUDA Graph 减少 H1 host launch/gap | clean `c20fd8d`；RTX 5090 UUID `GPU-1bf4...2ba7`；H1 repeat9/output128 | H1 engine TTFT `244.035 -> 229.270 ms`（-6.05%），token exact；NSYS Runtime API `5,025 -> 1,185`、GPU kernels 均为 `2,312`；H2 engine TTFT `+1.23%`，不声称加速 |
 | 模态自适应 visual compaction + scaled-FP8 通过三项 formal development gate | clean `4bc2094/a4a06b3`；image/mixed floor768、video-only floor256、keep0.6 | DocVQA `0.924640 -> 0.925308`、MuirBench `0.69 -> 0.69`、MVBench `0.608247 -> 0.608247`，三项 PASS；MVBench 97/97 output exact |
 | 视觉压缩释放页可被后续请求真实复用 | clean `a4a06b3`；H1 batch2/output128、11 blocks、page256 | 每请求 `7 -> 4` prompt pages；首请求释放 `[1,0,5]` 并被第二请求 prefill 使用；dense decode 全部 batch1，compact 378/384 步为 batch2；该受限 cell requests/s `+58.83%` |
+| P12 rate-1 H3 中 Prism 的 heavy-visual TTFT 低于 vLLM | clean 600-request artifacts；同 trace/prompt/SLO hash；SLO源 `ce72f63` | single-image/H1/H2 TTFT p50 相对 vLLM低 `31.5%/13.6%/6.2%`；text TTFT与全部TPOT仍落后，整体goodput低`0.34%` |
+| P12 rate-4 raw throughput接近vLLM/SGLang且KV-token capacity约翻倍 | clean固定内存三引擎H3；runtime artifacts `921de81/e883de5`；600 requests；相同arrival/prompt/SLO协议 | Prism raw throughput低`0.78%/0.76%`，KV-token capacity为`1.93x/1.95x`；loaded goodput低`69.31%/66.92%`，不是online胜出 |
+| P12 压力A/B证明visual compaction页回收能改变调度结果 | 同commit、同20-request trace、24-page scaled-FP8 pool、common NVML sampler | compaction消除一次swap，H1 TTFT `-21.1%`，raw throughput `+0.78%`；goodput变化只跨一个请求，不作formal比例claim |
+| P13 phase-prefill原型被同trace loaded gate否决 | dirty 60-request H3-primary selection；H1/H2单请求exact与workspace审计先行 | 1024 chunk把mixed prefill max `446.229→119.489 ms`，但class-aware goodput `21.569→14.197 tok/s`（-34.18%）、TTFT p50 `+16.5%`、TPOT p50 `+1.98%`；候选代码已删除 |
 | ~~旧 P9-D H1 排名~~ | clean `c11b6e9`，输出 `76ad1f...14c6` | **已撤销**：repeat hash 稳定但内容与图片无关，不构成语义 correctness 或性能发布证据 |
 
 ## 必须带限制的结论
@@ -84,10 +91,16 @@
 | H1/H2 中 Prism TPOT/TTFT 低于 vLLM 与 SGLang | 只覆盖 RTX 5090 UUID `GPU-7f63...f2eb`、指定 Qwen3-VL-8B snapshot、TP1、batch1、greedy、output128、offline CUDA Graph；H1 BF16 对 SGLang E2E 仅低 `0.07%`，scaled E2E 有两个轻微负单元；不是 online、batch 扩展、多模型或跨硬件的全面排名 |
 | 模态自适应 visual compaction + scaled-FP8 的三项 formal development gate PASS | DocVQA/MuirBench 与 MVBench 分别绑定 clean `4bc2094/a4a06b3`；不是完整 development/final 六格矩阵；短单图因 768 floor 可能完全不裁剪；合成 H1 compact 输出不与 dense token-exact |
 | 11-page H1 batch2 中 compact requests/s 提升 `58.83%` | 是容量受限、offline closed-loop 的页复用实验，收益来自并发 decode 与 scaled-FP8 组合；不是单请求 TPOT、网络 online goodput 或通用吞吐提升 |
+| Prism rate-4 raw throughput距vLLM/SGLang不到`0.8%` | 只说明完成速率接近；class-aware goodput只有`65.093 tok/s`，明显低于`212.108/196.779 tok/s`，process peak也更高 |
+| Prism H1/H2 rate-4 TTFT低于SGLang `7.5%/51.0%` | 是两个heavy-visual class的bounded p50；text和single-image更慢，不能推广为整体online latency或goodput |
+| P13将最大prefill段缩短到约`119–134 ms` | 可抢占粒度改善但总stage/work增加；loaded median与goodput退化，原型已删除，不能写作最终实现 |
 
 ## 当前禁止的结论
 
 - “Prism 全面超过 vLLM/SGLang”。
+- “Prism 的 loaded/online H3 goodput 超过 vLLM/SGLang”。
+- “phase-decomposed multimodal prefill 已保留、默认启用或提升 online
+  goodput/TPOT”；P13 原型已在同 trace 失败并删除。
 - “旧 `76ad1f...14c6` 或 `4a61f1...166f` hash 证明当前环境多模态语义正确”；这些
   full-engine hash 已被 P10.10 作废，历史 component-level exact A/B 只能说明局部
   候选相对同一旧基线未改变数值。
@@ -119,9 +132,9 @@
 - `diagnostic_matched`: Prism eager TPOT约为 vLLM eager 的 `1.91x-1.97x`。
 - `best_stable`: Prism off Graph约为 vLLM Graph 的 `1.69x-1.83x`；quality-qualified compact Graph约为 `1.65x-1.78x`。
 - 双方 E2E throughput 当前也是 vLLM 更高，但部分 Prism offline TTFT存在双峰，E2E不作为压缩收益归因。
-- 这是 offline closed-loop，不形成 online SLO goodput claim。P7.3 已建立 Prism 内部
-  engine-level arrival/queue/SLO goodput 基线，但尚无相同 arrival/SLO 配置的 vLLM
-  online record，因此仍不能形成外部 online ratio。
+- P7.1 数字是 offline closed-loop，不形成 online SLO goodput claim。外部 online
+  ratio 已由 P12 的 clean 600-request H3 单独补齐；其结论是 raw throughput 接近，
+  Prism loaded goodput 明显落后，不能用 P7 历史结果覆盖。
 - P7.4 使用 node-level Systems trace 定位到旧 `compute_logits` 每 decode 都执行
   `lm_head.weight.float()`；改用模型原生 BF16 后，该 region 从 `4.068 ms` 降至
   `0.762 ms`，clean 五 workload TPOT提升 `1.216x-1.280x`。

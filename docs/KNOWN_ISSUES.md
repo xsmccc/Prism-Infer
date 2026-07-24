@@ -1,6 +1,6 @@
 # Prism-Infer Known Issues
 
-> 更新日期：2026-07-23
+> 更新日期：2026-07-24
 > 本表记录当前主线限制，并保留本轮关闭项作为审计轨迹。历史 root cause 见
 > `docs/issues/` 与 [ISSUE_LOG](ISSUE_LOG.md)。任何条目只能由可复现证据关闭。
 
@@ -13,12 +13,13 @@
 | KI-003 | UNVERIFIED | TP2 | 当前租约仅分配 GPU0；额外可见设备不代表可用，TP2 尚无有效动态证据 |
 | KI-004 | CLOSED | GPU counter claim | NCU 2025.1 权限恢复，Paged Attention 的 occupancy/DRAM/compute counter 已实测 |
 | KI-005 | PARTIAL | FP8 模式边界 | unit-scale 已拒绝；scaled FP8 的 Prism 内部 full-physical Pareto 已完成；跨框架 allocator 字节仍不可比 |
-| KI-006 | NOT IMPLEMENTED | serving claim | 无 HTTP/gRPC server和 external online goodput |
+| KI-006 | PARTIAL | serving claim | 有进程内 external H3 online 对比，无 HTTP/gRPC server，且 Prism SLO goodput 未胜出 |
 | KI-007 | LIMITATION | prefix cache | VL prefix hash禁用；无独立 persistent prefix store |
 | KI-008 | LIMITATION | video输入 | 支持 frame sequence，不含通用文件解码/采样策略 |
 | KI-009 | CLOSED | torch.compile backend | unsafe full-decode 候选仍拒绝；边界受控的 compile+Graph 已通过 H1/H2 正确性与性能门禁 |
-| KI-010 | OPEN | E2E归因 | vision prefill/TTFT存在双峰 |
+| KI-010 | ATTRIBUTED | E2E/online归因 | P12 定位到不可抢占 multimodal prefill；仍未消除 |
 | KI-011 | PROCESS | raw evidence | `data/` gitignored，需要单独保存正式实验产物 |
+| KI-012 | REJECTED | phase prefill | P13 候选单请求正确但冻结 H3 goodput 回退，运行时代码已撤回 |
 
 ## KI-001：隐藏外部 GPU workload（CLOSED）
 
@@ -193,20 +194,24 @@ accuracy 点估计更高，但 paired CI 下界未过预注册稳定性 margin�
 
 scaled-FP8 的正式 H1/H2 runtime matrix 已完成，TPOT 相对 SGLang 低
 `1.06%–1.12%`、相对 vLLM 低 `2.55%–2.77%`，但 E2E 并非所有格都领先。
-剩余未闭环项是跨框架统一 allocator metadata 字节合同、在线并发 goodput，以及
-content compaction + scaled FP8 组合质量；这些项目不能从上述结果推导。
+剩余未闭环项是跨框架统一 allocator metadata 字节合同，以及 content compaction +
+scaled FP8 组合质量。P12 已测在线并发 goodput，但结果不占优：不能从 raw throughput
+或 KV capacity 推导 SLO goodput 优势。
 
-## KI-006：无生产网络 server与 external online 对比
+## KI-006：有进程内 external online 对比，无生产网络 server（PARTIAL）
 
-P7.3实现的是进程内 arrival/continuous-batching harness，记录 queue、TTFT、TPOT、
-goodput和 request FSM。当前没有：
+P7.3/P12 的进程内 arrival/continuous-batching harness 记录 queue、TTFT、TPOT、
+E2E、class-aware goodput 和 request FSM。P12 已用冻结 H3 trace、相同 class SLO 与
+约 4 GiB KV 预算完成 Prism/vLLM/SGLang 的 600-request rate=4 外部对比。
+Prism raw output throughput 与基线相差不足 0.8%，但 SLO goodput 明显落后，因此
+不能声称 online serving 胜出。当前仍没有：
 
 - HTTP/gRPC/OpenAI-compatible endpoint；
 - 网络序列化、backpressure、auth或多进程 frontend；
-- 相同 arrival/SLO配置的 vLLM online record；
 - process-level repeats和统计置信区间。
 
-因此不能声称网络 serving性能或相对外部框架的 online goodput优势。
+因此该证据只支持“同 trace 的进程内 scheduler/runtime 对比”，不支持网络 serving
+性能、生产可用性或相对外部框架的 online goodput 优势。
 
 ## KI-007：Prefix cache边界
 
@@ -246,11 +251,13 @@ processor marker或 placeholder数量改变，adapter会 fail closed，不能静
 配置；“compile+Graph 已支持”只指上述明确边界，不能解读成 whole-model/full-decode
 任意捕获。该限定既保留失败证据，也关闭 P9-D 当前主线门禁。
 
-## KI-010：Vision prefill/TTFT 双峰
+## KI-010：不可抢占 multimodal prefill（ATTRIBUTED）
 
 offline TPOT稳定，但部分 single-image vision prefill/TTFT出现约 `50–140 ms` 双峰。
-当前环境不能锁 GPU clocks，尚无充分 root cause。E2E中位数差异不能归因给压缩；
-headline使用更稳定的 TPOT。详见
+P12 的 H3 pipeline 归因进一步确认，Prism 在 loaded online trace 中存在约
+`180–210 ms` 的原子 multimodal prefill 阻塞，它放大 queue 与 SLO miss；这解释了
+raw throughput 接近基线但 goodput 明显落后的现象。当前环境不能锁 GPU clocks，
+更底层的双峰来源仍未完全解释。E2E 中位数差异不能简单归因给 KV 压缩；详见
 [P7-005-TTFT_VISION_BIMODALITY](issues/P7-005-TTFT_VISION_BIMODALITY.md)。
 
 ## KI-011：Raw evidence 默认不入 Git
@@ -268,6 +275,21 @@ headline使用更稳定的 TPOT。详见
 
 当前 GitHub release artifact尚未建立，因此仓库内数字主要通过报告、测试、summary
 生成器和本地 raw路径审计。
+
+## KI-012：P13 phase-decomposed prefill 候选（REJECTED）
+
+P13 将 multimodal prefill 拆成 vision phase 与 language chunks，并为图像路径增加
+BF16 prefill-only KV workspace，以避免分块读取永久 scaled-FP8 history 改变模型语义。
+H1 单请求 64 tokens exact，workspace 能确定性释放；视频路径因 FlashAttention
+shape/rounding 的低 margin 分叉而保留 atomic fallback。
+
+但冻结 H3 rate=4、60-request selection 中，`phase=512/1024` 相对 baseline 的
+class-aware goodput 分别下降 `100%/34.18%`；generic goodput req/s 也分别下降
+`78.24%/8.16%`。候选改变 batch composition，机械切片带来的重复 launch/调度成本
+超过有限的尾部改善，因此没有进入 600-request formal。
+运行时代码与测试已完整撤回，当前 HEAD 无该开关；raw evidence 仍保存在
+gitignored 的 `data/p13_phase/tuning/`。完整结果见
+[P13_PHASE_DECOMPOSED_PREFILL_RESULTS](P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md)。
 
 ## 关闭规则
 
