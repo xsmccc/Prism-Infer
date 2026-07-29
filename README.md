@@ -6,7 +6,8 @@ text/vision forward、M-RoPE、DeepStack、Paged KV、调度、CUDA Graph decode
 trace 和视觉 KV 物理压缩主路径。
 
 Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不作为模型 forward
-或 engine wrapper。当前仓库是研究原型，不是带 HTTP/gRPC 接口的生产 serving 系统。
+或 engine wrapper。当前仓库是研究原型，已包含原生 HTTP/SSE 推理边界，但不是
+OpenAI-compatible 或多机生产 serving 系统。
 
 > **2026-07-23 correctness 更正：**旧 P9-D/P10 文档中的 H1 输出
 > `76ad1f...14c6` 虽然 repeat 内 token hash 一致，但内容与八张输入图无关，不能作为
@@ -22,7 +23,8 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 |---|:---:|---|
 | text、单图、多图、视频、mixed batch | 已验证 | Qwen3-VL-8B、TP1；覆盖 eager 与 CUDA Graph decode |
 | Qwen3-VL full logits / PPL | 已验证 | text 与 VL 路径相对 HF reference 有 strict gate |
-| Paged KV、chunked prefill、continuous batching | 已验证 | engine-level arrival/SLO harness，不是网络 server |
+| Paged KV、chunked prefill、continuous batching | 已验证 | engine-level 与原生 HTTP/SSE arrival/SLO harness |
+| 原生 HTTP/SSE serving | 已验证 | JSON/SSE、bounded ingress、断连取消、单 engine owner；不是生产 API |
 | KV trace 与视觉 token 分析 | 已验证 | trace 默认关闭，JSONL 可离线分析 |
 | 模态自适应 visual KV physical compaction | 标准质量与动态页复用已验证 | image/mixed floor768、video-only floor256、keep0.6；DocVQA/MuirBench/MVBench formal development PASS |
 | unit-scale FP8 KV (`fp8_kv`) | 已实现、已拒绝 | direct cast 长输出质量未通过，只保留为失败基线 |
@@ -31,6 +33,8 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 | compile + CUDA Graph decode hot path | H1/H2 三引擎闭环 | RTX 5090、TP1、batch1、greedy、output128；Prism BF16 与 scaled-FP8 TPOT 均低于同协议 vLLM/SGLang |
 | arrival-driven external H3 | 正式闭环、loaded goodput 未胜出 | 600 requests、Poisson、四类 conditional-video mix；raw throughput 距 vLLM/SGLang 不到 0.8%，但 SLO goodput 明显落后 |
 | phase-decomposed multimodal prefill | 已实现原型、已拒绝并删除 | H1 单请求 exact 且最大执行段缩短；同 trace loaded goodput/TTFT/TPOT 未通过保留门槛 |
+| dynamic-shape Vision tensor Graph | loaded serving 默认关闭 | 新 RTX 5090 的 600-request mixed trace 出现错误 token；保留 decode CUDA Graph |
+| vision-aware scheduler | 实验实现、默认关闭 | 有界旁路改善 TTFT/E2E 中位数与尾部，但 loaded SLO goodput 未胜出 |
 | TP2 | 静态与 IPC preflight 完成 | 动态 correctness/performance 尚无两卡证据 |
 
 权威进度见 [ROADMAP](docs/ROADMAP.md)，允许和禁止使用的结论见
@@ -103,6 +107,7 @@ Hugging Face 只承担 tokenizer、processor、配置读取与数值参考，不
 [P11 结果](docs/P11_MULTIMODAL_COMPACTION_RESULTS.md) 与
 [P12 Online 结果](docs/P12_ONLINE_GOODPUT_RESULTS.md)、
 [P13 Phase Prefill 结果](docs/P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md) 与
+[Network Serving 结果](docs/NETWORK_SERVING_RESULTS.md)、
 [PERFORMANCE_REPORT](docs/PERFORMANCE_REPORT.md)。
 
 ## 架构

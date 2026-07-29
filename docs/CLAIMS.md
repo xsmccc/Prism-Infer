@@ -13,7 +13,8 @@
 > 当前 P12 online closure 文档点: `96f46c4`；正式 rate-4 runtime artifacts:
 > `921de81/e883de5`
 > P13 phase-prefill 候选: dirty selection evidence，已拒绝并从 retained source 删除
-> 更新日期: 2026-07-24
+> 当前 native network-serving 候选：base `25eeb72`；最终实现以本文所在提交为准
+> 更新日期: 2026-07-29
 
 本表区分“已实现”“已验证”和“性能占优”。README、简历和面试中的数字必须能
 追溯到本表及对应 raw evidence。
@@ -63,6 +64,9 @@
 | P12 rate-4 raw throughput接近vLLM/SGLang且KV-token capacity约翻倍 | clean固定内存三引擎H3；runtime artifacts `921de81/e883de5`；600 requests；相同arrival/prompt/SLO协议 | Prism raw throughput低`0.78%/0.76%`，KV-token capacity为`1.93x/1.95x`；loaded goodput低`69.31%/66.92%`，不是online胜出 |
 | P12 压力A/B证明visual compaction页回收能改变调度结果 | 同commit、同20-request trace、24-page scaled-FP8 pool、common NVML sampler | compaction消除一次swap，H1 TTFT `-21.1%`，raw throughput `+0.78%`；goodput变化只跨一个请求，不作formal比例claim |
 | P13 phase-prefill原型被同trace loaded gate否决 | dirty 60-request H3-primary selection；H1/H2单请求exact与workspace审计先行 | 1024 chunk把mixed prefill max `446.229→119.489 ms`，但class-aware goodput `21.569→14.197 tok/s`（-34.18%）、TTFT p50 `+16.5%`、TPOT p50 `+1.98%`；候选代码已删除 |
+| 原生 HTTP/SSE 边界不是当前主要瓶颈 | 新 RTX 5090 UUID `GPU-2981...d743`；相同 60-request arrival trace；Prism network/in-process | raw throughput `214.503/214.398 tok/s`，network 相对 in-process `+0.049%`；只说明当前本机 HTTP/SSE 开销不可见 |
+| 动态视觉 Tensor Graph 在 loaded mixed-shape serving 中必须关闭 | 同一 600-request frozen H3 network trace；FCFS；唯一变量 graph on/off | graph-on 出现 2 个错误首 token，其中一个请求 64 token 全为 0；graph-off 为 0，peak `24,456→24,018 MiB`、raw `+0.88%`、TPOT p50 `-1.36%`；TTFT/E2E p50 与 goodput 退化，因此是 correctness/stability 修复，不是全面加速 |
+| 有界 vision-aware 调度改善 latency 但未通过 goodput 选择 | 同一 600-request frozen H3 network trace；visual Graph off；heavy threshold4096、decode interval32、heavy旁路上限2 | 相对 FCFS，TTFT p50/p90 `-14.51%/-3.91%`、E2E p50/p90 `-3.26%/-1.61%`、raw `-0.47%`，但 TPOT p50 `+1.22%`、goodput `-15.79%`；只保留为实验策略 |
 | ~~旧 P9-D H1 排名~~ | clean `c11b6e9`，输出 `76ad1f...14c6` | **已撤销**：repeat hash 稳定但内容与图片无关，不构成语义 correctness 或性能发布证据 |
 
 ## 必须带限制的结论
@@ -94,11 +98,20 @@
 | Prism rate-4 raw throughput距vLLM/SGLang不到`0.8%` | 只说明完成速率接近；class-aware goodput只有`65.093 tok/s`，明显低于`212.108/196.779 tok/s`，process peak也更高 |
 | Prism H1/H2 rate-4 TTFT低于SGLang `7.5%/51.0%` | 是两个heavy-visual class的bounded p50；text和single-image更慢，不能推广为整体online latency或goodput |
 | P13将最大prefill段缩短到约`119–134 ms` | 可抢占粒度改善但总stage/work增加；loaded median与goodput退化，原型已删除，不能写作最终实现 |
+| 原生 HTTP/SSE 已实现且 network/in-process raw 接近 | 只覆盖本机 loopback、native `/v1/generate` 和单 engine owner；不是 OpenAI-compatible、多frontend、跨机或生产服务验证 |
+| dynamic Vision Graph off 的 600-request结果 | 正确性、显存、raw、TPOT和尾部更稳，但 TTFT/E2E p50与SLO goodput更差；只能称为正确性与稳定性取舍 |
+| vision-aware 有界旁路改善 TTFT/E2E | 当前双 SLO goodput 下降，默认仍为 FCFS；不能写成 online throughput/goodput 优化 |
 
 ## 当前禁止的结论
 
 - “Prism 全面超过 vLLM/SGLang”。
 - “Prism 的 loaded/online H3 goodput 超过 vLLM/SGLang”。
+- “原生网络 serving 已与 vLLM/SGLang 完成完全同协议排名”；当前外部开发行使用各自
+  原生入口，只有请求类别与 arrival trace 对齐。
+- “动态视觉 Tensor Graph 可用于 mixed-shape loaded serving”或“关闭它全面提升
+  latency/goodput”；当前默认关闭是因为错误 token。
+- “vision-aware scheduler 提升 SLO goodput”或“已作为默认调度器”；600-request
+  frozen H3 中即使加旁路上限，goodput仍下降 `15.79%`。
 - “phase-decomposed multimodal prefill 已保留、默认启用或提升 online
   goodput/TPOT”；P13 原型已在同 trace 失败并删除。
 - “旧 `76ad1f...14c6` 或 `4a61f1...166f` hash 证明当前环境多模态语义正确”；这些

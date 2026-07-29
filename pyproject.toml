@@ -32,10 +32,18 @@ quality = [
     "pyarrow>=14.0",
     "requests>=2.31",
 ]
+serving = [
+    "aiohttp>=3.10,<4",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+]
 dev = [
     "pytest>=8.1",
     "ruff>=0.9",
 ]
+
+[project.scripts]
+prism-serve = "prism_infer.serving.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/xsmccc/Prism-Infer"

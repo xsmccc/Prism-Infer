@@ -238,6 +238,9 @@ class SchedulerConfig:
     scheduler_policy: str = "fcfs"
     max_queue_size: int | None = None
     max_consecutive_prefill_batches: int = 1
+    heavy_prefill_vision_patch_threshold: int = 4096
+    min_decode_batches_between_heavy_prefills: int = 32
+    max_light_prefill_bypasses_per_heavy: int = 2
 
     def __post_init__(self) -> None:
         _positive_int(
@@ -250,13 +253,26 @@ class SchedulerConfig:
             self.max_consecutive_prefill_batches,
             name="max_consecutive_prefill_batches",
         )
+        _positive_int(
+            self.heavy_prefill_vision_patch_threshold,
+            name="heavy_prefill_vision_patch_threshold",
+        )
+        _positive_int(
+            self.min_decode_batches_between_heavy_prefills,
+            name="min_decode_batches_between_heavy_prefills",
+        )
+        _positive_int(
+            self.max_light_prefill_bypasses_per_heavy,
+            name="max_light_prefill_bypasses_per_heavy",
+        )
         _boolean(
             self.enable_chunked_prefill,
             name="enable_chunked_prefill",
         )
-        if self.scheduler_policy != "fcfs":
+        if self.scheduler_policy not in {"fcfs", "vision_aware"}:
             raise ValueError(
-                f"scheduler_policy currently supports only 'fcfs', got {self.scheduler_policy!r}"
+                "scheduler_policy must be 'fcfs' or 'vision_aware', "
+                f"got {self.scheduler_policy!r}"
             )
         if self.max_queue_size is not None:
             _positive_int(self.max_queue_size, name="max_queue_size")
@@ -593,6 +609,15 @@ class PrismConfig:
             "scheduler_policy": "scheduler_policy",
             "max_queue_size": "max_queue_size",
             "max_consecutive_prefill_batches": ("max_consecutive_prefill_batches"),
+            "heavy_prefill_vision_patch_threshold": (
+                "heavy_prefill_vision_patch_threshold"
+            ),
+            "min_decode_batches_between_heavy_prefills": (
+                "min_decode_batches_between_heavy_prefills"
+            ),
+            "max_light_prefill_bypasses_per_heavy": (
+                "max_light_prefill_bypasses_per_heavy"
+            ),
         }
         execution_fields = {
             "decode_compile_region": "compile_region",
@@ -912,6 +937,18 @@ class Config:
     @property
     def max_consecutive_prefill_batches(self) -> int:
         return self.scheduler_config.max_consecutive_prefill_batches
+
+    @property
+    def heavy_prefill_vision_patch_threshold(self) -> int:
+        return self.scheduler_config.heavy_prefill_vision_patch_threshold
+
+    @property
+    def min_decode_batches_between_heavy_prefills(self) -> int:
+        return self.scheduler_config.min_decode_batches_between_heavy_prefills
+
+    @property
+    def max_light_prefill_bypasses_per_heavy(self) -> int:
+        return self.scheduler_config.max_light_prefill_bypasses_per_heavy
 
     @property
     def gpu_memory_utilization(self) -> float:

@@ -25,6 +25,7 @@ from prism_infer.engine.scheduler_policy import (
     AdmissionDecision,
     FCFSSchedulerPolicy,
     SchedulerPolicy,
+    VisionAwareSchedulerPolicy,
 )
 from prism_infer.engine.sequence import Sequence
 
@@ -119,15 +120,55 @@ class Scheduler:
             config.num_cpu_blocks,
             enable_prefix_caching=config.enable_prefix_caching,
         )
-        self.policy = policy or FCFSSchedulerPolicy(
-            max_model_len=self.max_model_len,
-            max_num_batched_tokens=self.max_num_batched_tokens,
-            max_num_seqs=self.max_num_seqs,
-            enable_chunked_prefill=self.enable_chunked_prefill,
-            max_chunk_size=self.max_chunk_size,
-            max_queue_size=config.max_queue_size,
-            max_consecutive_prefill_batches=(config.max_consecutive_prefill_batches),
+        scheduler_policy_name = getattr(config, "scheduler_policy", "fcfs")
+        heavy_prefill_threshold = getattr(
+            config,
+            "heavy_prefill_vision_patch_threshold",
+            4096,
         )
+        heavy_prefill_interval = getattr(
+            config,
+            "min_decode_batches_between_heavy_prefills",
+            32,
+        )
+        max_light_prefill_bypasses = getattr(
+            config,
+            "max_light_prefill_bypasses_per_heavy",
+            2,
+        )
+        if policy is None:
+            policy_type = (
+                VisionAwareSchedulerPolicy
+                if scheduler_policy_name == "vision_aware"
+                else FCFSSchedulerPolicy
+            )
+            policy_options = {
+                "max_model_len": self.max_model_len,
+                "max_num_batched_tokens": self.max_num_batched_tokens,
+                "max_num_seqs": self.max_num_seqs,
+                "enable_chunked_prefill": self.enable_chunked_prefill,
+                "max_chunk_size": self.max_chunk_size,
+                "max_queue_size": config.max_queue_size,
+                "max_consecutive_prefill_batches": (
+                    config.max_consecutive_prefill_batches
+                ),
+            }
+            if policy_type is VisionAwareSchedulerPolicy:
+                policy_options.update(
+                    {
+                        "heavy_prefill_vision_patch_threshold": (
+                            heavy_prefill_threshold
+                        ),
+                        "min_decode_batches_between_heavy_prefills": (
+                            heavy_prefill_interval
+                        ),
+                        "max_light_prefill_bypasses_per_heavy": (
+                            max_light_prefill_bypasses
+                        ),
+                    }
+                )
+            policy = policy_type(**policy_options)
+        self.policy = policy
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
         self.swapped: deque[Sequence] = deque()
@@ -135,6 +176,8 @@ class Scheduler:
         self.cancelled: deque[Sequence] = deque()
         self.requests: dict[int, Sequence] = {}
         self.consecutive_prefill_batches = 0
+        self.decode_batches_since_heavy_prefill = heavy_prefill_interval
+        self.light_prefill_bypasses_since_heavy = 0
         self.admitted_requests = 0
         self.rejected_requests = 0
         self.cancelled_requests = 0
@@ -142,6 +185,9 @@ class Scheduler:
         self.swap_in_operations = 0
         self.swap_preemptions = 0
         self.recompute_preemptions = 0
+        self.heavy_prefill_batches = 0
+        self.heavy_prefill_deferrals = 0
+        self.light_prefill_bypasses = 0
         self.peak_waiting = 0
         self.peak_running = 0
         self.peak_swapped = 0
@@ -212,6 +258,12 @@ class Scheduler:
             "swap_in_operations": self.swap_in_operations,
             "swap_preemptions": self.swap_preemptions,
             "recompute_preemptions": self.recompute_preemptions,
+            "heavy_prefill_batches": self.heavy_prefill_batches,
+            "heavy_prefill_deferrals": self.heavy_prefill_deferrals,
+            "light_prefill_bypasses": self.light_prefill_bypasses,
+            "light_prefill_bypasses_since_heavy": (
+                self.light_prefill_bypasses_since_heavy
+            ),
             "peak_waiting": self.peak_waiting,
             "peak_running": self.peak_running,
             "peak_swapped": self.peak_swapped,
@@ -227,6 +279,12 @@ class Scheduler:
         self.rejected.clear()
         self.cancelled.clear()
         self.consecutive_prefill_batches = 0
+        self.decode_batches_since_heavy_prefill = (
+            self.policy.min_decode_batches_between_heavy_prefills
+            if isinstance(self.policy, VisionAwareSchedulerPolicy)
+            else 1
+        )
+        self.light_prefill_bypasses_since_heavy = 0
         for name in (
             "admitted_requests",
             "rejected_requests",
@@ -235,6 +293,9 @@ class Scheduler:
             "swap_in_operations",
             "swap_preemptions",
             "recompute_preemptions",
+            "heavy_prefill_batches",
+            "heavy_prefill_deferrals",
+            "light_prefill_bypasses",
             "peak_waiting",
             "peak_running",
             "peak_swapped",
@@ -292,6 +353,7 @@ class Scheduler:
         self,
         seq: Sequence,
         *,
+        waiting_index: int,
         available_tokens: int,
         batch: _PrefillBatchBuilder,
     ) -> _PrefillCandidate:
@@ -320,18 +382,38 @@ class Scheduler:
         except BaseException:
             self.block_manager.deallocate(seq)
             raise
-        self.waiting.popleft()
+        del self.waiting[waiting_index]
         self.running.append(seq)
         return candidate
 
     def _admit_waiting_prefills(self, batch: _PrefillBatchBuilder) -> None:
+        has_decode = bool(self.swapped) or any(
+            seq.status is RequestState.DECODING for seq in self.running
+        )
         while (
             self.waiting
             and len(self.running) < self.max_num_seqs
             and batch.has_sequence_capacity
             and not batch.requires_dedicated_batch
         ):
-            seq = self.waiting[0]
+            waiting_index = self.policy.waiting_prefill_index(
+                tuple(self.waiting),
+                has_decode=has_decode,
+                decode_batches_since_heavy_prefill=(
+                    self.decode_batches_since_heavy_prefill
+                ),
+                light_prefill_bypasses_since_heavy=(
+                    self.light_prefill_bypasses_since_heavy
+                ),
+            )
+            if waiting_index is None:
+                if has_decode and isinstance(self.policy, VisionAwareSchedulerPolicy):
+                    self.heavy_prefill_deferrals += 1
+                break
+            if waiting_index > 0:
+                self.light_prefill_bypasses += 1
+                self.light_prefill_bypasses_since_heavy += 1
+            seq = self.waiting[waiting_index]
             candidate = self._prefill_candidate(
                 seq,
                 available_tokens=batch.available_tokens,
@@ -342,6 +424,7 @@ class Scheduler:
                 break
             allocated = self._allocate_waiting_prefill(
                 seq,
+                waiting_index=waiting_index,
                 available_tokens=batch.available_tokens,
                 batch=batch,
             )
@@ -473,10 +556,17 @@ class Scheduler:
             prefill_plan = self._prefill_plan()
             if prefill_plan is not None:
                 self.consecutive_prefill_batches += 1
+                if self.policy.is_heavy_prefill(
+                    prefill_plan.num_scheduled_vision_patches
+                ):
+                    self.decode_batches_since_heavy_prefill = 0
+                    self.light_prefill_bypasses_since_heavy = 0
+                    self.heavy_prefill_batches += 1
                 self._observe_state()
                 return prefill_plan
         plan = self._decode_plan()
         self.consecutive_prefill_batches = 0
+        self.decode_batches_since_heavy_prefill += 1
         return plan
 
     def preempt(

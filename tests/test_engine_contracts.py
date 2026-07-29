@@ -22,7 +22,10 @@ from prism_infer.engine.metrics import EngineMetrics
 from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.engine.request import RequestState
 from prism_infer.engine.scheduler import Scheduler
-from prism_infer.engine.scheduler_policy import FCFSSchedulerPolicy
+from prism_infer.engine.scheduler_policy import (
+    FCFSSchedulerPolicy,
+    VisionAwareSchedulerPolicy,
+)
 from prism_infer.engine.sequence import Sequence
 from prism_infer.sampling_params import SamplingParams
 
@@ -157,6 +160,61 @@ def test_fcfs_policy_admission_and_chunk_budget_are_pure() -> None:
     assert visual_policy.prefill_token_count(visual, available_tokens=4) == 1
     visual.num_computed_tokens = 1
     assert visual_policy.prefill_token_count(visual, available_tokens=5) == 5
+
+
+def test_vision_aware_policy_bypasses_heavy_prefill_with_bounded_credit() -> None:
+    policy = VisionAwareSchedulerPolicy(
+        max_model_len=8,
+        max_num_batched_tokens=8,
+        max_num_seqs=2,
+        enable_chunked_prefill=False,
+        max_chunk_size=8,
+        heavy_prefill_vision_patch_threshold=4,
+        min_decode_batches_between_heavy_prefills=3,
+    )
+    heavy = _sequence(
+        [1],
+        pixel_values=torch.zeros((4, 1)),
+        image_grid_thw=torch.ones((1, 3), dtype=torch.int64),
+    )
+    light = _sequence([2])
+
+    assert (
+        policy.waiting_prefill_index(
+            (heavy, light),
+            has_decode=True,
+            decode_batches_since_heavy_prefill=0,
+            light_prefill_bypasses_since_heavy=0,
+        )
+        == 1
+    )
+    assert (
+        policy.waiting_prefill_index(
+            (heavy,),
+            has_decode=True,
+            decode_batches_since_heavy_prefill=0,
+            light_prefill_bypasses_since_heavy=0,
+        )
+        is None
+    )
+    assert (
+        policy.waiting_prefill_index(
+            (heavy, light),
+            has_decode=True,
+            decode_batches_since_heavy_prefill=3,
+            light_prefill_bypasses_since_heavy=0,
+        )
+        == 0
+    )
+    assert (
+        policy.waiting_prefill_index(
+            (heavy, light),
+            has_decode=True,
+            decode_batches_since_heavy_prefill=0,
+            light_prefill_bypasses_since_heavy=2,
+        )
+        == 0
+    )
 
 
 def test_scheduler_emits_named_plan_and_advances_fsm() -> None:

@@ -1,7 +1,7 @@
 # Prism-Infer 秋招最终交付
 
-> 冻结日期：2026-07-24
-> 冻结分支：`codex/torch28-p9d`
+> 冻结日期：2026-07-29
+> 冻结分支：`codex/network-serving`
 > P12 closure 文档点：`96f46c4ee624d3fd5df22e9452ad18f285250898`
 > 正式 runtime commits：以 P10/P11/P12 各自 evidence ledger 为准（P12 rate-4
 > 为 `921de81/e883de5`）
@@ -10,8 +10,9 @@
 ## 1. 项目定位
 
 Prism-Infer 是一个面向 Qwen3-VL-8B 的单机多模态推理研究引擎。它不是把 vLLM
-封装一层，也不是生产网络服务；核心价值是从模型语义、Paged KV、GPU kernel、
-compiler/Graph 到 arrival-driven scheduler 建立完整、可审计的优化闭环。
+封装一层；当前已包含原生 HTTP/SSE 服务边界，但不是 OpenAI-compatible 或多机
+生产服务。核心价值是从模型语义、Paged KV、GPU kernel、compiler/Graph 到
+arrival-driven scheduler 建立完整、可审计的优化闭环。
 
 秋招中最有辨识度的三条主线：
 
@@ -30,10 +31,12 @@ compiler/Graph 到 arrival-driven scheduler 建立完整、可审计的优化闭
 - 自实现 Qwen3-VL text/vision、M-RoPE、DeepStack 与 decoder 主路径；
 - Request FSM、continuous batching、immutable BatchPlan、Executor、Paged KV
   manager、swap/CoW、metrics；
+- 原生 HTTP/SSE JSON/streaming、bounded ingress、断连取消与单 engine owner；
 - BF16 与 scaled-FP8 paged KV store/decode/Graph；
 - visual KV physical compaction、尾页回收、动态页复用；
 - batch1 `torch.compile` 无状态 decode 子图；
-- decode CUDA Graph fixed buckets 与重型固定-shape Vision tensor Graph；
+- decode CUDA Graph fixed buckets；固定 shape Vision tensor Graph 仅保留为受限能力，
+  dynamic mixed-shape serving 默认关闭；
 - guarded FP8 LM-head candidate + FP32 exact rerank；
 - packed gate/up projection；
 - schema 化 correctness、quality、TTFT、TPOT、E2E、goodput、NVML 与 raw evidence。
@@ -41,8 +44,10 @@ compiler/Graph 到 arrival-driven scheduler 建立完整、可审计的优化闭
 没有保留：
 
 - unit-scale FP8 质量失败路径作为最终 profile；
-- GQA4 merge、split-K、QKV packed、各种 cadence/guard、phase-decomposed prefill；
-- TP2、HTTP/gRPC、投机解码、PD 分离、megakernel、权重/激活量化的未验证 claim。
+- GQA4 merge、split-K、QKV packed、phase-decomposed prefill；
+- vision-aware scheduler 只保留为显式实验策略，不作为默认 goodput 优化；
+- TP2、OpenAI-compatible API、多机 serving、投机解码、PD 分离、megakernel、
+  权重/激活量化的未验证 claim。
 
 ## 3. 最终结果
 
@@ -99,6 +104,21 @@ P13 进一步实现 phase-decomposed prefill 原型。1024 chunk 将 mixed prefi
 `446.229 -> 119.489 ms`，但同 trace class-aware goodput 从 `21.569` 降至
 `14.197 tok/s`（-34.18%）、TTFT p50 `+16.5%`、TPOT p50 `+1.98%`，因此候选
 被删除。
+
+### 3.5 原生 HTTP/SSE 与视觉调度
+
+新 RTX 5090 上，Prism 60-request network/in-process raw throughput 为
+`214.503/214.398 tok/s`，差 `0.049%`，说明当前 loopback HTTP/SSE 不是主要瓶颈。
+profile 将 loaded stall 定位到 `204–232 ms` 的 H1/H2 原子视觉 prefill。
+
+600-request frozen H3 中，dynamic Vision Graph on 产生 2 个异常首 token，其中一个
+请求 64 个 token 全为 0。默认关闭后异常 `2→0`、显存
+`24,456→24,018 MiB`、raw `+0.88%`、TPOT p50 `-1.36%`，但 goodput
+`-15.39%`，所以这是 correctness/stability 修复而不是全面加速。
+
+有界 vision-aware 策略把 TTFT p50/p90 改善 `14.51%/3.91%`，但 goodput
+下降 `15.79%`，最终默认仍为 FCFS。完整证据与面试复盘见
+[NETWORK_SERVING_RESULTS](NETWORK_SERVING_RESULTS.md)。
 
 ## 4. 推荐简历 bullets
 

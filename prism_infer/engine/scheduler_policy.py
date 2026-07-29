@@ -44,6 +44,17 @@ class SchedulerPolicy(Protocol):
         consecutive_prefill_batches: int,
     ) -> bool: ...
 
+    def waiting_prefill_index(
+        self,
+        candidates: TypingSequence[Sequence],
+        *,
+        has_decode: bool,
+        decode_batches_since_heavy_prefill: int,
+        light_prefill_bypasses_since_heavy: int,
+    ) -> int | None: ...
+
+    def is_heavy_prefill(self, vision_patches: int) -> bool: ...
+
 
 @dataclass(frozen=True, slots=True)
 class FCFSSchedulerPolicy:
@@ -166,3 +177,73 @@ class FCFSSchedulerPolicy:
         if not has_decode:
             return True
         return consecutive_prefill_batches < self.max_consecutive_prefill_batches
+
+    def waiting_prefill_index(
+        self,
+        candidates: TypingSequence[Sequence],
+        *,
+        has_decode: bool,
+        decode_batches_since_heavy_prefill: int,
+        light_prefill_bypasses_since_heavy: int,
+    ) -> int | None:
+        del (
+            has_decode,
+            decode_batches_since_heavy_prefill,
+            light_prefill_bypasses_since_heavy,
+        )
+        return 0 if candidates else None
+
+    def is_heavy_prefill(self, vision_patches: int) -> bool:
+        del vision_patches
+        return False
+
+
+@dataclass(frozen=True, slots=True)
+class VisionAwareSchedulerPolicy(FCFSSchedulerPolicy):
+    """Protect decode cadence from long, atomic vision-prefill batches.
+
+    A heavy request may be bypassed by the oldest lightweight request while
+    decode credit accumulates. Decode credit or the explicit bypass cap then
+    restores the oldest request's priority.
+    """
+
+    heavy_prefill_vision_patch_threshold: int = 4096
+    min_decode_batches_between_heavy_prefills: int = 32
+    max_light_prefill_bypasses_per_heavy: int = 2
+    name: str = "vision_aware"
+
+    def __post_init__(self) -> None:
+        FCFSSchedulerPolicy.__post_init__(self)
+        if self.heavy_prefill_vision_patch_threshold <= 0:
+            raise ValueError("heavy_prefill_vision_patch_threshold must be positive")
+        if self.min_decode_batches_between_heavy_prefills <= 0:
+            raise ValueError("min_decode_batches_between_heavy_prefills must be positive")
+        if self.max_light_prefill_bypasses_per_heavy <= 0:
+            raise ValueError("max_light_prefill_bypasses_per_heavy must be positive")
+
+    def waiting_prefill_index(
+        self,
+        candidates: TypingSequence[Sequence],
+        *,
+        has_decode: bool,
+        decode_batches_since_heavy_prefill: int,
+        light_prefill_bypasses_since_heavy: int,
+    ) -> int | None:
+        if not candidates:
+            return None
+        if (
+            not has_decode
+            or decode_batches_since_heavy_prefill
+            >= self.min_decode_batches_between_heavy_prefills
+            or light_prefill_bypasses_since_heavy
+            >= self.max_light_prefill_bypasses_per_heavy
+            or not self.is_heavy_prefill(candidates[0].vision_patch_count)
+        ):
+            return 0
+        for index, candidate in enumerate(candidates[1:], start=1):
+            if not self.is_heavy_prefill(candidate.vision_patch_count):
+                return index
+        return None
+
+    def is_heavy_prefill(self, vision_patches: int) -> bool:
+        return vision_patches >= self.heavy_prefill_vision_patch_threshold

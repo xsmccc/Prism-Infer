@@ -8,6 +8,7 @@ import json
 import random
 import sys
 from collections import Counter
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, Thread
@@ -42,6 +43,10 @@ from prism_infer.analysis.online_serving import (
     summarize_distribution,
     summarize_online_run,
     validate_online_benchmark_record,
+)
+from prism_infer.analysis.performance_profile import (
+    performance_profile,
+    validate_performance_profile_record,
 )
 from prism_infer.engine.kv_quantization import kv_cache_storage_bytes
 from prism_infer.engine.online import OnlineRequest, OnlineServingSession
@@ -626,7 +631,17 @@ def _build_engine(args: argparse.Namespace):
         max_chunk_size=args.max_chunk_size,
         enable_prefix_caching=args.enable_prefix_caching,
         max_queue_size=args.max_queue_size,
+        scheduler_policy=args.scheduler_policy,
         max_consecutive_prefill_batches=(args.max_consecutive_prefill_batches),
+        heavy_prefill_vision_patch_threshold=(
+            args.heavy_prefill_vision_patch_threshold
+        ),
+        min_decode_batches_between_heavy_prefills=(
+            args.min_decode_batches_between_heavy_prefills
+        ),
+        max_light_prefill_bypasses_per_heavy=(
+            args.max_light_prefill_bypasses_per_heavy
+        ),
         visual_pruning_keep_ratio=args.visual_pruning_keep_ratio,
         visual_pruning_min_keep_tokens=args.visual_pruning_min_keep_tokens,
         visual_pruning_video_min_keep_tokens=(
@@ -676,7 +691,27 @@ def main() -> None:
     parser.add_argument("--max-num-seqs", type=int, default=16)
     parser.add_argument("--max-chunk-size", type=int, default=512)
     parser.add_argument("--max-queue-size", type=int)
+    parser.add_argument(
+        "--scheduler-policy",
+        choices=("fcfs", "vision_aware"),
+        default="fcfs",
+    )
     parser.add_argument("--max-consecutive-prefill-batches", type=int, default=1)
+    parser.add_argument(
+        "--heavy-prefill-vision-patch-threshold",
+        type=int,
+        default=4096,
+    )
+    parser.add_argument(
+        "--min-decode-batches-between-heavy-prefills",
+        type=int,
+        default=32,
+    )
+    parser.add_argument(
+        "--max-light-prefill-bypasses-per-heavy",
+        type=int,
+        default=2,
+    )
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     parser.add_argument("--num-kvcache-blocks", type=int, default=16)
     parser.add_argument("--kvcache-block-size", type=int, default=256)
@@ -719,6 +754,10 @@ def main() -> None:
         help="JSON file with per-class TTFT/TPOT SLOs derived from vLLM low load",
     )
     parser.add_argument("--output")
+    parser.add_argument(
+        "--profile-output",
+        help="write the measured online run's semantic CPU/CUDA profile",
+    )
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -752,6 +791,7 @@ def main() -> None:
     mode = MODE_SPECS[args.mode]
     llm = _build_engine(args)
     process_memory_sampler = _DeviceProcessMemorySampler()
+    profile_record = None
     process_memory_sampler.start()
     try:
         if args.warmup_requests:
@@ -779,7 +819,30 @@ def main() -> None:
             sampling=sampling,
             key_prefix="formal",
         )
-        run = OnlineServingSession(llm).run(requests)
+        trace_sha256 = _canonical_sha256(
+            {
+                "classes": request_classes,
+                "offsets_s": [request.arrival_offset_s for request in requests],
+            }
+        )
+        profile_context = (
+            performance_profile(
+                metadata={
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                    "model": str(Path(args.model).resolve()),
+                    "mode": args.mode,
+                    "workload_case": workload_case,
+                    "request_count": args.requests,
+                    "trace_sha256": trace_sha256,
+                    "max_tokens": args.max_tokens,
+                },
+                cuda_timing=True,
+            )
+            if args.profile_output
+            else nullcontext(None)
+        )
+        with profile_context as profile_session:
+            run = OnlineServingSession(llm).run(requests)
         torch.cuda.synchronize()
         process_device_memory = process_memory_sampler.stop()
         run_record = run.to_record()
@@ -841,14 +904,7 @@ def main() -> None:
                 "request_rate_per_s": args.request_rate,
                 "seed": args.seed,
                 "offsets_s": [request.arrival_offset_s for request in requests],
-                "trace_sha256": _canonical_sha256(
-                    {
-                        "classes": request_classes,
-                        "offsets_s": [
-                            request.arrival_offset_s for request in requests
-                        ],
-                    }
-                ),
+                "trace_sha256": trace_sha256,
             },
             "engine": {
                 "mode": args.mode,
@@ -860,7 +916,17 @@ def main() -> None:
                 "max_num_seqs": args.max_num_seqs,
                 "max_chunk_size": args.max_chunk_size,
                 "max_queue_size": args.max_queue_size,
+                "scheduler_policy": args.scheduler_policy,
                 "max_consecutive_prefill_batches": (args.max_consecutive_prefill_batches),
+                "heavy_prefill_vision_patch_threshold": (
+                    args.heavy_prefill_vision_patch_threshold
+                ),
+                "min_decode_batches_between_heavy_prefills": (
+                    args.min_decode_batches_between_heavy_prefills
+                ),
+                "max_light_prefill_bypasses_per_heavy": (
+                    args.max_light_prefill_bypasses_per_heavy
+                ),
                 "num_kvcache_blocks": args.num_kvcache_blocks,
                 "kvcache_block_size": args.kvcache_block_size,
                 "enable_prefix_caching": args.enable_prefix_caching,
@@ -907,6 +973,26 @@ def main() -> None:
             "summary": summary,
         }
         validate_online_benchmark_record(record)
+        if profile_session is not None:
+            profile_session.metadata.update(
+                {
+                    "git_commit": git.commit,
+                    "git_dirty": git.dirty,
+                    "gpu": torch.cuda.get_device_name(0),
+                    "cuda": torch.version.cuda,
+                    "torch": torch.__version__,
+                    "completed_requests": sum(
+                        request["state"] == "finished"
+                        for request in run_record["requests"]
+                    ),
+                    "terminal_failure_count": record["terminal_failures"]["count"],
+                    "output_token_ids_sha256": _canonical_sha256(
+                        [request["token_ids"] for request in run_record["requests"]]
+                    ),
+                }
+            )
+            profile_record = profile_session.to_record()
+            validate_performance_profile_record(profile_record)
     finally:
         if process_memory_sampler.running:
             try:
@@ -921,6 +1007,19 @@ def main() -> None:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(rendered + "\n", encoding="utf-8")
         print(f"wrote online record to {output}", file=sys.stderr)
+    if args.profile_output:
+        profile_output = Path(args.profile_output)
+        profile_output.parent.mkdir(parents=True, exist_ok=True)
+        profile_output.write_text(
+            json.dumps(
+                profile_record,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(f"wrote online profile to {profile_output}", file=sys.stderr)
     print(rendered)
 
 

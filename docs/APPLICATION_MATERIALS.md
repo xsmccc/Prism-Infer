@@ -1,6 +1,6 @@
 # Prism-Infer 投递与面试材料
 
-> 更新日期：2026-07-24
+> 更新日期：2026-07-29
 > 使用规则：所有数字必须能回到 [CLAIMS](CLAIMS.md) 和对应证据；投递时选择与岗位
 > 匹配的 2–3 条，不要把本文件整段复制到一页简历。
 
@@ -29,7 +29,7 @@ vLLM/SGLang baselines, while scaled-FP8 nearly doubled KV capacity within the sa
 
 - 自实现 Qwen3-VL-8B text/vision/M-RoPE/DeepStack 与推理 engine 主路径，覆盖
   text、单图、多图、视频和 mixed batch；建立模块、full logits/PPL、greedy、
-  CUDA Graph和长输出分层门禁，P9-C clean full gate为 `377 passed / 6 skipped`。
+  CUDA Graph和长输出分层数值验证。
 - 设计 content-aware visual KV physical compaction：prefill末层 attention top-k、
   page内重排/尾页回收、logical M-RoPE与physical KV位置分离；7-image/35-caption
   preflight将 physical tokens/active bytes降至 `0.535x/0.538x`，token-F1与
@@ -74,6 +74,10 @@ vLLM/SGLang baselines, while scaled-FP8 nearly doubled KV capacity within the sa
 - 构建600-request Poisson多模态H3与vLLM/SGLang同协议online对比，统一
   prompt/arrival/SLO hash、TTFT/TPOT/goodput/NVML；定位loaded瓶颈为原子visual
   prefill，并因同trace goodput/median退化删除phase-decomposed候选。
+- 实现原生HTTP/SSE JSON与token streaming、bounded ingress、断连取消和单engine
+  owner；相同60-request trace的network/in-process raw吞吐仅差`0.049%`，进一步将
+  瓶颈隔离到engine而非网络。600-request动态视觉Graph出现错误token，最终保留
+  decode Graph并关闭dynamic vision Graph。
 
 ### 2.4 English bullets
 
@@ -125,9 +129,11 @@ greedy decode 放进 CUDA Graph。最终在同一 RTX 5090、同 prompt hash、w
 第二条线是 per-token/per-KV-head scaled-FP8 KV：三个标准多模态数据集的六个正式 cell
 全部通过质量门禁，同容量 KV bytes下降48.44%、进程NVML峰值下降8.24%；同约4 GiB
 budget容量提升94.69%，TPOT仍小幅领先两家外部baseline。我保留了E2E mixed、online
-loaded goodput未胜出和TP2/网络server尚未验证这些边界。600-request rate-4 H3里，
+loaded goodput未胜出和TP2尚未验证这些边界。原生HTTP/SSE对照证明网络不是瓶颈；
+600-request rate-4 H3里，
 Prism raw throughput距vLLM/SGLang不到0.8%，但goodput明显落后；我把它归因到长
-visual prefill，并用被否决的phase-chunk原型证明缩短单次阻塞不等于系统加速。
+visual prefill，并用被否决的phase-chunk和vision-aware调度证明缩短单次阻塞或中位
+延迟不等于goodput提升。动态视觉Graph还出现了错误token，所以默认只保留decode Graph。
 
 ## 5. 5 分钟项目讲解结构
 
@@ -168,8 +174,9 @@ visual prefill，并用被否决的phase-chunk原型证明缩短单次阻塞不�
 ### 4:30–5:00：下一步
 
 - 为 content-aware + scaled-FP8 组合补标准多模态质量矩阵；
-- 建立真实网络 server后，在 P12 同 trace 基础上重做包含 frontend/network 的
-  external online SLO 与容量/并发 goodput；
+- profile loaded batch `2/4/8` decode Graph 的实际 residency、launch gap 与
+  GEMV/attention占比，解释 Prism TPOT 与外部开发基线的剩余差距；
+- 若要发布完全同协议network排名，再为vLLM/SGLang补同一HTTP payload/frontend；
 - P13 已证伪当前phase-decomposed chunk方案；只在profile证明stream可重叠且不受
   memory-bandwidth竞争时，再研究异步vision/language pipeline；
 - 只在 profile 证明收益时研究 weight-only/outlier-correction kernel，不再扩展已失败的
@@ -320,9 +327,10 @@ COW、swap、compaction和Graph生命周期；它在冻结的六个标准质量c
 ### 当前最大的技术债是什么？
 
 loaded H3 goodput仍受长visual prefill干扰，P13当前phase-chunk设计已经被同trace否决；
-online仍是in-process harness而非网络server；TP2没有合法双卡动态证据；跨框架
-page-table/allocator字节尚不可比；scaled FP8目标是容量而非已证明的runtime speedup。
-每项都有明确证据和禁止claim。
+原生HTTP/SSE已完成，但外部两家尚未统一到同一network frontend；动态visual Graph
+在mixed-shape loaded trace中有错误token并已默认关闭；TP2没有合法双卡动态证据；
+跨框架page-table/allocator字节尚不可比；scaled FP8目标是容量而非已证明的runtime
+speedup。每项都有明确证据和禁止claim。
 
 ## 8. 作品集页面建议
 
