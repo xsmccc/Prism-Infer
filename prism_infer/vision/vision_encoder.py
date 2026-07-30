@@ -18,6 +18,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from prism_infer.observability import profile_region
 from prism_infer.models.qwen3_vl_architecture import (
     CANONICAL_VISION_HIDDEN_SIZE,
     CANONICAL_VISION_IN_CHANNELS,
@@ -59,6 +60,21 @@ class _VisionTensorCUDAGraphEntry:
     capture_net_allocated_delta_bytes: int
     capture_net_reserved_delta_bytes: int
     replay_count: int = 0
+
+
+@dataclass(slots=True)
+class VisionEncoderForwardState:
+    """Vision execution paused at an exact Transformer block boundary."""
+
+    hidden_states: torch.Tensor
+    cos: torch.Tensor
+    sin: torch.Tensor
+    cu_seqlens: torch.Tensor
+    max_seqlen: int
+    segment_ranges: tuple[tuple[int, int], ...]
+    next_block: int = 0
+    deepstack_features: list[torch.Tensor] | None = None
+    main: torch.Tensor | None = None
 
 
 UNBATCHED_ATTENTION_TENSOR_RANK = 3
@@ -746,6 +762,101 @@ class VisionEncoder(nn.Module):
 
         main = self.merger(x)
         return main, deepstack_features
+
+    def begin_cooperative_forward(
+        self,
+        pixel_values: torch.Tensor,
+        grid_thw: torch.Tensor,
+    ) -> VisionEncoderForwardState:
+        """Prepare a vision payload for block-boundary execution."""
+
+        if self.enable_tensor_cudagraph:
+            raise RuntimeError(
+                "cooperative vision execution cannot use a monolithic "
+                "Vision CUDA Graph"
+            )
+        (
+            hidden_states,
+            cos,
+            sin,
+            cu_seqlens,
+            max_seqlen,
+            segment_ranges,
+        ) = self.prepare_tensor_region_inputs(pixel_values, grid_thw)
+        return VisionEncoderForwardState(
+            hidden_states=hidden_states,
+            cos=cos,
+            sin=sin,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=max_seqlen,
+            segment_ranges=segment_ranges,
+            deepstack_features=[],
+        )
+
+    def advance_cooperative_forward(
+        self,
+        state: VisionEncoderForwardState,
+        *,
+        max_blocks: int,
+    ) -> bool:
+        """Run a bounded block quantum and report whether merging completed."""
+
+        if not isinstance(state, VisionEncoderForwardState):
+            raise TypeError("state must be VisionEncoderForwardState")
+        if max_blocks <= 0:
+            raise ValueError(f"max_blocks must be positive, got {max_blocks}")
+        if state.main is not None:
+            return True
+        block_end = min(state.next_block + max_blocks, len(self.blocks))
+        for block_index in range(state.next_block, block_end):
+            state.hidden_states = self.blocks[block_index](
+                state.hidden_states,
+                cos=state.cos,
+                sin=state.sin,
+                cu_seqlens=state.cu_seqlens,
+                max_seqlen=state.max_seqlen,
+                segment_ranges=state.segment_ranges,
+            )
+            if block_index in self.deepstack_visual_indexes:
+                merger_index = self.deepstack_visual_indexes.index(
+                    block_index
+                )
+                with profile_region(
+                    "vision.deepstack_merger",
+                    metadata={
+                        "block_index": block_index,
+                        "tokens": int(state.hidden_states.shape[0]),
+                    },
+                ):
+                    state.deepstack_features.append(
+                        self.deepstack_merger_list[merger_index](
+                            state.hidden_states
+                        )
+                    )
+        state.next_block = block_end
+        if state.next_block != len(self.blocks):
+            return False
+        with profile_region(
+            "vision.main_merger",
+            metadata={"tokens": int(state.hidden_states.shape[0])},
+        ):
+            state.main = self.merger(state.hidden_states)
+        return True
+
+    def finish_cooperative_forward(
+        self,
+        state: VisionEncoderForwardState,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        """Return merged outputs after every vision block has executed."""
+
+        if not isinstance(state, VisionEncoderForwardState):
+            raise TypeError("state must be VisionEncoderForwardState")
+        if state.main is None:
+            raise RuntimeError(
+                "cannot finish an incomplete vision forward: "
+                f"{state.next_block}/{len(self.blocks)} blocks"
+            )
+        return state.main, list(state.deepstack_features or ())
 
     @staticmethod
     def _tensor_cudagraph_key(

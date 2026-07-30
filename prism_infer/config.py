@@ -333,6 +333,9 @@ class ExecutionConfig:
     fused_add_rmsnorm: bool = False
     packed_kv_projection: bool = False
     block4_gate_up: bool = False
+    cooperative_prefill: bool = False
+    cooperative_prefill_layer_quantum: int = 1
+    cooperative_prefill_vision_block_quantum: int | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -375,6 +378,19 @@ class ExecutionConfig:
             self.block4_gate_up,
             name="enable_decode_block4_gate_up",
         )
+        _boolean(
+            self.cooperative_prefill,
+            name="enable_cooperative_prefill",
+        )
+        _positive_int(
+            self.cooperative_prefill_layer_quantum,
+            name="cooperative_prefill_layer_quantum",
+        )
+        if self.cooperative_prefill_vision_block_quantum is not None:
+            _positive_int(
+                self.cooperative_prefill_vision_block_quantum,
+                name="cooperative_prefill_vision_block_quantum",
+            )
         if self.fused_qk_mrope and not self.fused_qk_rmsnorm:
             raise ValueError(
                 "enable_fused_qk_mrope requires enable_fused_qk_rmsnorm"
@@ -423,6 +439,13 @@ class ExecutionConfig:
             raise ValueError(
                 f"execution backend {backend.value!r} cannot use "
                 f"decode_compile_region={self.compile_region!r}"
+            )
+        if self.cooperative_prefill and backend not in (
+            ExecutionBackendName.CUDA_GRAPH,
+            ExecutionBackendName.COMPILE_GRAPH,
+        ):
+            raise ValueError(
+                "enable_cooperative_prefill requires a CUDA Graph execution backend"
             )
 
 
@@ -561,6 +584,11 @@ class PrismConfig:
                 raise ValueError(
                     "enable_decode_block4_gate_up requires a CUDA Graph backend"
                 )
+        if (
+            self.execution.cooperative_prefill
+            and self.model.tensor_parallel_size != 1
+        ):
+            raise ValueError("enable_cooperative_prefill currently supports TP1 only")
 
     @classmethod
     def from_flat_options(
@@ -631,6 +659,13 @@ class PrismConfig:
             "enable_fused_add_rmsnorm": "fused_add_rmsnorm",
             "enable_packed_kv_projection": "packed_kv_projection",
             "enable_decode_block4_gate_up": "block4_gate_up",
+            "enable_cooperative_prefill": "cooperative_prefill",
+            "cooperative_prefill_layer_quantum": (
+                "cooperative_prefill_layer_quantum"
+            ),
+            "cooperative_prefill_vision_block_quantum": (
+                "cooperative_prefill_vision_block_quantum"
+            ),
         }
         control_fields = {"enforce_eager", "execution_backend"}
         allowed = (
@@ -1036,6 +1071,23 @@ class Config:
     @property
     def enable_decode_block4_gate_up(self) -> bool:
         return self.execution_config.block4_gate_up
+
+    @property
+    def enable_cooperative_prefill(self) -> bool:
+        return self.execution_config.cooperative_prefill
+
+    @property
+    def cooperative_prefill_layer_quantum(self) -> int:
+        return self.execution_config.cooperative_prefill_layer_quantum
+
+    @property
+    def cooperative_prefill_vision_block_quantum(self) -> int:
+        configured = (
+            self.execution_config.cooperative_prefill_vision_block_quantum
+        )
+        if configured is None:
+            return self.cooperative_prefill_layer_quantum
+        return configured
 
     @property
     def decode_compile_mode(self) -> str:

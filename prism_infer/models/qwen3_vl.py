@@ -5,6 +5,7 @@ Qwen3-VL-8B 完整模型定义 (Vision + LLM + DeepStack).
 """
 
 import math
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -28,6 +29,7 @@ from prism_infer.models.qwen3_vl_architecture import (
 )
 from prism_infer.observability import is_trace_enabled, profile_region
 from prism_infer.ops.add_rmsnorm import (
+    MAX_EXACT_ADD_RMSNORM_BATCH,
     fused_add_rmsnorm,
     fused_add_rmsnorm_prefill,
 )
@@ -37,10 +39,12 @@ from prism_infer.ops.block4_gate_up import (
 )
 from prism_infer.ops.cutlass_swiglu import maybe_cutlass_dual_swiglu
 from prism_infer.ops.qk_rmsnorm import (
+    MAX_EXACT_QK_RMSNORM_BATCH,
     fused_qk_rmsnorm,
     maybe_fused_qk_rmsnorm_prefill,
 )
 from prism_infer.ops.selective_topk import (
+    MAX_SELECTIVE_TOPK_BATCH,
     rerank_greedy_candidates,
     selective_topk_indices,
 )
@@ -58,6 +62,21 @@ FP8_SELECTIVE_FP32_LOGITS_TOP_K = 64
 BATCHED_TOKEN_FEATURES_RANK = 3
 MROPE_POSITION_MATRIX_RANK = 2
 POSITION_EMBEDDING_TENSOR_COUNT = 2
+
+
+@dataclass(slots=True)
+class Qwen3VLTextForwardState:
+    """Resumable language-model state at an exact Transformer layer boundary."""
+
+    hidden_states: torch.Tensor
+    position_embeddings: tuple[torch.Tensor, torch.Tensor]
+    attention_mask: torch.Tensor | None
+    visual_pos_masks: torch.Tensor | None
+    deepstack_visual_embeds: list[torch.Tensor] | None
+    residual: torch.Tensor | None
+    next_layer: int
+    use_fused_add_rmsnorm: bool
+    is_prefill: bool
 
 
 def compile_decode_o_proj(
@@ -102,8 +121,12 @@ def compile_decode_fp8_lm_head(
         weight_scale: torch.Tensor,
     ) -> torch.Tensor:
         hidden_scale = (
-            hidden_states.float().abs().amax().clamp_min(1e-12) / fp8_max
-        ).reshape(1, 1)
+            hidden_states.float()
+            .abs()
+            .amax(dim=-1, keepdim=True)
+            .clamp_min(1e-12)
+            / fp8_max
+        )
         hidden_fp8 = (
             (hidden_states.float() / hidden_scale)
             .clamp(-fp8_max, fp8_max)
@@ -125,7 +148,7 @@ def compile_decode_fp8_lm_head(
         candidate_projection,
         backend="inductor",
         fullgraph=True,
-        dynamic=False,
+        dynamic=True,
         options=compile_options,
     )
 
@@ -435,7 +458,7 @@ class Qwen3VLTextAttention(nn.Module):
             and hidden_states.is_cuda
             and not torch.compiler.is_compiling()
             and not context.is_prefill
-            and hidden_states.shape[0] <= 4
+            and hidden_states.shape[0] <= MAX_EXACT_QK_RMSNORM_BATCH
             and context.slot_mapping is not None
             and self.engine_attn.k_cache.numel() > 0
             and self.engine_attn.k_cache.dtype == torch.bfloat16
@@ -503,7 +526,7 @@ class Qwen3VLTextAttention(nn.Module):
             and q.is_cuda
             and not torch.compiler.is_compiling()
             and not is_prefill
-            and q.shape[0] <= 4
+            and q.shape[0] <= MAX_EXACT_QK_RMSNORM_BATCH
         ):
             fused_positions = {}
             if self.fused_qk_mrope_enabled and position_embeddings is not None:
@@ -959,7 +982,7 @@ class Qwen3VLTextModel(nn.Module):
         use_fused_add_rmsnorm = fused_add_rmsnorm_base and (
             is_prefill
             or (
-                hidden_states.shape[0] <= 4
+                hidden_states.shape[0] <= MAX_EXACT_ADD_RMSNORM_BATCH
                 and deepstack_visual_embeds is None
             )
         )
@@ -1002,6 +1025,137 @@ class Qwen3VLTextModel(nn.Module):
         else:
             hidden_states = self.norm(hidden_states)
         return hidden_states
+
+    def begin_cooperative_forward(
+        self,
+        *,
+        inputs_embeds: torch.Tensor,
+        position_ids: torch.Tensor | None,
+        attention_mask: torch.Tensor | None,
+        visual_pos_masks: torch.Tensor | None,
+        deepstack_visual_embeds: list[torch.Tensor] | None,
+    ) -> Qwen3VLTextForwardState:
+        """Prepare a prefill that can yield only at Transformer layer boundaries."""
+
+        if position_ids is None:
+            device = inputs_embeds.device
+            if inputs_embeds.ndim == FLATTENED_TOKEN_FEATURES_RANK:
+                position_ids = torch.arange(inputs_embeds.shape[0], device=device)
+            else:
+                sequence_length = inputs_embeds.shape[1]
+                position_ids = torch.arange(
+                    sequence_length,
+                    device=device,
+                ).unsqueeze(0)
+        elif (
+            inputs_embeds.ndim == FLATTENED_TOKEN_FEATURES_RANK
+            and position_ids.ndim == MROPE_POSITION_MATRIX_RANK
+            and position_ids.shape[0] == MROPE_AXIS_COUNT
+        ):
+            position_ids = position_ids[:, None, :]
+        position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
+
+        fused_add_rmsnorm_base = (
+            self.fused_add_rmsnorm_enabled
+            and inputs_embeds.ndim == FLATTENED_TOKEN_FEATURES_RANK
+            and inputs_embeds.is_cuda
+            and not torch.compiler.is_compiling()
+            and attention_mask is None
+        )
+        is_prefill = fused_add_rmsnorm_base and get_context().is_prefill
+        use_fused_add_rmsnorm = fused_add_rmsnorm_base and (
+            is_prefill
+            or (
+                inputs_embeds.shape[0] <= MAX_EXACT_ADD_RMSNORM_BATCH
+                and deepstack_visual_embeds is None
+            )
+        )
+        return Qwen3VLTextForwardState(
+            hidden_states=inputs_embeds,
+            position_embeddings=position_embeddings,
+            attention_mask=attention_mask,
+            visual_pos_masks=visual_pos_masks,
+            deepstack_visual_embeds=deepstack_visual_embeds,
+            residual=None,
+            next_layer=0,
+            use_fused_add_rmsnorm=use_fused_add_rmsnorm,
+            is_prefill=is_prefill,
+        )
+
+    def advance_cooperative_forward(
+        self,
+        state: Qwen3VLTextForwardState,
+        *,
+        max_layers: int,
+    ) -> bool:
+        """Execute a bounded layer quantum and report whether all layers ran."""
+
+        if not isinstance(state, Qwen3VLTextForwardState):
+            raise TypeError("state must be Qwen3VLTextForwardState")
+        if max_layers <= 0:
+            raise ValueError(f"max_layers must be positive, got {max_layers}")
+        if state.next_layer >= len(self.layers):
+            return True
+        layer_end = min(state.next_layer + max_layers, len(self.layers))
+        for layer_index in range(state.next_layer, layer_end):
+            layer = self.layers[layer_index]
+            if state.use_fused_add_rmsnorm:
+                state.hidden_states, state.residual = (
+                    layer.forward_fused_add_rmsnorm(
+                        state.hidden_states,
+                        state.residual,
+                        state.position_embeddings,
+                        prefill=state.is_prefill,
+                    )
+                )
+            else:
+                state.hidden_states = layer(
+                    state.hidden_states,
+                    position_embeddings=state.position_embeddings,
+                    attention_mask=state.attention_mask,
+                )
+            if (
+                state.deepstack_visual_embeds is not None
+                and layer_index < len(state.deepstack_visual_embeds)
+            ):
+                if state.use_fused_add_rmsnorm:
+                    state.hidden_states = state.hidden_states + state.residual
+                    state.residual = None
+                state.hidden_states = self._deepstack_process(
+                    state.hidden_states,
+                    state.visual_pos_masks,
+                    state.deepstack_visual_embeds[layer_index],
+                )
+        state.next_layer = layer_end
+        return state.next_layer == len(self.layers)
+
+    def finish_cooperative_forward(
+        self,
+        state: Qwen3VLTextForwardState,
+    ) -> torch.Tensor:
+        """Apply the exact ordinary final norm after the final layer quantum."""
+
+        if not isinstance(state, Qwen3VLTextForwardState):
+            raise TypeError("state must be Qwen3VLTextForwardState")
+        if state.next_layer != len(self.layers):
+            raise RuntimeError(
+                "cannot finish an incomplete language forward: "
+                f"{state.next_layer}/{len(self.layers)} layers"
+            )
+        if state.use_fused_add_rmsnorm:
+            fused_op = (
+                fused_add_rmsnorm_prefill
+                if state.is_prefill
+                else fused_add_rmsnorm
+            )
+            hidden_states, _ = fused_op(
+                state.hidden_states,
+                state.residual,
+                self.norm.weight,
+                eps=float(self.norm.eps),
+            )
+            return hidden_states
+        return self.norm(state.hidden_states)
 
     def _deepstack_process(
         self,
@@ -1197,17 +1351,20 @@ class Qwen3VLModel(nn.Module):
             [torch.cat(parts, dim=0) for parts in (deepstack_parts or [])],
         )
 
-    def forward(
+    def prepare_language_inputs(
         self,
         input_ids: torch.Tensor,
         pixel_values: torch.Tensor | None = None,
         image_grid_thw: torch.Tensor | None = None,
         pixel_values_videos: torch.Tensor | None = None,
         video_grid_thw: torch.Tensor | None = None,
-        position_embeddings: tuple | None = None,
-        attention_mask: torch.Tensor | None = None,
-        position_ids: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        visual_embeds: torch.Tensor | None = None,
+        deepstack_visual_embeds: tuple[torch.Tensor, ...] = (),
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor | None,
+        list[torch.Tensor] | None,
+    ]:
         """
         input_ids: [batch, seqlen]
         pixel_values: [N_image_patches, 1536] or None
@@ -1218,6 +1375,19 @@ class Qwen3VLModel(nn.Module):
         # 1. 文本 embedding
         with profile_region("model.token_embedding"):
             inputs_embeds = self.language_model.embed_tokens(input_ids)
+
+        if visual_embeds is not None and any(
+            value is not None
+            for value in (
+                pixel_values,
+                image_grid_thw,
+                pixel_values_videos,
+                video_grid_thw,
+            )
+        ):
+            raise ValueError(
+                "precomputed visual embeddings cannot be combined with raw visual inputs"
+            )
 
         visual_masks: list[torch.Tensor] = []
         deepstack_by_modality: list[list[torch.Tensor]] = []
@@ -1293,15 +1463,38 @@ class Qwen3VLModel(nn.Module):
             deepstack_by_modality.append(deepstack_video)
 
         visual_pos_masks = None
-        deepstack_visual_embeds = None
-        if visual_masks:
+        resolved_deepstack_visual_embeds = None
+        if visual_embeds is not None:
+            visual_pos_masks = (input_ids == self.image_token_id) | (
+                input_ids == self.video_token_id
+            )
+            if int(visual_pos_masks.sum().item()) != int(visual_embeds.shape[0]):
+                raise ValueError(
+                    "precomputed visual embedding rows do not match this prefill "
+                    f"slice: {visual_embeds.shape[0]} != "
+                    f"{int(visual_pos_masks.sum().item())}"
+                )
+            if not deepstack_visual_embeds or any(
+                value.shape != visual_embeds.shape
+                for value in deepstack_visual_embeds
+            ):
+                raise ValueError(
+                    "precomputed DeepStack embeddings must match visual_embeds"
+                )
+            visual_mask = visual_pos_masks.unsqueeze(-1).expand_as(inputs_embeds)
+            inputs_embeds = inputs_embeds.masked_scatter(
+                visual_mask,
+                visual_embeds.to(inputs_embeds.device, inputs_embeds.dtype),
+            )
+            resolved_deepstack_visual_embeds = list(deepstack_visual_embeds)
+        elif visual_masks:
             visual_pos_masks = visual_masks[0]
             for mask in visual_masks[1:]:
                 visual_pos_masks = visual_pos_masks | mask
             if len(deepstack_by_modality) == 1:
-                deepstack_visual_embeds = deepstack_by_modality[0]
+                resolved_deepstack_visual_embeds = deepstack_by_modality[0]
             else:
-                deepstack_visual_embeds = []
+                resolved_deepstack_visual_embeds = []
                 for layer_embeds in zip(*deepstack_by_modality):
                     joint = layer_embeds[0].new_zeros(
                         visual_pos_masks.sum(),
@@ -1310,9 +1503,38 @@ class Qwen3VLModel(nn.Module):
                     for mask, embeds in zip(visual_masks, layer_embeds):
                         modality_mask = mask[visual_pos_masks]
                         joint[modality_mask, :] = embeds.to(joint.device, joint.dtype)
-                    deepstack_visual_embeds.append(joint)
+                    resolved_deepstack_visual_embeds.append(joint)
 
-        # 3. LLM forward (DeepStack 注入在 Qwen3VLTextModel.forward 内部)
+        return inputs_embeds, visual_pos_masks, resolved_deepstack_visual_embeds
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        pixel_values: torch.Tensor | None = None,
+        image_grid_thw: torch.Tensor | None = None,
+        pixel_values_videos: torch.Tensor | None = None,
+        video_grid_thw: torch.Tensor | None = None,
+        visual_embeds: torch.Tensor | None = None,
+        deepstack_visual_embeds: tuple[torch.Tensor, ...] = (),
+        position_embeddings: tuple | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Run vision preparation and the uninterrupted language forward."""
+
+        (
+            inputs_embeds,
+            visual_pos_masks,
+            deepstack_visual_embeds,
+        ) = self.prepare_language_inputs(
+            input_ids=input_ids,
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
+            pixel_values_videos=pixel_values_videos,
+            video_grid_thw=video_grid_thw,
+            visual_embeds=visual_embeds,
+            deepstack_visual_embeds=deepstack_visual_embeds,
+        )
         with profile_region("model.language_model"):
             hidden_states = self.language_model(
                 inputs_embeds=inputs_embeds,
@@ -1387,6 +1609,8 @@ class Qwen3VLForCausalLM(nn.Module):
         image_grid_thw: torch.Tensor | None = None,
         pixel_values_videos: torch.Tensor | None = None,
         video_grid_thw: torch.Tensor | None = None,
+        visual_embeds: torch.Tensor | None = None,
+        deepstack_visual_embeds: tuple[torch.Tensor, ...] = (),
         position_embeddings: tuple | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
@@ -1397,6 +1621,8 @@ class Qwen3VLForCausalLM(nn.Module):
             image_grid_thw=image_grid_thw,
             pixel_values_videos=pixel_values_videos,
             video_grid_thw=video_grid_thw,
+            visual_embeds=visual_embeds,
+            deepstack_visual_embeds=deepstack_visual_embeds,
             position_embeddings=position_embeddings,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -1449,7 +1675,7 @@ class Qwen3VLForCausalLM(nn.Module):
                 self._compiled_decode_fp8_greedy_lm_head is not None
                 and self._decode_lm_head_weight_fp8 is not None
                 and self._decode_lm_head_weight_scale is not None
-                and hidden_states.shape[0] == 1
+                and hidden_states.shape[0] <= MAX_SELECTIVE_TOPK_BATCH
             )
             if use_fp8_candidates:
                 logits = self._compiled_decode_fp8_greedy_lm_head(
@@ -1461,7 +1687,10 @@ class Qwen3VLForCausalLM(nn.Module):
             else:
                 logits = self.lm_head(hidden_states)
                 candidate_count = SELECTIVE_FP32_LOGITS_TOP_K
-            if logits.dtype == torch.bfloat16 and logits.shape[0] <= 4:
+            if (
+                logits.dtype == torch.bfloat16
+                and logits.shape[0] <= MAX_SELECTIVE_TOPK_BATCH
+            ):
                 top_ids = selective_topk_indices(
                     logits,
                     k=candidate_count,

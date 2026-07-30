@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover - CPU-only environments
 
 SELECTIVE_TOPK_TILE_SIZE = 1024
 SELECTIVE_TOPK_NUM_WARPS = 8
-MAX_SELECTIVE_TOPK_BATCH = 4
+MAX_SELECTIVE_TOPK_BATCH = 8
 SELECTIVE_RERANK_NUM_WARPS = 8
 
 
@@ -246,7 +246,10 @@ def rerank_greedy_candidates(
     if weight.shape[1] != hidden_states.shape[1]:
         raise ValueError("LM-head weight and hidden size must match")
     if not 1 <= batch_size <= MAX_SELECTIVE_TOPK_BATCH:
-        raise ValueError("selective FP32 reranking supports batch sizes 1 through 4")
+        raise ValueError(
+            "selective FP32 reranking supports batch sizes 1 through "
+            f"{MAX_SELECTIVE_TOPK_BATCH}"
+        )
     if top_k <= 0 or top_k & (top_k - 1):
         raise ValueError("selective FP32 reranking candidate count must be a power of two")
     if top_k > SELECTIVE_TOPK_TILE_SIZE:

@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 from collections import deque
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    Future,
+    ThreadPoolExecutor,
+    wait,
+)
 from dataclasses import dataclass, field
 from math import isfinite
 from time import perf_counter_ns, sleep
@@ -18,6 +24,7 @@ _ONLINE_MEDIA_FIELD_BY_TYPE = {
     "video": "video",
 }
 _SUPPORTED_ONLINE_REQUEST_TYPES = frozenset({"text", *_ONLINE_MEDIA_FIELD_BY_TYPE})
+_ONLINE_PREPROCESS_WORKERS = 1
 
 
 def _non_negative_seconds(value: object, *, name: str) -> float:
@@ -128,6 +135,16 @@ class OnlineRunResult:
 
 
 @dataclass(slots=True)
+class _PendingPreprocess:
+    """One arrived media request being prepared off the engine thread."""
+
+    request: OnlineRequest
+    arrival_ns: int
+    request_id: int
+    future: Future
+
+
+@dataclass(slots=True)
 class _OnlineRunState:
     """Mutable state for one online event-loop invocation."""
 
@@ -137,6 +154,9 @@ class _OnlineRunState:
     started_ns: int
     internal_ids: dict[str, int] = field(default_factory=dict)
     outputs: dict[int, tuple[int, ...]] = field(default_factory=dict)
+    preprocessing: dict[str, _PendingPreprocess] = field(default_factory=dict)
+    admitted_keys: set[str] = field(default_factory=set)
+    deferred_cancellations: set[str] = field(default_factory=set)
 
     def elapsed_seconds(self, now_ns: int) -> float:
         return (now_ns - self.started_ns) / NANOSECONDS_PER_SECOND
@@ -145,10 +165,10 @@ class _OnlineRunState:
 class OnlineServingSession:
     """Drive arrivals and dynamic batches through one ``LLMEngine`` instance.
 
-    Arrival processing and model execution intentionally share one control
-    thread, matching the current engine architecture.  Arrivals that occur
-    during a GPU step retain their intended arrival timestamp and enter the
-    next scheduling decision when control returns.
+    Scheduler admission and model execution share one control thread. CPU
+    media preprocessing runs on a bounded worker so it cannot stall decode.
+    Arrivals retain their intended timestamp and enter scheduling after their
+    host-side preprocessing completes.
     """
 
     def __init__(
@@ -239,6 +259,7 @@ class OnlineServingSession:
     def _submit_ready_arrivals(
         self,
         state: _OnlineRunState,
+        preprocess_executor: ThreadPoolExecutor,
     ) -> None:
         while state.pending:
             elapsed_s = state.elapsed_seconds(self.clock_ns())
@@ -246,7 +267,71 @@ class OnlineServingSession:
                 return
             request = state.pending.popleft()
             arrival_ns = state.started_ns + int(request.arrival_offset_s * NANOSECONDS_PER_SECOND)
-            state.internal_ids[request.request_key] = self._submit(request, arrival_ns)
+            if request.payload.get("type", "text") == "text":
+                state.internal_ids[request.request_key] = self._submit(
+                    request,
+                    arrival_ns,
+                )
+                state.admitted_keys.add(request.request_key)
+                continue
+            request_id = self.engine._allocate_request_id()
+            state.internal_ids[request.request_key] = request_id
+            state.preprocessing[request.request_key] = _PendingPreprocess(
+                request=request,
+                arrival_ns=arrival_ns,
+                request_id=request_id,
+                future=preprocess_executor.submit(
+                    self._prepare_media_sequence,
+                    request,
+                    request_id,
+                ),
+            )
+
+    def _prepare_media_sequence(
+        self,
+        request: OnlineRequest,
+        request_id: int,
+    ) -> Any:
+        """Prepare one media request without touching scheduler state."""
+
+        payload = request.payload
+        request_type = payload.get("type", "text")
+        if request_type in ("image", "images"):
+            media_field = _ONLINE_MEDIA_FIELD_BY_TYPE[request_type]
+            return self.engine._prepare_image_request(
+                payload["prompt"],
+                payload[media_field],
+                request.sampling_params,
+                request_id=request_id,
+            )
+        if request_type == "video":
+            return self.engine._prepare_video_request(
+                payload["prompt"],
+                payload["video"],
+                request.sampling_params,
+                request_id=request_id,
+            )
+        raise RuntimeError(
+            f"background preprocessing received unsupported type {request_type!r}"
+        )
+
+    def _admit_ready_preprocessing(self, state: _OnlineRunState) -> None:
+        """Publish completed preprocessing results from the engine thread."""
+
+        for request_key, pending in tuple(state.preprocessing.items()):
+            if not pending.future.done():
+                continue
+            sequence = pending.future.result()
+            self.engine._submit_sequence(
+                sequence,
+                submitted_ns=pending.arrival_ns,
+                raise_on_reject=False,
+            )
+            state.admitted_keys.add(request_key)
+            del state.preprocessing[request_key]
+            if request_key in state.deferred_cancellations:
+                self.engine.cancel_request(pending.request_id)
+                state.deferred_cancellations.remove(request_key)
 
     def _apply_ready_cancellations(
         self,
@@ -258,8 +343,12 @@ class OnlineServingSession:
                 return
             _, request_key = state.cancellations.popleft()
             request_id = state.internal_ids.get(request_key)
-            if request_id is not None:
+            if request_id is None:
+                continue
+            if request_key in state.admitted_keys:
                 self.engine.cancel_request(request_id)
+            else:
+                state.deferred_cancellations.add(request_key)
 
     def _execute_step(self, state: _OnlineRunState) -> bool:
         if self.engine.is_finished():
@@ -269,23 +358,42 @@ class OnlineServingSession:
             state.outputs[output.request_id] = output.token_ids
         return True
 
-    def _wait_for_next_arrival(self, state: _OnlineRunState) -> None:
-        if not state.pending:
-            return
-        wait_s = max(
-            0.0,
-            state.pending[0].arrival_offset_s - state.elapsed_seconds(self.clock_ns()),
-        )
-        if wait_s > 0:
+    def _wait_for_next_event(self, state: _OnlineRunState) -> None:
+        wait_s = None
+        if state.pending:
+            wait_s = max(
+                0.0,
+                state.pending[0].arrival_offset_s
+                - state.elapsed_seconds(self.clock_ns()),
+            )
+        futures = [
+            pending.future for pending in state.preprocessing.values()
+        ]
+        if futures:
+            wait(
+                futures,
+                timeout=wait_s,
+                return_when=FIRST_COMPLETED,
+            )
+        elif wait_s is not None and wait_s > 0:
             self.sleep_fn(wait_s)
 
-    def _drive_event_loop(self, state: _OnlineRunState) -> None:
-        while state.pending or not self.engine.is_finished():
-            self._submit_ready_arrivals(state)
+    def _drive_event_loop(
+        self,
+        state: _OnlineRunState,
+        preprocess_executor: ThreadPoolExecutor,
+    ) -> None:
+        while (
+            state.pending
+            or state.preprocessing
+            or not self.engine.is_finished()
+        ):
+            self._submit_ready_arrivals(state, preprocess_executor)
+            self._admit_ready_preprocessing(state)
             self._apply_ready_cancellations(state)
             if self._execute_step(state):
                 continue
-            self._wait_for_next_arrival(state)
+            self._wait_for_next_event(state)
 
     def _request_results(
         self,
@@ -314,7 +422,11 @@ class OnlineServingSession:
     def run(self, requests: Iterable[OnlineRequest]) -> OnlineRunResult:
         submitted = self._validate_requests(requests)
         state = self._new_run_state(submitted)
-        self._drive_event_loop(state)
+        with ThreadPoolExecutor(
+            max_workers=_ONLINE_PREPROCESS_WORKERS,
+            thread_name_prefix="prism-media-preprocess",
+        ) as preprocess_executor:
+            self._drive_event_loop(state, preprocess_executor)
         finished_ns = self.clock_ns()
         metrics = self.engine.metrics_snapshot()
         return OnlineRunResult(

@@ -27,7 +27,7 @@ from prism_infer.engine.vl_inputs import (
 )
 from prism_infer.engine.scheduler import Scheduler
 from prism_infer.engine.model_runner import ModelRunner
-from prism_infer.engine.contracts import MetricsSink, StepResult
+from prism_infer.engine.contracts import BatchPlan, MetricsSink, StepResult
 from prism_infer.engine.executor import ModelExecutor
 from prism_infer.engine.metrics import EngineMetrics
 from prism_infer.engine.tp_control import DEFAULT_TP_CONTROL_TIMEOUT_SECONDS
@@ -38,6 +38,9 @@ from prism_infer.engine.request import (
 )
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 from prism_infer.models.model_registry import validate_model_architecture
+
+
+_COOPERATIVE_PREFILL_SPARSE_DECODE_QUANTUM_FLOOR = 4
 
 
 @dataclass(slots=True)
@@ -69,6 +72,15 @@ class _GenerationProgress:
     def close(self) -> None:
         if self.progress_bar is not None:
             self.progress_bar.close()
+
+
+@dataclass(slots=True)
+class _PendingPrefill:
+    """One prefill paused at a language Transformer layer boundary."""
+
+    plan: BatchPlan
+    runner_handle: object
+    started_ns: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +233,7 @@ class LLMEngine:
             self.model_runner,
             self.scheduler.block_manager,
         )
+        self._pending_prefill: _PendingPrefill | None = None
         self.metrics: MetricsSink = metrics_sink if metrics_sink is not None else EngineMetrics()
         atexit.register(self.exit)  # 注册退出清理函数(类似RAII析构+atexit)
 
@@ -462,6 +475,8 @@ class LLMEngine:
         self,
         inputs: ImageInputs,
         sampling_params: SamplingParams,
+        *,
+        request_id: int | None = None,
     ) -> Sequence:
         """Build one image sequence without mutating scheduler queues."""
 
@@ -476,7 +491,11 @@ class LLMEngine:
             inputs,
             sampling_params,
             block_size=self.config.kvcache_block_size,
-            request_id=self._allocate_request_id(),
+            request_id=(
+                self._allocate_request_id()
+                if request_id is None
+                else validate_request_id(request_id)
+            ),
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
@@ -486,6 +505,8 @@ class LLMEngine:
         prompt: str,
         image: Any,
         sampling_params: SamplingParams,
+        *,
+        request_id: int | None = None,
     ) -> Sequence:
         """Run image preprocessing without publishing a request."""
 
@@ -493,7 +514,11 @@ class LLMEngine:
             raise ValueError("image generation requires a Qwen3-VL model config")
         with profile_region("preprocess.image_processor", cuda=False):
             inputs = prepare_image_inputs(self.vl_processor, prompt, image)
-        return self._prepare_image_sequence(inputs, sampling_params)
+        return self._prepare_image_sequence(
+            inputs,
+            sampling_params,
+            request_id=request_id,
+        )
 
     def add_vl_request(
         self,
@@ -603,6 +628,8 @@ class LLMEngine:
         self,
         inputs: VideoInputs,
         sampling_params: SamplingParams,
+        *,
+        request_id: int | None = None,
     ) -> Sequence:
         """Build one video sequence without mutating scheduler queues."""
 
@@ -617,7 +644,11 @@ class LLMEngine:
             inputs,
             sampling_params,
             block_size=self.config.kvcache_block_size,
-            request_id=self._allocate_request_id(),
+            request_id=(
+                self._allocate_request_id()
+                if request_id is None
+                else validate_request_id(request_id)
+            ),
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
@@ -627,6 +658,8 @@ class LLMEngine:
         prompt: str,
         video: Any,
         sampling_params: SamplingParams,
+        *,
+        request_id: int | None = None,
     ) -> Sequence:
         """Run video preprocessing without publishing a request."""
 
@@ -634,7 +667,186 @@ class LLMEngine:
             raise ValueError("video generation requires a Qwen3-VL model config")
         with profile_region("preprocess.video_processor", cuda=False):
             inputs = prepare_video_inputs(self.vl_processor, prompt, video)
-        return self._prepare_video_sequence(inputs, sampling_params)
+        return self._prepare_video_sequence(
+            inputs,
+            sampling_params,
+            request_id=request_id,
+        )
+
+    @staticmethod
+    def _annotate_profile_step(profile_session, plan) -> None:
+        if profile_session is None:
+            return
+        profile_session.annotate_step(
+            phase=plan.phase.value,
+            batch_size=plan.batch_size,
+            sequence_ids=list(plan.sequence_ids),
+            sequence_lengths=[len(seq) for seq in plan.sequences],
+            prompt_tokens=sum(seq.num_prompt_tokens for seq in plan.sequences),
+            image_tokens=sum(seq.image_token_count for seq in plan.sequences),
+            video_tokens=sum(seq.video_token_count for seq in plan.sequences),
+            vision_patches=plan.num_scheduled_vision_patches,
+            scheduled_tokens=plan.num_scheduled_tokens,
+            scheduler_policy=plan.policy_name,
+        )
+
+    def _commit_step_result(
+        self,
+        plan,
+        execution,
+        *,
+        started_ns: int,
+    ) -> StepResult:
+        clock_ns = getattr(self, "clock_ns", perf_counter_ns)
+        finished_ns = clock_ns()
+        self.metrics.on_batch_completed(
+            plan,
+            execution,
+            started_ns=started_ns,
+            finished_ns=finished_ns,
+        )
+        with profile_region("engine.scheduler.postprocess", cuda=False):
+            outputs = self.scheduler.postprocess(plan, execution.token_ids)
+        completed_ns = clock_ns()
+        self.metrics.on_requests_finished(
+            outputs,
+            timestamp_ns=completed_ns,
+        )
+        if self.scheduler.is_finished():
+            self._cooperative_prefill_fine_grain_active = False
+        return StepResult(
+            plan=plan,
+            outputs=outputs,
+            execution=execution,
+            elapsed_ns=completed_ns - plan.created_ns,
+        )
+
+    def _execute_planned_step(self, plan, profile_session) -> StepResult:
+        self.metrics.on_batch_planned(plan)
+        self._annotate_profile_step(profile_session, plan)
+        clock_ns = getattr(self, "clock_ns", perf_counter_ns)
+        started_ns = clock_ns()
+        execution = self.executor.execute(plan)
+        return self._commit_step_result(
+            plan,
+            execution,
+            started_ns=started_ns,
+        )
+
+    def _finish_pending_prefill(self, profile_session=None) -> StepResult:
+        pending = getattr(self, "_pending_prefill", None)
+        if pending is None:
+            raise RuntimeError("there is no pending prefill")
+        self._annotate_profile_step(profile_session, pending.plan)
+        execution = self.executor.finish_prefill(
+            pending.plan,
+            pending.runner_handle,
+        )
+        self._pending_prefill = None
+        return self._commit_step_result(
+            pending.plan,
+            execution,
+            started_ns=pending.started_ns,
+        )
+
+    def _start_cooperative_prefill_if_useful(
+        self,
+        plan,
+    ) -> bool:
+        if (
+            not getattr(
+                self.config,
+                "enable_cooperative_prefill",
+                False,
+            )
+            or not plan.is_prefill
+            or not self.scheduler.has_decode_work()
+        ):
+            return False
+        is_heavy_visual = (
+            plan.num_scheduled_vision_patches
+            >= self.config.heavy_prefill_vision_patch_threshold
+        )
+        if (
+            not is_heavy_visual
+            and not self._cooperative_prefill_fine_grain_enabled()
+        ):
+            return False
+        self.metrics.on_batch_planned(plan)
+        clock_ns = getattr(self, "clock_ns", perf_counter_ns)
+        started_ns = clock_ns()
+        runner_handle = self.executor.begin_prefill(plan)
+        self._pending_prefill = _PendingPrefill(
+            plan=plan,
+            runner_handle=runner_handle,
+            started_ns=started_ns,
+        )
+        return True
+
+    def _cooperative_prefill_fine_grain_enabled(self) -> bool:
+        """Latch fine-grained prefill after decode reaches one-quarter capacity."""
+
+        fine_grain_decode_batch_size = max(
+            1,
+            (self.config.max_num_seqs + 3) // 4,
+        )
+        if (
+            self.scheduler.decode_work_count()
+            >= fine_grain_decode_batch_size
+        ):
+            self._cooperative_prefill_fine_grain_active = True
+        return getattr(
+            self,
+            "_cooperative_prefill_fine_grain_active",
+            False,
+        )
+
+    def _cooperative_prefill_quanta(self) -> tuple[int, int]:
+        """Choose coarse startup or fine loaded prefill quanta."""
+
+        layer_quantum = self.config.cooperative_prefill_layer_quantum
+        vision_block_quantum = (
+            self.config.cooperative_prefill_vision_block_quantum
+        )
+        if self._cooperative_prefill_fine_grain_enabled():
+            return layer_quantum, vision_block_quantum
+        return (
+            max(
+                layer_quantum,
+                _COOPERATIVE_PREFILL_SPARSE_DECODE_QUANTUM_FLOOR,
+            ),
+            max(
+                vision_block_quantum,
+                _COOPERATIVE_PREFILL_SPARSE_DECODE_QUANTUM_FLOOR,
+            ),
+        )
+
+    def _next_step_result(self, profile_session) -> StepResult:
+        pending = getattr(self, "_pending_prefill", None)
+        if pending is not None:
+            if not self.scheduler.has_decode_work():
+                return self._finish_pending_prefill(profile_session)
+            layer_quantum, vision_block_quantum = (
+                self._cooperative_prefill_quanta()
+            )
+            complete = self.executor.advance_prefill(
+                pending.runner_handle,
+                max_layers=layer_quantum,
+                max_vision_blocks=vision_block_quantum,
+            )
+            if complete:
+                return self._finish_pending_prefill(profile_session)
+            with profile_region("engine.scheduler.schedule", cuda=False):
+                plan = self.scheduler.schedule_decode()
+            return self._execute_planned_step(plan, profile_session)
+
+        with profile_region("engine.scheduler.schedule", cuda=False):
+            plan = self.scheduler.schedule()
+        if self._start_cooperative_prefill_if_useful(plan):
+            with profile_region("engine.scheduler.schedule", cuda=False):
+                decode_plan = self.scheduler.schedule_decode()
+            return self._execute_planned_step(decode_plan, profile_session)
+        return self._execute_planned_step(plan, profile_session)
 
     def step_result(self) -> StepResult:
         """Execute one strongly typed schedule → execute → commit cycle."""
@@ -644,45 +856,7 @@ class LLMEngine:
             profile_session.begin_step()
         step_status = "error"
         try:
-            with profile_region("engine.scheduler.schedule", cuda=False):
-                plan = self.scheduler.schedule()
-            self.metrics.on_batch_planned(plan)
-            if profile_session is not None:
-                profile_session.annotate_step(
-                    phase=plan.phase.value,
-                    batch_size=plan.batch_size,
-                    sequence_ids=list(plan.sequence_ids),
-                    sequence_lengths=[len(seq) for seq in plan.sequences],
-                    prompt_tokens=sum(seq.num_prompt_tokens for seq in plan.sequences),
-                    image_tokens=sum(seq.image_token_count for seq in plan.sequences),
-                    video_tokens=sum(seq.video_token_count for seq in plan.sequences),
-                    vision_patches=plan.num_scheduled_vision_patches,
-                    scheduled_tokens=plan.num_scheduled_tokens,
-                    scheduler_policy=plan.policy_name,
-                )
-            clock_ns = getattr(self, "clock_ns", perf_counter_ns)
-            started_ns = clock_ns()
-            execution = self.executor.execute(plan)
-            finished_ns = clock_ns()
-            self.metrics.on_batch_completed(
-                plan,
-                execution,
-                started_ns=started_ns,
-                finished_ns=finished_ns,
-            )
-            with profile_region("engine.scheduler.postprocess", cuda=False):
-                outputs = self.scheduler.postprocess(plan, execution.token_ids)
-            completed_ns = clock_ns()
-            self.metrics.on_requests_finished(
-                outputs,
-                timestamp_ns=completed_ns,
-            )
-            result = StepResult(
-                plan=plan,
-                outputs=outputs,
-                execution=execution,
-                elapsed_ns=completed_ns - plan.created_ns,
-            )
+            result = self._next_step_result(profile_session)
             step_status = "ok"
             return result
         finally:
@@ -701,6 +875,9 @@ class LLMEngine:
     def cancel_request(self, request_id: int) -> bool:
         """Cancel an admitted request and release owned KV blocks."""
 
+        pending = getattr(self, "_pending_prefill", None)
+        if pending is not None and request_id in pending.plan.sequence_ids:
+            self._finish_pending_prefill()
         cancelled = self.scheduler.cancel(request_id)
         if cancelled:
             marker = getattr(self.metrics, "mark_terminal", None)

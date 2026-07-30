@@ -16,6 +16,7 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import timedelta
 from multiprocessing.connection import Connection
 from time import perf_counter
@@ -41,6 +42,7 @@ from prism_infer.config import (
 from prism_infer.engine.compression import (
     build_compression_metadata,
     build_visual_pruning_config,
+    compression_mode_supports_cuda_graph,
     compression_supports_cuda_graph,
     compression_mode_uses_fp8_payload,
     compression_mode_uses_token_head_scales,
@@ -80,11 +82,13 @@ except ImportError:
     Qwen3ForCausalLM = None  # VL 项目中纯文本模型可能不存在, 用 VL 版替代
 from prism_infer.models.qwen3_vl import (
     Qwen3VLForCausalLM,
+    Qwen3VLTextForwardState,
     compile_decode_fp8_lm_head,
     compile_decode_o_proj,
 )
 from prism_infer.models.model_registry import ModelFamily, resolve_model_family
 from prism_infer.models.qwen3_vl_architecture import MROPE_AXIS_COUNT
+from prism_infer.vision.vision_encoder import VisionEncoderForwardState
 from prism_infer.layers.sampler import (  # 采样器 (温度采样/贪婪)
     SAMPLING_NUMERICAL_EPSILON,
     Sampler,
@@ -102,6 +106,35 @@ from prism_infer.utils.loader import load_model  # 权重加载
 CUDA_GRAPH_EXACT_BATCH_LIMIT = 8
 CUDA_GRAPH_BATCH_BUCKET_STRIDE = 16
 MROPE_DECODE_POSITION_RANK = 2
+
+
+@dataclass(slots=True)
+class _CooperativeVisionPayload:
+    """One image or video payload split only at attention-safe boundaries."""
+
+    token_id: int
+    pixel_values: torch.Tensor
+    grid_thw: torch.Tensor
+    microbatches: tuple[
+        tuple[int, int, tuple[tuple[int, int, int], ...]],
+        ...,
+    ]
+    next_microbatch: int = 0
+    active_state: VisionEncoderForwardState | None = None
+    main_parts: list[torch.Tensor] | None = None
+    deepstack_parts: list[list[torch.Tensor]] | None = None
+
+
+@dataclass(slots=True)
+class _PendingPrefillExecution:
+    """One prefill paused at an exact vision or language block boundary."""
+
+    plan: BatchPlan
+    device_batch: DeviceBatch
+    model_state: Qwen3VLTextForwardState | None
+    vision_payloads: list[_CooperativeVisionPayload]
+    next_vision_payload: int = 0
+    sampled_tokens: torch.Tensor | None = None
 
 
 def _resolve_model_dtype(hf_config) -> torch.dtype:
@@ -1201,12 +1234,335 @@ class ModelRunner:
         """Execute one immutable host plan through a tensor-only DeviceBatch."""
 
         self._validate_execution_plan(plan)
+        return self._run_plan(plan)
+
+    def _run_plan(self, plan: BatchPlan) -> ExecutionResult:
+        """Execute a validated plan on the caller-selected CUDA stream."""
+
         backend = self._get_execution_backend()
         device_batch = backend.prepare(plan)
         execution = backend.execute(device_batch)
         token_ids = list(execution.token_ids)
         if plan.is_prefill:
             self._commit_prefill_execution(plan, device_batch, token_ids)
+        return ExecutionResult(token_ids=tuple(token_ids))
+
+    def _build_cooperative_vision_payloads(
+        self,
+        inputs: DeviceModelInputs,
+    ) -> list[_CooperativeVisionPayload]:
+        """Materialize attention-safe vision microbatch plans without encoding."""
+
+        visual_model = self.model.model
+        patch_limit = visual_model.vision_encoder_microbatch_patches
+        payloads = []
+        for token_id, pixel_values, grid_thw in (
+            (
+                visual_model.image_token_id,
+                inputs.pixel_values,
+                inputs.image_grid_thw,
+            ),
+            (
+                visual_model.video_token_id,
+                inputs.pixel_values_videos,
+                inputs.video_grid_thw,
+            ),
+        ):
+            if pixel_values is None:
+                if grid_thw is not None:
+                    raise RuntimeError("visual grid exists without a payload")
+                continue
+            if grid_thw is None:
+                raise RuntimeError("visual payload exists without a grid")
+            microbatches = visual_model._plan_visual_microbatches(
+                grid_thw,
+                patch_limit=patch_limit,
+            )
+            expected_patches = microbatches[-1][1] if microbatches else 0
+            if expected_patches != int(pixel_values.shape[0]):
+                raise ValueError(
+                    "visual grid/payload patch count mismatch: "
+                    f"grid={expected_patches} "
+                    f"payload={int(pixel_values.shape[0])}"
+                )
+            payloads.append(
+                _CooperativeVisionPayload(
+                    token_id=token_id,
+                    pixel_values=pixel_values,
+                    grid_thw=grid_thw,
+                    microbatches=microbatches,
+                    main_parts=[],
+                )
+            )
+        return payloads
+
+    def _begin_pending_language_forward(
+        self,
+        pending: _PendingPrefillExecution,
+    ) -> None:
+        """Install completed visual outputs and create the language state."""
+
+        inputs = pending.device_batch.model_inputs
+        visual_embeds = None
+        deepstack_visual_embeds: tuple[torch.Tensor, ...] = ()
+        if pending.vision_payloads:
+            modality_outputs = []
+            for payload in pending.vision_payloads:
+                if (
+                    payload.next_microbatch != len(payload.microbatches)
+                    or not payload.main_parts
+                    or payload.deepstack_parts is None
+                ):
+                    raise RuntimeError(
+                        "language forward started before vision completed"
+                    )
+                modality_outputs.append(
+                    (
+                        payload.token_id,
+                        torch.cat(payload.main_parts, dim=0),
+                        tuple(
+                            torch.cat(parts, dim=0)
+                            for parts in payload.deepstack_parts
+                        ),
+                    )
+                )
+
+            input_ids = inputs.input_ids
+            visual_token_mask = torch.zeros_like(
+                input_ids,
+                dtype=torch.bool,
+            )
+            for token_id, _, _ in modality_outputs:
+                visual_token_mask |= input_ids == token_id
+            visual_token_ids = input_ids[visual_token_mask]
+            hidden_size = int(modality_outputs[0][1].shape[-1])
+            visual_embeds = modality_outputs[0][1].new_empty(
+                (visual_token_ids.numel(), hidden_size)
+            )
+            deepstack_depth = len(modality_outputs[0][2])
+            deepstack_visual_embeds = tuple(
+                visual_embeds.new_empty(visual_embeds.shape)
+                for _ in range(deepstack_depth)
+            )
+            for token_id, main, deepstack in modality_outputs:
+                if len(deepstack) != deepstack_depth:
+                    raise RuntimeError(
+                        "vision modalities returned inconsistent DeepStack"
+                    )
+                positions = torch.nonzero(
+                    visual_token_ids == token_id,
+                    as_tuple=False,
+                ).flatten()
+                if positions.numel() != main.shape[0]:
+                    raise ValueError(
+                        "visual output/token count mismatch: "
+                        f"token_id={token_id} output={main.shape[0]} "
+                        f"positions={positions.numel()}"
+                    )
+                visual_embeds[positions] = main
+                for target, value in zip(
+                    deepstack_visual_embeds,
+                    deepstack,
+                    strict=True,
+                ):
+                    target[positions] = value
+
+        with use_context(pending.device_batch.attention_context):
+            (
+                inputs_embeds,
+                visual_pos_masks,
+                resolved_deepstack,
+            ) = self.model.model.prepare_language_inputs(
+                input_ids=inputs.input_ids,
+                visual_embeds=visual_embeds,
+                deepstack_visual_embeds=deepstack_visual_embeds,
+            )
+            pending.model_state = (
+                self.model.model.language_model.begin_cooperative_forward(
+                    inputs_embeds=inputs_embeds,
+                    position_ids=inputs.position_ids,
+                    attention_mask=None,
+                    visual_pos_masks=visual_pos_masks,
+                    deepstack_visual_embeds=resolved_deepstack,
+                )
+            )
+
+    def _advance_pending_vision(
+        self,
+        pending: _PendingPrefillExecution,
+        *,
+        max_blocks: int,
+    ) -> bool:
+        """Execute one vision block quantum across the active microbatch."""
+
+        if pending.next_vision_payload >= len(pending.vision_payloads):
+            return True
+        payload = pending.vision_payloads[pending.next_vision_payload]
+        if payload.active_state is None:
+            if payload.next_microbatch >= len(payload.microbatches):
+                raise RuntimeError("completed vision payload remained active")
+            start, end, rows = payload.microbatches[payload.next_microbatch]
+            chunk_grid = torch.tensor(
+                rows,
+                dtype=payload.grid_thw.dtype,
+                device=payload.grid_thw.device,
+            )
+            with profile_region(
+                "runner.prefill.vision_begin",
+                metadata={
+                    "microbatch": payload.next_microbatch,
+                    "patches": end - start,
+                },
+            ):
+                payload.active_state = (
+                    self.model.model.visual.begin_cooperative_forward(
+                        payload.pixel_values[start:end],
+                        chunk_grid,
+                    )
+                )
+
+        state = payload.active_state
+        with profile_region(
+            "runner.prefill.vision_block_quantum",
+            metadata={
+                "blocks": max_blocks,
+                "microbatch": payload.next_microbatch,
+                "next_block": state.next_block,
+                "patches": int(state.hidden_states.shape[0]),
+            },
+        ):
+            complete = (
+                self.model.model.visual.advance_cooperative_forward(
+                    state,
+                    max_blocks=max_blocks,
+                )
+            )
+        if not complete:
+            return False
+
+        main, deepstack = (
+            self.model.model.visual.finish_cooperative_forward(state)
+        )
+        payload.main_parts.append(main)
+        if payload.deepstack_parts is None:
+            payload.deepstack_parts = [[] for _ in deepstack]
+        if len(deepstack) != len(payload.deepstack_parts):
+            raise RuntimeError(
+                "vision microbatches returned inconsistent DeepStack"
+            )
+        for parts, value in zip(
+            payload.deepstack_parts,
+            deepstack,
+            strict=True,
+        ):
+            parts.append(value)
+        payload.active_state = None
+        payload.next_microbatch += 1
+        if payload.next_microbatch == len(payload.microbatches):
+            pending.next_vision_payload += 1
+        return pending.next_vision_payload == len(
+            pending.vision_payloads
+        )
+
+    @torch.inference_mode()
+    def begin_prefill_plan(self, plan: BatchPlan) -> _PendingPrefillExecution:
+        """Prepare a prefill paused before its first vision or language block."""
+
+        if not self.config.enable_cooperative_prefill:
+            raise RuntimeError("cooperative prefill is not enabled")
+        if self.world_size != 1:
+            raise RuntimeError("cooperative prefill currently supports TP1 only")
+        if not self.is_vl_model:
+            raise RuntimeError("cooperative prefill currently requires Qwen3-VL")
+        if plan.phase is not BatchPhase.PREFILL:
+            raise ValueError("begin_prefill_plan requires a prefill plan")
+        self._validate_execution_plan(plan)
+        backend = self._get_execution_backend()
+        device_batch = backend.prepare(plan)
+        inputs = device_batch.model_inputs
+        vision_payloads = self._build_cooperative_vision_payloads(inputs)
+        pending = _PendingPrefillExecution(
+            plan=plan,
+            device_batch=device_batch,
+            model_state=None,
+            vision_payloads=vision_payloads,
+        )
+        if not vision_payloads:
+            self._begin_pending_language_forward(pending)
+        return pending
+
+    @torch.inference_mode()
+    def advance_prefill_plan(
+        self,
+        pending: _PendingPrefillExecution,
+        max_layers: int,
+        *,
+        max_vision_blocks: int | None = None,
+    ) -> bool:
+        """Execute one bounded vision-block or language-layer quantum."""
+
+        if not isinstance(pending, _PendingPrefillExecution):
+            raise TypeError("pending prefill handle is invalid")
+        if pending.sampled_tokens is not None:
+            return True
+        if pending.model_state is None:
+            if max_vision_blocks is None:
+                max_vision_blocks = (
+                    self.config.cooperative_prefill_vision_block_quantum
+                )
+            vision_complete = self._advance_pending_vision(
+                pending,
+                max_blocks=max_vision_blocks,
+            )
+            if not vision_complete:
+                return False
+            with profile_region("runner.prefill.language_begin"):
+                self._begin_pending_language_forward(pending)
+            return False
+        language_model = self.model.model.language_model
+        with use_context(pending.device_batch.attention_context):
+            complete = language_model.advance_cooperative_forward(
+                pending.model_state,
+                max_layers=max_layers,
+            )
+            if complete:
+                hidden_states = language_model.finish_cooperative_forward(
+                    pending.model_state,
+                )
+                logits = self.model.compute_logits(hidden_states)
+                pending.sampled_tokens = self.sampler(
+                    logits,
+                    pending.device_batch.temperatures,
+                    sampling_mode=pending.device_batch.sampling_mode,
+                )
+        if not complete:
+            return False
+        return True
+
+    def finish_prefill_plan(
+        self,
+        pending: _PendingPrefillExecution,
+    ) -> ExecutionResult:
+        """Finish all remaining layers, sample and commit the prefill."""
+
+        if not isinstance(pending, _PendingPrefillExecution):
+            raise TypeError("pending prefill handle is invalid")
+        max_quantum = max(
+            len(self.model.model.visual.blocks),
+            len(self.model.model.language_model.layers),
+        )
+        while pending.sampled_tokens is None:
+            self.advance_prefill_plan(
+                pending,
+                max_quantum,
+                max_vision_blocks=max_quantum,
+            )
+        token_ids = list(pending.sampled_tokens.tolist())
+        self._commit_prefill_execution(
+            pending.plan,
+            pending.device_batch,
+            token_ids,
+        )
         return ExecutionResult(token_ids=tuple(token_ids))
 
     def prepare_single_greedy_decode_cudagraph(
@@ -1216,7 +1572,7 @@ class ModelRunner:
         """Fill persistent Graph host buffers for the latency-critical B1 path.
 
         General decode preparation intentionally materializes immutable staging
-        tensors.  For TP=1, dense BF16 or scaled-FP8 KV, greedy batch-one replay,
+        tensors.  For TP=1, CUDA-Graph-safe KV state, greedy batch-one replay,
         the Graph already owns stable pinned buffers and
         ``sampled_tokens.tolist()`` makes each step sequential.  Reusing those
         buffers avoids two small tensor allocations, a second host copy, and
@@ -1227,7 +1583,9 @@ class ModelRunner:
             plan.phase is not BatchPhase.DECODE
             or plan.batch_size != 1
             or self.world_size != 1
-            or self.config.compression_mode not in ("off", "scaled_fp8_kv")
+            or not compression_mode_supports_cuda_graph(
+                self.config.compression_mode
+            )
             or getattr(self.config, "enable_visual_pruning_shadow", False)
             or is_trace_enabled()
             or 1 not in getattr(self, "graph_vars", {})

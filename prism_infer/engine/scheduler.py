@@ -541,13 +541,33 @@ class Scheduler:
             created_ns=self.clock_ns(),
         )
 
+    def has_decode_work(self) -> bool:
+        """Return whether at least one request can enter a decode decision."""
+
+        return self.decode_work_count() > 0
+
+    def decode_work_count(self) -> int:
+        """Return the number of requests eligible for a decode decision."""
+
+        return len(self.swapped) + sum(
+            seq.status is RequestState.DECODING for seq in self.running
+        )
+
+    def schedule_decode(self) -> BatchPlan:
+        """Schedule decode while a previously selected prefill remains in flight."""
+
+        if not self.has_decode_work():
+            raise RuntimeError("scheduler has no decode work")
+        plan = self._decode_plan()
+        self.consecutive_prefill_batches = 0
+        self.decode_batches_since_heavy_prefill += 1
+        return plan
+
     def schedule(self) -> BatchPlan:
         has_prefill = bool(self.waiting) or any(
             seq.status is RequestState.PREFILLING for seq in self.running
         )
-        has_decode = bool(self.swapped) or any(
-            seq.status is RequestState.DECODING for seq in self.running
-        )
+        has_decode = self.has_decode_work()
         if self.policy.should_schedule_prefill(
             has_prefill=has_prefill,
             has_decode=has_decode,
@@ -564,10 +584,7 @@ class Scheduler:
                     self.heavy_prefill_batches += 1
                 self._observe_state()
                 return prefill_plan
-        plan = self._decode_plan()
-        self.consecutive_prefill_batches = 0
-        self.decode_batches_since_heavy_prefill += 1
-        return plan
+        return self.schedule_decode()
 
     def preempt(
         self,

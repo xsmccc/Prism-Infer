@@ -77,11 +77,14 @@ class ModelInputPreparer:
         *,
         dtype: torch.dtype,
     ) -> torch.Tensor:
-        if self.config.execution_backend == "cuda_graph":
+        if self.config.execution_backend in ("cuda_graph", "compile_graph"):
             # CUDA Graph replay copies these small staging values into its own
             # persistent pinned host buffers.  Pinning each throw-away source
             # tensor forces two page-locked allocations on every decode step
-            # without accelerating that CPU-to-CPU copy.
+            # without accelerating that CPU-to-CPU copy.  ``compile_graph``
+            # shares the same replay boundary after compiling its stateless
+            # tensor regions, so staging its values on CUDA would add a
+            # device-to-host copy before the Graph copies them back to CUDA.
             return torch.tensor(values, dtype=dtype)
         return torch.tensor(values, dtype=dtype, pin_memory=True).cuda(non_blocking=True)
 

@@ -32,6 +32,56 @@ class ModelExecutor:
         self.runner = runner
         self.kv_manager = kv_manager
 
+    def begin_prefill(self, plan: BatchPlan) -> object:
+        """Prepare a transfer-free prefill for layer-boundary execution."""
+
+        if plan.phase is not BatchPhase.PREFILL:
+            raise ValueError("begin_prefill requires a prefill plan")
+        if not plan.kv_transfers.is_empty:
+            raise RuntimeError("cooperative prefill does not support KV transfers")
+        begin = getattr(self.runner, "begin_prefill_plan", None)
+        if begin is None:
+            raise RuntimeError("runner does not support cooperative prefill")
+        return begin(plan)
+
+    def advance_prefill(
+        self,
+        pending: object,
+        *,
+        max_layers: int,
+        max_vision_blocks: int,
+    ) -> bool:
+        """Run one bounded vision-block or language-layer quantum."""
+
+        advance = getattr(self.runner, "advance_prefill_plan", None)
+        if advance is None:
+            raise RuntimeError("runner does not support cooperative prefill")
+        return bool(
+            advance(
+                pending,
+                max_layers,
+                max_vision_blocks=max_vision_blocks,
+            )
+        )
+
+    def finish_prefill(
+        self,
+        plan: BatchPlan,
+        pending: object,
+    ) -> ExecutionResult:
+        """Finish a cooperative prefill and apply physical KV compaction."""
+
+        finish = getattr(self.runner, "finish_prefill_plan", None)
+        if finish is None:
+            raise RuntimeError("runner does not support cooperative prefill")
+        runner_result = finish(pending)
+        if not isinstance(runner_result, ExecutionResult):
+            raise RuntimeError(
+                "rank-0 runner must return ExecutionResult, "
+                f"got {type(runner_result).__name__}"
+            )
+        return self._commit_visual_compaction(plan, runner_result)
+
     def execute(self, plan: BatchPlan) -> ExecutionResult:
         transfers = plan.kv_transfers
         if plan.phase is BatchPhase.DECODE and transfers.is_empty:
@@ -66,6 +116,15 @@ class ModelExecutor:
                 "rank-0 runner result must match the planned batch size: "
                 f"{len(runner_result.token_ids)} != {plan.batch_size}"
             )
+
+        return self._commit_visual_compaction(plan, runner_result)
+
+    def _commit_visual_compaction(
+        self,
+        plan: BatchPlan,
+        runner_result: ExecutionResult,
+    ) -> ExecutionResult:
+        """Apply post-prefill physical compaction to a completed runner result."""
 
         compaction_count = 0
         if plan.is_prefill and self.config.compression_mode in (

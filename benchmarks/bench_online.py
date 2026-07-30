@@ -656,6 +656,13 @@ def _build_engine(args: argparse.Namespace):
         enable_fused_qk_mrope=mode.fused_qk_mrope,
         enable_fused_add_rmsnorm=mode.fused_add_rmsnorm,
         enable_packed_kv_projection=mode.packed_kv_projection,
+        enable_cooperative_prefill=args.enable_cooperative_prefill,
+        cooperative_prefill_layer_quantum=(
+            args.cooperative_prefill_layer_quantum
+        ),
+        cooperative_prefill_vision_block_quantum=(
+            args.cooperative_prefill_vision_block_quantum
+        ),
         enable_vision_tensor_cudagraph=args.enable_vision_tensor_cudagraph,
         vision_attention_backend="sdpa",
     )
@@ -749,6 +756,28 @@ def main() -> None:
         default="packed",
     )
     parser.add_argument("--enable-vision-tensor-cudagraph", action="store_true")
+    parser.add_argument(
+        "--enable-cooperative-prefill",
+        action="store_true",
+        help=(
+            "yield heavy visual prefills to decode CUDA Graphs at exact "
+            "Transformer layer boundaries"
+        ),
+    )
+    parser.add_argument(
+        "--cooperative-prefill-layer-quantum",
+        type=int,
+        default=1,
+        help="language Transformer layers executed between decode opportunities",
+    )
+    parser.add_argument(
+        "--cooperative-prefill-vision-block-quantum",
+        type=int,
+        help=(
+            "ViT blocks executed between decode opportunities; defaults to "
+            "the language-layer quantum"
+        ),
+    )
     parser.add_argument(
         "--class-slo-file",
         help="JSON file with per-class TTFT/TPOT SLOs derived from vLLM low load",
@@ -943,6 +972,32 @@ def main() -> None:
                 "vision_tensor_cudagraph": (
                     args.enable_vision_tensor_cudagraph
                 ),
+                "cooperative_prefill": args.enable_cooperative_prefill,
+                "cooperative_prefill_scope": (
+                    "heavy_visual_then_all_loaded"
+                    if args.enable_cooperative_prefill
+                    else "disabled"
+                ),
+                "cooperative_prefill_layer_quantum": (
+                    args.cooperative_prefill_layer_quantum
+                ),
+                "cooperative_prefill_vision_block_quantum": (
+                    args.cooperative_prefill_layer_quantum
+                    if args.cooperative_prefill_vision_block_quantum is None
+                    else args.cooperative_prefill_vision_block_quantum
+                ),
+                "cooperative_prefill_quantum_policy": (
+                    "one_quarter_latched_until_idle"
+                    if args.enable_cooperative_prefill
+                    else "disabled"
+                ),
+                "cooperative_prefill_fine_decode_batch_size": max(
+                    1,
+                    (args.max_num_seqs + 3) // 4,
+                ),
+                "cooperative_prefill_sparse_quantum_floor": 4,
+                "online_media_preprocess": "single_worker_async",
+                "media_preprocess_in_ttft": True,
             },
             "memory": {
                 "process_device": process_device_memory,
