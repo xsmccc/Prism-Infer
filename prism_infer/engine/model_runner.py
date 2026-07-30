@@ -365,7 +365,9 @@ class ModelRunner:
         # The control pipe remains open until workers acknowledge this method.
         if self.world_size > 1:
             self._tp_barrier()
-        self._visual_embedding_cache.clear()
+        visual_embedding_cache = getattr(self, "_visual_embedding_cache", None)
+        if visual_embedding_cache is not None:
+            visual_embedding_cache.clear()
         self._visual_embedding_cache_resident_bytes = 0
         self._release_execution_backend()
         reset_context()

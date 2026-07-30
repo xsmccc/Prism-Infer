@@ -61,7 +61,7 @@ def test_attention_compile_config_requires_eager_off_baseline(
             decode_compile_region="attention",
             allow_unsafe_decode_compile=True,
         )
-    with pytest.raises(ValueError, match="rejected P6.3 preflight candidate"):
+    with pytest.raises(ValueError, match="attention-only decode compilation is experimental"):
         Config(
             str(tmp_path),
             max_model_len=1024,
@@ -70,7 +70,6 @@ def test_attention_compile_config_requires_eager_off_baseline(
             compression_mode="off",
             decode_compile_region="attention",
         )
-    print("P6.3 compile/Graph/compression config isolation: PASS")
 
 
 def test_compile_graph_config_uses_supported_stateless_region(
