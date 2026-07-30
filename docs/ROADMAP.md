@@ -1,8 +1,25 @@
 # Prism-Infer 项目路线图
 
-> 修订日期: 2026-07-24
+> 修订日期: 2026-07-30
 > 目标模型: Qwen3-VL-8B-Instruct
 > 项目目标: 面向 Qwen3-VL 的跨层多模态推理 Runtime；把视觉 KV 保留、物理 Paged-KV 压缩、scaled FP8、Compiler/CUDA Graph、调度与优化 Kernel 接成可验证系统。
+
+## P16 完成状态
+
+P16 已在 RTX 5090、Qwen3-VL-8B、600-request Poisson rate-4 冻结协议上完成：
+
+- per-request class TTFT SLO 贯穿 benchmark、online request、Sequence 与 scheduler；
+- latest-start/cost-aware prefill 调度、text/visual domain batching、语义边界打断；
+- 128-entry exact CPU processor-output LRU；
+- opt-in 256 MiB exact Vision Encoder main/DeepStack GPU LRU；
+- n600 cache-off / cache-on / vLLM / SGLang 对照、n10 semantic profiler、H1/H2
+  token hash、scaled-FP8 KV、视觉物理页回收与退出显存检查。
+
+正式结果为 `241.184 tok/s` raw、`226.311 tok/s` class-SLO Goodput、
+563/600 good requests、TTFT/TPOT p50 `275.225/14.329 ms`。同一冻结
+repeated-media workload 下 Goodput 高于 vLLM `6.70%`、SGLang `15.01%`。
+结论不外推到 unique-media、cold start 或通用生产 serving，详见
+`docs/P16_STEADY_STATE_GOODPUT_RESULTS.md`。
 
 ## 项目总目标
 
@@ -872,17 +889,19 @@ CUDA Graph、counter-driven kernel、多模态调度和薄 serving 闭环。完�
 
 ## 下一步执行顺序
 
-当前没有必须继续扩张的主线优化。秋招投递以 `FINAL_DELIVERY.md` 的冻结叙事为准。
-后续只有在新增资源或明确研究目标时才开启新阶段：
+P16 已是当前秋招交付终点。后续只有在明确开启新阶段时继续：
 
-1. P15 已完成 60-request loaded selection 与四次复测；若继续攻 600-request
-   cross-runtime Goodput，必须沿用 deadline/coalescing 与 CPU resource evidence，
-   不能直接复活 P13 机械切块或已拒绝的 stream overlap。
-2. 若继续 content-aware physical compaction，先补标准质量 gate 和动态 allocator
-   的真实 NVML 下降；达不到两项就不形成 headline。
-3. 网络 endpoint、TP2 和 weight-only quantization 都是独立扩展，不属于当前交付缺口；
-   TP2 只在获得真实双卡租约后开展。
-4. 已冻结结果不通过删除 outlier、改 SLO 或只选有利场景重写；任何公开 push 仍需用户
-   明确授权。
+1. **先验证泛化，不再扫调度常数。** 用 unique-media 与可控重复率 trace 测量 hit-rate、
+   cold-miss TTFT 和 Goodput 曲线；若要接网络请求，再设计媒体内容 hash、碰撞校验和
+   tenant 隔离。没有这组证据，不把 identity cache 写成通用 prefix cache。
+2. **缓存命中后，剩余热点转向 language prefill 与 decode。** P16 profiler 已证明
+   warm hit 不再执行 ViT；下一轮 kernel/compile 候选必须由 language layer、paged
+   attention 或 CUDA Graph replay 的占比选择，不再优化已退出 critical path 的 vision。
+3. **内存策略只做有收益的组合。** 若扩大视觉 cache，必须联动 scaled-FP8 KV 水位、
+   LRU admission 与 eviction；当前 `104.1 MiB` cache 没有形成 whole-process NVML
+   降低，不能写成显存优化。
+4. 网络 endpoint、TP2、weight-only quantization 与投机解码仍是独立扩展，不属于
+   P16 缺口；已冻结结果不通过删 outlier、改 SLO 或只选有利场景重写，公开 push
+   仍需用户明确授权。
 
 P3/P4/P4.5/P5 已建立多模态 FP baseline、KV trace、KV 语义硬化、logical pruning 和 FP8 storage baseline。P6 只允许在统一 benchmark 和固定外部版本下形成性能 claim；没有真实 megakernel实现或 launch-bound 证据时，不开展 megakernel 对比。

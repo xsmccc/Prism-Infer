@@ -25,6 +25,7 @@ from prism_infer.engine.scheduler_policy import (
     AdmissionDecision,
     FCFSSchedulerPolicy,
     SchedulerPolicy,
+    SLOAwareSchedulerPolicy,
     VisionAwareSchedulerPolicy,
 )
 from prism_infer.engine.sequence import Sequence
@@ -137,11 +138,12 @@ class Scheduler:
             2,
         )
         if policy is None:
-            policy_type = (
-                VisionAwareSchedulerPolicy
-                if scheduler_policy_name == "vision_aware"
-                else FCFSSchedulerPolicy
-            )
+            policy_types = {
+                "fcfs": FCFSSchedulerPolicy,
+                "slo_aware": SLOAwareSchedulerPolicy,
+                "vision_aware": VisionAwareSchedulerPolicy,
+            }
+            policy_type = policy_types[scheduler_policy_name]
             policy_options = {
                 "max_model_len": self.max_model_len,
                 "max_num_batched_tokens": self.max_num_batched_tokens,
@@ -153,12 +155,16 @@ class Scheduler:
                     config.max_consecutive_prefill_batches
                 ),
             }
+            if policy_type in (
+                SLOAwareSchedulerPolicy,
+                VisionAwareSchedulerPolicy,
+            ):
+                policy_options["heavy_prefill_vision_patch_threshold"] = (
+                    heavy_prefill_threshold
+                )
             if policy_type is VisionAwareSchedulerPolicy:
                 policy_options.update(
                     {
-                        "heavy_prefill_vision_patch_threshold": (
-                            heavy_prefill_threshold
-                        ),
                         "min_decode_batches_between_heavy_prefills": (
                             heavy_prefill_interval
                         ),
@@ -188,6 +194,8 @@ class Scheduler:
         self.heavy_prefill_batches = 0
         self.heavy_prefill_deferrals = 0
         self.light_prefill_bypasses = 0
+        self.deadline_prefill_reorders = 0
+        self.cost_tier_batch_deferrals = 0
         self.peak_waiting = 0
         self.peak_running = 0
         self.peak_swapped = 0
@@ -261,6 +269,8 @@ class Scheduler:
             "heavy_prefill_batches": self.heavy_prefill_batches,
             "heavy_prefill_deferrals": self.heavy_prefill_deferrals,
             "light_prefill_bypasses": self.light_prefill_bypasses,
+            "deadline_prefill_reorders": self.deadline_prefill_reorders,
+            "cost_tier_batch_deferrals": self.cost_tier_batch_deferrals,
             "light_prefill_bypasses_since_heavy": (
                 self.light_prefill_bypasses_since_heavy
             ),
@@ -296,6 +306,8 @@ class Scheduler:
             "heavy_prefill_batches",
             "heavy_prefill_deferrals",
             "light_prefill_bypasses",
+            "deadline_prefill_reorders",
+            "cost_tier_batch_deferrals",
             "peak_waiting",
             "peak_running",
             "peak_swapped",
@@ -386,7 +398,12 @@ class Scheduler:
         self.running.append(seq)
         return candidate
 
-    def _admit_waiting_prefills(self, batch: _PrefillBatchBuilder) -> None:
+    def _admit_waiting_prefills(
+        self,
+        batch: _PrefillBatchBuilder,
+        *,
+        max_slo_cost_tier: int | None = None,
+    ) -> None:
         has_decode = bool(self.swapped) or any(
             seq.status is RequestState.DECODING for seq in self.running
         )
@@ -396,8 +413,22 @@ class Scheduler:
             and batch.has_sequence_capacity
             and not batch.requires_dedicated_batch
         ):
-            waiting_index = self.policy.waiting_prefill_index(
-                tuple(self.waiting),
+            waiting_indices = tuple(
+                index
+                for index, seq in enumerate(self.waiting)
+                if (
+                    max_slo_cost_tier is None
+                    or (
+                        isinstance(self.policy, SLOAwareSchedulerPolicy)
+                        and self.policy.prefill_cost_tier(seq)
+                        < max_slo_cost_tier
+                    )
+                )
+            )
+            if not waiting_indices:
+                break
+            relative_index = self.policy.waiting_prefill_index(
+                tuple(self.waiting[index] for index in waiting_indices),
                 has_decode=has_decode,
                 decode_batches_since_heavy_prefill=(
                     self.decode_batches_since_heavy_prefill
@@ -406,14 +437,25 @@ class Scheduler:
                     self.light_prefill_bypasses_since_heavy
                 ),
             )
-            if waiting_index is None:
+            if relative_index is None:
                 if has_decode and isinstance(self.policy, VisionAwareSchedulerPolicy):
                     self.heavy_prefill_deferrals += 1
                 break
+            waiting_index = waiting_indices[relative_index]
             if waiting_index > 0:
-                self.light_prefill_bypasses += 1
-                self.light_prefill_bypasses_since_heavy += 1
+                if isinstance(self.policy, SLOAwareSchedulerPolicy):
+                    self.deadline_prefill_reorders += 1
+                else:
+                    self.light_prefill_bypasses += 1
+                    self.light_prefill_bypasses_since_heavy += 1
             seq = self.waiting[waiting_index]
+            if (
+                batch.sequences
+                and isinstance(self.policy, SLOAwareSchedulerPolicy)
+                and not self.policy.can_co_batch(batch.sequences[0], seq)
+            ):
+                self.cost_tier_batch_deferrals += 1
+                break
             candidate = self._prefill_candidate(
                 seq,
                 available_tokens=batch.available_tokens,
@@ -430,14 +472,23 @@ class Scheduler:
             )
             batch.add(allocated)
 
-    def _prefill_plan(self) -> BatchPlan | None:
+    def _prefill_plan(
+        self,
+        *,
+        max_slo_cost_tier: int | None = None,
+        include_running_prefills: bool = True,
+    ) -> BatchPlan | None:
         batch = _PrefillBatchBuilder(
             max_tokens=self.max_num_batched_tokens,
             max_sequences=self.max_num_seqs,
             max_vision_patches=self.max_vision_patches_per_batch,
         )
-        self._collect_running_prefills(batch)
-        self._admit_waiting_prefills(batch)
+        if include_running_prefills:
+            self._collect_running_prefills(batch)
+        self._admit_waiting_prefills(
+            batch,
+            max_slo_cost_tier=max_slo_cost_tier,
+        )
         if not batch.sequences:
             return None
         return BatchPlan(
@@ -563,6 +614,39 @@ class Scheduler:
         self.decode_batches_since_heavy_prefill += 1
         return plan
 
+    def _record_prefill_plan(self, plan: BatchPlan) -> BatchPlan:
+        self.consecutive_prefill_batches += 1
+        if self.policy.is_heavy_prefill(
+            plan.num_scheduled_vision_patches
+        ):
+            self.decode_batches_since_heavy_prefill = 0
+            self.light_prefill_bypasses_since_heavy = 0
+            self.heavy_prefill_batches += 1
+        self._observe_state()
+        return plan
+
+    def schedule_prefill(
+        self,
+        *,
+        max_slo_cost_tier: int | None = None,
+    ) -> BatchPlan:
+        """Schedule waiting prefill work while another prefill is paused."""
+
+        if max_slo_cost_tier is not None and not isinstance(
+            self.policy,
+            SLOAwareSchedulerPolicy,
+        ):
+            raise RuntimeError(
+                "max_slo_cost_tier requires the SLO-aware scheduler"
+            )
+        plan = self._prefill_plan(
+            max_slo_cost_tier=max_slo_cost_tier,
+            include_running_prefills=False,
+        )
+        if plan is None:
+            raise RuntimeError("scheduler has no admissible prefill work")
+        return self._record_prefill_plan(plan)
+
     def schedule(self) -> BatchPlan:
         has_prefill = bool(self.waiting) or any(
             seq.status is RequestState.PREFILLING for seq in self.running
@@ -575,15 +659,7 @@ class Scheduler:
         ):
             prefill_plan = self._prefill_plan()
             if prefill_plan is not None:
-                self.consecutive_prefill_batches += 1
-                if self.policy.is_heavy_prefill(
-                    prefill_plan.num_scheduled_vision_patches
-                ):
-                    self.decode_batches_since_heavy_prefill = 0
-                    self.light_prefill_bypasses_since_heavy = 0
-                    self.heavy_prefill_batches += 1
-                self._observe_state()
-                return prefill_plan
+                return self._record_prefill_plan(prefill_plan)
         return self.schedule_decode()
 
     def preempt(

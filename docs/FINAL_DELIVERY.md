@@ -7,6 +7,40 @@
 > 为 `921de81/e883de5`）
 > 最终文档提交：以本文件所在 clean HEAD 为准
 
+## P16 稳态多模态 SLO Goodput 更新
+
+P16 将 P12/P15 的“raw throughput 接近、loaded Goodput 落后”推进为一个有明确
+场景边界的 Goodput 胜出：
+
+- 在冻结 600-request、Poisson rate-4、seed20260717 workload 上，以 per-request
+  TTFT SLO 推导 latest safe start，按 prefill cost tier 预留 `120/250/700 ms`；
+- deadline order 只隔离 tight text 与 visual prefill，保留 visual-visual batching；
+- 已在执行的 heavy prefill 只允许在 ViT block/语言层语义边界被到期的低成本请求打断；
+- 用 128-entry exact CPU processor LRU 与 256 MiB exact GPU
+  Vision Encoder/DeepStack LRU 消除同一媒体对象的重复预处理与 ViT；
+- language prefill、scaled-FP8 KV store、视觉物理压缩、CUDA Graph decode、精确
+  rerank、sampling 与 64-token 生成仍逐请求完整执行。
+
+正式 n600 结果：
+
+| Result | Raw tok/s | Goodput tok/s | Good requests | TTFT p50 | TPOT p50 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| P15 n600 | 239.387 | 67.427 | 169/600 | 892.717 ms | 12.764 ms |
+| P16 cache-off | 241.037 | 171.538 | 427/600 | 305.479 ms | 16.270 ms |
+| **P16 cache-on** | **241.184** | **226.311** | **563/600** | 275.225 ms | 14.329 ms |
+| vLLM | 241.489 | 212.108 | 527/600 | 180.244 ms | 14.283 ms |
+| SGLang | 241.447 | 196.779 | 489/600 | 258.192 ms | 14.392 ms |
+
+P16 Goodput 相对 vLLM/SGLang 高 `6.70%/15.01%`，相对 cache-off 高
+`31.93%`；600/600 完成、无失败，H1/H2 token hash exact，KV pool 仍为
+`4,282,122,240 B`（相对 BF16 `-48.44%`），并释放 480 个视觉物理 block。
+
+该结论只覆盖 warm、单进程、三个 exact media object 重复的 workload。外部系统未
+配置等价的 Prism Vision-output cache；因此这是同一 workload 的 feature-enabled
+system result，不是 unique-media、冷启动、网络 content-hash cache 或全面 serving
+排名。n600 TPOT 比 SGLang 低 `0.44%`、比 vLLM 高 `0.32%`，只能称近似持平。
+完整结果见 [P16_STEADY_STATE_GOODPUT_RESULTS](P16_STEADY_STATE_GOODPUT_RESULTS.md)。
+
 ## 0. P15 loaded-serving 更新
 
 P15 解决了 P14 “TPOT 达标但 TTFT/吞吐/Goodput 退化”的主要取舍。最终保留：
@@ -144,6 +178,11 @@ profile 将 loaded stall 定位到 `204–232 ms` 的 H1/H2 原子视觉 prefill
 
 选择三条即可：
 
+- 面向 600-request Poisson 多模态稳态负载，设计基于请求成本与 TTFT slack 的
+  调度器，并实现 256 MiB exact Vision Encoder/DeepStack LRU；在重复媒体
+  workload 上将 class-SLO Goodput 从 `171.54` 提升至 `226.31 tok/s`
+  （`+31.9%`），同协议结果高于 vLLM `6.70%`、SGLang `15.01%`，同时保持
+  H1/H2 token hash exact、scaled-FP8 KV bytes `-48.44%` 与视觉物理页回收。
 - 自实现 Qwen3-VL-8B text/vision、M-RoPE、DeepStack、Paged KV 与 continuous
   batching 主路径；用 HF module/logits/PPL、greedy、CUDA Graph、标准多模态任务和
   token/prompt hash 建立分层 correctness gate。
@@ -174,9 +213,12 @@ trace 找到每 token 整张 LM-head 转 FP32 的问题，修复后 TPOT 提升
 第二条线是多模态 KV：我实现 per-token/per-head scaled-FP8 和视觉 KV 物理压缩，
 不是逻辑 mask，而是重排 K/V、更新 page table、释放尾页并让后续请求复用。六项标准
 质量 cell 全通过，同预算 KV capacity 提升 94.69%。我也做了 600-request online
-对比：raw throughput 已接近两家，但 loaded goodput 仍落后，根因是长 visual
-prefill。后续 phase-chunk 原型虽然缩短单次阻塞，却让总工作和排队变差，所以我保留
-数据并删除了代码。
+对比：早期 raw throughput 已接近两家，但 loaded Goodput 落后。phase-chunk 虽然
+缩短单次阻塞，却增加总工作，所以我删除了候选；随后用 class SLO slack 做调度，
+只隔离 tight text 与 visual batch，再对同一媒体对象精确复用 Vision/DeepStack
+输出。最终重复媒体 workload 的 Goodput 达到 226.31 tok/s，高于 vLLM 6.70%、
+SGLang 15.01%。这个 cache 不复用语言 prefill、KV 或生成 token，我也会主动说明
+它不是 unique-media 的全面排名。
 
 ## 6. 面试主线
 
@@ -194,9 +236,9 @@ prefill。后续 phase-chunk 原型虽然缩短单次阻塞，却让总工作和
 
 ## 7. 必须主动说明的边界
 
-- “超过 vLLM/SGLang”只用于冻结 H1/H2 batch1 offline TPOT；
-- online H3 只允许说 raw throughput 接近、KV capacity 约 1.94x、loaded goodput
-  落后；
+- “超过 vLLM/SGLang”的离线结论仍只用于冻结 H1/H2 batch1 TPOT；
+- online Goodput 胜出只用于 P16 warm repeated-media frozen trace；必须同时说明
+  exact in-process identity cache、native frontend 不完全相同和 unique-media 未验证；
 - `-48.44%` 是 allocated KV pool，不是整卡显存；整进程实测为 `-8.24%`；
 - `+58.83% requests/s` 是 11-page 容量受限 batch2；
 - Graph speedup 是 Prism internal eager→Graph；
@@ -208,6 +250,7 @@ prefill。后续 phase-chunk 原型虽然缩短单次阻塞，却让总工作和
 - `P11_MULTIMODAL_COMPACTION_RESULTS.md`：Vision Graph、标准质量、动态页复用；
 - `P12_ONLINE_GOODPUT_RESULTS.md`：600-request external online closure；
 - `P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md`：phase 候选实现与否决；
+- `P16_STEADY_STATE_GOODPUT_RESULTS.md`：P16 调度、视觉复用、正式对比和边界；
 - `CLAIMS.md`：允许/限制/禁止的唯一口径；
 - `REPRODUCIBILITY.md`：环境、命令与 artifact contract；
 - `APPLICATION_MATERIALS.md`：简历、STAR、面试追问。

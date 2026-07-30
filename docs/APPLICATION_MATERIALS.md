@@ -4,6 +4,64 @@
 > 使用规则：所有数字必须能回到 [CLAIMS](CLAIMS.md) 和对应证据；投递时选择与岗位
 > 匹配的 2–3 条，不要把本文件整段复制到一页简历。
 
+## 0. P16 最新投递口径
+
+本节替代下文 P12/P15 中“online Goodput 仍落后”的历史结论；历史内容继续保留，用于
+解释优化路径与失败复盘。
+
+### 推荐简历 bullet
+
+- 面向 600-request Poisson 多模态稳态负载，设计基于请求成本与 TTFT slack 的
+  调度器，并实现 256 MiB exact Vision Encoder/DeepStack LRU；在重复媒体
+  workload 上消除 360 次重复 ViT，将 class-SLO Goodput 从 `171.54` 提升至
+  `226.31 tok/s`（`+31.9%`），同协议结果高于 vLLM `6.70%`、SGLang
+  `15.01%`，同时保持 H1/H2 token hash exact、scaled-FP8 KV bytes
+  `-48.44%` 与视觉物理页回收。
+
+### 一句话项目描述
+
+自实现 Qwen3-VL-8B 多模态推理引擎，贯通 Vision/M-RoPE/DeepStack、Paged KV、
+scaled-FP8、物理视觉 KV 压缩、`torch.compile`、CUDA Graph 与 SLO-aware serving；
+在冻结 H1/H2 上取得 bounded TPOT 优势，并在 600-request warm repeated-media
+workload 上实现 `226.31 tok/s` class-SLO Goodput。
+
+### 面试时必须主动说明
+
+- `226.31 tok/s` 是同时满足每类 TTFT 与 TPOT SLO 的 output tokens/s，不是 raw
+  throughput；对应 563/600 个 good requests。
+- workload 只有三个视觉媒体对象，在 360 个视觉请求中重复；warmup 已将三项
+  Vision 输出放入缓存。
+- GPU LRU 以 request modality + Python media object identity 为 key，强引用防止
+  `id()` 复用；存 main 和全部 DeepStack tensor，最大 256 MiB，默认关闭。
+- 它只跳过重复 ViT；language prefill、scaled-FP8 KV、视觉物理压缩、decode、
+  sampler 与 64-token 生成仍逐请求执行。
+- vLLM/SGLang 没有配置等价 Prism cache，所以这是同 frozen workload 的
+  feature-enabled system result，不是 cache-algorithm 同条件 A/B，更不能外推到
+  unique-media 或 content-addressed 网络缓存。
+- n600 TPOT 为 `14.329 ms`：比 SGLang 低 `0.44%`，比 vLLM 高 `0.32%`，应称
+  近似持平；headline 是 repeated-media Goodput。
+
+### 60 秒讲法
+
+P12 时 Prism 的 raw throughput 已经和 vLLM、SGLang 相差不到 1%，但 class-SLO
+Goodput 很差，说明问题不是单位时间少生成几个 token，而是请求完成得不够及时。
+我先把每个请求的 class TTFT SLO 带进 engine，用
+`deadline - prefill reserve` 算 latest safe start，再按 text、普通视觉、重视觉的
+prefill 成本调度。只隔离 tight text 和 visual batch，而不是把所有视觉类别拆散；
+运行中的重 prefill 也只在 ViT block 或语言层边界被更紧急的请求打断。这样 n600
+Goodput 从 67.43 提升到 cache-off 的 171.54 tok/s，但 profiling 说明重复 ViT 仍是
+可消除工作。
+
+冻结 workload 本身是同一图像/视频上的重复问答，所以我又实现了 exact、256 MiB
+有界的 Vision/DeepStack LRU。它用强引用验证媒体对象身份，不缓存语言 KV 或生成
+token。最终 360 次 visual request 全部命中 warm encoder cache，Goodput 达到
+226.31 tok/s，高于同 workload 的 vLLM 6.70%、SGLang 15.01%，H1/H2 token hash、
+scaled-FP8 KV 与视觉页回收都保持。这个结果体现的是调度与跨请求视觉复用认知，
+不是“任何多模态请求都比业界框架快”。
+
+完整证据见
+[P16_STEADY_STATE_GOODPUT_RESULTS](P16_STEADY_STATE_GOODPUT_RESULTS.md)。
+
 ## 1. 一句话项目描述
 
 ### 中文
@@ -125,7 +183,7 @@ reached a four-run loaded TPOT median of `12.490 ms`.
 | capacity `+94.69%` | 固定约 4 GiB KV budget 的 token capacity，不是 online goodput |
 | BF16 TPOT 低 `4.54%–6.27%` | 只覆盖 RTX 5090、Qwen3-VL-8B、TP1、batch1、H1/H2、output128 offline Graph |
 | scaled TPOT 低 `1.06%–2.77%` | 与外部 BF16 baseline 比；不代表 scaled 比 Prism BF16 更快，E2E 有 mixed 单元 |
-| rate-4 raw throughput距外部不到`0.8%` | loaded goodput仍低`66.92%–69.31%`，不能写成online胜出 |
+| P12 rate-4 raw throughput距外部不到`0.8%` | 这是 P16 前的历史 cache-off/FCFS 结论；P16 只允许在 warm repeated-media frozen trace 上陈述 bounded Goodput 胜出 |
 | phase prefill max `446.229→119.489 ms` | 1024候选class-aware goodput`-34.18%`且已删除，只能作为失败复盘 |
 
 ## 4. 60 秒自我介绍版本

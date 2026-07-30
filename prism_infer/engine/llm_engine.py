@@ -2,6 +2,7 @@ import atexit  # atexit.register: 注册进程退出时的清理函数(类似C++
 import gc
 import socket
 from dataclasses import dataclass
+from math import isfinite
 from time import perf_counter, perf_counter_ns
 from typing import Any, cast
 from tqdm.auto import tqdm  # 进度条库, auto版本自动适配终端/Jupyter
@@ -26,6 +27,7 @@ from prism_infer.engine.vl_inputs import (
     prepare_video_inputs,
 )
 from prism_infer.engine.scheduler import Scheduler
+from prism_infer.engine.scheduler_policy import SLOAwareSchedulerPolicy
 from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.engine.contracts import BatchPlan, MetricsSink, StepResult
 from prism_infer.engine.executor import ModelExecutor
@@ -239,6 +241,12 @@ class LLMEngine:
         self._cooperative_prefill_deferred_decode_steps = 0
         self._cooperative_prefill_atomic_batches = 0
         self._cooperative_prefill_underfilled_batches = 0
+        self._slo_prefill_deadline_releases = 0
+        self._slo_prefill_light_atomic_batches = 0
+        self._slo_prefill_deadline_atomic_batches = 0
+        self._slo_prefill_interruptions = 0
+        self._slo_pending_deadline_finishes = 0
+        self._decode_after_slo_prefill_interrupt = False
         self.metrics: MetricsSink = metrics_sink if metrics_sink is not None else EngineMetrics()
         atexit.register(self.exit)  # 注册退出清理函数(类似RAII析构+atexit)
 
@@ -389,6 +397,7 @@ class LLMEngine:
         sampling_params: SamplingParams,
         *,
         submitted_ns: int | None = None,
+        ttft_slo_ms: float | None = None,
         raise_on_reject: bool = True,
     ) -> int:
         """添加一条推理请求: 文本→tokenize→创建Sequence→加入调度队列"""
@@ -397,6 +406,7 @@ class LLMEngine:
         return self._submit_sequence(
             seq,
             submitted_ns=submitted_ns,
+            ttft_slo_ms=ttft_slo_ms,
             raise_on_reject=raise_on_reject,
         )
 
@@ -424,6 +434,7 @@ class LLMEngine:
         seq: Sequence,
         *,
         submitted_ns: int | None = None,
+        ttft_slo_ms: float | None = None,
         raise_on_reject: bool = True,
     ) -> int:
         """Submit one prepared request through admission and metrics contracts."""
@@ -434,7 +445,19 @@ class LLMEngine:
             self.metrics = EngineMetrics()
         clock_ns = getattr(self, "clock_ns", perf_counter_ns)
         arrival_ns = clock_ns() if submitted_ns is None else submitted_ns
+        if ttft_slo_ms is not None and (
+            isinstance(ttft_slo_ms, bool)
+            or not isinstance(ttft_slo_ms, (int, float))
+            or not isfinite(float(ttft_slo_ms))
+            or ttft_slo_ms <= 0
+        ):
+            raise ValueError("ttft_slo_ms must be a finite positive number or None")
         seq.submitted_ns = arrival_ns
+        seq.ttft_slo_ms = (
+            None if ttft_slo_ms is None else float(ttft_slo_ms)
+        )
+        if self.config.enable_visual_embedding_cache:
+            self.model_runner.hydrate_visual_embedding_cache(seq)
         self.metrics.on_request_submitted(seq, timestamp_ns=arrival_ns)
         try:
             decision = self.scheduler.add(
@@ -516,15 +539,24 @@ class LLMEngine:
     ) -> Sequence:
         """Run image preprocessing without publishing a request."""
 
-        if self.vl_processor is None:
-            raise ValueError("image generation requires a Qwen3-VL model config")
-        with profile_region("preprocess.image_processor", cuda=False):
-            inputs = prepare_image_inputs(self.vl_processor, prompt, image)
+        inputs = self._process_image_inputs(prompt, image)
         return self._prepare_image_sequence(
             inputs,
             sampling_params,
             request_id=request_id,
         )
+
+    def _process_image_inputs(
+        self,
+        prompt: str,
+        image: Any,
+    ) -> ImageInputs:
+        """Run the reusable processor-only part of image preparation."""
+
+        if self.vl_processor is None:
+            raise ValueError("image generation requires a Qwen3-VL model config")
+        with profile_region("preprocess.image_processor", cuda=False):
+            return prepare_image_inputs(self.vl_processor, prompt, image)
 
     def add_vl_request(
         self,
@@ -669,15 +701,24 @@ class LLMEngine:
     ) -> Sequence:
         """Run video preprocessing without publishing a request."""
 
-        if self.vl_processor is None:
-            raise ValueError("video generation requires a Qwen3-VL model config")
-        with profile_region("preprocess.video_processor", cuda=False):
-            inputs = prepare_video_inputs(self.vl_processor, prompt, video)
+        inputs = self._process_video_inputs(prompt, video)
         return self._prepare_video_sequence(
             inputs,
             sampling_params,
             request_id=request_id,
         )
+
+    def _process_video_inputs(
+        self,
+        prompt: str,
+        video: Any,
+    ) -> VideoInputs:
+        """Run the reusable processor-only part of video preparation."""
+
+        if self.vl_processor is None:
+            raise ValueError("video generation requires a Qwen3-VL model config")
+        with profile_region("preprocess.video_processor", cuda=False):
+            return prepare_video_inputs(self.vl_processor, prompt, video)
 
     @staticmethod
     def _annotate_profile_step(profile_session, plan) -> None:
@@ -755,6 +796,87 @@ class LLMEngine:
             started_ns=pending.started_ns,
         )
 
+    def _slo_prefill_policy(self) -> SLOAwareSchedulerPolicy | None:
+        policy = getattr(self.scheduler, "policy", None)
+        return policy if isinstance(policy, SLOAwareSchedulerPolicy) else None
+
+    def _slo_prefill_reserve_ns(self, seq: Sequence) -> int:
+        policy = self._slo_prefill_policy()
+        if policy is None:
+            return _COOPERATIVE_PREFILL_COALESCE_MAX_WAIT_NS
+        return policy.prefill_reserve_ns(seq)
+
+    def _is_slo_light_prefill_plan(self, plan: BatchPlan) -> bool:
+        policy = self._slo_prefill_policy()
+        if policy is None:
+            return False
+        return (
+            any(seq.ttft_slo_ms is not None for seq in plan.sequences)
+            and all(policy.prefill_cost_tier(seq) < 2 for seq in plan.sequences)
+        )
+
+    def _is_slo_deadline_atomic_plan(self, plan: BatchPlan) -> bool:
+        policy = self._slo_prefill_policy()
+        if policy is None:
+            return False
+        clock_ns = getattr(self, "clock_ns", perf_counter_ns)
+        now_ns = clock_ns()
+        return any(
+            deadline_ns is not None
+            and now_ns + self._slo_prefill_reserve_ns(seq) >= deadline_ns
+            for seq in plan.sequences
+            for deadline_ns in (policy.ttft_deadline_ns(seq),)
+        )
+
+    def _slo_pending_prefill_release_ns(
+        self,
+        pending: _PendingPrefill,
+    ) -> int | None:
+        policy = self._slo_prefill_policy()
+        if policy is None:
+            return None
+        releases = tuple(
+            deadline_ns - self._slo_prefill_reserve_ns(seq)
+            for seq in pending.plan.sequences
+            for deadline_ns in (policy.ttft_deadline_ns(seq),)
+            if deadline_ns is not None
+        )
+        return min(releases) if releases else None
+
+    def _slo_prefill_interrupt(
+        self,
+        pending: _PendingPrefill,
+        *,
+        now_ns: int,
+    ) -> tuple[int, int] | None:
+        """Return the paused tier and earliest due lower-cost release."""
+
+        policy = self._slo_prefill_policy()
+        if policy is None or not self.scheduler.waiting:
+            return None
+        pending_tier = min(
+            policy.prefill_cost_tier(seq)
+            for seq in pending.plan.sequences
+        )
+        if pending_tier <= 0:
+            return None
+        due_releases = []
+        for seq in self.scheduler.waiting:
+            if policy.prefill_cost_tier(seq) >= pending_tier:
+                continue
+            deadline_ns = policy.ttft_deadline_ns(seq)
+            if (
+                deadline_ns is not None
+                and now_ns
+                >= deadline_ns - self._slo_prefill_reserve_ns(seq)
+            ):
+                due_releases.append(
+                    deadline_ns - self._slo_prefill_reserve_ns(seq)
+                )
+        if not due_releases:
+            return None
+        return pending_tier, min(due_releases)
+
     def _start_cooperative_prefill_if_useful(
         self,
         plan,
@@ -768,6 +890,12 @@ class LLMEngine:
             or not plan.is_prefill
             or not self.scheduler.has_decode_work()
         ):
+            return False
+        if self._is_slo_light_prefill_plan(plan):
+            self._slo_prefill_light_atomic_batches += 1
+            return False
+        if self._is_slo_deadline_atomic_plan(plan):
+            self._slo_prefill_deadline_atomic_batches += 1
             return False
         if plan.batch_size >= _COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES:
             self._cooperative_prefill_atomic_batches += 1
@@ -854,8 +982,29 @@ class LLMEngine:
         if not submitted_ns:
             return False
         clock_ns = getattr(self, "clock_ns", perf_counter_ns)
-        oldest_age_ns = clock_ns() - min(submitted_ns)
-        return oldest_age_ns < _COOPERATIVE_PREFILL_COALESCE_MAX_WAIT_NS
+        now_ns = clock_ns()
+        fixed_release_ns = (
+            min(submitted_ns) + _COOPERATIVE_PREFILL_COALESCE_MAX_WAIT_NS
+        )
+        release_ns = fixed_release_ns
+        policy = self._slo_prefill_policy()
+        if policy is not None:
+            for seq in waiting:
+                deadline_ns = policy.ttft_deadline_ns(seq)
+                if deadline_ns is None:
+                    continue
+                release_ns = min(
+                    release_ns,
+                    deadline_ns - self._slo_prefill_reserve_ns(seq),
+                )
+        should_wait = now_ns < release_ns
+        if (
+            not should_wait
+            and release_ns < fixed_release_ns
+            and policy is not None
+        ):
+            self._slo_prefill_deadline_releases += 1
+        return should_wait
 
     def cooperative_prefill_policy_metadata(self) -> dict[str, object]:
         """Return measured counters for the deadline-coalescing policy."""
@@ -876,11 +1025,69 @@ class LLMEngine:
             "cooperative_underfilled_batches": (
                 self._cooperative_prefill_underfilled_batches
             ),
+            "slo_prefill_reserve_ms_by_tier": (
+                None
+                if self._slo_prefill_policy() is None
+                else list(
+                    self._slo_prefill_policy().prefill_reserve_ms_by_tier
+                )
+            ),
+            "slo_deadline_releases": self._slo_prefill_deadline_releases,
+            "slo_light_atomic_batches": (
+                self._slo_prefill_light_atomic_batches
+            ),
+            "slo_deadline_atomic_batches": (
+                self._slo_prefill_deadline_atomic_batches
+            ),
+            "slo_prefill_interruptions": self._slo_prefill_interruptions,
+            "slo_pending_deadline_finishes": (
+                self._slo_pending_deadline_finishes
+            ),
         }
 
     def _next_step_result(self, profile_session) -> StepResult:
         pending = getattr(self, "_pending_prefill", None)
         if pending is not None:
+            if self._decode_after_slo_prefill_interrupt:
+                self._decode_after_slo_prefill_interrupt = False
+                if self.scheduler.has_decode_work():
+                    with profile_region(
+                        "engine.scheduler.schedule",
+                        cuda=False,
+                    ):
+                        plan = self.scheduler.schedule_decode()
+                    return self._execute_planned_step(
+                        plan,
+                        profile_session,
+                    )
+            clock_ns = getattr(self, "clock_ns", perf_counter_ns)
+            now_ns = clock_ns()
+            pending_release_ns = self._slo_pending_prefill_release_ns(
+                pending
+            )
+            interrupt = self._slo_prefill_interrupt(
+                pending,
+                now_ns=now_ns,
+            )
+            if interrupt is not None:
+                interrupt_tier, _ = interrupt
+                with profile_region("engine.scheduler.schedule", cuda=False):
+                    plan = self.scheduler.schedule_prefill(
+                        max_slo_cost_tier=interrupt_tier,
+                    )
+                self._slo_prefill_interruptions += 1
+                result = self._execute_planned_step(
+                    plan,
+                    profile_session,
+                )
+                self._decode_after_slo_prefill_interrupt = True
+                return result
+            if (
+                pending_release_ns is not None
+                and now_ns >= pending_release_ns
+            ):
+                self._slo_pending_deadline_finishes += 1
+                return self._finish_pending_prefill(profile_session)
             if not self.scheduler.has_decode_work():
                 return self._finish_pending_prefill(profile_session)
             layer_quantum, vision_block_quantum = (
@@ -895,7 +1102,8 @@ class LLMEngine:
                 return self._finish_pending_prefill(profile_session)
             with profile_region("engine.scheduler.schedule", cuda=False):
                 plan = self.scheduler.schedule_decode()
-            return self._execute_planned_step(plan, profile_session)
+            result = self._execute_planned_step(plan, profile_session)
+            return result
 
         with profile_region("engine.scheduler.schedule", cuda=False):
             if self._should_coalesce_prefill():
@@ -958,6 +1166,11 @@ class LLMEngine:
             raise RuntimeError("configured metrics sink does not expose snapshots")
         return snapshot()
 
+    def visual_embedding_cache_metadata(self) -> dict[str, object]:
+        """Return measured state for the opt-in exact Vision output cache."""
+
+        return self.model_runner.visual_embedding_cache_metadata()
+
     def reset_metrics(self) -> None:
         """Reset request/batch/scheduler ledgers between idle benchmark runs."""
 
@@ -968,6 +1181,13 @@ class LLMEngine:
         self._cooperative_prefill_deferred_decode_steps = 0
         self._cooperative_prefill_atomic_batches = 0
         self._cooperative_prefill_underfilled_batches = 0
+        self._slo_prefill_deadline_releases = 0
+        self._slo_prefill_light_atomic_batches = 0
+        self._slo_prefill_deadline_atomic_batches = 0
+        self._slo_prefill_interruptions = 0
+        self._slo_pending_deadline_finishes = 0
+        self._decode_after_slo_prefill_interrupt = False
+        self.model_runner.reset_visual_embedding_cache_metrics()
         reset()
 
     def request_state(self, request_id: int):

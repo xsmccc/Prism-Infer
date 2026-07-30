@@ -287,6 +287,8 @@ class DeviceModelInputs:
     image_grid_thw: torch.Tensor | None = None
     pixel_values_videos: torch.Tensor | None = None
     video_grid_thw: torch.Tensor | None = None
+    visual_embeds: torch.Tensor | None = None
+    deepstack_visual_embeds: tuple[torch.Tensor, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.input_ids, torch.Tensor):
@@ -303,10 +305,26 @@ class DeviceModelInputs:
             "image_grid_thw",
             "pixel_values_videos",
             "video_grid_thw",
+            "visual_embeds",
         ):
             value = getattr(self, name)
             if value is not None and not isinstance(value, torch.Tensor):
                 raise TypeError(f"DeviceModelInputs.{name} must be a tensor or None")
+        if not isinstance(self.deepstack_visual_embeds, tuple):
+            raise TypeError(
+                "DeviceModelInputs.deepstack_visual_embeds must be an immutable tuple"
+            )
+        if any(
+            not isinstance(value, torch.Tensor)
+            for value in self.deepstack_visual_embeds
+        ):
+            raise TypeError(
+                "DeviceModelInputs.deepstack_visual_embeds must contain tensors"
+            )
+        if self.visual_embeds is None and self.deepstack_visual_embeds:
+            raise ValueError(
+                "DeepStack visual embeddings require main visual embeddings"
+            )
 
 
 @dataclass(frozen=True, slots=True)

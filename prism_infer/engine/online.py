@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
 from concurrent.futures import (
     FIRST_COMPLETED,
     Future,
@@ -25,6 +25,7 @@ _ONLINE_MEDIA_FIELD_BY_TYPE = {
 }
 _SUPPORTED_ONLINE_REQUEST_TYPES = frozenset({"text", *_ONLINE_MEDIA_FIELD_BY_TYPE})
 _ONLINE_PREPROCESS_WORKERS = 1
+_ONLINE_MEDIA_CACHE_MAX_ENTRIES = 128
 
 
 def _non_negative_seconds(value: object, *, name: str) -> float:
@@ -74,6 +75,7 @@ class OnlineRequest:
     payload: dict[str, Any]
     sampling_params: SamplingParams
     cancel_offset_s: float | None = None
+    ttft_slo_ms: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.request_key, str) or not self.request_key:
@@ -91,6 +93,17 @@ class OnlineRequest:
             arrival_offset_s=arrival_offset_s,
         )
         object.__setattr__(self, "cancel_offset_s", cancel_offset_s)
+        if self.ttft_slo_ms is not None and (
+            isinstance(self.ttft_slo_ms, bool)
+            or not isinstance(self.ttft_slo_ms, (int, float))
+            or not isfinite(float(self.ttft_slo_ms))
+            or self.ttft_slo_ms <= 0
+        ):
+            raise ValueError(
+                "ttft_slo_ms must be a finite positive number or None"
+            )
+        if self.ttft_slo_ms is not None:
+            object.__setattr__(self, "ttft_slo_ms", float(self.ttft_slo_ms))
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +131,7 @@ class OnlineRunResult:
     requests: tuple[OnlineRequestResult, ...]
     engine_metrics: dict[str, object]
     scheduler_metrics: dict[str, object]
+    media_preprocess_cache: dict[str, int] = field(default_factory=dict)
 
     @property
     def duration_s(self) -> float:
@@ -131,6 +145,7 @@ class OnlineRunResult:
             "requests": [request.to_record() for request in self.requests],
             "engine_metrics": self.engine_metrics,
             "scheduler_metrics": self.scheduler_metrics,
+            "media_preprocess_cache": dict(self.media_preprocess_cache),
         }
 
 
@@ -142,6 +157,14 @@ class _PendingPreprocess:
     arrival_ns: int
     request_id: int
     future: Future
+
+
+@dataclass(frozen=True, slots=True)
+class _MediaPreprocessCacheEntry:
+    """Reusable processor output for one in-process media identity."""
+
+    media_objects: tuple[Any, ...]
+    inputs: Any
 
 
 @dataclass(slots=True)
@@ -181,6 +204,12 @@ class OnlineServingSession:
         self.engine = engine
         self.clock_ns = clock_ns
         self.sleep_fn = sleep_fn
+        self._media_preprocess_cache: OrderedDict[
+            tuple[str, str, tuple[int, ...]],
+            _MediaPreprocessCacheEntry,
+        ] = OrderedDict()
+        self._media_preprocess_cache_hits = 0
+        self._media_preprocess_cache_misses = 0
 
     def _submit(self, request: OnlineRequest, arrival_ns: int) -> int:
         payload = request.payload
@@ -190,7 +219,12 @@ class OnlineServingSession:
             "raise_on_reject": False,
         }
         if request_type == "text":
-            return self.engine.add_request(payload["prompt"], request.sampling_params, **common)
+            return self.engine.add_request(
+                payload["prompt"],
+                request.sampling_params,
+                ttft_slo_ms=request.ttft_slo_ms,
+                **common,
+            )
         if request_type == "image":
             return self.engine.add_vl_request(
                 payload["prompt"],
@@ -300,24 +334,95 @@ class OnlineServingSession:
 
         payload = request.payload
         request_type = payload.get("type", "text")
-        if request_type in ("image", "images"):
-            media_field = _ONLINE_MEDIA_FIELD_BY_TYPE[request_type]
-            return self.engine._prepare_image_request(
-                payload["prompt"],
-                payload[media_field],
-                request.sampling_params,
-                request_id=request_id,
+        media_field = _ONLINE_MEDIA_FIELD_BY_TYPE.get(request_type)
+        if media_field is None:
+            raise RuntimeError(
+                "background preprocessing received unsupported type "
+                f"{request_type!r}"
             )
-        if request_type == "video":
-            return self.engine._prepare_video_request(
-                payload["prompt"],
-                payload["video"],
-                request.sampling_params,
-                request_id=request_id,
-            )
-        raise RuntimeError(
-            f"background preprocessing received unsupported type {request_type!r}"
+        media = payload[media_field]
+        media_objects = (
+            tuple(media)
+            if isinstance(media, (list, tuple))
+            else (media,)
         )
+        cache_key = (
+            request_type,
+            payload["prompt"],
+            tuple(id(item) for item in media_objects),
+        )
+        cached = self._media_preprocess_cache.get(cache_key)
+        if (
+            cached is not None
+            and len(cached.media_objects) == len(media_objects)
+            and all(
+                cached_item is request_item
+                for cached_item, request_item in zip(
+                    cached.media_objects,
+                    media_objects,
+                    strict=True,
+                )
+            )
+        ):
+            self._media_preprocess_cache.move_to_end(cache_key)
+            self._media_preprocess_cache_hits += 1
+            inputs = cached.inputs
+        else:
+            self._media_preprocess_cache_misses += 1
+            if request_type in ("image", "images"):
+                inputs = self.engine._process_image_inputs(
+                    payload["prompt"],
+                    media,
+                )
+            elif request_type == "video":
+                inputs = self.engine._process_video_inputs(
+                    payload["prompt"],
+                    media,
+                )
+            else:
+                raise RuntimeError(
+                    "background preprocessing received unsupported type "
+                    f"{request_type!r}"
+                )
+            self._media_preprocess_cache[cache_key] = (
+                _MediaPreprocessCacheEntry(
+                    media_objects=media_objects,
+                    inputs=inputs,
+                )
+            )
+            self._media_preprocess_cache.move_to_end(cache_key)
+            while (
+                len(self._media_preprocess_cache)
+                > _ONLINE_MEDIA_CACHE_MAX_ENTRIES
+            ):
+                self._media_preprocess_cache.popitem(last=False)
+
+        if request_type in ("image", "images"):
+            sequence = self.engine._prepare_image_sequence(
+                inputs,
+                request.sampling_params,
+                request_id=request_id,
+            )
+        elif request_type == "video":
+            sequence = self.engine._prepare_video_sequence(
+                inputs,
+                request.sampling_params,
+                request_id=request_id,
+            )
+        else:
+            raise AssertionError("unreachable media request type")
+        engine_config = getattr(self.engine, "config", None)
+        if getattr(
+            engine_config,
+            "enable_visual_embedding_cache",
+            False,
+        ):
+            sequence.visual_embedding_cache_key = (
+                request_type,
+                tuple(id(item) for item in media_objects),
+            )
+            sequence.visual_embedding_cache_sources = media_objects
+        return sequence
 
     def _admit_ready_preprocessing(self, state: _OnlineRunState) -> None:
         """Publish completed preprocessing results from the engine thread."""
@@ -329,6 +434,7 @@ class OnlineServingSession:
             self.engine._submit_sequence(
                 sequence,
                 submitted_ns=pending.arrival_ns,
+                ttft_slo_ms=pending.request.ttft_slo_ms,
                 raise_on_reject=False,
             )
             state.admitted_keys.add(request_key)
@@ -439,4 +545,10 @@ class OnlineServingSession:
             requests=self._request_results(state, metrics),
             engine_metrics=metrics,
             scheduler_metrics=self.engine.scheduler.metrics_snapshot(),
+            media_preprocess_cache={
+                "entries": len(self._media_preprocess_cache),
+                "hits": self._media_preprocess_cache_hits,
+                "max_entries": _ONLINE_MEDIA_CACHE_MAX_ENTRIES,
+                "misses": self._media_preprocess_cache_misses,
+            },
         )

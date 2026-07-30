@@ -175,6 +175,7 @@ def _online_requests(
     seed: int,
     sampling: SamplingParams,
     key_prefix: str,
+    ttft_slo_ms_by_request: list[float | None] | None = None,
 ) -> tuple[OnlineRequest, ...]:
     offsets = _arrival_offsets(
         count,
@@ -182,12 +183,22 @@ def _online_requests(
         request_rate=request_rate,
         seed=seed,
     )
+    if (
+        ttft_slo_ms_by_request is not None
+        and len(ttft_slo_ms_by_request) != count
+    ):
+        raise ValueError("per-request TTFT SLO count must match online requests")
     return tuple(
         OnlineRequest(
             request_key=f"{key_prefix}-{index:05d}",
             arrival_offset_s=offset,
             payload=payloads[index % len(payloads)],
             sampling_params=sampling,
+            ttft_slo_ms=(
+                None
+                if ttft_slo_ms_by_request is None
+                else ttft_slo_ms_by_request[index]
+            ),
         )
         for index, offset in enumerate(offsets)
     )
@@ -664,6 +675,7 @@ def _build_engine(args: argparse.Namespace):
             args.cooperative_prefill_vision_block_quantum
         ),
         enable_vision_tensor_cudagraph=args.enable_vision_tensor_cudagraph,
+        enable_visual_embedding_cache=args.enable_visual_embedding_cache,
         vision_attention_backend="sdpa",
     )
 
@@ -709,7 +721,7 @@ def main() -> None:
     parser.add_argument("--max-queue-size", type=int)
     parser.add_argument(
         "--scheduler-policy",
-        choices=("fcfs", "vision_aware"),
+        choices=("fcfs", "vision_aware", "slo_aware"),
         default="fcfs",
     )
     parser.add_argument("--max-consecutive-prefill-batches", type=int, default=1)
@@ -765,6 +777,14 @@ def main() -> None:
         default="packed",
     )
     parser.add_argument("--enable-vision-tensor-cudagraph", action="store_true")
+    parser.add_argument(
+        "--enable-visual-embedding-cache",
+        action="store_true",
+        help=(
+            "retain exact Vision Encoder outputs for repeated in-process "
+            "media identities in a bounded GPU LRU"
+        ),
+    )
     parser.add_argument(
         "--enable-cooperative-prefill",
         action="store_true",
@@ -824,6 +844,18 @@ def main() -> None:
             count=args.requests,
         )
         workload_case = f"h3_{args.h3_profile}"
+    class_slos, class_slo_source = _load_class_slos(
+        args.class_slo_file,
+        request_classes=request_classes,
+    )
+    ttft_slo_ms_by_request = [
+        (
+            class_slos[case_id]["ttft_ms"]
+            if case_id in class_slos
+            else None
+        )
+        for case_id in request_classes
+    ]
     sampling = SamplingParams(
         temperature=0.0,
         max_tokens=args.max_tokens,
@@ -845,6 +877,9 @@ def main() -> None:
                 seed=args.seed,
                 sampling=sampling,
                 key_prefix="warmup",
+                ttft_slo_ms_by_request=ttft_slo_ms_by_request[
+                    : args.warmup_requests
+                ],
             )
             OnlineServingSession(llm).run(warmup)
             llm.reset_metrics()
@@ -859,6 +894,7 @@ def main() -> None:
             seed=args.seed,
             sampling=sampling,
             key_prefix="formal",
+            ttft_slo_ms_by_request=ttft_slo_ms_by_request,
         )
         trace_sha256 = _canonical_sha256(
             {
@@ -889,10 +925,6 @@ def main() -> None:
         process_device_memory = process_memory_sampler.stop()
         run_record = run.to_record()
         _annotate_request_classes(run_record, request_classes)
-        class_slos, class_slo_source = _load_class_slos(
-            args.class_slo_file,
-            request_classes=request_classes,
-        )
         prompt_audit = _prompt_audit(llm, run, request_classes)
         compaction_summary = _visual_compaction_summary(
             llm,
@@ -984,6 +1016,9 @@ def main() -> None:
                 "visual_pruning_strategy": args.visual_pruning_strategy,
                 "vision_tensor_cudagraph": (
                     args.enable_vision_tensor_cudagraph
+                ),
+                "visual_embedding_cache": (
+                    llm.visual_embedding_cache_metadata()
                 ),
                 "cooperative_prefill": args.enable_cooperative_prefill,
                 "cooperative_prefill_scope": (

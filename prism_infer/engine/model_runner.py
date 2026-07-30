@@ -14,6 +14,7 @@
 # C++ 类比: 整个文件 ≈ inference engine 的 execute() 函数
 # ═══════════════════════════════════════════════════════════════
 
+from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -106,6 +107,7 @@ from prism_infer.utils.loader import load_model  # 权重加载
 CUDA_GRAPH_EXACT_BATCH_LIMIT = 8
 CUDA_GRAPH_BATCH_BUCKET_STRIDE = 16
 MROPE_DECODE_POSITION_RANK = 2
+VISUAL_EMBEDDING_CACHE_MAX_BYTES = 256 * 1024 * 1024
 
 
 @dataclass(slots=True)
@@ -135,6 +137,16 @@ class _PendingPrefillExecution:
     vision_payloads: list[_CooperativeVisionPayload]
     next_vision_payload: int = 0
     sampled_tokens: torch.Tensor | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _VisualEmbeddingCacheEntry:
+    """Exact Vision Encoder outputs retained for one media identity."""
+
+    source_objects: tuple[object, ...]
+    visual_embeds: torch.Tensor
+    deepstack_visual_embeds: tuple[torch.Tensor, ...]
+    storage_bytes: int
 
 
 def _resolve_model_dtype(hf_config) -> torch.dtype:
@@ -216,6 +228,15 @@ class ModelRunner:
         self.decode_compile_first_call_pending = False
         self.last_cudagraph_actual_batch_size: int | None = None
         self.last_cudagraph_replay_batch_size: int | None = None
+        self._visual_embedding_cache: OrderedDict[
+            tuple[str, tuple[int, ...]],
+            _VisualEmbeddingCacheEntry,
+        ] = OrderedDict()
+        self._visual_embedding_cache_resident_bytes = 0
+        self._visual_embedding_cache_hits = 0
+        self._visual_embedding_cache_misses = 0
+        self._visual_embedding_cache_evictions = 0
+        self._visual_embedding_cache_oversize_skips = 0
         register_model_config(config)
         self._initialize_distributed(distributed_init_method)
         self._initialize_model_runtime(hf_config)
@@ -350,6 +371,8 @@ class ModelRunner:
         # The control pipe remains open until workers acknowledge this method.
         if self.world_size > 1:
             self._tp_barrier()
+        self._visual_embedding_cache.clear()
+        self._visual_embedding_cache_resident_bytes = 0
         self._release_execution_backend()
         reset_context()
         torch.cuda.synchronize()
@@ -505,8 +528,182 @@ class ModelRunner:
                 image_grid_thw=inputs.image_grid_thw,
                 pixel_values_videos=inputs.pixel_values_videos,
                 video_grid_thw=inputs.video_grid_thw,
+                visual_embeds=inputs.visual_embeds,
+                deepstack_visual_embeds=(
+                    inputs.deepstack_visual_embeds
+                ),
             )
         return self.model(inputs.input_ids, inputs.position_ids)
+
+    @staticmethod
+    def _visual_cache_device_tensor(value: torch.Tensor) -> torch.Tensor:
+        if value.is_cuda:
+            return value
+        return value.pin_memory().cuda(non_blocking=True)
+
+    @staticmethod
+    def _visual_cache_storage_bytes(
+        visual_embeds: torch.Tensor,
+        deepstack_visual_embeds: tuple[torch.Tensor, ...],
+    ) -> int:
+        return sum(
+            value.numel() * value.element_size()
+            for value in (visual_embeds, *deepstack_visual_embeds)
+        )
+
+    @staticmethod
+    def _attach_visual_embedding_cache_entry(
+        seq: Sequence,
+        entry: _VisualEmbeddingCacheEntry,
+    ) -> None:
+        seq.precomputed_visual_embeds = entry.visual_embeds
+        seq.precomputed_deepstack_visual_embeds = (
+            entry.deepstack_visual_embeds
+        )
+
+    @torch.inference_mode()
+    def hydrate_visual_embedding_cache(self, seq: Sequence) -> None:
+        """Attach or compute exact visual outputs for one admitted request."""
+
+        if not self.config.enable_visual_embedding_cache:
+            return
+        if self.world_size != 1 or not self.is_vl_model:
+            raise RuntimeError(
+                "visual embedding cache currently requires Qwen3-VL with TP1"
+            )
+        key = seq.visual_embedding_cache_key
+        sources = seq.visual_embedding_cache_sources
+        if key is None:
+            return
+        if not sources:
+            raise RuntimeError(
+                "visual embedding cache identity is missing source objects"
+            )
+
+        cached = self._visual_embedding_cache.get(key)
+        if cached is not None and len(cached.source_objects) == len(sources):
+            identity_matches = all(
+                cached_source is source
+                for cached_source, source in zip(
+                    cached.source_objects,
+                    sources,
+                    strict=True,
+                )
+            )
+            if identity_matches:
+                self._visual_embedding_cache.move_to_end(key)
+                self._visual_embedding_cache_hits += 1
+                self._attach_visual_embedding_cache_entry(seq, cached)
+                return
+        if cached is not None:
+            self._visual_embedding_cache_resident_bytes -= (
+                cached.storage_bytes
+            )
+            del self._visual_embedding_cache[key]
+            self._visual_embedding_cache_evictions += 1
+
+        payloads = [
+            (seq.pixel_values, seq.image_grid_thw),
+            (seq.pixel_values_videos, seq.video_grid_thw),
+        ]
+        present = [
+            (payload, grid)
+            for payload, grid in payloads
+            if payload is not None
+        ]
+        if len(present) != 1:
+            raise RuntimeError(
+                "visual embedding cache requires exactly one visual modality "
+                f"per request, got {len(present)} for seq={seq.seq_id}"
+            )
+        payload, grid = present[0]
+        if grid is None:
+            raise RuntimeError(
+                f"visual cache payload is missing grid metadata for seq={seq.seq_id}"
+            )
+        payload = self._visual_cache_device_tensor(payload)
+        grid = self._visual_cache_device_tensor(grid)
+        self._visual_embedding_cache_misses += 1
+        with profile_region(
+            "model.vision.embedding_cache_miss",
+            metadata={
+                "patch_tokens": int(payload.shape[0]),
+                "seq_id": seq.seq_id,
+            },
+        ):
+            visual_embeds, deepstack = (
+                self.model.model._encode_visual_payload(payload, grid)
+            )
+        visual_embeds = visual_embeds.detach()
+        deepstack_visual_embeds = tuple(
+            value.detach() for value in deepstack
+        )
+        expected_rows = seq.image_token_count + seq.video_token_count
+        if (
+            int(visual_embeds.shape[0]) != expected_rows
+            or not deepstack_visual_embeds
+            or any(
+                value.shape != visual_embeds.shape
+                for value in deepstack_visual_embeds
+            )
+        ):
+            raise RuntimeError(
+                "Vision Encoder cache output does not match visual placeholders: "
+                f"seq={seq.seq_id} rows={visual_embeds.shape[0]} "
+                f"expected={expected_rows}"
+            )
+        storage_bytes = self._visual_cache_storage_bytes(
+            visual_embeds,
+            deepstack_visual_embeds,
+        )
+        entry = _VisualEmbeddingCacheEntry(
+            source_objects=sources,
+            visual_embeds=visual_embeds,
+            deepstack_visual_embeds=deepstack_visual_embeds,
+            storage_bytes=storage_bytes,
+        )
+        self._attach_visual_embedding_cache_entry(seq, entry)
+        if storage_bytes > VISUAL_EMBEDDING_CACHE_MAX_BYTES:
+            self._visual_embedding_cache_oversize_skips += 1
+            return
+        while (
+            self._visual_embedding_cache
+            and self._visual_embedding_cache_resident_bytes + storage_bytes
+            > VISUAL_EMBEDDING_CACHE_MAX_BYTES
+        ):
+            _, evicted = self._visual_embedding_cache.popitem(last=False)
+            self._visual_embedding_cache_resident_bytes -= (
+                evicted.storage_bytes
+            )
+            self._visual_embedding_cache_evictions += 1
+        self._visual_embedding_cache[key] = entry
+        self._visual_embedding_cache_resident_bytes += storage_bytes
+
+    def visual_embedding_cache_metadata(self) -> dict[str, object]:
+        """Return bounded cache state and measured-run counters."""
+
+        return {
+            "enabled": self.config.enable_visual_embedding_cache,
+            "identity": "exact_in_process_media_object",
+            "scope": "vision_encoder_main_and_deepstack_outputs_only",
+            "max_bytes": VISUAL_EMBEDDING_CACHE_MAX_BYTES,
+            "resident_bytes": self._visual_embedding_cache_resident_bytes,
+            "entries": len(self._visual_embedding_cache),
+            "hits": self._visual_embedding_cache_hits,
+            "misses": self._visual_embedding_cache_misses,
+            "evictions": self._visual_embedding_cache_evictions,
+            "oversize_skips": (
+                self._visual_embedding_cache_oversize_skips
+            ),
+        }
+
+    def reset_visual_embedding_cache_metrics(self) -> None:
+        """Reset counters while retaining warm exact encoder outputs."""
+
+        self._visual_embedding_cache_hits = 0
+        self._visual_embedding_cache_misses = 0
+        self._visual_embedding_cache_evictions = 0
+        self._visual_embedding_cache_oversize_skips = 0
 
     def _configure_decode_compile(self) -> None:
         """Enable exactly one explicitly configured decode compile region."""
@@ -1303,9 +1500,13 @@ class ModelRunner:
         """Install completed visual outputs and create the language state."""
 
         inputs = pending.device_batch.model_inputs
-        visual_embeds = None
-        deepstack_visual_embeds: tuple[torch.Tensor, ...] = ()
+        visual_embeds = inputs.visual_embeds
+        deepstack_visual_embeds = inputs.deepstack_visual_embeds
         if pending.vision_payloads:
+            if visual_embeds is not None:
+                raise RuntimeError(
+                    "cooperative prefill cannot mix raw and cached vision inputs"
+                )
             modality_outputs = []
             for payload in pending.vision_payloads:
                 if (

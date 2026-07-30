@@ -247,3 +247,90 @@ class VisionAwareSchedulerPolicy(FCFSSchedulerPolicy):
 
     def is_heavy_prefill(self, vision_patches: int) -> bool:
         return vision_patches >= self.heavy_prefill_vision_patch_threshold
+
+
+@dataclass(frozen=True, slots=True)
+class SLOAwareSchedulerPolicy(FCFSSchedulerPolicy):
+    """Order waiting prefills by TTFT deadline and isolate cost tiers.
+
+    Requests without an explicit TTFT SLO retain FCFS ordering. Under decode
+    load, co-batching is restricted to comparable prefill-cost tiers so a
+    short text request cannot inherit the latency of a multi-image or video
+    prefill.
+    """
+
+    heavy_prefill_vision_patch_threshold: int = 4096
+    prefill_reserve_ms_by_tier: tuple[float, float, float] = (
+        120.0,
+        250.0,
+        700.0,
+    )
+    name: str = "slo_aware"
+
+    def __post_init__(self) -> None:
+        FCFSSchedulerPolicy.__post_init__(self)
+        if self.heavy_prefill_vision_patch_threshold <= 0:
+            raise ValueError(
+                "heavy_prefill_vision_patch_threshold must be positive"
+            )
+        if any(value <= 0 for value in self.prefill_reserve_ms_by_tier):
+            raise ValueError("prefill reserve estimates must be positive")
+
+    @staticmethod
+    def ttft_deadline_ns(seq: Sequence) -> int | None:
+        if seq.submitted_ns is None or seq.ttft_slo_ms is None:
+            return None
+        return seq.submitted_ns + int(seq.ttft_slo_ms * 1_000_000)
+
+    def prefill_cost_tier(self, seq: Sequence) -> int:
+        if seq.vision_patch_count == 0 and seq.num_prompt_tokens <= 256:
+            return 0
+        if seq.vision_patch_count < self.heavy_prefill_vision_patch_threshold:
+            return 1
+        return 2
+
+    def prefill_reserve_ns(self, seq: Sequence) -> int:
+        tier = self.prefill_cost_tier(seq)
+        return int(self.prefill_reserve_ms_by_tier[tier] * 1_000_000)
+
+    def can_co_batch(self, anchor: Sequence, candidate: Sequence) -> bool:
+        """Keep text isolated while allowing visual requests to share work."""
+
+        anchor_tier = self.prefill_cost_tier(anchor)
+        candidate_tier = self.prefill_cost_tier(candidate)
+        return (anchor_tier == 0) == (candidate_tier == 0)
+
+    def waiting_prefill_index(
+        self,
+        candidates: TypingSequence[Sequence],
+        *,
+        has_decode: bool,
+        decode_batches_since_heavy_prefill: int,
+        light_prefill_bypasses_since_heavy: int,
+    ) -> int | None:
+        del (
+            has_decode,
+            decode_batches_since_heavy_prefill,
+            light_prefill_bypasses_since_heavy,
+        )
+        if not candidates:
+            return None
+
+        def priority(index: int) -> tuple[int, int, int]:
+            candidate = candidates[index]
+            deadline_ns = self.ttft_deadline_ns(candidate)
+            submitted_ns = candidate.submitted_ns
+            return (
+                (
+                    deadline_ns - self.prefill_reserve_ns(candidate)
+                    if deadline_ns is not None
+                    else 2**63 - 1
+                ),
+                submitted_ns if submitted_ns is not None else 2**63 - 1,
+                index,
+            )
+
+        return min(range(len(candidates)), key=priority)
+
+    def is_heavy_prefill(self, vision_patches: int) -> bool:
+        return vision_patches >= self.heavy_prefill_vision_patch_threshold

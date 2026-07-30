@@ -269,9 +269,9 @@ class SchedulerConfig:
             self.enable_chunked_prefill,
             name="enable_chunked_prefill",
         )
-        if self.scheduler_policy not in {"fcfs", "vision_aware"}:
+        if self.scheduler_policy not in {"fcfs", "vision_aware", "slo_aware"}:
             raise ValueError(
-                "scheduler_policy must be 'fcfs' or 'vision_aware', "
+                "scheduler_policy must be 'fcfs', 'vision_aware', or 'slo_aware', "
                 f"got {self.scheduler_policy!r}"
             )
         if self.max_queue_size is not None:
@@ -288,6 +288,7 @@ class MultimodalConfig:
     vision_encoder_microbatch_patches: int = DEFAULT_VISION_ENCODER_MICROBATCH_PATCHES
     vision_attention_backend: VisionAttentionBackendName | str = VisionAttentionBackendName.SDPA
     enable_vision_tensor_cudagraph: bool = False
+    enable_visual_embedding_cache: bool = False
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -311,6 +312,10 @@ class MultimodalConfig:
         _boolean(
             self.enable_vision_tensor_cudagraph,
             name="enable_vision_tensor_cudagraph",
+        )
+        _boolean(
+            self.enable_visual_embedding_cache,
+            name="enable_visual_embedding_cache",
         )
         object.__setattr__(
             self,
@@ -612,6 +617,7 @@ class PrismConfig:
             "vision_encoder_microbatch_patches": ("vision_encoder_microbatch_patches"),
             "vision_attention_backend": "vision_attention_backend",
             "enable_vision_tensor_cudagraph": ("enable_vision_tensor_cudagraph"),
+            "enable_visual_embedding_cache": "enable_visual_embedding_cache",
         }
         cache_fields = {
             "gpu_memory_utilization": "gpu_memory_utilization",
@@ -944,6 +950,10 @@ class Config:
     @property
     def enable_vision_tensor_cudagraph(self) -> bool:
         return self.multimodal_config.enable_vision_tensor_cudagraph
+
+    @property
+    def enable_visual_embedding_cache(self) -> bool:
+        return self.multimodal_config.enable_visual_embedding_cache
 
     @property
     def max_num_batched_tokens(self) -> int:

@@ -217,6 +217,37 @@ def test_vision_aware_policy_bypasses_heavy_prefill_with_bounded_credit() -> Non
     )
 
 
+def test_slo_policy_isolates_tight_text_from_visual_prefill() -> None:
+    scheduler = Scheduler(
+        _scheduler_config(
+            scheduler_policy="slo_aware",
+            heavy_prefill_vision_patch_threshold=4,
+        ),
+        clock_ns=lambda: 0,
+    )
+    visual = _sequence(
+        [1],
+        SamplingParams(max_tokens=1),
+        pixel_values=torch.zeros((4, 1)),
+        image_grid_thw=torch.ones((1, 3), dtype=torch.int64),
+    )
+    visual.submitted_ns = 0
+    visual.ttft_slo_ms = 1_352.0
+    text = _sequence([2], SamplingParams(max_tokens=1))
+    text.submitted_ns = 0
+    text.ttft_slo_ms = 170.0
+    scheduler.add(visual)
+    scheduler.add(text)
+
+    plan = scheduler.schedule()
+
+    assert plan.sequences == (text,)
+    assert tuple(scheduler.waiting) == (visual,)
+    metrics = scheduler.metrics_snapshot()
+    assert metrics["deadline_prefill_reorders"] == 1
+    assert metrics["cost_tier_batch_deferrals"] == 1
+
+
 def test_scheduler_emits_named_plan_and_advances_fsm() -> None:
     with _explicit_page_contract():
         scheduler = Scheduler(_scheduler_config())

@@ -1,5 +1,20 @@
 # Prism-Infer
 
+## P16 稳态多模态 Goodput 更新
+
+在 RTX 5090、Qwen3-VL-8B、600-request Poisson rate-4 冻结负载上，P16
+将 class-SLO Goodput 从 P16 调度器 cache-off 的 `171.538 tok/s` 提升到
+`226.311 tok/s`（`+31.93%`），同一 workload 下高于 vLLM `6.70%`、高于
+SGLang `15.01%`；raw throughput 为 `241.184 tok/s`，与两者相差不超过
+`0.13%`。600/600 请求完成且无失败，H1/H2 64-token hash exact、
+scaled-FP8 KV bytes `-48.44%` 与视觉物理页回收保持不变。
+
+该结果限定于 warm、单进程、重复媒体对象 workload。256 MiB exact LRU 只复用
+Vision Encoder 主输出与 DeepStack 输出；语言 prefill、KV 写入、decode、采样和每次
+64-token 生成仍完整执行。它不是 unique-media、content-addressed network cache 或
+“Prism 全面超过 vLLM/SGLang”的结论。完整协议、公平性边界、失败候选、Profiler 与
+面试口径见 [P16 Steady-State Goodput 结果](docs/P16_STEADY_STATE_GOODPUT_RESULTS.md)。
+
 Prism-Infer 是一个面向 **Qwen3-VL-8B-Instruct** 的单机多模态推理与视觉 KV
 Cache 研究引擎。项目以 nano-vLLM 的轻量框架为起点，自实现 Qwen3-VL
 text/vision forward、M-RoPE、DeepStack、Paged KV、调度、CUDA Graph decode、KV
@@ -33,6 +48,7 @@ OpenAI-compatible 或多机生产 serving 系统。
 | compile + CUDA Graph decode hot path | H1/H2 三引擎闭环 | RTX 5090、TP1、batch1、greedy、output128；Prism BF16 与 scaled-FP8 TPOT 均低于同协议 vLLM/SGLang |
 | arrival-driven external H3 | 正式闭环、loaded goodput 未胜出 | 600 requests、Poisson、四类 conditional-video mix；raw throughput 距 vLLM/SGLang 不到 0.8%，但 SLO goodput 明显落后 |
 | P15 balanced loaded serving | 四次复测通过 | 60-request frozen trace；deadline-aware prefill coalescing + CPU preprocessing resource budget；TPOT 低于 vLLM/SGLang bounded references，raw/TTFT/Goodput 仍落后 |
+| P16 steady-state repeated-media serving | 600-request 正式闭环、限定 Goodput 胜出 | SLO slack/cost 调度 + 256 MiB exact Vision/DeepStack LRU；Goodput `226.311 tok/s`，高于同 workload vLLM/SGLang `6.70%/15.01%`；不外推到 unique-media |
 | phase-decomposed multimodal prefill | 已实现原型、已拒绝并删除 | H1 单请求 exact 且最大执行段缩短；同 trace loaded goodput/TTFT/TPOT 未通过保留门槛 |
 | dynamic-shape Vision tensor Graph | loaded serving 默认关闭 | 新 RTX 5090 的 600-request mixed trace 出现错误 token；保留 decode CUDA Graph |
 | vision-aware scheduler | 实验实现、默认关闭 | 有界旁路改善 TTFT/E2E 中位数与尾部，但 loaded SLO goodput 未胜出 |
@@ -109,6 +125,12 @@ OpenAI-compatible 或多机生产 serving 系统。
   class-SLO Goodput `75.566 tok/s`；TPOT 相对 vLLM/SGLang bounded references
   低 `8.56%/13.86%`，但另外三项仍未超过外部系统。H1/H2 64-token hash exact，
   KV bytes `-48.44%` 与视觉物理页回收保持不变。
+- P16 在冻结 600-request trace 上先用 latest-start/cost-aware 调度把 Goodput 从
+  P15 n600 的 `67.427` 提升至 cache-off 的 `171.538 tok/s`，再利用精确、受限的
+  视觉编码结果复用达到 `226.311 tok/s`（563/600 请求同时满足 class TTFT/TPOT
+  SLO）。相同 workload 下 vLLM/SGLang 为 `212.108/196.779 tok/s`；P16 n600
+  TPOT `14.329 ms` 与 vLLM 近似持平、低于 SGLang `0.44%`，因此 headline 是
+  repeated-media SLO Goodput 而不是全面 TPOT 排名。
 
 最终口径、环境和 raw evidence 路径见
 [P10 最终结果](docs/P10_FINAL_RESULTS.md)、
@@ -117,6 +139,7 @@ OpenAI-compatible 或多机生产 serving 系统。
 [P13 Phase Prefill 结果](docs/P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md) 与
 [P14 Loaded Decode 结果](docs/P14_LOADED_DECODE_RESULTS.md)、
 [P15 Balanced Serving 结果](docs/P15_BALANCED_MULTIMODAL_RESULTS.md) 与
+[P16 Steady-State Goodput 结果](docs/P16_STEADY_STATE_GOODPUT_RESULTS.md)、
 [Network Serving 结果](docs/NETWORK_SERVING_RESULTS.md)、
 [PERFORMANCE_REPORT](docs/PERFORMANCE_REPORT.md)。
 
@@ -160,7 +183,8 @@ docs/           # 路线图、验证合同、报告、claim ledger
 
 ```text
 GPU: NVIDIA GeForce RTX 5090 32 GB
-GPU UUID: GPU-7f63f8b0-1027-d3bf-18b7-5102cbc9f2eb
+P10/P11 GPU UUID: GPU-7f63f8b0-1027-d3bf-18b7-5102cbc9f2eb
+P15/P16 GPU UUID: GPU-a0340044-fe48-ceca-08e0-a50d9bcdd79a
 Driver: 580.105.08
 CUDA: 13.0
 Python: 3.12.3
@@ -395,6 +419,7 @@ python -m pytest -q tests -s
 - [P13 Phase Prefill 结果](docs/P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md)：可调度多模态 prefill 原型、correctness 问题、loaded 否决与删除。
 - [P14 Loaded Decode 结果](docs/P14_LOADED_DECODE_RESULTS.md)：block/layer cooperative prefill、B1--B8 Graph 与 guarded FP8 LM head。
 - [P15 Balanced Serving 结果](docs/P15_BALANCED_MULTIMODAL_RESULTS.md)：deadline-aware coalescing、CPU launch starvation 根因与四次 loaded 复测。
+- [P16 Steady-State Goodput 结果](docs/P16_STEADY_STATE_GOODPUT_RESULTS.md)：600-request SLO 调度、exact Vision/DeepStack LRU、外部 Goodput 对比、Profiler、失败候选与面试边界。
 - [秋招最终交付](docs/FINAL_DELIVERY.md)：项目定位、最终数字、简历 bullets、面试主线和交付边界。
 - [Claim Ledger](docs/CLAIMS.md)：允许、必须限定和禁止使用的结论。
 - [压缩报告](docs/COMPRESSION_REPORT.md) / [KV 分析报告](docs/KV_ANALYSIS_REPORT.md)。
@@ -410,7 +435,8 @@ python -m pytest -q tests -s
 - 不声称 scaled-FP8 比 Prism BF16 更快，也不把 KV-limited sequence 上限写成
   online concurrency/goodput。
 - 不把 offline output tok/s 当作 online serving goodput。
-- 不声称 Prism 的 loaded H3 goodput 已超过 vLLM/SGLang；正式 rate-4 结果明确落后。
+- 不把 P16 的重复媒体、warm identity-cache Goodput 胜出扩写为 unique-media、冷启动、
+  content-addressed 网络缓存或通用线上服务全面超过 vLLM/SGLang。
 - 不声称 phase-decomposed multimodal prefill 已保留或带来 online 加速；该原型已因
   loaded 退化删除。
 - 不把 packed MLP 的小幅 decode TPOT 收益写成 online goodput或稳定 E2E 加速。

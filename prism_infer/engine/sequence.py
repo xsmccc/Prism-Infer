@@ -1,4 +1,5 @@
 from copy import copy  # copy模块: 浅拷贝(复制列表本身, 不复制元素)
+from math import isfinite
 
 import torch
 
@@ -46,6 +47,7 @@ class Sequence:
 
         self.seq_id = request_id
         self.submitted_ns: int | None = None
+        self.ttft_slo_ms: float | None = None
         self.block_size = block_size
         self.lifecycle = RequestLifecycle(self.seq_id)
         self.token_ids = copy(token_ids)  # 浅拷贝prompt的token列表(值语义, 类似C++ vector拷贝)
@@ -74,6 +76,18 @@ class Sequence:
         self.image_token_count = image_token_count
         self.video_token_id = video_token_id
         self.video_token_count = video_token_count
+        # Runtime-only references for the opt-in exact visual-embedding cache.
+        # They are intentionally excluded from request serialization.
+        self.visual_embedding_cache_key: tuple[
+            str,
+            tuple[int, ...],
+        ] | None = None
+        self.visual_embedding_cache_sources: tuple[object, ...] = ()
+        self.precomputed_visual_embeds: torch.Tensor | None = None
+        self.precomputed_deepstack_visual_embeds: tuple[
+            torch.Tensor,
+            ...,
+        ] = ()
         self.visual_pruning_decision_record: dict[str, object] | None = None
         self.kv_layout: KVCacheLayoutDescriptor | None = None
 
@@ -347,6 +361,7 @@ class Sequence:
         return {
             "seq_id": self.seq_id,
             "submitted_ns": self.submitted_ns,
+            "ttft_slo_ms": self.ttft_slo_ms,
             "request_state": self.status,
             "block_size": self.block_size,
             "num_tokens": self.num_tokens,
@@ -406,6 +421,19 @@ class Sequence:
                 "serialized submitted_ns must be a non-negative integer or None"
             )
         self.submitted_ns = submitted_ns
+        ttft_slo_ms = state.get("ttft_slo_ms")
+        if ttft_slo_ms is not None and (
+            isinstance(ttft_slo_ms, bool)
+            or not isinstance(ttft_slo_ms, (int, float))
+            or not isfinite(float(ttft_slo_ms))
+            or ttft_slo_ms <= 0
+        ):
+            raise ValueError(
+                "serialized ttft_slo_ms must be a finite positive number or None"
+            )
+        self.ttft_slo_ms = (
+            None if ttft_slo_ms is None else float(ttft_slo_ms)
+        )
         request_state = state.get("request_state", RequestState.WAITING)
         self.lifecycle = RequestLifecycle(self.seq_id, state=request_state)
         serialized_block_size = state["block_size"]

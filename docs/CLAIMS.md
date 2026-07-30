@@ -16,6 +16,9 @@
 > P14 loaded-decode retained 点：`7ea7f80`
 > P15 balanced-serving 点：以本文所在提交为准；正式 artifacts 位于
 > `data/p15_balanced/final_cpu8_q1_formal_n60_dirty_r1..r4.json`
+> P16 steady-state Goodput 点：以本文所在提交为准；正式 artifact 为
+> `data/p16_goodput/p16_visual_embedding_cache_n600_s20260717_r1.json`
+> （SHA256 `a66fa5f311c109d23dcb37b8b3f64a31323960b4a96ba95088340e4e81e7357e`）
 > 当前 native network-serving 候选：base `25eeb72`；最终实现以本文所在提交为准
 > 更新日期: 2026-07-30
 
@@ -26,6 +29,9 @@
 
 | 结论 | 范围 | 证据 |
 |---|---|---|
+| P16 在冻结重复媒体 H3 上的 class-SLO Goodput 高于 vLLM/SGLang references | RTX 5090 UUID `GPU-a034...d79a`；Qwen3-VL-8B；600 requests、Poisson rate-4、seed20260717、warmup10、output64；三个视觉媒体对象重复 360 次；warm、单进程、exact identity cache | Prism `226.311 tok/s`、563/600 good；vLLM `212.108 tok/s`、527/600；SGLang `196.779 tok/s`、489/600；相对高 `6.70%/15.01%`，见 `P16_STEADY_STATE_GOODPUT_RESULTS.md` |
+| P16 的调度贡献与视觉复用贡献已分开测量 | 同一 n600 trace、prompt/arrival/SLO hash 与 P16 source；P15 FCFS、P16 cache-off、P16 cache-on 三档 | class-SLO Goodput `67.427 -> 171.538 -> 226.311 tok/s`；cache-on 相对 cache-off `+31.93%`；raw 均约 239–241 tok/s，说明主要收益来自 deadline attainment |
+| P16 exact encoder cache 只消除重复 ViT，不跳过生成 pipeline | 256 MiB GPU LRU；请求 modality + in-process media object identity；main + DeepStack 输出；n10 semantic profile | n600 measured window 360 hits/0 misses、3 entries、`109,182,976 B`；profile 中无 `model.vision.*`/cache-miss，仍有 language prefill、KV、paged attention、CUDA Graph decode 与 sampler；H1/H2 output64 hash exact |
 | P15 在冻结 loaded trace 上的 TPOT 低于 vLLM/SGLang bounded references | RTX 5090 UUID `GPU-a034...d79a`；Qwen3-VL-8B；60 requests、Poisson rate-4、seed20260717、warmup10、output64；四次 final-code 复测 | Prism 四次 TPOT 中位数 `12.490 ms`，相对 vLLM `13.659 ms` 低 `8.56%`、相对 SGLang `14.500 ms` 低 `13.86%`；raw throughput、TTFT、Goodput 仍落后，见 `P15_BALANCED_MULTIMODAL_RESULTS.md` |
 | deadline-aware coalescing 与 CPU 资源预算消除了 P14 的主要 loaded tradeoff | 同一 60-request trace；250 ms underfilled deadline、min batch3、CPU intra-op8；P14/P15 各四次中位数 | raw `+16.68%`、TTFT `-68.83%`、TPOT `-10.33%`、class-SLO Goodput `8.18x`；最终为 `215.628 tok/s`、`776.863/12.490 ms`、`75.566 tok/s` |
 | P15 性能提升保持既有多模态正确性与压缩 | 最终 retained mode；isolated H1/H2 output64；四次 loaded n60 | H1/H2 token hash exact；KV pool `4,282,122,240` bytes、相对 BF16 `-48.44%`；loaded visual tokens `-33.94%`、physical blocks `-33.33%` |
@@ -79,6 +85,9 @@
 
 | 现象 | 必须同时说明 |
 |---|---|
+| P16 class-SLO Goodput `226.311 tok/s`，高于 vLLM/SGLang `6.70%/15.01%` | 只覆盖 warm、单进程、三个 exact media object 重复的冻结 workload；外部 frontend 与缓存能力不是字节级相同，属于 feature-enabled system result，不是 unique-media、冷启动、网络 content-hash cache 或通用 serving 排名 |
+| P16 n600 TPOT `14.329 ms` | 比 SGLang `14.392 ms` 低 `0.44%`，但比 vLLM `14.283 ms` 高 `0.32%`；只能称近似持平，不能把 n60 的 P15/P16 bounded TPOT 优势外推成 n600 vLLM TPOT 胜出 |
+| encoder cache resident `104.1 MiB` | 是缓存张量逻辑字节；process NVML peak 为 cache-on/off `24,004/24,002 MiB`，不构成整进程显存下降；缓存只覆盖 Vision Encoder main/DeepStack 输出 |
 | P15 loaded TPOT 中位数 `12.490 ms`，低于 vLLM/SGLang references | 只覆盖当前 RTX 5090、指定 Qwen3-VL-8B snapshot、60-request in-process frozen trace 与四次复测；Prism raw throughput 仍低 `3.07%/2.51%`，TTFT 与 class-SLO Goodput 也明显落后 |
 | CPU intra-op `104→8` 后 TTFT/TPOT/Goodput 大幅改善 | 是同进程媒体预处理与 CUDA launch 的资源隔离；预处理仍计入 TTFT，不是 GPU kernel 加速，也不证明 8 对所有 CPU 拓扑最优 |
 | uniform/unit-scale-FP8 组合曾观察到 `4.016x` peak running capacity | uniform quality FAIL；unit-scale FP8 quality 未通过；不是 online throughput |
@@ -113,7 +122,8 @@
 ## 当前禁止的结论
 
 - “Prism 全面超过 vLLM/SGLang”。
-- “Prism 的 loaded/online H3 goodput 超过 vLLM/SGLang”。
+- “Prism 在 unique-media、冷启动或通用 loaded/online H3 上全面超过 vLLM/SGLang”；
+  当前只允许陈述 P16 warm repeated-media frozen trace 的 bounded Goodput 结果。
 - “原生网络 serving 已与 vLLM/SGLang 完成完全同协议排名”；当前外部开发行使用各自
   原生入口，只有请求类别与 arrival trace 对齐。
 - “动态视觉 Tensor Graph 可用于 mixed-shape loaded serving”或“关闭它全面提升

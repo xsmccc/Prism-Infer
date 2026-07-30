@@ -137,6 +137,39 @@ def test_online_arrival_loop_refreshes_clock_after_host_preprocessing() -> None:
     assert not state.pending
 
 
+def test_online_media_processor_cache_reuses_only_identical_objects() -> None:
+    media = object()
+    processor_calls: list[object] = []
+
+    def process_image(_prompt: str, image: object) -> object:
+        processor_calls.append(image)
+        return object()
+
+    engine = SimpleNamespace(
+        _process_image_inputs=process_image,
+        _prepare_image_sequence=lambda inputs, _sampling, request_id: (
+            inputs,
+            request_id,
+        ),
+    )
+    session = OnlineServingSession(engine)
+    request = OnlineRequest(
+        request_key="same-image",
+        arrival_offset_s=0.0,
+        payload={"type": "image", "prompt": "describe", "image": media},
+        sampling_params=SamplingParams(max_tokens=1),
+    )
+
+    first = session._prepare_media_sequence(request, 1)
+    second = session._prepare_media_sequence(request, 2)
+
+    assert len(processor_calls) == 1
+    assert first[0] is second[0]
+    assert (first[1], second[1]) == (1, 2)
+    assert session._media_preprocess_cache_hits == 1
+    assert session._media_preprocess_cache_misses == 1
+
+
 def test_online_session_preserves_arrival_and_continuous_batching() -> None:
     clock = _FakeClock()
     engine = _engine(clock)

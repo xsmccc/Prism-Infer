@@ -44,6 +44,10 @@ class _PrefillHostBatch:
     image_grid_chunks: list[torch.Tensor] = field(default_factory=list)
     video_value_chunks: list[torch.Tensor] = field(default_factory=list)
     video_grid_chunks: list[torch.Tensor] = field(default_factory=list)
+    visual_embed_chunks: list[torch.Tensor] = field(default_factory=list)
+    deepstack_visual_embed_chunks: list[list[torch.Tensor]] = field(
+        default_factory=list
+    )
 
 
 class ModelInputPreparer:
@@ -175,6 +179,59 @@ class ModelInputPreparer:
         seq: Sequence,
         current_tokens: list[int],
     ) -> None:
+        if seq.precomputed_visual_embeds is not None:
+            expected_tokens = seq.image_token_count + seq.video_token_count
+            observed_tokens = sum(
+                current_tokens.count(token_id)
+                for token_id in (seq.image_token_id, seq.video_token_id)
+                if token_id is not None
+            )
+            if observed_tokens not in (0, expected_tokens):
+                raise ValueError(
+                    "chunk boundary splits cached visual embeddings: "
+                    f"seq={seq.seq_id} chunk_tokens={observed_tokens} "
+                    f"expected={expected_tokens}"
+                )
+            if observed_tokens:
+                if (
+                    int(seq.precomputed_visual_embeds.shape[0])
+                    != expected_tokens
+                ):
+                    raise ValueError(
+                        "cached visual embedding rows do not match placeholders: "
+                        f"seq={seq.seq_id} "
+                        f"embeddings={seq.precomputed_visual_embeds.shape[0]} "
+                        f"expected={expected_tokens}"
+                    )
+                deepstack = seq.precomputed_deepstack_visual_embeds
+                if not deepstack:
+                    raise RuntimeError(
+                        "cached visual embeddings are missing DeepStack outputs"
+                    )
+                if not host.deepstack_visual_embed_chunks:
+                    host.deepstack_visual_embed_chunks = [
+                        [] for _ in deepstack
+                    ]
+                if len(host.deepstack_visual_embed_chunks) != len(deepstack):
+                    raise RuntimeError(
+                        "cached visual requests have inconsistent DeepStack depth"
+                    )
+                host.visual_embed_chunks.append(
+                    seq.precomputed_visual_embeds
+                )
+                for chunks, value in zip(
+                    host.deepstack_visual_embed_chunks,
+                    deepstack,
+                    strict=True,
+                ):
+                    if value.shape != seq.precomputed_visual_embeds.shape:
+                        raise ValueError(
+                            "cached DeepStack output shape does not match "
+                            f"main visual embeddings for seq={seq.seq_id}"
+                        )
+                    chunks.append(value)
+            return
+
         media = (
             (
                 "image",
@@ -271,18 +328,39 @@ class ModelInputPreparer:
             host.slot_mapping.append(seq.block_table[block_index] * self.block_size + block_offset)
 
     @staticmethod
-    def _multimodal_inputs(host: _PrefillHostBatch) -> dict[str, torch.Tensor | None]:
+    def _multimodal_inputs(host: _PrefillHostBatch) -> dict[str, object]:
         def concatenate(chunks: list[torch.Tensor]) -> torch.Tensor | None:
             if not chunks:
                 return None
             values = chunks[0] if len(chunks) == 1 else torch.cat(chunks, dim=0)
             return values.pin_memory().cuda(non_blocking=True)
 
+        has_raw = bool(host.pixel_value_chunks or host.video_value_chunks)
+        has_cached = bool(host.visual_embed_chunks)
+        if has_raw and has_cached:
+            raise RuntimeError(
+                "one prefill batch cannot mix raw and cached visual payloads"
+            )
+        visual_embeds = (
+            None
+            if not host.visual_embed_chunks
+            else (
+                host.visual_embed_chunks[0]
+                if len(host.visual_embed_chunks) == 1
+                else torch.cat(host.visual_embed_chunks, dim=0)
+            )
+        )
+        deepstack_visual_embeds = tuple(
+            chunks[0] if len(chunks) == 1 else torch.cat(chunks, dim=0)
+            for chunks in host.deepstack_visual_embed_chunks
+        )
         return {
             "pixel_values": concatenate(host.pixel_value_chunks),
             "image_grid_thw": concatenate(host.image_grid_chunks),
             "pixel_values_videos": concatenate(host.video_value_chunks),
             "video_grid_thw": concatenate(host.video_grid_chunks),
+            "visual_embeds": visual_embeds,
+            "deepstack_visual_embeds": deepstack_visual_embeds,
         }
 
     def _visual_pruning_scorer(
@@ -395,7 +473,11 @@ class ModelInputPreparer:
         visual_pruning_scorer = self._visual_pruning_scorer(
             seqs,
             slices,
-            has_visual_payload=bool(host.pixel_value_chunks or host.video_value_chunks),
+            has_visual_payload=bool(
+                host.pixel_value_chunks
+                or host.video_value_chunks
+                or host.visual_embed_chunks
+            ),
             compression_metadata=compression_metadata,
         )
         multimodal_inputs = self._multimodal_inputs(host)
