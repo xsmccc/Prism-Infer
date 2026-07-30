@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from prism_infer.analysis.online_serving import (
     ONLINE_BENCHMARK_SCHEMA_VERSION,
@@ -137,37 +138,92 @@ def test_online_arrival_loop_refreshes_clock_after_host_preprocessing() -> None:
     assert not state.pending
 
 
-def test_online_media_processor_cache_reuses_only_identical_objects() -> None:
-    media = object()
+def test_online_media_processor_cache_reuses_equal_content_across_objects() -> None:
+    media = bytearray(b"same decoded media")
+    media_copy = bytearray(media)
     processor_calls: list[object] = []
 
     def process_image(_prompt: str, image: object) -> object:
         processor_calls.append(image)
-        return object()
+        content_value = sum(image)
+        return SimpleNamespace(
+            pixel_values=(
+                torch.arange(8, dtype=torch.float32).reshape(2, 4)
+                + content_value
+            ),
+            image_grid_thw=torch.tensor([[1, 2, 2]]),
+            image_token_id=42,
+            image_token_count=2,
+        )
 
     engine = SimpleNamespace(
+        config=SimpleNamespace(
+            enable_visual_embedding_cache=True,
+            image_max_pixels=None,
+            model="",
+            video_max_pixels=None,
+        ),
+        vl_processor=None,
         _process_image_inputs=process_image,
         _prepare_image_sequence=lambda inputs, _sampling, request_id: (
-            inputs,
-            request_id,
+            SimpleNamespace(
+                inputs=inputs,
+                request_id=request_id,
+                visual_embedding_cache_key=None,
+            )
         ),
     )
     session = OnlineServingSession(engine)
-    request = OnlineRequest(
+    first_request = OnlineRequest(
         request_key="same-image",
         arrival_offset_s=0.0,
         payload={"type": "image", "prompt": "describe", "image": media},
         sampling_params=SamplingParams(max_tokens=1),
     )
+    second_request = OnlineRequest(
+        request_key="same-image-copy",
+        arrival_offset_s=0.0,
+        payload={
+            "type": "image",
+            "prompt": "describe",
+            "image": media_copy,
+        },
+        sampling_params=SamplingParams(max_tokens=1),
+    )
+    different_question = OnlineRequest(
+        request_key="same-image-different-question",
+        arrival_offset_s=0.0,
+        payload={
+            "type": "image",
+            "prompt": "what color",
+            "image": bytearray(media),
+        },
+        sampling_params=SamplingParams(max_tokens=1),
+    )
+    different_content = OnlineRequest(
+        request_key="different-image",
+        arrival_offset_s=0.0,
+        payload={
+            "type": "image",
+            "prompt": "describe",
+            "image": bytearray(b"different decoded media"),
+        },
+        sampling_params=SamplingParams(max_tokens=1),
+    )
 
-    first = session._prepare_media_sequence(request, 1)
-    second = session._prepare_media_sequence(request, 2)
+    first = session._prepare_media_sequence(first_request, 1)
+    second = session._prepare_media_sequence(second_request, 2)
+    third = session._prepare_media_sequence(different_question, 3)
+    fourth = session._prepare_media_sequence(different_content, 4)
 
-    assert len(processor_calls) == 1
-    assert first[0] is second[0]
-    assert (first[1], second[1]) == (1, 2)
+    assert len(processor_calls) == 3
+    assert first.inputs is second.inputs
+    assert (first.request_id, second.request_id) == (1, 2)
+    assert first.visual_embedding_cache_key == second.visual_embedding_cache_key
+    assert first.visual_embedding_cache_key == third.visual_embedding_cache_key
+    assert first.visual_embedding_cache_key != fourth.visual_embedding_cache_key
     assert session._media_preprocess_cache_hits == 1
-    assert session._media_preprocess_cache_misses == 1
+    assert session._media_preprocess_cache_misses == 3
 
 
 def test_online_session_preserves_arrival_and_continuous_batching() -> None:

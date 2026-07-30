@@ -7,6 +7,37 @@
 > 为 `921de81/e883de5`）
 > 最终文档提交：以本文件所在 clean HEAD 为准
 
+## P17 内容寻址压缩多模态前缀缓存
+
+P17 修复了 P16 最重要的泛化边界：语义相同但每次重新解码得到的新媒体对象也能命中。
+缓存 key 不使用对象地址，而是以 length-delimited SHA256 覆盖模型/processor、
+媒体像素与布局，并在 compacted prefix KV 层绑定截至最后视觉占位符的精确 prompt
+token。它复用 processor 张量、Vision/DeepStack 和物理压缩的 scaled-FP8 KV 页；
+同媒体换问题时只重建视觉占位符之后的文本，不复用语言后缀或生成 token。
+
+前缀 KV 缓存与现有 Paged KV/压缩主线共用真实页面：full page 只读共享，partial
+tail 首次命中执行有效行 CoW，之后把派生尾页留在同一预算内供后续请求租用；引用计数、
+eviction、M-RoPE logical/physical metadata 和退出释放均进入同一生命周期。
+
+fresh-object n60 对比结果：
+
+| Repeat | Prism raw / Goodput | vLLM raw / Goodput | 结论 |
+| ---: | ---: | ---: | --- |
+| 0% | 216.188 / 133.316 | 223.079 / 215.643 | vLLM 领先 |
+| 50% | 217.083 / 206.228 | 223.521 / 219.796 | vLLM 领先 |
+| 75% | 224.279 / 224.279 | 225.112 / 225.112 | 相差 0.37% |
+| 100% | 224.369 / 224.369 | 225.004 / 225.004 | 相差 0.28% |
+| 100% 换问题 | 224.301 / 224.301 | 225.004 / 225.004 | 相差 0.31% |
+
+100% repeat 的 Prism raw/Goodput 相对可用 SGLang cache-on 参考高
+`0.82%/4.30%`。正式 n600 结果为 `241.428 tok/s`、600/600 SLO、
+TTFT/TPOT p50 `146.418/13.041 ms`，相对 P16 Goodput 提升 `6.68%`；
+H1/H2 exact、scaled-FP8 KV `-48.44%`、视觉页回收、零失败和退出显存释放保持。
+
+结论边界很明确：P17 在高重复多模态 workload 中与 vLLM 统计持平并超过当前可用
+SGLang 参考；unique/低重复仍由 vLLM 领先。完整证据见
+[P17_CONTENT_ADDRESSED_PREFIX_CACHE_RESULTS](P17_CONTENT_ADDRESSED_PREFIX_CACHE_RESULTS.md)。
+
 ## P16 稳态多模态 SLO Goodput 更新
 
 P16 将 P12/P15 的“raw throughput 接近、loaded Goodput 落后”推进为一个有明确
@@ -215,10 +246,10 @@ trace 找到每 token 整张 LM-head 转 FP32 的问题，修复后 TPOT 提升
 质量 cell 全通过，同预算 KV capacity 提升 94.69%。我也做了 600-request online
 对比：早期 raw throughput 已接近两家，但 loaded Goodput 落后。phase-chunk 虽然
 缩短单次阻塞，却增加总工作，所以我删除了候选；随后用 class SLO slack 做调度，
-只隔离 tight text 与 visual batch，再对同一媒体对象精确复用 Vision/DeepStack
-输出。最终重复媒体 workload 的 Goodput 达到 226.31 tok/s，高于 vLLM 6.70%、
-SGLang 15.01%。这个 cache 不复用语言 prefill、KV 或生成 token，我也会主动说明
-它不是 unique-media 的全面排名。
+只隔离 tight text 与 visual batch。P16 先验证同对象 Vision/DeepStack 复用；
+P17 再升级为内容 SHA256，并把复用延伸到 compacted scaled-FP8 prefix KV 的真实
+页面、CoW 和尾页池。fresh-object 高重复负载超过当前 SGLang 参考并与 vLLM 相差
+0.3% 左右，n600 达到 600/600 SLO；unique/低重复仍落后，我不会把它讲成全面排名。
 
 ## 6. 面试主线
 
@@ -237,8 +268,10 @@ SGLang 15.01%。这个 cache 不复用语言 prefill、KV 或生成 token，我�
 ## 7. 必须主动说明的边界
 
 - “超过 vLLM/SGLang”的离线结论仍只用于冻结 H1/H2 batch1 TPOT；
-- online Goodput 胜出只用于 P16 warm repeated-media frozen trace；必须同时说明
-  exact in-process identity cache、native frontend 不完全相同和 unique-media 未验证；
+- online 高重复结论只用于 P17 单进程 fresh-object frozen trace；必须同时说明
+  vLLM 是高重复统计持平、SGLang 单机没有功能完全等价的 multimodal global cache，
+  且 0--50% repeat 仍由 vLLM 领先；
+- P17 的“持久”是同一 engine 生命周期内跨请求，不是跨进程/跨节点网络缓存；
 - `-48.44%` 是 allocated KV pool，不是整卡显存；整进程实测为 `-8.24%`；
 - `+58.83% requests/s` 是 11-page 容量受限 batch2；
 - Graph speedup 是 Prism internal eager→Graph；
@@ -251,6 +284,8 @@ SGLang 15.01%。这个 cache 不复用语言 prefill、KV 或生成 token，我�
 - `P12_ONLINE_GOODPUT_RESULTS.md`：600-request external online closure；
 - `P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md`：phase 候选实现与否决；
 - `P16_STEADY_STATE_GOODPUT_RESULTS.md`：P16 调度、视觉复用、正式对比和边界；
+- `P17_CONTENT_ADDRESSED_PREFIX_CACHE_RESULTS.md`：内容指纹、fresh-object 矩阵、
+  压缩前缀页生命周期、失败候选和 n600 闭环；
 - `CLAIMS.md`：允许/限制/禁止的唯一口径；
 - `REPRODUCIBILITY.md`：环境、命令与 artifact contract；
 - `APPLICATION_MATERIALS.md`：简历、STAR、面试追问。
@@ -259,7 +294,7 @@ SGLang 15.01%。这个 cache 不复用语言 prefill、KV 或生成 token，我�
 
 - retained source 无已知负收益实验代码；
 - 工作树 clean，分支和 commit 明确；
-- P10/P11/P12 正式 artifact 与 P13 rejected artifact 均有索引；
+- P10/P11/P12/P16/P17 正式 artifact 与 rejected artifact 均有索引；
 - README、claim ledger、简历与面试口径一致；
 - 不再为了“多一个优化点”新增未经 profiling 证明的模块。
 

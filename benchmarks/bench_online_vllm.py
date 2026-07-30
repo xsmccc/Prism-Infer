@@ -36,6 +36,9 @@ from benchmarks.bench_external_vllm import (
     _materialize_case,
 )
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
+from benchmarks.multimodal_cache_workload import (
+    build_multimodal_cache_workload,
+)
 from prism_infer.analysis.online_serving import summarize_distribution
 
 
@@ -552,6 +555,10 @@ def main() -> None:
     parser.add_argument("--block-size", type=int, default=256)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     parser.add_argument("--attention-backend", default="FLASH_ATTN")
+    parser.add_argument("--enable-prefix-caching", action="store_true")
+    parser.add_argument("--mm-processor-cache-gb", type=float, default=0.0)
+    parser.add_argument("--media-repeat-rate", type=float)
+    parser.add_argument("--vary-media-questions", action="store_true")
     parser.add_argument("--formal", action="store_true")
     parser.add_argument("--class-slo-file")
     parser.add_argument("--slo-output")
@@ -561,6 +568,11 @@ def main() -> None:
         raise SystemExit(
             "--requests must be positive, warmup non-negative and max-tokens >= 2"
         )
+    if (
+        args.media_repeat_rate is not None
+        and not 0.0 <= args.media_repeat_rate <= 1.0
+    ):
+        raise SystemExit("--media-repeat-rate must be in [0, 1]")
 
     manifest_path = Path(args.manifest)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -569,6 +581,23 @@ def main() -> None:
         profile=args.h3_profile,
         count=args.requests,
     )
+    cache_workload = None
+    warmup_pool = requests
+    if args.media_repeat_rate is not None or args.vary_media_questions:
+        warmup_pool, _ = build_multimodal_cache_workload(
+            requests,
+            repeat_rate=1.0,
+            vary_questions=False,
+        )
+        requests, cache_workload = build_multimodal_cache_workload(
+            requests,
+            repeat_rate=(
+                1.0
+                if args.media_repeat_rate is None
+                else args.media_repeat_rate
+            ),
+            vary_questions=args.vary_media_questions,
+        )
     offsets_s = _arrival_offsets(
         args.requests,
         process=args.arrival_process,
@@ -627,8 +656,8 @@ def main() -> None:
         kv_cache_memory_bytes=args.kv_cache_memory_bytes,
         block_size=args.block_size,
         enforce_eager=False,
-        enable_prefix_caching=False,
-        mm_processor_cache_gb=0,
+        enable_prefix_caching=args.enable_prefix_caching,
+        mm_processor_cache_gb=args.mm_processor_cache_gb,
         limit_mm_per_prompt=limit_mm_per_prompt,
         attention_config={"backend": args.attention_backend},
         enable_chunked_prefill=True,
@@ -645,7 +674,7 @@ def main() -> None:
         ignore_eos=True,
     )
     warmup_requests = [
-        requests[index % len(requests)]
+        warmup_pool[index % len(warmup_pool)]
         for index in range(args.warmup_requests)
     ]
     warmup_classes = [
@@ -730,6 +759,7 @@ def main() -> None:
             "h3_contract": h3_contract,
             "h3_conformance": conformance,
             "class_slo": class_slo_audit,
+            "multimodal_cache_workload": cache_workload,
             **prompt_audit,
         },
         "arrival": {
@@ -745,8 +775,8 @@ def main() -> None:
             **effective_backend,
             "attention": args.attention_backend,
             "block_size": args.block_size,
-            "prefix_caching": False,
-            "mm_processor_cache_gb": 0,
+            "prefix_caching": args.enable_prefix_caching,
+            "mm_processor_cache_gb": args.mm_processor_cache_gb,
             "kv_cache_memory_bytes_requested": args.kv_cache_memory_bytes,
             "kv_cache_memory_bytes_effective": (
                 vllm_config.cache_config.kv_cache_memory_bytes

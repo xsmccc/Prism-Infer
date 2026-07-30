@@ -57,14 +57,36 @@ class KVCompactionCoordinator:
                 f"shared_block_ids={shared_blocks}"
             )
 
-        retained_positions = build_retained_context_indices(
-            record,
-            seq.num_prompt_tokens,
+        compacted_logical_len = (
+            seq.num_prompt_tokens
+            if seq.is_prefill_finished or seq.num_computed_tokens == 0
+            else seq.num_computed_tokens
+        )
+        if compacted_logical_len < seq.num_prompt_tokens and (
+            not seq.multimodal_prefix_cache_enabled
+            or compacted_logical_len != seq.multimodal_prefix_boundary
+        ):
+            raise RuntimeError(
+                "partial visual KV compaction must end at the cacheable "
+                "multimodal prefix boundary"
+            )
+        retained_positions = tuple(
+            position
+            for position in build_retained_context_indices(
+                record,
+                seq.num_prompt_tokens,
+            )
+            if position < compacted_logical_len
         )
         if not retained_positions:
             raise RuntimeError("visual KV compaction retained zero prompt tokens")
         physical_prompt_len = len(retained_positions)
-        new_num_blocks = (physical_prompt_len + self.block_size - 1) // self.block_size
+        final_physical_prompt_len = physical_prompt_len + (
+            seq.num_prompt_tokens - compacted_logical_len
+        )
+        new_num_blocks = (
+            final_physical_prompt_len + self.block_size - 1
+        ) // self.block_size
         old_block_table = tuple(seq.block_table)
         new_block_table = old_block_table[:new_num_blocks]
         released_block_ids = old_block_table[new_num_blocks:]
@@ -81,6 +103,8 @@ class KVCompactionCoordinator:
             seq_id=seq.seq_id,
             logical_prompt_len=seq.num_prompt_tokens,
             physical_prompt_len=physical_prompt_len,
+            compacted_logical_len=compacted_logical_len,
+            final_physical_prompt_len=final_physical_prompt_len,
             old_block_table=old_block_table,
             new_block_table=new_block_table,
             released_block_ids=released_block_ids,
@@ -112,7 +136,13 @@ class KVCompactionCoordinator:
             {
                 "physical_compaction": True,
                 "logical_prompt_tokens": plan.logical_prompt_len,
-                "physical_prompt_kv_tokens": plan.physical_prompt_len,
+                "compacted_logical_tokens": (
+                    plan.effective_compacted_logical_len
+                ),
+                "compacted_prefix_kv_tokens": plan.physical_prompt_len,
+                "physical_prompt_kv_tokens": (
+                    plan.effective_final_physical_prompt_len
+                ),
                 "old_block_table": list(plan.old_block_table),
                 "new_block_table": list(plan.new_block_table),
                 "released_block_ids": list(plan.released_block_ids),
@@ -120,10 +150,11 @@ class KVCompactionCoordinator:
         )
         layout = KVCacheLayoutDescriptor(
             mode=KV_LAYOUT_VISUAL_COMPACT,
-            logical_context_len=seq.num_tokens,
+            logical_context_len=plan.effective_compacted_logical_len,
             physical_kv_len=plan.physical_prompt_len,
             prompt_logical_len=seq.num_prompt_tokens,
             compressed_prompt_kv_len=plan.physical_prompt_len,
+            compacted_logical_len=plan.effective_compacted_logical_len,
             retained_original_positions=plan.retained_original_positions,
             kv_dtype=plan.kv_dtype,
             compression_record=compact_record,
@@ -143,7 +174,12 @@ class KVCompactionCoordinator:
 
         seq.block_table = list(plan.new_block_table)
         seq.visual_pruning_decision_record = compact_record
-        seq.install_kv_layout(layout)
+        if plan.effective_compacted_logical_len == seq.num_prompt_tokens:
+            seq.install_kv_layout(layout)
+        else:
+            seq.num_cached_tokens = plan.effective_compacted_logical_len
+            seq.install_cached_prefix_layout(layout)
+            seq.num_cached_tokens = 0
 
 
 __all__ = ["KVCompactionCoordinator"]

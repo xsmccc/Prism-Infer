@@ -4,7 +4,57 @@
 > 使用规则：所有数字必须能回到 [CLAIMS](CLAIMS.md) 和对应证据；投递时选择与岗位
 > 匹配的 2–3 条，不要把本文件整段复制到一页简历。
 
-## 0. P16 最新投递口径
+## 0. P17 最新投递口径
+
+### 推荐简历 bullet
+
+- 为 Qwen3-VL 实现内容寻址的压缩多模态前缀缓存：以模型/processor/媒体像素与
+  layout/prompt-prefix SHA256 跨请求复用 Vision、DeepStack 和 compacted
+  scaled-FP8 KV 页，设计 M-RoPE 逻辑/物理位置解耦、页引用/CoW、收益每页淘汰及
+  可回池尾页；fresh-object 100% repeat 达到 60/60 SLO、`224.37 tok/s`，
+  相对 SGLang cache-on raw/Goodput 高 `0.82%/4.30%`、与 vLLM 相差 `0.28%`，
+  n600 达到 600/600 SLO，并保持 H1/H2 exact、KV bytes `-48.44%` 与视觉页回收。
+
+### 一句话项目描述
+
+自实现 Qwen3-VL-8B 多模态推理引擎，贯通 Vision/M-RoPE/DeepStack、Paged KV、
+scaled-FP8、视觉 KV 物理压缩、`torch.compile`、CUDA Graph 与 SLO-aware serving；
+进一步实现可跨媒体对象复用的内容寻址压缩前缀页，在高重复 fresh-object 负载中
+超过可用 SGLang 参考并与 vLLM 持平，同时诚实保留 unique/低重复落后结果。
+
+### 面试时必须主动说明
+
+- “fresh-object”表示每请求重新创建解码后的媒体对象，但重复 cell 的内容逐字节相同；
+  它验证跨对象内容命中，不是跨进程或网络共享缓存。
+- 100% repeat 中 Prism/vLLM 为 `224.369/225.004 tok/s`，差距 `0.28%`，只能称
+  持平；0--50% repeat vLLM 明显领先。
+- SGLang 0.5.15 的官方 multimodal global cache 不能用于当前单机路径，因此
+  `222.538/215.120 tok/s` 是可用的 Radix/repeated-object cache-on 参考，不是功能
+  完全等价 A/B。
+- cache 只复用截至最后视觉占位符的媒体不变量和 compacted prefix KV，不复用问题
+  后缀、生成 token 或 sampler。
+- `-48.44%` 是 allocated KV payload+scales；n600 process peak 仍为
+  `24,006 MiB`，不能说整卡显存减半。
+
+### 60 秒讲法
+
+P16 证明了重复视觉编码可以提高 SLO Goodput，但缓存 key 是 Python 对象身份，无法
+解释真实服务中同一媒体被重复解码的情况。P17 先把身份改为 fail-closed 的内容
+SHA256，并把模型、processor、像素、grid 和 prompt 视觉前缀都纳入 namespace；
+同媒体换问题时只重新 tokenization 问题后缀。随后我没有停在 Vision embedding
+LRU，而是把已经裁剪并量化的 multimodal prefix KV 真实页面也持久保留：full page
+只读共享，partial tail 第一次命中按有效行 CoW，之后复用尾页池，同时维护 M-RoPE
+逻辑位置、物理 KV 位置、引用计数和收益/页淘汰。
+
+结果上，fresh-object 75%/100% 重复时 Prism 与 vLLM 相差 0.4% 以内，100% 重复
+超过当前 SGLang 参考；n600 600/600 请求满足双 SLO。unique/低重复仍落后 vLLM，
+profiling 指向 cold multimodal prefill 对 decode cadence 的干扰。我保留了三个看似
+改善 TTFT、但降低吞吐或 Goodput 的调度候选，这也是我会主动讲的系统取舍。
+
+完整证据见
+[P17_CONTENT_ADDRESSED_PREFIX_CACHE_RESULTS](P17_CONTENT_ADDRESSED_PREFIX_CACHE_RESULTS.md)。
+
+## 0A. P16 历史投递口径
 
 本节替代下文 P12/P15 中“online Goodput 仍落后”的历史结论；历史内容继续保留，用于
 解释优化路径与失败复盘。
@@ -183,7 +233,7 @@ reached a four-run loaded TPOT median of `12.490 ms`.
 | capacity `+94.69%` | 固定约 4 GiB KV budget 的 token capacity，不是 online goodput |
 | BF16 TPOT 低 `4.54%–6.27%` | 只覆盖 RTX 5090、Qwen3-VL-8B、TP1、batch1、H1/H2、output128 offline Graph |
 | scaled TPOT 低 `1.06%–2.77%` | 与外部 BF16 baseline 比；不代表 scaled 比 Prism BF16 更快，E2E 有 mixed 单元 |
-| P12 rate-4 raw throughput距外部不到`0.8%` | 这是 P16 前的历史 cache-off/FCFS 结论；P16 只允许在 warm repeated-media frozen trace 上陈述 bounded Goodput 胜出 |
+| P12 rate-4 raw throughput距外部不到`0.8%` | 这是 P16/P17 前的历史 cache-off/FCFS 结论；当前只允许陈述 P17 fresh-object 高重复负载的 bounded 结果 |
 | phase prefill max `446.229→119.489 ms` | 1024候选class-aware goodput`-34.18%`且已删除，只能作为失败复盘 |
 
 ## 4. 60 秒自我介绍版本

@@ -36,6 +36,9 @@ from benchmarks.harness import (
     find_workload_case,
     materialize_requests,
 )
+from benchmarks.multimodal_cache_workload import (
+    build_multimodal_cache_workload,
+)
 from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import load_workload_manifest
 from prism_infer.analysis.online_serving import (
@@ -786,6 +789,19 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--media-repeat-rate",
+        type=float,
+        help=(
+            "materialize fresh media objects with this exact content-repeat "
+            "rate among multimodal requests"
+        ),
+    )
+    parser.add_argument(
+        "--vary-media-questions",
+        action="store_true",
+        help="use deterministic different question suffixes for media requests",
+    )
+    parser.add_argument(
         "--enable-cooperative-prefill",
         action="store_true",
         help=(
@@ -828,6 +844,11 @@ def main() -> None:
         raise SystemExit("--online-cpu-intraop-threads must be positive")
     if args.request_rate <= 0 and args.arrival_process != "burst":
         raise SystemExit("--request-rate must be positive")
+    if (
+        args.media_repeat_rate is not None
+        and not 0.0 <= args.media_repeat_rate <= 1.0
+    ):
+        raise SystemExit("--media-repeat-rate must be in [0, 1]")
 
     torch.set_num_threads(args.online_cpu_intraop_threads)
     manifest = load_workload_manifest(args.manifest)
@@ -844,6 +865,23 @@ def main() -> None:
             count=args.requests,
         )
         workload_case = f"h3_{args.h3_profile}"
+    cache_workload = None
+    warmup_payloads = payloads
+    if args.media_repeat_rate is not None or args.vary_media_questions:
+        warmup_payloads, _ = build_multimodal_cache_workload(
+            payloads,
+            repeat_rate=1.0,
+            vary_questions=False,
+        )
+        payloads, cache_workload = build_multimodal_cache_workload(
+            payloads,
+            repeat_rate=(
+                1.0
+                if args.media_repeat_rate is None
+                else args.media_repeat_rate
+            ),
+            vary_questions=args.vary_media_questions,
+        )
     class_slos, class_slo_source = _load_class_slos(
         args.class_slo_file,
         request_classes=request_classes,
@@ -865,10 +903,10 @@ def main() -> None:
     llm = _build_engine(args)
     process_memory_sampler = _DeviceProcessMemorySampler()
     profile_record = None
+    serving_session = OnlineServingSession(llm)
     process_memory_sampler.start()
     try:
         if args.warmup_requests:
-            warmup_payloads = payloads[: args.warmup_requests]
             warmup = _online_requests(
                 warmup_payloads,
                 count=args.warmup_requests,
@@ -881,8 +919,9 @@ def main() -> None:
                     : args.warmup_requests
                 ],
             )
-            OnlineServingSession(llm).run(warmup)
+            serving_session.run(warmup)
             llm.reset_metrics()
+            serving_session.reset_metrics()
 
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
@@ -920,7 +959,7 @@ def main() -> None:
             else nullcontext(None)
         )
         with profile_context as profile_session:
-            run = OnlineServingSession(llm).run(requests)
+            run = serving_session.run(requests)
         torch.cuda.synchronize()
         process_device_memory = process_memory_sampler.stop()
         run_record = run.to_record()
@@ -971,6 +1010,7 @@ def main() -> None:
                 "max_tokens": args.max_tokens,
                 "h3_contract": h3_contract,
                 "h3_conformance": _h3_conformance(h3_contract, args),
+                "multimodal_cache_workload": cache_workload,
                 **prompt_audit,
             },
             "arrival": {
@@ -1019,6 +1059,9 @@ def main() -> None:
                 ),
                 "visual_embedding_cache": (
                     llm.visual_embedding_cache_metadata()
+                ),
+                "multimodal_prefix_cache": (
+                    llm.multimodal_prefix_cache_metadata()
                 ),
                 "cooperative_prefill": args.enable_cooperative_prefill,
                 "cooperative_prefill_scope": (

@@ -9,10 +9,17 @@ from concurrent.futures import (
     ThreadPoolExecutor,
     wait,
 )
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import hashlib
+import json
 from math import isfinite
+from pathlib import Path
 from time import perf_counter_ns, sleep
 from typing import Any, Callable, Iterable
+
+import numpy as np
+from PIL import Image
+import torch
 
 from prism_infer.sampling_params import SamplingParams
 
@@ -26,6 +33,179 @@ _ONLINE_MEDIA_FIELD_BY_TYPE = {
 _SUPPORTED_ONLINE_REQUEST_TYPES = frozenset({"text", *_ONLINE_MEDIA_FIELD_BY_TYPE})
 _ONLINE_PREPROCESS_WORKERS = 1
 _ONLINE_MEDIA_CACHE_MAX_ENTRIES = 128
+_MEDIA_CACHE_KEY_SCHEMA = "prism_media_content_v1"
+
+
+def _update_length_delimited(
+    hasher: Any,
+    value: bytes | bytearray | memoryview,
+) -> None:
+    view = memoryview(value).cast("B")
+    hasher.update(len(view).to_bytes(8, byteorder="little", signed=False))
+    hasher.update(view)
+
+
+def _update_text(hasher: Any, value: str) -> None:
+    _update_length_delimited(hasher, value.encode("utf-8"))
+
+
+def _update_content_hash(hasher: Any, value: object) -> bool:
+    """Add exact supported media content to ``hasher``.
+
+    Unsupported opaque objects deliberately return ``False`` instead of using
+    identity or ``repr``. That keeps the content-addressed cache fail-closed.
+    """
+
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        _update_text(hasher, "bytes")
+        _update_length_delimited(hasher, value)
+        return True
+    if isinstance(value, Path) or isinstance(value, str):
+        try:
+            path = Path(value)
+            is_file = path.is_file()
+        except OSError:
+            return False
+        if not is_file:
+            return False
+        _update_text(hasher, "file")
+        _update_text(hasher, path.suffix.lower())
+        hasher.update(path.stat().st_size.to_bytes(8, "little"))
+        with path.open("rb") as media_file:
+            while chunk := media_file.read(1024 * 1024):
+                hasher.update(chunk)
+        return True
+    if isinstance(value, Image.Image):
+        _update_text(hasher, "pil")
+        _update_text(hasher, value.mode)
+        _update_text(hasher, json.dumps(value.size))
+        _update_length_delimited(hasher, value.tobytes())
+        return True
+    if isinstance(value, np.ndarray):
+        array = np.ascontiguousarray(value)
+        _update_text(hasher, "numpy")
+        _update_text(hasher, array.dtype.str)
+        _update_text(hasher, json.dumps(array.shape))
+        _update_length_delimited(hasher, memoryview(array).cast("B"))
+        return True
+    if isinstance(value, torch.Tensor):
+        tensor = value.detach().cpu().contiguous()
+        byte_view = tensor.flatten().view(torch.uint8).numpy()
+        _update_text(hasher, "torch")
+        _update_text(hasher, str(tensor.dtype))
+        _update_text(hasher, json.dumps(tuple(tensor.shape)))
+        _update_length_delimited(hasher, memoryview(byte_view))
+        return True
+    if isinstance(value, (list, tuple)):
+        _update_text(hasher, type(value).__name__)
+        hasher.update(len(value).to_bytes(8, "little"))
+        return all(_update_content_hash(hasher, item) for item in value)
+    return False
+
+
+def _content_fingerprint(*values: object) -> str | None:
+    hasher = hashlib.sha256()
+    _update_text(hasher, _MEDIA_CACHE_KEY_SCHEMA)
+    if not all(_update_content_hash(hasher, value) for value in values):
+        return None
+    return hasher.hexdigest()
+
+
+def _cache_namespace(engine: Any) -> str:
+    """Fingerprint the model and processor semantics used by cached outputs."""
+
+    config = getattr(engine, "config", None)
+    processor = getattr(engine, "vl_processor", None)
+    model_value = getattr(config, "model", "")
+    model_path = Path(str(model_value)) if model_value else None
+    model_files = []
+    if model_path is not None and model_path.is_dir():
+        for path in sorted(model_path.glob("*.json")):
+            model_files.append(
+                {
+                    "name": path.name,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+            )
+        for path in sorted(model_path.glob("*.safetensors")):
+            stat = path.stat()
+            model_files.append(
+                {
+                    "name": path.name,
+                    "size": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                }
+            )
+
+    def component_identity(component: object) -> dict[str, object] | None:
+        if component is None:
+            return None
+        identity: dict[str, object] = {
+            "class": (
+                f"{type(component).__module__}.{type(component).__qualname__}"
+            )
+        }
+        to_dict = getattr(component, "to_dict", None)
+        if callable(to_dict):
+            identity["config"] = to_dict()
+        return identity
+
+    namespace = {
+        "schema": _MEDIA_CACHE_KEY_SCHEMA,
+        "model_path": (
+            str(model_path.resolve()) if model_path is not None else ""
+        ),
+        "model_files": model_files,
+        "image_max_pixels": getattr(config, "image_max_pixels", None),
+        "video_max_pixels": getattr(config, "video_max_pixels", None),
+        "processor": component_identity(processor),
+        "image_processor": component_identity(
+            getattr(processor, "image_processor", None)
+        ),
+        "video_processor": component_identity(
+            getattr(processor, "video_processor", None)
+        ),
+        "tokenizer": component_identity(
+            getattr(processor, "tokenizer", None)
+        ),
+    }
+    encoded = json.dumps(
+        namespace,
+        default=str,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _visual_embedding_fingerprint(
+    namespace: str,
+    request_type: str,
+    inputs: Any,
+) -> str:
+    """Hash the exact processor output consumed by the Vision Encoder."""
+
+    if request_type in ("image", "images"):
+        payload = inputs.pixel_values
+        grid = inputs.image_grid_thw
+        token_id = inputs.image_token_id
+        token_count = inputs.image_token_count
+    else:
+        payload = inputs.pixel_values_videos
+        grid = inputs.video_grid_thw
+        token_id = inputs.video_token_id
+        token_count = inputs.video_token_count
+    fingerprint = _content_fingerprint(
+        namespace.encode("ascii"),
+        request_type.encode("ascii"),
+        payload,
+        grid,
+        str(token_id).encode("ascii"),
+        str(token_count).encode("ascii"),
+    )
+    if fingerprint is None:
+        raise TypeError("processor output contains unsupported cache-key data")
+    return fingerprint
 
 
 def _non_negative_seconds(value: object, *, name: str) -> float:
@@ -161,10 +341,111 @@ class _PendingPreprocess:
 
 @dataclass(frozen=True, slots=True)
 class _MediaPreprocessCacheEntry:
-    """Reusable processor output for one in-process media identity."""
+    """Reusable processor output for one exact media-content fingerprint."""
+
+    inputs: Any
+    visual_embedding_fingerprint: str
+    prompt: str
+
+
+def _tokenize_prompt_text(tokenizer: Any, text: str) -> list[int]:
+    encoded = tokenizer(
+        text,
+        add_special_tokens=False,
+        return_attention_mask=False,
+    )
+    token_ids = encoded["input_ids"]
+    if isinstance(token_ids, torch.Tensor):
+        token_ids = token_ids.tolist()
+    if token_ids and isinstance(token_ids[0], list):
+        if len(token_ids) != 1:
+            raise ValueError("media prompt tokenizer returned a batched result")
+        token_ids = token_ids[0]
+    return [int(token_id) for token_id in token_ids]
+
+
+def _rebind_cached_media_prompt(
+    cached: _MediaPreprocessCacheEntry,
+    *,
+    prompt: str,
+    tokenizer: Any,
+) -> Any | None:
+    """Retokenize a changed question while retaining processed media tensors."""
+
+    if tokenizer is None:
+        return None
+    if cached.prompt == prompt:
+        return cached.inputs
+    prompt_text = cached.inputs.prompt_text
+    if prompt_text.count(cached.prompt) != 1:
+        return None
+    rebound_prompt_text = prompt_text.replace(cached.prompt, prompt, 1)
+    old_template_ids = _tokenize_prompt_text(tokenizer, prompt_text)
+    new_template_ids = _tokenize_prompt_text(tokenizer, rebound_prompt_text)
+
+    common_prefix = 0
+    for old_token, new_token in zip(
+        old_template_ids,
+        new_template_ids,
+        strict=False,
+    ):
+        if old_token != new_token:
+            break
+        common_prefix += 1
+    common_suffix = 0
+    max_suffix = min(
+        len(old_template_ids) - common_prefix,
+        len(new_template_ids) - common_prefix,
+    )
+    while (
+        common_suffix < max_suffix
+        and old_template_ids[-1 - common_suffix]
+        == new_template_ids[-1 - common_suffix]
+    ):
+        common_suffix += 1
+
+    visual_token_id = getattr(cached.inputs, "image_token_id", None)
+    if visual_token_id is None:
+        visual_token_id = getattr(cached.inputs, "video_token_id", None)
+    placeholder_positions = [
+        index
+        for index, token_id in enumerate(old_template_ids)
+        if token_id == visual_token_id
+    ]
+    if not placeholder_positions or common_prefix <= placeholder_positions[-1]:
+        return None
+
+    expanded_ids = [int(token_id) for token_id in cached.inputs.token_ids]
+    expansion_offset = len(expanded_ids) - len(old_template_ids)
+    replace_start = common_prefix + expansion_offset
+    replace_end = len(expanded_ids) - common_suffix
+    if not 0 <= replace_start <= replace_end <= len(expanded_ids):
+        return None
+    if common_suffix and expanded_ids[replace_end:] != old_template_ids[-common_suffix:]:
+        return None
+
+    replacement_end = len(new_template_ids) - common_suffix
+    rebound_ids = (
+        expanded_ids[:replace_start]
+        + new_template_ids[common_prefix:replacement_end]
+        + expanded_ids[replace_end:]
+    )
+    input_ids = cached.inputs.input_ids.new_tensor(rebound_ids).unsqueeze(0)
+    attention_mask = cached.inputs.attention_mask.new_ones(input_ids.shape)
+    return replace(
+        cached.inputs,
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        prompt_text=rebound_prompt_text,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _MediaFingerprintMemoEntry:
+    """Content fingerprint memoized behind a verified object-identity fast path."""
 
     media_objects: tuple[Any, ...]
-    inputs: Any
+    fingerprint: str
 
 
 @dataclass(slots=True)
@@ -205,11 +486,25 @@ class OnlineServingSession:
         self.clock_ns = clock_ns
         self.sleep_fn = sleep_fn
         self._media_preprocess_cache: OrderedDict[
-            tuple[str, str, tuple[int, ...]],
+            tuple[str, str, str, str],
             _MediaPreprocessCacheEntry,
         ] = OrderedDict()
+        self._media_layout_cache: OrderedDict[
+            tuple[str, str, str],
+            _MediaPreprocessCacheEntry,
+        ] = OrderedDict()
+        self._media_fingerprint_memo: OrderedDict[
+            tuple[str, tuple[int, ...]],
+            _MediaFingerprintMemoEntry,
+        ] = OrderedDict()
+        self._cache_namespace = _cache_namespace(engine)
         self._media_preprocess_cache_hits = 0
         self._media_preprocess_cache_misses = 0
+        self._media_preprocess_cache_uncacheable = 0
+        self._media_prompt_rebind_hits = 0
+        self._media_prompt_rebind_misses = 0
+        self._media_fingerprint_memo_hits = 0
+        self._media_fingerprint_memo_misses = 0
 
     def _submit(self, request: OnlineRequest, arrival_ns: int) -> int:
         payload = request.payload
@@ -346,56 +641,151 @@ class OnlineServingSession:
             if isinstance(media, (list, tuple))
             else (media,)
         )
-        cache_key = (
+        fingerprint_memo_key = (
             request_type,
-            payload["prompt"],
             tuple(id(item) for item in media_objects),
         )
-        cached = self._media_preprocess_cache.get(cache_key)
+        memoized = self._media_fingerprint_memo.get(
+            fingerprint_memo_key
+        )
         if (
-            cached is not None
-            and len(cached.media_objects) == len(media_objects)
+            memoized is not None
+            and len(memoized.media_objects) == len(media_objects)
             and all(
-                cached_item is request_item
-                for cached_item, request_item in zip(
-                    cached.media_objects,
+                memoized_item is request_item
+                for memoized_item, request_item in zip(
+                    memoized.media_objects,
                     media_objects,
                     strict=True,
                 )
             )
         ):
+            media_fingerprint = memoized.fingerprint
+            self._media_fingerprint_memo.move_to_end(
+                fingerprint_memo_key
+            )
+            self._media_fingerprint_memo_hits += 1
+        else:
+            self._media_fingerprint_memo_misses += 1
+            if memoized is not None:
+                del self._media_fingerprint_memo[
+                    fingerprint_memo_key
+                ]
+            media_fingerprint = _content_fingerprint(*media_objects)
+            if media_fingerprint is not None:
+                self._media_fingerprint_memo[
+                    fingerprint_memo_key
+                ] = _MediaFingerprintMemoEntry(
+                    media_objects=media_objects,
+                    fingerprint=media_fingerprint,
+                )
+                self._media_fingerprint_memo.move_to_end(
+                    fingerprint_memo_key
+                )
+                while (
+                    len(self._media_fingerprint_memo)
+                    > _ONLINE_MEDIA_CACHE_MAX_ENTRIES
+                ):
+                    self._media_fingerprint_memo.popitem(last=False)
+        cache_key = (
+            self._cache_namespace,
+            request_type,
+            payload["prompt"],
+            media_fingerprint or "",
+        )
+        layout_key = (
+            self._cache_namespace,
+            request_type,
+            media_fingerprint or "",
+        )
+        cached = (
+            None
+            if media_fingerprint is None
+            else self._media_preprocess_cache.get(cache_key)
+        )
+        if cached is not None:
             self._media_preprocess_cache.move_to_end(cache_key)
             self._media_preprocess_cache_hits += 1
             inputs = cached.inputs
+            visual_embedding_fingerprint = (
+                cached.visual_embedding_fingerprint
+            )
         else:
-            self._media_preprocess_cache_misses += 1
-            if request_type in ("image", "images"):
-                inputs = self.engine._process_image_inputs(
-                    payload["prompt"],
-                    media,
-                )
-            elif request_type == "video":
-                inputs = self.engine._process_video_inputs(
-                    payload["prompt"],
-                    media,
-                )
-            else:
-                raise RuntimeError(
-                    "background preprocessing received unsupported type "
-                    f"{request_type!r}"
-                )
-            self._media_preprocess_cache[cache_key] = (
-                _MediaPreprocessCacheEntry(
-                    media_objects=media_objects,
-                    inputs=inputs,
+            layout_cached = (
+                None
+                if media_fingerprint is None
+                else self._media_layout_cache.get(layout_key)
+            )
+            inputs = (
+                None
+                if layout_cached is None
+                else _rebind_cached_media_prompt(
+                    layout_cached,
+                    prompt=payload["prompt"],
+                    tokenizer=getattr(
+                        getattr(self.engine, "vl_processor", None),
+                        "tokenizer",
+                        None,
+                    ),
                 )
             )
-            self._media_preprocess_cache.move_to_end(cache_key)
-            while (
-                len(self._media_preprocess_cache)
-                > _ONLINE_MEDIA_CACHE_MAX_ENTRIES
-            ):
-                self._media_preprocess_cache.popitem(last=False)
+            if inputs is not None:
+                self._media_preprocess_cache_hits += 1
+                self._media_prompt_rebind_hits += 1
+                self._media_layout_cache.move_to_end(layout_key)
+                visual_embedding_fingerprint = (
+                    layout_cached.visual_embedding_fingerprint
+                )
+            else:
+                self._media_preprocess_cache_misses += 1
+                if layout_cached is not None:
+                    self._media_prompt_rebind_misses += 1
+                if media_fingerprint is None:
+                    self._media_preprocess_cache_uncacheable += 1
+                if request_type in ("image", "images"):
+                    inputs = self.engine._process_image_inputs(
+                        payload["prompt"],
+                        media,
+                    )
+                elif request_type == "video":
+                    inputs = self.engine._process_video_inputs(
+                        payload["prompt"],
+                        media,
+                    )
+                else:
+                    raise RuntimeError(
+                        "background preprocessing received unsupported type "
+                        f"{request_type!r}"
+                    )
+                visual_embedding_fingerprint = (
+                    _visual_embedding_fingerprint(
+                        self._cache_namespace,
+                        request_type,
+                        inputs=inputs,
+                    )
+                )
+            if media_fingerprint is not None:
+                cache_entry = _MediaPreprocessCacheEntry(
+                    inputs=inputs,
+                    visual_embedding_fingerprint=(
+                        visual_embedding_fingerprint
+                    ),
+                    prompt=payload["prompt"],
+                )
+                self._media_preprocess_cache[cache_key] = cache_entry
+                self._media_preprocess_cache.move_to_end(cache_key)
+                while (
+                    len(self._media_preprocess_cache)
+                    > _ONLINE_MEDIA_CACHE_MAX_ENTRIES
+                ):
+                    self._media_preprocess_cache.popitem(last=False)
+                self._media_layout_cache[layout_key] = cache_entry
+                self._media_layout_cache.move_to_end(layout_key)
+                while (
+                    len(self._media_layout_cache)
+                    > _ONLINE_MEDIA_CACHE_MAX_ENTRIES
+                ):
+                    self._media_layout_cache.popitem(last=False)
 
         if request_type in ("image", "images"):
             sequence = self.engine._prepare_image_sequence(
@@ -418,10 +808,11 @@ class OnlineServingSession:
             False,
         ):
             sequence.visual_embedding_cache_key = (
-                request_type,
-                tuple(id(item) for item in media_objects),
+                visual_embedding_fingerprint
             )
-            sequence.visual_embedding_cache_sources = media_objects
+        sequence.multimodal_prefix_cache_key = (
+            visual_embedding_fingerprint
+        )
         return sequence
 
     def _admit_ready_preprocessing(self, state: _OnlineRunState) -> None:
@@ -547,8 +938,29 @@ class OnlineServingSession:
             scheduler_metrics=self.engine.scheduler.metrics_snapshot(),
             media_preprocess_cache={
                 "entries": len(self._media_preprocess_cache),
+                "layout_entries": len(self._media_layout_cache),
                 "hits": self._media_preprocess_cache_hits,
                 "max_entries": _ONLINE_MEDIA_CACHE_MAX_ENTRIES,
                 "misses": self._media_preprocess_cache_misses,
+                "uncacheable": self._media_preprocess_cache_uncacheable,
+                "prompt_rebind_hits": self._media_prompt_rebind_hits,
+                "prompt_rebind_misses": self._media_prompt_rebind_misses,
+                "fingerprint_memo_hits": (
+                    self._media_fingerprint_memo_hits
+                ),
+                "fingerprint_memo_misses": (
+                    self._media_fingerprint_memo_misses
+                ),
             },
         )
+
+    def reset_metrics(self) -> None:
+        """Reset measured counters while retaining safe processor cache entries."""
+
+        self._media_preprocess_cache_hits = 0
+        self._media_preprocess_cache_misses = 0
+        self._media_preprocess_cache_uncacheable = 0
+        self._media_prompt_rebind_hits = 0
+        self._media_prompt_rebind_misses = 0
+        self._media_fingerprint_memo_hits = 0
+        self._media_fingerprint_memo_misses = 0

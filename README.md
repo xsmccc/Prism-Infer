@@ -1,5 +1,22 @@
 # Prism-Infer
 
+## P17 内容寻址压缩多模态前缀缓存
+
+P17 将 P16 依赖 Python 对象身份的视觉缓存升级为安全的内容寻址复用：缓存身份覆盖
+模型/processor、媒体像素与布局，以及截至最后一个视觉占位符的精确 prompt prefix。
+它能跨请求复用 processor 张量、Vision/DeepStack 输出和已经物理压缩的 scaled-FP8
+前缀 KV，同时保留 M-RoPE 逻辑位置、页引用、部分尾页 CoW、可复用尾页池和按收益/页
+淘汰语义；同一媒体换问题时只复用媒体不变量，不复用问题后缀。
+
+在每个请求都重新创建媒体对象的 60-request 冻结矩阵中，Prism 在 75%/100% 重复率
+达到 60/60 SLO，raw throughput 为 `224.279/224.369 tok/s`，与开启官方缓存路径的
+vLLM 相差 `0.37%/0.28%`；100% 重复时相对可用的 SGLang cache-on 参考高
+`0.82%` raw、`4.30%` Goodput。unique 至 50% 重复时 vLLM 仍领先，因此不声明全面
+胜出。最终 n600 100%-repeat 闭环为 `241.428 tok/s`、600/600 SLO，相比 P16
+Goodput `+6.68%`，同时保持 H1/H2 exact、scaled-FP8 KV `-48.44%`、视觉物理页
+回收和退出显存释放。完整设计、失败实验、公平性边界与复现见
+[P17 Content-Addressed Prefix Cache 结果](docs/P17_CONTENT_ADDRESSED_PREFIX_CACHE_RESULTS.md)。
+
 ## P16 稳态多模态 Goodput 更新
 
 在 RTX 5090、Qwen3-VL-8B、600-request Poisson rate-4 冻结负载上，P16
@@ -49,6 +66,7 @@ OpenAI-compatible 或多机生产 serving 系统。
 | arrival-driven external H3 | 正式闭环、loaded goodput 未胜出 | 600 requests、Poisson、四类 conditional-video mix；raw throughput 距 vLLM/SGLang 不到 0.8%，但 SLO goodput 明显落后 |
 | P15 balanced loaded serving | 四次复测通过 | 60-request frozen trace；deadline-aware prefill coalescing + CPU preprocessing resource budget；TPOT 低于 vLLM/SGLang bounded references，raw/TTFT/Goodput 仍落后 |
 | P16 steady-state repeated-media serving | 600-request 正式闭环、限定 Goodput 胜出 | SLO slack/cost 调度 + 256 MiB exact Vision/DeepStack LRU；Goodput `226.311 tok/s`，高于同 workload vLLM/SGLang `6.70%/15.01%`；不外推到 unique-media |
+| P17 content-addressed compressed prefix cache | fresh-object 矩阵与 n600 正式闭环 | 内容 SHA256 + media-layout prompt rebind + compacted scaled-FP8 prefix pages/CoW/tail pool；高重复负载与 vLLM 持平并超过可用 SGLang 参考，unique/低重复仍落后 |
 | phase-decomposed multimodal prefill | 已实现原型、已拒绝并删除 | H1 单请求 exact 且最大执行段缩短；同 trace loaded goodput/TTFT/TPOT 未通过保留门槛 |
 | dynamic-shape Vision tensor Graph | loaded serving 默认关闭 | 新 RTX 5090 的 600-request mixed trace 出现错误 token；保留 decode CUDA Graph |
 | vision-aware scheduler | 实验实现、默认关闭 | 有界旁路改善 TTFT/E2E 中位数与尾部，但 loaded SLO goodput 未胜出 |
@@ -131,6 +149,11 @@ OpenAI-compatible 或多机生产 serving 系统。
   SLO）。相同 workload 下 vLLM/SGLang 为 `212.108/196.779 tok/s`；P16 n600
   TPOT `14.329 ms` 与 vLLM 近似持平、低于 SGLang `0.44%`，因此 headline 是
   repeated-media SLO Goodput 而不是全面 TPOT 排名。
+- P17 用模型/processor/媒体内容/布局/prompt-prefix SHA256 取代对象身份作为缓存
+  语义，并把复用扩展到物理压缩的 scaled-FP8 prefix KV。fresh-object n60 的
+  100% 重复与同媒体不同问题分别为 `224.369/224.301 tok/s`、均 60/60 SLO；
+  n600 为 `241.428 tok/s`、600/600 SLO。它在高重复负载超过可用 SGLang
+  cache-on 参考并与 vLLM 相差 0.3% 以内，但 unique/低重复仍由 vLLM 领先。
 
 最终口径、环境和 raw evidence 路径见
 [P10 最终结果](docs/P10_FINAL_RESULTS.md)、
@@ -140,6 +163,7 @@ OpenAI-compatible 或多机生产 serving 系统。
 [P14 Loaded Decode 结果](docs/P14_LOADED_DECODE_RESULTS.md)、
 [P15 Balanced Serving 结果](docs/P15_BALANCED_MULTIMODAL_RESULTS.md) 与
 [P16 Steady-State Goodput 结果](docs/P16_STEADY_STATE_GOODPUT_RESULTS.md)、
+[P17 Content-Addressed Prefix Cache 结果](docs/P17_CONTENT_ADDRESSED_PREFIX_CACHE_RESULTS.md)、
 [Network Serving 结果](docs/NETWORK_SERVING_RESULTS.md)、
 [PERFORMANCE_REPORT](docs/PERFORMANCE_REPORT.md)。
 
@@ -184,7 +208,7 @@ docs/           # 路线图、验证合同、报告、claim ledger
 ```text
 GPU: NVIDIA GeForce RTX 5090 32 GB
 P10/P11 GPU UUID: GPU-7f63f8b0-1027-d3bf-18b7-5102cbc9f2eb
-P15/P16 GPU UUID: GPU-a0340044-fe48-ceca-08e0-a50d9bcdd79a
+P15/P16/P17 GPU UUID: GPU-a0340044-fe48-ceca-08e0-a50d9bcdd79a
 Driver: 580.105.08
 CUDA: 13.0
 Python: 3.12.3
@@ -420,6 +444,7 @@ python -m pytest -q tests -s
 - [P14 Loaded Decode 结果](docs/P14_LOADED_DECODE_RESULTS.md)：block/layer cooperative prefill、B1--B8 Graph 与 guarded FP8 LM head。
 - [P15 Balanced Serving 结果](docs/P15_BALANCED_MULTIMODAL_RESULTS.md)：deadline-aware coalescing、CPU launch starvation 根因与四次 loaded 复测。
 - [P16 Steady-State Goodput 结果](docs/P16_STEADY_STATE_GOODPUT_RESULTS.md)：600-request SLO 调度、exact Vision/DeepStack LRU、外部 Goodput 对比、Profiler、失败候选与面试边界。
+- [P17 Content-Addressed Prefix Cache 结果](docs/P17_CONTENT_ADDRESSED_PREFIX_CACHE_RESULTS.md)：fresh-object 重复率矩阵、安全内容指纹、媒体换问题复用、压缩前缀页/CoW/尾页池、公平 cache-on 对比与 n600 闭环。
 - [秋招最终交付](docs/FINAL_DELIVERY.md)：项目定位、最终数字、简历 bullets、面试主线和交付边界。
 - [Claim Ledger](docs/CLAIMS.md)：允许、必须限定和禁止使用的结论。
 - [压缩报告](docs/COMPRESSION_REPORT.md) / [KV 分析报告](docs/KV_ANALYSIS_REPORT.md)。
@@ -435,8 +460,9 @@ python -m pytest -q tests -s
 - 不声称 scaled-FP8 比 Prism BF16 更快，也不把 KV-limited sequence 上限写成
   online concurrency/goodput。
 - 不把 offline output tok/s 当作 online serving goodput。
-- 不把 P16 的重复媒体、warm identity-cache Goodput 胜出扩写为 unique-media、冷启动、
-  content-addressed 网络缓存或通用线上服务全面超过 vLLM/SGLang。
+- 不把 P16/P17 的单进程重复媒体 Goodput 结果扩写为 unique-media、冷启动、跨进程/
+  分布式网络缓存或通用线上服务全面超过 vLLM/SGLang；P17 已是内容寻址缓存，但当前
+  fresh-object 数据仍显示 0--50% 重复率由 vLLM 领先。
 - 不声称 phase-decomposed multimodal prefill 已保留或带来 online 加速；该原型已因
   loaded 退化删除。
 - 不把 packed MLP 的小幅 decode TPOT 收益写成 online goodput或稳定 E2E 加速。

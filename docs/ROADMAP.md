@@ -4,6 +4,28 @@
 > 目标模型: Qwen3-VL-8B-Instruct
 > 项目目标: 面向 Qwen3-VL 的跨层多模态推理 Runtime；把视觉 KV 保留、物理 Paged-KV 压缩、scaled FP8、Compiler/CUDA Graph、调度与优化 Kernel 接成可验证系统。
 
+## P17 完成状态
+
+P17 已将 P16 的进程内对象身份缓存升级为内容寻址的压缩多模态前缀缓存：
+
+- fail-closed、length-delimited SHA256 覆盖模型/processor namespace、媒体内容、
+  processor 布局和精确视觉 prompt prefix；
+- fresh-object 跨请求复用 processor 张量、Vision/DeepStack 和 compacted
+  scaled-FP8 prefix KV；
+- 同媒体不同问题只重建视觉占位符之后的文本 token，不缓存语言后缀；
+- 缓存页具有引用计数、部分尾页 CoW、可回池尾页、M-RoPE 逻辑/物理位置解耦和
+  benefit-per-page eviction；以及
+- unique/25/50/75/100% repeat 与 same-media/different-question 矩阵、vLLM
+  official cache-on、SGLang 可用 cache-on reference、失败候选与 n600 闭环均已保留。
+
+最终 fresh-object n60 在 75%/100% repeat 为 `224.279/224.369 tok/s`、60/60
+SLO，与 vLLM 相差 `0.37%/0.28%`；100% repeat 相对 SGLang 参考高
+`0.82%` raw、`4.30%` Goodput。0--50% repeat 仍由 vLLM 领先。n600
+100%-repeat 为 `241.428 tok/s`、600/600 SLO、TTFT/TPOT p50
+`146.418/13.041 ms`，并保持 H1/H2 exact、scaled-FP8 KV `-48.44%`、
+视觉物理页回收、零失败和退出显存释放。详见
+`docs/P17_CONTENT_ADDRESSED_PREFIX_CACHE_RESULTS.md`。
+
 ## P16 完成状态
 
 P16 已在 RTX 5090、Qwen3-VL-8B、600-request Poisson rate-4 冻结协议上完成：
@@ -33,7 +55,12 @@ Prism-Infer 的交付目标不是单个 demo，而是一套可验证、可复现
 
 ## 当前真实状态
 
-**交付冻结状态（2026-07-24）**：P12 已在同一冻结 H3 到达流、class SLO 与约
+**P17 交付冻结状态（2026-07-30）**：内容寻址、媒体换问题复用、压缩前缀页所有权、
+fresh-object 重复率曲线、公平 cache-on 外部对比和 n600 正式运行均已闭环。项目当前
+最强结论是高重复多模态负载中的压缩复用设计与 SLO 结果，不是 unique-media 或通用
+serving 排名。P17 已达到当前秋招项目交付终点。
+
+**P12/P13 历史转折点（2026-07-24）**：P12 已在同一冻结 H3 到达流、class SLO 与约
 4 GiB KV 预算下完成 Prism/vLLM/SGLang 的 600-request 外部 online 对比。Prism 的
 raw output throughput 与两套基线相差小于 0.8%，scaled-FP8 KV capacity 为
 `56,320` tokens，但 SLO goodput 明显落后；瓶颈归因到不可抢占的
@@ -889,19 +916,19 @@ CUDA Graph、counter-driven kernel、多模态调度和薄 serving 闭环。完�
 
 ## 下一步执行顺序
 
-P16 已是当前秋招交付终点。后续只有在明确开启新阶段时继续：
+P17 已是当前秋招交付终点。后续只有在用户明确开启新阶段时继续：
 
-1. **先验证泛化，不再扫调度常数。** 用 unique-media 与可控重复率 trace 测量 hit-rate、
-   cold-miss TTFT 和 Goodput 曲线；若要接网络请求，再设计媒体内容 hash、碰撞校验和
-   tenant 隔离。没有这组证据，不把 identity cache 写成通用 prefix cache。
-2. **缓存命中后，剩余热点转向 language prefill 与 decode。** P16 profiler 已证明
-   warm hit 不再执行 ViT；下一轮 kernel/compile 候选必须由 language layer、paged
-   attention 或 CUDA Graph replay 的占比选择，不再优化已退出 critical path 的 vision。
-3. **内存策略只做有收益的组合。** 若扩大视觉 cache，必须联动 scaled-FP8 KV 水位、
-   LRU admission 与 eviction；当前 `104.1 MiB` cache 没有形成 whole-process NVML
-   降低，不能写成显存优化。
+1. **若继续追求 unique/低重复性能，先 profile cold multimodal prefill。** P17
+   0--50% repeat 已明确落后 vLLM；只根据 language layer、paged attention、
+   processor/ViT overlap 或 CUDA Graph replay 的实测占比选择一个候选，不再扫调度
+   常数，也不优化高命中时已经退出 critical path 的 Vision。
+2. **若扩展为生产缓存，再单独设计跨进程边界。** 当前内容寻址只在同一 engine
+   生命周期内持久；跨进程/跨节点需要 tenant namespace、磁盘或远端存储格式、版本
+   失效、校验与故障恢复，不能由 P17 结果自动推出。
+3. **内存策略保持同一预算。** cache 扩容必须联动 scaled-FP8 KV 水位、admission、
+   eviction 与 whole-process NVML；逻辑缓存字节或 avoided-copy bytes 不等于显存下降。
 4. 网络 endpoint、TP2、weight-only quantization 与投机解码仍是独立扩展，不属于
-   P16 缺口；已冻结结果不通过删 outlier、改 SLO 或只选有利场景重写，公开 push
+   P17 缺口；已冻结结果不通过删 outlier、改 SLO 或只选有利场景重写，公开 push
    仍需用户明确授权。
 
 P3/P4/P4.5/P5 已建立多模态 FP baseline、KV trace、KV 语义硬化、logical pruning 和 FP8 storage baseline。P6 只允许在统一 benchmark 和固定外部版本下形成性能 claim；没有真实 megakernel实现或 launch-bound 证据时，不开展 megakernel 对比。

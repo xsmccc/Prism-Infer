@@ -33,12 +33,25 @@ class ModelExecutor:
         self.kv_manager = kv_manager
 
     def begin_prefill(self, plan: BatchPlan) -> object:
-        """Prepare a transfer-free prefill for layer-boundary execution."""
+        """Prepare a prefill for layer-boundary execution."""
 
         if plan.phase is not BatchPhase.PREFILL:
             raise ValueError("begin_prefill requires a prefill plan")
-        if not plan.kv_transfers.is_empty:
-            raise RuntimeError("cooperative prefill does not support KV transfers")
+        transfers = plan.kv_transfers
+        if transfers.swap_in or transfers.swap_out:
+            raise RuntimeError("cooperative prefill does not support KV swapping")
+        if transfers.copy_prefix:
+            with profile_region("engine.kv.copy_prefix"):
+                self.runner.call(
+                    "copy_kv_block_prefixes",
+                    list(transfers.copy_prefix),
+                )
+        if transfers.copy_on_write:
+            with profile_region("engine.kv.copy_on_write"):
+                self.runner.call(
+                    "copy_kv_blocks",
+                    list(transfers.copy_on_write),
+                )
         begin = getattr(self.runner, "begin_prefill_plan", None)
         if begin is None:
             raise RuntimeError("runner does not support cooperative prefill")
@@ -95,6 +108,12 @@ class ModelExecutor:
                     fast_result = fast_execute(plan)
                 if fast_result is not None:
                     return fast_result
+        if transfers.copy_prefix:
+            with profile_region("engine.kv.copy_prefix"):
+                self.runner.call(
+                    "copy_kv_block_prefixes",
+                    list(transfers.copy_prefix),
+                )
         if transfers.copy_on_write:
             with profile_region("engine.kv.copy_on_write"):
                 self.runner.call("copy_kv_blocks", list(transfers.copy_on_write))
@@ -136,7 +155,15 @@ class ModelExecutor:
                 plans = [
                     compaction_plan
                     for seq in plan.sequences
-                    if seq.is_prefill_finished
+                    if seq.kv_layout is None
+                    if (
+                        seq.is_prefill_finished
+                        or (
+                            seq.multimodal_prefix_cache_enabled
+                            and seq.num_computed_tokens
+                            == seq.multimodal_prefix_boundary
+                        )
+                    )
                     if (
                         compaction_plan := self.kv_manager.build_compaction_plan(
                             seq,
@@ -154,6 +181,13 @@ class ModelExecutor:
                     if compaction_plan is not None:
                         self.kv_manager.commit_compaction(seq, compaction_plan)
                 compaction_count = len(plans)
+                for seq in plan.sequences:
+                    if (
+                        seq.is_prefill_finished
+                        and seq.kv_layout is not None
+                        and not seq.multimodal_prefix_cache_hit
+                    ):
+                        self.kv_manager.store_multimodal_prefix(seq)
 
         return ExecutionResult(
             token_ids=runner_result.token_ids,

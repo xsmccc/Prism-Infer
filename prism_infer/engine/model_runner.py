@@ -141,9 +141,8 @@ class _PendingPrefillExecution:
 
 @dataclass(frozen=True, slots=True)
 class _VisualEmbeddingCacheEntry:
-    """Exact Vision Encoder outputs retained for one media identity."""
+    """Exact Vision Encoder outputs retained for one content fingerprint."""
 
-    source_objects: tuple[object, ...]
     visual_embeds: torch.Tensor
     deepstack_visual_embeds: tuple[torch.Tensor, ...]
     storage_bytes: int
@@ -229,7 +228,7 @@ class ModelRunner:
         self.last_cudagraph_actual_batch_size: int | None = None
         self.last_cudagraph_replay_batch_size: int | None = None
         self._visual_embedding_cache: OrderedDict[
-            tuple[str, tuple[int, ...]],
+            str,
             _VisualEmbeddingCacheEntry,
         ] = OrderedDict()
         self._visual_embedding_cache_resident_bytes = 0
@@ -572,35 +571,15 @@ class ModelRunner:
                 "visual embedding cache currently requires Qwen3-VL with TP1"
             )
         key = seq.visual_embedding_cache_key
-        sources = seq.visual_embedding_cache_sources
         if key is None:
             return
-        if not sources:
-            raise RuntimeError(
-                "visual embedding cache identity is missing source objects"
-            )
 
         cached = self._visual_embedding_cache.get(key)
-        if cached is not None and len(cached.source_objects) == len(sources):
-            identity_matches = all(
-                cached_source is source
-                for cached_source, source in zip(
-                    cached.source_objects,
-                    sources,
-                    strict=True,
-                )
-            )
-            if identity_matches:
-                self._visual_embedding_cache.move_to_end(key)
-                self._visual_embedding_cache_hits += 1
-                self._attach_visual_embedding_cache_entry(seq, cached)
-                return
         if cached is not None:
-            self._visual_embedding_cache_resident_bytes -= (
-                cached.storage_bytes
-            )
-            del self._visual_embedding_cache[key]
-            self._visual_embedding_cache_evictions += 1
+            self._visual_embedding_cache.move_to_end(key)
+            self._visual_embedding_cache_hits += 1
+            self._attach_visual_embedding_cache_entry(seq, cached)
+            return
 
         payloads = [
             (seq.pixel_values, seq.image_grid_thw),
@@ -657,7 +636,6 @@ class ModelRunner:
             deepstack_visual_embeds,
         )
         entry = _VisualEmbeddingCacheEntry(
-            source_objects=sources,
             visual_embeds=visual_embeds,
             deepstack_visual_embeds=deepstack_visual_embeds,
             storage_bytes=storage_bytes,
@@ -684,7 +662,7 @@ class ModelRunner:
 
         return {
             "enabled": self.config.enable_visual_embedding_cache,
-            "identity": "exact_in_process_media_object",
+            "identity": "sha256_model_processor_media_layout_v1",
             "scope": "vision_encoder_main_and_deepstack_outputs_only",
             "max_bytes": VISUAL_EMBEDDING_CACHE_MAX_BYTES,
             "resident_bytes": self._visual_embedding_cache_resident_bytes,
@@ -1012,14 +990,34 @@ class ModelRunner:
         return scale_cache
 
     def copy_kv_blocks(self, cow_pairs: list[tuple[int, int]]):
-        """复制 KV Cache blocks: 把 src block 的数据复制到 dst block"""
+        """Copy complete source KV blocks into private destination blocks."""
+
         scale_cache = self._bound_gpu_scale_cache()
         for src_block_id, dst_block_id in cow_pairs:
-            # kv_cache shape: [2, num_layers, num_blocks, block_size, num_kv_heads, head_dim]
-            # 复制所有层的 K 和 V
             self.kv_cache[:, :, dst_block_id].copy_(self.kv_cache[:, :, src_block_id])
             if scale_cache is not None:
                 scale_cache[:, :, dst_block_id].copy_(scale_cache[:, :, src_block_id])
+
+    def copy_kv_block_prefixes(
+        self,
+        copies: list[tuple[int, int, int]],
+    ) -> None:
+        """Copy only valid rows from shared compact-prefix tail blocks."""
+
+        scale_cache = self._bound_gpu_scale_cache()
+        block_size = self.kv_cache.shape[3]
+        for src_block_id, dst_block_id, num_rows in copies:
+            if num_rows <= 0 or num_rows > block_size:
+                raise ValueError(
+                    f"KV block-prefix rows must be in [1, {block_size}], got {num_rows}"
+                )
+            self.kv_cache[:, :, dst_block_id, :num_rows].copy_(
+                self.kv_cache[:, :, src_block_id, :num_rows]
+            )
+            if scale_cache is not None:
+                scale_cache[:, :, dst_block_id, :num_rows].copy_(
+                    scale_cache[:, :, src_block_id, :num_rows]
+                )
 
     def compact_kv_cache(self, plans: list[KVCompactionPlan]) -> None:
         """按已验证 plan 把 retained prompt KV 移到页表前部。
@@ -1928,6 +1926,11 @@ class ModelRunner:
                     scorer,
                 )
         for index, (seq, prefill_slice) in enumerate(zip(seqs, plan.prefill_slices)):
+            if (
+                seq.kv_layout is not None
+                and seq.kv_layout.logical_context_len < seq.num_prompt_tokens
+            ):
+                seq.kv_layout.append_prefill_tokens(prefill_slice.num_tokens)
             seq.num_computed_tokens = prefill_slice.token_end
             if not seq.is_prefill_finished:
                 token_ids[index] = None

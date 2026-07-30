@@ -11,6 +11,10 @@
 #           block_table ≈ 页表, hash_to_block_id ≈ TLB/缓存索引
 # ═══════════════════════════════════════════════════════════════
 
+import hashlib
+from collections import OrderedDict
+from dataclasses import dataclass, field
+
 import numpy as np
 import xxhash
 
@@ -21,8 +25,44 @@ from prism_infer.engine.block_pool import (
     NO_BLOCK_HASH,
 )
 from prism_infer.engine.kv_compaction_coordinator import KVCompactionCoordinator
-from prism_infer.engine.kv_layout import KVCompactionPlan
+from prism_infer.engine.kv_layout import (
+    KV_LAYOUT_VISUAL_COMPACT,
+    KVCacheLayoutDescriptor,
+    KVCompactionPlan,
+)
 from prism_infer.engine.sequence import Sequence
+
+
+MULTIMODAL_PREFIX_CACHE_MAX_BLOCKS = 256
+
+
+@dataclass(slots=True)
+class _MultimodalPrefixCacheEntry:
+    """One compacted multimodal prefix retained by physical page reference."""
+
+    key: str
+    prompt_prefix_token_ids: tuple[int, ...]
+    logical_prefix_len: int
+    physical_prefix_len: int
+    retained_original_positions: tuple[int, ...]
+    block_ids: tuple[int, ...]
+    kv_dtype: str
+    compression_record: dict[str, object]
+    benefit_tokens: int
+    lifetime_hits: int = 0
+    tail_clone_block_ids: list[int] = field(default_factory=list)
+
+    @property
+    def resident_blocks(self) -> int:
+        return len(self.block_ids) + len(self.tail_clone_block_ids)
+
+    @property
+    def benefit_per_block(self) -> float:
+        return (
+            self.benefit_tokens
+            * (1 + self.lifetime_hits)
+            / self.resident_blocks
+        )
 
 
 # ─── BlockManager: 物理块分配器 ──────────────────────────────
@@ -49,6 +89,298 @@ class BlockManager:
             block_size=block_size,
             gpu_pool=self._gpu_pool,
         )
+        self._multimodal_prefix_cache: OrderedDict[
+            str,
+            _MultimodalPrefixCacheEntry,
+        ] = OrderedDict()
+        self._multimodal_prefix_cache_max_blocks = min(
+            MULTIMODAL_PREFIX_CACHE_MAX_BLOCKS,
+            max(1, num_blocks // 8),
+        )
+        self._multimodal_prefix_cache_blocks = 0
+        self._multimodal_prefix_cache_hits = 0
+        self._multimodal_prefix_cache_misses = 0
+        self._multimodal_prefix_cache_admissions = 0
+        self._multimodal_prefix_cache_evictions = 0
+        self._multimodal_prefix_cache_rejections = 0
+        self._multimodal_prefix_cache_cow_copies = 0
+        self._multimodal_prefix_cache_cow_rows = 0
+        self._multimodal_prefix_cache_tail_clone_hits = 0
+        self._multimodal_prefix_cache_tail_clone_admissions = 0
+        self._multimodal_prefix_cache_tail_clone_evictions = 0
+        self._multimodal_prefix_cache_tail_clone_reused_rows = 0
+
+    @staticmethod
+    def _multimodal_prefix_boundary(seq: Sequence) -> int | None:
+        """Return the strict logical prefix ending at the visual payload."""
+
+        return seq.multimodal_prefix_boundary
+
+    @staticmethod
+    def _multimodal_prefix_cache_id(
+        media_key: str,
+        prompt_prefix_token_ids: tuple[int, ...],
+    ) -> str:
+        token_bytes = np.asarray(prompt_prefix_token_ids, dtype=np.int64).tobytes()
+        token_digest = hashlib.sha256(token_bytes).hexdigest()
+        return f"{media_key}:{len(prompt_prefix_token_ids)}:{token_digest}"
+
+    def _matching_multimodal_prefix(
+        self,
+        seq: Sequence,
+    ) -> tuple[str, _MultimodalPrefixCacheEntry] | None:
+        if not self.enable_prefix_caching:
+            return None
+        media_key = seq.multimodal_prefix_cache_key
+        if media_key is None:
+            return None
+        for cache_id, entry in self._multimodal_prefix_cache.items():
+            if entry.key != media_key:
+                continue
+            if tuple(seq.prompt_token_ids[: entry.logical_prefix_len]) != (
+                entry.prompt_prefix_token_ids
+            ):
+                continue
+            return cache_id, entry
+        return None
+
+    def cached_prefix_tokens(self, seq: Sequence) -> int:
+        """Publish a read-only cache candidate for cache-aware scheduling."""
+
+        self._assert_sequence_block_size(seq)
+        seq.multimodal_prefix_cache_enabled = self.enable_prefix_caching
+        match = self._matching_multimodal_prefix(seq)
+        candidate_tokens = 0 if match is None else match[1].logical_prefix_len
+        seq.prefix_cache_candidate_tokens = candidate_tokens
+        return candidate_tokens
+
+    def _required_free_blocks_for_prefix_hit(
+        self,
+        seq: Sequence,
+        entry: _MultimodalPrefixCacheEntry,
+    ) -> int:
+        suffix_tokens = seq.num_prompt_tokens - entry.logical_prefix_len
+        final_physical_tokens = entry.physical_prefix_len + suffix_tokens
+        final_blocks = (
+            final_physical_tokens + self.block_size - 1
+        ) // self.block_size
+        suffix_blocks = final_blocks - len(entry.block_ids)
+        has_idle_tail_clone = any(
+            self.blocks[block_id].ref_count == 1
+            for block_id in entry.tail_clone_block_ids
+        )
+        partial_page_copy = int(
+            entry.physical_prefix_len % self.block_size != 0
+            and not has_idle_tail_clone
+        )
+        return suffix_blocks + partial_page_copy
+
+    def _reclaimable_cache_blocks(
+        self,
+        *,
+        protected_cache_id: str | None = None,
+    ) -> int:
+        return sum(
+            1
+            for cache_id, entry in self._multimodal_prefix_cache.items()
+            if cache_id != protected_cache_id
+            for block_id in (*entry.block_ids, *entry.tail_clone_block_ids)
+            if self.blocks[block_id].ref_count == 1
+        )
+
+    def _eviction_candidate(
+        self,
+        *,
+        protected_cache_id: str | None = None,
+    ) -> str | None:
+        candidates = [
+            (entry.benefit_per_block, order, cache_id)
+            for order, (cache_id, entry) in enumerate(
+                self._multimodal_prefix_cache.items()
+            )
+            if cache_id != protected_cache_id
+        ]
+        return min(candidates)[2] if candidates else None
+
+    def _evict_multimodal_prefix(self, cache_id: str) -> None:
+        entry = self._multimodal_prefix_cache.pop(cache_id)
+        for block_id in (*entry.block_ids, *entry.tail_clone_block_ids):
+            self._gpu_pool.release_reference(block_id)
+        self._multimodal_prefix_cache_blocks -= entry.resident_blocks
+        self._multimodal_prefix_cache_evictions += 1
+
+    def _drop_idle_tail_clone(
+        self,
+        *,
+        protected_cache_id: str | None = None,
+    ) -> bool:
+        """Release one derived tail page before evicting reusable prefix KV."""
+
+        for cache_id, entry in self._multimodal_prefix_cache.items():
+            if cache_id == protected_cache_id:
+                continue
+            for index, block_id in enumerate(entry.tail_clone_block_ids):
+                if self.blocks[block_id].ref_count != 1:
+                    continue
+                entry.tail_clone_block_ids.pop(index)
+                self._gpu_pool.release_reference(block_id)
+                self._multimodal_prefix_cache_blocks -= 1
+                self._multimodal_prefix_cache_tail_clone_evictions += 1
+                return True
+        return False
+
+    def _ensure_free_blocks(
+        self,
+        required_blocks: int,
+        *,
+        protected_cache_id: str | None = None,
+    ) -> None:
+        while self._gpu_pool.free_count < required_blocks:
+            if self._drop_idle_tail_clone(
+                protected_cache_id=protected_cache_id,
+            ):
+                continue
+            cache_id = self._eviction_candidate(
+                protected_cache_id=protected_cache_id,
+            )
+            if cache_id is None:
+                break
+            self._evict_multimodal_prefix(cache_id)
+        if self._gpu_pool.free_count < required_blocks:
+            raise RuntimeError(
+                "insufficient GPU KV-cache capacity after cache eviction: "
+                f"required={required_blocks}, available={self._gpu_pool.free_count}"
+            )
+
+    def _allocate_dense(self, seq: Sequence) -> tuple[tuple[int, int], ...]:
+        self._ensure_free_blocks(seq.num_blocks)
+        block_hash = NO_BLOCK_HASH
+        cache_miss = False
+        for i in range(seq.num_blocks):
+            token_ids = seq.block(i)
+            block_hash = (
+                self.compute_hash(token_ids, block_hash)
+                if self.enable_prefix_caching
+                and not seq.is_multimodal
+                and len(token_ids) == self.block_size
+                else NO_BLOCK_HASH
+            )
+            cached_block = self._gpu_pool.lookup(block_hash, token_ids)
+            if cached_block is None:
+                cache_miss = True
+            if cache_miss:
+                block = self._allocate_free_block()
+            else:
+                seq.num_cached_tokens += self.block_size
+                block = self._gpu_pool.retain(cached_block.block_id)
+            if block_hash != NO_BLOCK_HASH:
+                self._gpu_pool.register_hash(
+                    block.block_id,
+                    block_hash,
+                    token_ids,
+                )
+            seq.block_table.append(block.block_id)
+        return ()
+
+    def _allocate_multimodal_prefix_hit(
+        self,
+        seq: Sequence,
+        cache_id: str,
+        entry: _MultimodalPrefixCacheEntry,
+    ) -> tuple[tuple[int, int, int], ...]:
+        required_free_blocks = self._required_free_blocks_for_prefix_hit(
+            seq,
+            entry,
+        )
+        self._ensure_free_blocks(
+            required_free_blocks,
+            protected_cache_id=cache_id,
+        )
+        tail_rows = entry.physical_prefix_len % self.block_size
+        immutable_block_ids = entry.block_ids[:-1] if tail_rows else entry.block_ids
+        for block_id in immutable_block_ids:
+            self._gpu_pool.retain(block_id)
+            seq.block_table.append(block_id)
+
+        copy_prefix: list[tuple[int, int, int]] = []
+        if tail_rows:
+            idle_tail_clone = next(
+                (
+                    block_id
+                    for block_id in entry.tail_clone_block_ids
+                    if self.blocks[block_id].ref_count == 1
+                ),
+                None,
+            )
+            if idle_tail_clone is not None:
+                self._gpu_pool.retain(idle_tail_clone)
+                seq.block_table.append(idle_tail_clone)
+                self._multimodal_prefix_cache_tail_clone_hits += 1
+                self._multimodal_prefix_cache_tail_clone_reused_rows += (
+                    tail_rows
+                )
+            else:
+                canonical_tail = entry.block_ids[-1]
+                self._gpu_pool.retain(canonical_tail)
+                seq.block_table.append(canonical_tail)
+                pair = self.copy_on_write(seq)
+                if pair is None:
+                    raise RuntimeError(
+                        "shared compact prefix tail did not trigger CoW"
+                    )
+                copy_prefix.append((*pair, tail_rows))
+                self._multimodal_prefix_cache_cow_copies += 1
+                self._multimodal_prefix_cache_cow_rows += tail_rows
+                copied_tail = pair[1]
+                if (
+                    self._multimodal_prefix_cache_blocks
+                    < self._multimodal_prefix_cache_max_blocks
+                ):
+                    self._gpu_pool.retain(copied_tail)
+                    entry.tail_clone_block_ids.append(copied_tail)
+                    self._multimodal_prefix_cache_blocks += 1
+                    self._multimodal_prefix_cache_tail_clone_admissions += 1
+
+        suffix_tokens = seq.num_prompt_tokens - entry.logical_prefix_len
+        final_physical_tokens = entry.physical_prefix_len + suffix_tokens
+        final_blocks = (
+            final_physical_tokens + self.block_size - 1
+        ) // self.block_size
+        while len(seq.block_table) < final_blocks:
+            seq.block_table.append(self._allocate_free_block().block_id)
+
+        compression_record = dict(entry.compression_record)
+        compression_record.update(
+            {
+                "multimodal_prefix_cache_hit": True,
+                "cached_logical_prefix_tokens": entry.logical_prefix_len,
+                "cached_physical_prefix_tokens": entry.physical_prefix_len,
+                "logical_prompt_tokens": seq.num_prompt_tokens,
+                "physical_prompt_kv_tokens": final_physical_tokens,
+            }
+        )
+        seq.num_cached_tokens = entry.logical_prefix_len
+        seq.num_computed_tokens = entry.logical_prefix_len
+        seq.prefix_cache_candidate_tokens = entry.logical_prefix_len
+        seq.multimodal_prefix_cache_hit = True
+        seq.visual_pruning_decision_record = compression_record
+        seq.install_cached_prefix_layout(
+            KVCacheLayoutDescriptor(
+                mode=KV_LAYOUT_VISUAL_COMPACT,
+                logical_context_len=entry.logical_prefix_len,
+                physical_kv_len=entry.physical_prefix_len,
+                prompt_logical_len=seq.num_prompt_tokens,
+                compressed_prompt_kv_len=entry.physical_prefix_len,
+                retained_original_positions=entry.retained_original_positions,
+                kv_dtype=entry.kv_dtype,
+                compression_record=compression_record,
+                compacted_logical_len=entry.logical_prefix_len,
+            )
+        )
+        self._multimodal_prefix_cache.move_to_end(cache_id)
+        entry.lifetime_hits += 1
+        self._multimodal_prefix_cache_hits += 1
+        return tuple(copy_prefix)
 
     # Compatibility views for existing diagnostics/tests. Allocator mutations
     # remain centralized in GpuBlockPool and CpuBlockPool.
@@ -126,47 +458,62 @@ class BlockManager:
     # scheduler._schedule_prefill() 调用
     def can_allocate(self, seq: Sequence) -> bool:
         self._assert_sequence_block_size(seq)
-        return self._gpu_pool.free_count >= seq.num_blocks
+        match = self._matching_multimodal_prefix(seq)
+        if match is None:
+            required_blocks = seq.num_blocks
+            protected_cache_id = None
+        else:
+            protected_cache_id, entry = match
+            required_blocks = self._required_free_blocks_for_prefix_hit(
+                seq,
+                entry,
+            )
+        return (
+            self._gpu_pool.free_count
+            + self._reclaimable_cache_blocks(
+                protected_cache_id=protected_cache_id,
+            )
+            >= required_blocks
+        )
 
     # ── allocate: 为一条新序列分配所有 KV Cache 块 (Prefill 阶段) ──
     # 带 Prefix Caching: 如果之前有相同前缀的 block，直接复用，跳过计算
     #
     # 流程: 遍历序列的每个 block → 算哈希 → 查缓存 → 命中则复用, 未命中则新分配
-    def allocate(self, seq: Sequence) -> None:
+    def allocate(self, seq: Sequence) -> tuple[tuple[int, int, int], ...]:
         self._assert_sequence_block_size(seq)
         if seq.block_table or seq.cpu_block_table:
             raise RuntimeError(f"sequence {seq.seq_id} already owns a KV block table")
         if not self.can_allocate(seq):
+            match = self._matching_multimodal_prefix(seq)
+            required_blocks = (
+                seq.num_blocks
+                if match is None
+                else self._required_free_blocks_for_prefix_hit(seq, match[1])
+            )
             raise RuntimeError(
                 "insufficient GPU KV-cache capacity for atomic allocation: "
-                f"required={seq.num_blocks}, available={self._gpu_pool.free_count}"
+                f"required={required_blocks}, available={self._gpu_pool.free_count}"
             )
-        block_hash = NO_BLOCK_HASH
-        cache_miss = False
-        for i in range(seq.num_blocks):
-            token_ids = seq.block(i)
-            block_hash = (
-                self.compute_hash(token_ids, block_hash)
-                if self.enable_prefix_caching
-                and not seq.is_multimodal
-                and len(token_ids) == self.block_size
-                else NO_BLOCK_HASH
+        match = self._matching_multimodal_prefix(seq)
+        if match is None:
+            if (
+                self.enable_prefix_caching
+                and seq.multimodal_prefix_cache_key is not None
+            ):
+                self._multimodal_prefix_cache_misses += 1
+            return self._allocate_dense(seq)
+        cache_id, entry = match
+        try:
+            return self._allocate_multimodal_prefix_hit(
+                seq,
+                cache_id,
+                entry,
             )
-            cached_block = self._gpu_pool.lookup(block_hash, token_ids)
-            if cached_block is None:
-                cache_miss = True
-            if cache_miss:
-                block = self._allocate_free_block()
-            else:
-                seq.num_cached_tokens += self.block_size
-                block = self._gpu_pool.retain(cached_block.block_id)
-            if block_hash != NO_BLOCK_HASH:
-                self._gpu_pool.register_hash(
-                    block.block_id,
-                    block_hash,
-                    token_ids,
-                )
-            seq.block_table.append(block.block_id)
+        except BaseException:
+            if seq.block_table:
+                self.deallocate(seq)
+            raise
 
     # ── deallocate: 释放一条序列的所有 KV Cache 块 ──
     # scheduler.preempt() 或 scheduler.postprocess() (序列结束时) 调用
@@ -184,6 +531,163 @@ class BlockManager:
         seq.cpu_block_hashes.clear()
         seq.cpu_block_token_ids.clear()
         seq.kv_layout = None
+        seq.prefix_cache_candidate_tokens = 0
+        seq.multimodal_prefix_cache_hit = False
+
+    def store_multimodal_prefix(self, seq: Sequence) -> bool:
+        """Retain compacted multimodal prefix pages after a cold prefill."""
+
+        self._assert_sequence_block_size(seq)
+        media_key = seq.multimodal_prefix_cache_key
+        layout = seq.kv_layout
+        boundary = self._multimodal_prefix_boundary(seq)
+        if (
+            not self.enable_prefix_caching
+            or media_key is None
+            or layout is None
+            or boundary is None
+        ):
+            return False
+        if seq.multimodal_prefix_cache_hit:
+            return False
+        if not seq.is_prefill_finished or seq.num_tokens != seq.num_prompt_tokens:
+            raise RuntimeError("multimodal prefix admission requires completed prompt prefill")
+        retained_positions = tuple(
+            position
+            for position in layout.retained_original_positions
+            if position < boundary
+        )
+        physical_prefix_len = len(retained_positions)
+        if physical_prefix_len <= 0:
+            self._multimodal_prefix_cache_rejections += 1
+            return False
+        prefix_blocks = (
+            physical_prefix_len + self.block_size - 1
+        ) // self.block_size
+        if (
+            prefix_blocks > self._multimodal_prefix_cache_max_blocks
+            or prefix_blocks > len(seq.block_table)
+        ):
+            self._multimodal_prefix_cache_rejections += 1
+            return False
+
+        prompt_prefix = tuple(seq.prompt_token_ids[:boundary])
+        cache_id = self._multimodal_prefix_cache_id(
+            media_key,
+            prompt_prefix,
+        )
+        existing = self._multimodal_prefix_cache.get(cache_id)
+        if existing is not None:
+            if (
+                existing.key != media_key
+                or existing.prompt_prefix_token_ids != prompt_prefix
+            ):
+                raise RuntimeError("multimodal prefix cache digest collision")
+            self._multimodal_prefix_cache.move_to_end(cache_id)
+            return False
+
+        candidate_utility = boundary / prefix_blocks
+        while (
+            self._multimodal_prefix_cache_blocks + prefix_blocks
+            > self._multimodal_prefix_cache_max_blocks
+        ):
+            if self._drop_idle_tail_clone():
+                continue
+            eviction_id = self._eviction_candidate()
+            if eviction_id is None:
+                self._multimodal_prefix_cache_rejections += 1
+                return False
+            eviction_entry = self._multimodal_prefix_cache[eviction_id]
+            if candidate_utility <= eviction_entry.benefit_per_block:
+                self._multimodal_prefix_cache_rejections += 1
+                return False
+            self._evict_multimodal_prefix(eviction_id)
+
+        block_ids = tuple(seq.block_table[:prefix_blocks])
+        for block_id in block_ids:
+            self._gpu_pool.retain(block_id)
+        self._multimodal_prefix_cache[cache_id] = _MultimodalPrefixCacheEntry(
+            key=media_key,
+            prompt_prefix_token_ids=prompt_prefix,
+            logical_prefix_len=boundary,
+            physical_prefix_len=physical_prefix_len,
+            retained_original_positions=retained_positions,
+            block_ids=block_ids,
+            kv_dtype=layout.kv_dtype,
+            compression_record=dict(layout.compression_record),
+            benefit_tokens=boundary,
+        )
+        self._multimodal_prefix_cache_blocks += prefix_blocks
+        self._multimodal_prefix_cache_admissions += 1
+        return True
+
+    def clear_multimodal_prefix_cache(self) -> None:
+        """Release every cache-owned page reference."""
+
+        for cache_id in tuple(self._multimodal_prefix_cache):
+            self._evict_multimodal_prefix(cache_id)
+        self._multimodal_prefix_cache_evictions = 0
+
+    def multimodal_prefix_cache_metadata(self) -> dict[str, object]:
+        """Return resident page state and measured-run counters."""
+
+        return {
+            "enabled": self.enable_prefix_caching,
+            "identity": "sha256_model_processor_media_layout_prompt_prefix_v1",
+            "scope": "compacted_scaled_fp8_multimodal_prefix_kv",
+            "admission_policy": "lifetime_hits_times_logical_tokens_per_page",
+            "max_blocks": self._multimodal_prefix_cache_max_blocks,
+            "resident_blocks": self._multimodal_prefix_cache_blocks,
+            "entries": len(self._multimodal_prefix_cache),
+            "hits": self._multimodal_prefix_cache_hits,
+            "misses": self._multimodal_prefix_cache_misses,
+            "admissions": self._multimodal_prefix_cache_admissions,
+            "evictions": self._multimodal_prefix_cache_evictions,
+            "rejections": self._multimodal_prefix_cache_rejections,
+            "cow_copies": self._multimodal_prefix_cache_cow_copies,
+            "cow_copied_rows": self._multimodal_prefix_cache_cow_rows,
+            "cow_dense_equivalent_rows": (
+                self._multimodal_prefix_cache_cow_copies * self.block_size
+            ),
+            "tail_clone_hits": self._multimodal_prefix_cache_tail_clone_hits,
+            "tail_clone_admissions": (
+                self._multimodal_prefix_cache_tail_clone_admissions
+            ),
+            "tail_clone_evictions": (
+                self._multimodal_prefix_cache_tail_clone_evictions
+            ),
+            "tail_clone_reused_rows": (
+                self._multimodal_prefix_cache_tail_clone_reused_rows
+            ),
+            "copy_avoided_rows": (
+                self._multimodal_prefix_cache_cow_copies * self.block_size
+                - self._multimodal_prefix_cache_cow_rows
+                + self._multimodal_prefix_cache_tail_clone_reused_rows
+            ),
+            "resident_tail_clone_blocks": sum(
+                len(entry.tail_clone_block_ids)
+                for entry in self._multimodal_prefix_cache.values()
+            ),
+            "resident_lifetime_hits": sum(
+                entry.lifetime_hits
+                for entry in self._multimodal_prefix_cache.values()
+            ),
+        }
+
+    def reset_multimodal_prefix_cache_metrics(self) -> None:
+        """Reset counters while retaining warm compacted prefix pages."""
+
+        self._multimodal_prefix_cache_hits = 0
+        self._multimodal_prefix_cache_misses = 0
+        self._multimodal_prefix_cache_admissions = 0
+        self._multimodal_prefix_cache_evictions = 0
+        self._multimodal_prefix_cache_rejections = 0
+        self._multimodal_prefix_cache_cow_copies = 0
+        self._multimodal_prefix_cache_cow_rows = 0
+        self._multimodal_prefix_cache_tail_clone_hits = 0
+        self._multimodal_prefix_cache_tail_clone_admissions = 0
+        self._multimodal_prefix_cache_tail_clone_evictions = 0
+        self._multimodal_prefix_cache_tail_clone_reused_rows = 0
 
     def build_compaction_plan(
         self,

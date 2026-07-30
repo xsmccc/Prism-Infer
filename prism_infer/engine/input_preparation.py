@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 import torch
 
-from prism_infer.config import Config
+from prism_infer.config import DEFAULT_PAGED_DECODE_BLOCK_N, Config
 from prism_infer.engine.compression import build_compression_metadata
 from prism_infer.engine.contracts import DeviceModelInputs, PrefillSlice, PreparedModelInputs
 from prism_infer.engine.sequence import Sequence
@@ -81,7 +81,10 @@ class ModelInputPreparer:
         *,
         dtype: torch.dtype,
     ) -> torch.Tensor:
-        if self.config.execution_backend in ("cuda_graph", "compile_graph"):
+        if getattr(self.config, "execution_backend", "eager") in (
+            "cuda_graph",
+            "compile_graph",
+        ):
             # CUDA Graph replay copies these small staging values into its own
             # persistent pinned host buffers.  Pinning each throw-away source
             # tensor forces two page-locked allocations on every decode step
@@ -127,7 +130,7 @@ class ModelInputPreparer:
             prefill_slices = tuple(
                 PrefillSlice(
                     sequence_id=seq.seq_id,
-                    token_start=max(seq.num_cached_tokens, seq.num_computed_tokens),
+                    token_start=seq.effective_prefill_start,
                     token_end=seq.num_prompt_tokens,
                 )
                 for seq in seqs
@@ -309,7 +312,12 @@ class ModelInputPreparer:
             host.text_positions.extend(range(query_start, token_end))
 
         query_length = token_end - query_start
-        key_length = token_end
+        physical_query_start = (
+            query_start
+            if seq.kv_layout is None
+            else seq.kv_layout.physical_kv_len
+        )
+        key_length = physical_query_start + query_length
         host.cu_seqlens_q.append(host.cu_seqlens_q[-1] + query_length)
         host.cu_seqlens_k.append(host.cu_seqlens_k[-1] + key_length)
         host.max_seqlen_q = max(query_length, host.max_seqlen_q)
@@ -317,14 +325,19 @@ class ModelInputPreparer:
 
         if not seq.block_table:  # warmup does not own KV pages
             return
-        required_blocks = (token_end + self.block_size - 1) // self.block_size
+        required_blocks = (
+            key_length + self.block_size - 1
+        ) // self.block_size
         if len(seq.block_table) < required_blocks:
             raise RuntimeError(
                 "prefill block_table does not cover scheduled tokens: "
                 f"seq={seq.seq_id} blocks={len(seq.block_table)} required={required_blocks}"
             )
-        for token_index in range(query_start, token_end):
-            block_index, block_offset = divmod(token_index, self.block_size)
+        for physical_index in range(
+            physical_query_start,
+            physical_query_start + query_length,
+        ):
+            block_index, block_offset = divmod(physical_index, self.block_size)
             host.slot_mapping.append(seq.block_table[block_index] * self.block_size + block_offset)
 
     @staticmethod
@@ -448,7 +461,17 @@ class ModelInputPreparer:
         if paged_prefill:
             block_tables = self.prepare_block_tables(seqs)
             context_lens = self._to_cuda_tensor(
-                [prefill_slice.token_end for prefill_slice in slices],
+                [
+                    (
+                        prefill_slice.token_end
+                        if seq.kv_layout is None
+                        else (
+                            seq.kv_layout.physical_kv_len
+                            + prefill_slice.num_tokens
+                        )
+                    )
+                    for seq, prefill_slice in zip(seqs, slices)
+                ],
                 dtype=torch.int32,
             )
 
@@ -638,7 +661,11 @@ class ModelInputPreparer:
                 block_tables=block_tables,
                 decode_max_context_len=decode_max_context_len,
                 packed_decode_metadata=packed_attention_metadata,
-                paged_decode_block_n=self.config.paged_decode_block_n,
+                paged_decode_block_n=getattr(
+                    self.config,
+                    "paged_decode_block_n",
+                    DEFAULT_PAGED_DECODE_BLOCK_N,
+                ),
                 trace_metadata=trace_metadata,
                 compression_metadata=compression_metadata,
                 visual_pruning_slot_mappings=visual_pruning_slot_mappings,

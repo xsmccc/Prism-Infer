@@ -18,7 +18,9 @@ if TYPE_CHECKING:
 
 
 BlockPair = tuple[int, int]
+BlockPrefixCopy = tuple[int, int, int]
 BLOCK_PAIR_ARITY = 2
+BLOCK_PREFIX_COPY_ARITY = 3
 
 
 def _positive_int(value: object, *, name: str) -> int:
@@ -40,6 +42,27 @@ def _validate_block_pairs(pairs: object, *, name: str) -> None:
             )
         ):
             raise ValueError(f"{name} must contain non-negative integer block pairs")
+
+
+def _validate_block_prefix_copies(copies: object) -> None:
+    if not isinstance(copies, tuple):
+        raise TypeError("copy_prefix must be an immutable tuple")
+    for copy in copies:
+        if (
+            not isinstance(copy, tuple)
+            or len(copy) != BLOCK_PREFIX_COPY_ARITY
+            or any(
+                isinstance(value, bool) or not isinstance(value, int)
+                for value in copy
+            )
+            or copy[0] < 0
+            or copy[1] < 0
+            or copy[2] <= 0
+        ):
+            raise ValueError(
+                "copy_prefix must contain "
+                "(non-negative source, non-negative destination, positive rows)"
+            )
 
 
 class BatchPhase(str, Enum):
@@ -81,17 +104,24 @@ class KVTransferPlan:
     """Immutable GPU/CPU KV movement requested by one scheduler decision."""
 
     copy_on_write: tuple[BlockPair, ...] = ()
+    copy_prefix: tuple[BlockPrefixCopy, ...] = ()
     swap_in: tuple[BlockPair, ...] = ()
     swap_out: tuple[BlockPair, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_block_pairs(self.copy_on_write, name="copy_on_write")
+        _validate_block_prefix_copies(self.copy_prefix)
         _validate_block_pairs(self.swap_in, name="swap_in")
         _validate_block_pairs(self.swap_out, name="swap_out")
 
     @property
     def is_empty(self) -> bool:
-        return not (self.copy_on_write or self.swap_in or self.swap_out)
+        return not (
+            self.copy_on_write
+            or self.copy_prefix
+            or self.swap_in
+            or self.swap_out
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,9 +206,15 @@ class BatchPlan:
 
     @staticmethod
     def _default_prefill_slice(seq: "Sequence", count: int) -> PrefillSlice:
-        token_start = max(
-            int(getattr(seq, "num_cached_tokens", 0)),
-            int(getattr(seq, "num_computed_tokens", 0)),
+        token_start = int(
+            getattr(
+                seq,
+                "effective_prefill_start",
+                max(
+                    int(getattr(seq, "num_cached_tokens", 0)),
+                    int(getattr(seq, "num_computed_tokens", 0)),
+                ),
+            )
         )
         return PrefillSlice(
             sequence_id=seq.seq_id,
@@ -493,9 +529,11 @@ class KVCacheManager(Protocol):
 
     def can_allocate(self, seq: "Sequence") -> bool: ...
 
-    def allocate(self, seq: "Sequence") -> None: ...
+    def allocate(self, seq: "Sequence") -> tuple[BlockPrefixCopy, ...]: ...
 
     def deallocate(self, seq: "Sequence") -> None: ...
+
+    def cached_prefix_tokens(self, seq: "Sequence") -> int: ...
 
     def can_append(self, seq: "Sequence") -> bool: ...
 
@@ -523,6 +561,8 @@ class KVCacheManager(Protocol):
         seq: "Sequence",
         plan: "KVCompactionPlan",
     ) -> None: ...
+
+    def store_multimodal_prefix(self, seq: "Sequence") -> bool: ...
 
 
 class EngineExecutor(Protocol):

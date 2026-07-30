@@ -207,6 +207,82 @@ def test_block_manager_and_runner_commit_physical_compaction() -> None:
         print("P6.4 post-prefill KV compact/block release: PASS")
 
 
+def test_multimodal_prefix_cache_reuses_compacted_pages_with_tail_cow() -> None:
+    """Same media/different question reuses only the safe compact prefix."""
+
+    with _page_contract(4) as block_size:
+        manager = BlockManager(num_blocks=32, block_size=block_size)
+        cold = _manager_sequence(block_size)
+        cold.multimodal_prefix_cache_key = "media-layout-sha256"
+        cold.visual_pruning_decision_record.update(
+            {
+                "kept_visual_tokens": 1,
+                "dropped_visual_tokens": 5,
+                "keep_ratio_actual": 1 / 6,
+                "kept_token_indices": [2],
+                "dropped_token_indices": [3, 4, 5, 6, 7],
+            }
+        )
+        manager.allocate(cold)
+        plan = manager.build_compaction_plan(
+            cold,
+            kv_dtype="torch.float8_e4m3fn",
+        )
+        assert plan is not None
+        cold.num_computed_tokens = cold.num_prompt_tokens
+        manager.commit_compaction(cold, plan)
+        assert manager.store_multimodal_prefix(cold)
+        cached_block_id = cold.block_table[0]
+        manager.deallocate(cold)
+
+        hit = _manager_sequence(block_size)
+        hit.token_ids[-2:] = [42, 43]
+        hit.multimodal_prefix_cache_key = "media-layout-sha256"
+        assert manager.cached_prefix_tokens(hit) == 8
+        assert manager.can_allocate(hit)
+        prefix_copies = manager.allocate(hit)
+
+        assert prefix_copies == ((cached_block_id, hit.block_table[0], 3),)
+        assert hit.block_table[0] != cached_block_id
+        assert hit.multimodal_prefix_cache_hit
+        assert hit.num_cached_tokens == 8
+        assert hit.num_computed_tokens == 8
+        assert hit.kv_layout is not None
+        assert hit.kv_layout.logical_context_len == 8
+        assert hit.kv_layout.physical_kv_len == 3
+        assert hit.kv_layout.retained_original_positions == (0, 1, 2)
+        assert manager.blocks[cached_block_id].ref_count == 1
+        tail_clone_block_id = hit.block_table[0]
+        assert manager.blocks[tail_clone_block_id].ref_count == 2
+
+        hit.kv_layout.append_prefill_tokens(2)
+        hit.num_computed_tokens = 10
+        assert hit.kv_layout.logical_context_len == 10
+        assert hit.kv_layout.physical_kv_len == 5
+        manager.deallocate(hit)
+
+        second_hit = _manager_sequence(block_size)
+        second_hit.token_ids[-2:] = [44, 45]
+        second_hit.multimodal_prefix_cache_key = "media-layout-sha256"
+        assert manager.cached_prefix_tokens(second_hit) == 8
+        assert manager.can_allocate(second_hit)
+        assert manager.allocate(second_hit) == ()
+        assert second_hit.block_table[0] == tail_clone_block_id
+        manager.deallocate(second_hit)
+
+        metadata = manager.multimodal_prefix_cache_metadata()
+        assert metadata["hits"] == 2
+        assert metadata["cow_copies"] == 1
+        assert metadata["tail_clone_hits"] == 1
+        assert metadata["tail_clone_admissions"] == 1
+        assert metadata["tail_clone_reused_rows"] == 3
+        assert metadata["copy_avoided_rows"] == 4
+        assert metadata["resident_tail_clone_blocks"] == 1
+        assert metadata["resident_blocks"] == 2
+        manager.clear_multimodal_prefix_cache()
+        assert not manager.used_block_ids
+
+
 def test_compaction_commit_rejects_stale_decision_without_mutating_pages() -> None:
     """A plan cannot commit after its pruning decision has changed."""
 

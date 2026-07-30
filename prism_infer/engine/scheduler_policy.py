@@ -140,9 +140,17 @@ class FCFSSchedulerPolicy:
         remaining = seq.remaining_prefill_tokens
         if not self.enable_chunked_prefill:
             return remaining if remaining <= available_tokens else 0
-        start = seq.num_computed_tokens
+        start = seq.effective_prefill_start
         count = min(remaining, self.max_chunk_size, available_tokens)
         end = start + count
+        multimodal_prefix_boundary = seq.multimodal_prefix_boundary
+        if (
+            seq.multimodal_prefix_cache_enabled
+            and seq.kv_layout is None
+            and multimodal_prefix_boundary is not None
+            and start < multimodal_prefix_boundary < end
+        ):
+            end = multimodal_prefix_boundary
         for span_start, span_end in self._visual_spans(seq):
             if span_end <= start or span_start >= end:
                 continue
@@ -237,11 +245,11 @@ class VisionAwareSchedulerPolicy(FCFSSchedulerPolicy):
             >= self.min_decode_batches_between_heavy_prefills
             or light_prefill_bypasses_since_heavy
             >= self.max_light_prefill_bypasses_per_heavy
-            or not self.is_heavy_prefill(candidates[0].vision_patch_count)
+            or not self.is_heavy_prefill(candidates[0].prefill_vision_patch_count)
         ):
             return 0
         for index, candidate in enumerate(candidates[1:], start=1):
-            if not self.is_heavy_prefill(candidate.vision_patch_count):
+            if not self.is_heavy_prefill(candidate.prefill_vision_patch_count):
                 return index
         return None
 
@@ -283,9 +291,10 @@ class SLOAwareSchedulerPolicy(FCFSSchedulerPolicy):
         return seq.submitted_ns + int(seq.ttft_slo_ms * 1_000_000)
 
     def prefill_cost_tier(self, seq: Sequence) -> int:
-        if seq.vision_patch_count == 0 and seq.num_prompt_tokens <= 256:
+        vision_patches = seq.prefill_vision_patch_count
+        if vision_patches == 0 and seq.remaining_prefill_tokens <= 256:
             return 0
-        if seq.vision_patch_count < self.heavy_prefill_vision_patch_threshold:
+        if vision_patches < self.heavy_prefill_vision_patch_threshold:
             return 1
         return 2
 

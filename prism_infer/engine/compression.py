@@ -242,12 +242,27 @@ def _build_visual_pruning_records_by_batch(
 
     if is_prefill:
         pruning_config = build_visual_pruning_config(config)
-        if active and pruning_config.strategy == "attention":
-            # Runtime score 在选定 decoder layers 内收集；完整 prefill 结束后
-            # 才生成 decision，供 logical pruning 或 physical compaction 复用。
-            return tuple(None for _ in seqs)
         records: list[dict[str, object] | None] = []
         for batch_index, seq in enumerate(seqs):
+            cached_record = getattr(
+                seq,
+                "visual_pruning_decision_record",
+                None,
+            )
+            if (
+                getattr(seq, "multimodal_prefix_cache_hit", False)
+                and getattr(seq, "kv_layout", None) is not None
+                and cached_record is not None
+            ):
+                records.append(
+                    _with_batch_index(cached_record, batch_index)
+                )
+                continue
+            if active and pruning_config.strategy == "attention":
+                # Runtime scores are collected in selected decoder layers.
+                # The decision is finalized only after a complete cold prefill.
+                records.append(None)
+                continue
             decision = compute_pruning_decision(seq, pruning_config)
             record = (
                 _with_batch_index(decision.to_record(), batch_index)

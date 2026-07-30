@@ -28,6 +28,7 @@ class KVCacheLayoutDescriptor:
     retained_original_positions: tuple[int, ...]
     kv_dtype: str
     compression_record: dict[str, object]
+    compacted_logical_len: int | None = None
     schema_version: int = KV_LAYOUT_SCHEMA_VERSION
 
     def validate(
@@ -60,15 +61,18 @@ class KVCacheLayoutDescriptor:
     def _validate_lengths(self) -> None:
         if self.prompt_logical_len < 1:
             raise ValueError("prompt_logical_len must be positive")
-        if self.logical_context_len < self.prompt_logical_len:
-            raise ValueError("logical context cannot be shorter than prompt")
+        compacted_logical_len = self.effective_compacted_logical_len
+        if not 1 <= compacted_logical_len <= self.prompt_logical_len:
+            raise ValueError("compacted logical prefix is outside prompt bounds")
+        if self.logical_context_len < compacted_logical_len:
+            raise ValueError("logical context cannot be shorter than compacted prefix")
         if not 1 <= self.compressed_prompt_kv_len <= self.prompt_logical_len:
             raise ValueError("compressed prompt KV length is outside prompt bounds")
-        generated_tokens = self.logical_context_len - self.prompt_logical_len
-        expected_physical_len = self.compressed_prompt_kv_len + generated_tokens
+        dense_tail_tokens = self.logical_context_len - compacted_logical_len
+        expected_physical_len = self.compressed_prompt_kv_len + dense_tail_tokens
         if self.physical_kv_len != expected_physical_len:
             raise ValueError(
-                "physical KV length must equal compact prompt + generated tokens: "
+                "physical KV length must equal compact prefix + dense tail: "
                 f"physical={self.physical_kv_len}, expected={expected_physical_len}"
             )
 
@@ -78,7 +82,10 @@ class KVCacheLayoutDescriptor:
             raise ValueError("retained position count must equal compressed prompt KV length")
         if tuple(sorted(set(retained))) != retained:
             raise ValueError("retained original positions must be sorted and unique")
-        if retained and (retained[0] < 0 or retained[-1] >= self.prompt_logical_len):
+        if retained and (
+            retained[0] < 0
+            or retained[-1] >= self.effective_compacted_logical_len
+        ):
             raise ValueError("retained original positions are outside prompt")
 
     def _validate_block_table(
@@ -89,12 +96,26 @@ class KVCacheLayoutDescriptor:
         allow_pending_append: bool,
     ) -> None:
         required_blocks = (self.physical_kv_len + block_size - 1) // block_size
+        final_physical_len = self.compressed_prompt_kv_len + (
+            self.prompt_logical_len - self.effective_compacted_logical_len
+        )
+        final_required_blocks = (
+            final_physical_len + block_size - 1
+        ) // block_size
+        reserved_prefill_blocks = (
+            self.logical_context_len < self.prompt_logical_len
+            and required_blocks <= len(block_table) <= final_required_blocks
+        )
         pending_append = (
             allow_pending_append
             and self.physical_kv_len % block_size == 1
             and len(block_table) == required_blocks - 1
         )
-        if len(block_table) != required_blocks and not pending_append:
+        if (
+            len(block_table) != required_blocks
+            and not reserved_prefill_blocks
+            and not pending_append
+        ):
             raise ValueError(
                 "compact block table length mismatch: "
                 f"required={required_blocks}, actual={len(block_table)}"
@@ -111,8 +132,30 @@ class KVCacheLayoutDescriptor:
     def append_generated_token(self) -> None:
         """为下一次 decode KV 写入同时推进逻辑与物理长度。"""
 
+        if self.logical_context_len < self.prompt_logical_len:
+            raise RuntimeError("cannot append generated KV before prompt prefill completes")
         self.logical_context_len += 1
         self.physical_kv_len += 1
+
+    @property
+    def effective_compacted_logical_len(self) -> int:
+        """Return the logical prefix represented by compacted KV rows."""
+
+        return (
+            self.prompt_logical_len
+            if self.compacted_logical_len is None
+            else self.compacted_logical_len
+        )
+
+    def append_prefill_tokens(self, count: int) -> None:
+        """Advance a dense prompt suffix after a cached compacted prefix."""
+
+        if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+            raise ValueError("prefill append count must be a positive integer")
+        if self.logical_context_len + count > self.prompt_logical_len:
+            raise ValueError("prefill append exceeds prompt logical length")
+        self.logical_context_len += count
+        self.physical_kv_len += count
 
     def to_record(self, *, block_table: list[int]) -> dict[str, object]:
         """生成可跨进程序列化和 benchmark 记录的 layout 数据。"""
@@ -124,6 +167,7 @@ class KVCacheLayoutDescriptor:
             "physical_kv_len": self.physical_kv_len,
             "prompt_logical_len": self.prompt_logical_len,
             "compressed_prompt_kv_len": self.compressed_prompt_kv_len,
+            "compacted_logical_len": self.effective_compacted_logical_len,
             "retained_original_positions": list(self.retained_original_positions),
             "block_table": list(block_table),
             "kv_dtype": self.kv_dtype,
@@ -141,6 +185,12 @@ class KVCacheLayoutDescriptor:
             physical_kv_len=int(record["physical_kv_len"]),
             prompt_logical_len=int(record["prompt_logical_len"]),
             compressed_prompt_kv_len=int(record["compressed_prompt_kv_len"]),
+            compacted_logical_len=int(
+                record.get(
+                    "compacted_logical_len",
+                    record["prompt_logical_len"],
+                )
+            ),
             retained_original_positions=tuple(
                 int(position) for position in record["retained_original_positions"]
             ),
@@ -164,6 +214,8 @@ class KVCompactionPlan:
     destination_slots: tuple[int, ...]
     kv_dtype: str
     compression_record: dict[str, object]
+    compacted_logical_len: int | None = None
+    final_physical_prompt_len: int | None = None
 
     def validate(self, *, block_size: int) -> None:
         """校验 copy mapping、页表缩减和 decision record。"""
@@ -179,6 +231,8 @@ class KVCompactionPlan:
             raise ValueError(f"block_size must be positive, got {block_size}")
         if self.logical_prompt_len < 1:
             raise ValueError("compaction logical prompt length must be positive")
+        if not 1 <= self.effective_compacted_logical_len <= self.logical_prompt_len:
+            raise ValueError("compacted logical prefix is outside prompt bounds")
         if self.physical_prompt_len != len(self.retained_original_positions):
             raise ValueError("physical prompt length must equal retained positions")
         if self.physical_prompt_len != len(self.source_slots):
@@ -191,9 +245,17 @@ class KVCompactionPlan:
             self.retained_original_positions
         ):
             raise ValueError("plan retained positions must be sorted and unique")
+        if (
+            self.retained_original_positions
+            and self.retained_original_positions[-1]
+            >= self.effective_compacted_logical_len
+        ):
+            raise ValueError("plan retained positions exceed compacted prefix")
 
     def _validate_block_tables(self, block_size: int) -> None:
-        expected_blocks = (self.physical_prompt_len + block_size - 1) // block_size
+        expected_blocks = (
+            self.effective_final_physical_prompt_len + block_size - 1
+        ) // block_size
         if len(self.new_block_table) != expected_blocks:
             raise ValueError("plan compact block count is inconsistent")
         if self.old_block_table[:expected_blocks] != self.new_block_table:
@@ -214,3 +276,19 @@ class KVCompactionPlan:
             raise ValueError("plan KV dtype must be recorded")
         if bool(self.compression_record.get("physical_compaction", False)):
             raise ValueError("uncommitted plan record must not claim compaction complete")
+
+    @property
+    def effective_compacted_logical_len(self) -> int:
+        return (
+            self.logical_prompt_len
+            if self.compacted_logical_len is None
+            else self.compacted_logical_len
+        )
+
+    @property
+    def effective_final_physical_prompt_len(self) -> int:
+        return (
+            self.physical_prompt_len
+            if self.final_physical_prompt_len is None
+            else self.final_physical_prompt_len
+        )

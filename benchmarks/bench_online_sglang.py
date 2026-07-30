@@ -609,6 +609,8 @@ def main() -> None:
     parser.add_argument("--chunked-prefill-size", type=int, default=-1)
     parser.add_argument("--attention-backend", default="triton")
     parser.add_argument("--mm-attention-backend", default="triton_attn")
+    parser.add_argument("--enable-prefix-caching", action="store_true")
+    parser.add_argument("--enable-mm-global-cache", action="store_true")
     parser.add_argument("--enforce-eager", action="store_true")
     parser.add_argument("--formal", action="store_true")
     parser.add_argument("--class-slo-file")
@@ -673,9 +675,10 @@ def main() -> None:
         chunked_prefill_size=args.chunked_prefill_size,
         disable_cuda_graph=args.enforce_eager,
         cuda_graph_max_bs_decode=args.max_num_seqs,
-        disable_radix_cache=True,
+        disable_radix_cache=not args.enable_prefix_caching,
         attention_backend=args.attention_backend,
         mm_attention_backend=args.mm_attention_backend,
+        enable_mm_global_cache=args.enable_mm_global_cache,
         enable_request_time_stats_logging=True,
         stream_interval=1,
         random_seed=0,
@@ -805,7 +808,8 @@ def main() -> None:
             "mm_attention": args.mm_attention_backend,
             "chunked_prefill": args.chunked_prefill_size > 0,
             "chunked_prefill_size": args.chunked_prefill_size,
-            "prefix_caching": False,
+            "prefix_caching": args.enable_prefix_caching,
+            "mm_global_cache": args.enable_mm_global_cache,
             "cuda_graph_max_bs_decode": args.max_num_seqs,
             "kv_cache_capacity_tokens": args.max_total_tokens,
             "kv_cache_bytes_per_token_theoretical": kv_bytes_per_token,

@@ -374,6 +374,15 @@ class LLMEngine:
         # shutdown must unregister it so completed engines do not accumulate
         # in a long-lived process.
         atexit.unregister(self.exit)
+        scheduler = getattr(self, "scheduler", None)
+        block_manager = getattr(scheduler, "block_manager", None)
+        clear_prefix_cache = getattr(
+            block_manager,
+            "clear_multimodal_prefix_cache",
+            None,
+        )
+        if clear_prefix_cache is not None:
+            clear_prefix_cache()
         failure = self._release_model_runner()
         failure = self._first_cleanup_failure(
             failure,
@@ -456,7 +465,7 @@ class LLMEngine:
         seq.ttft_slo_ms = (
             None if ttft_slo_ms is None else float(ttft_slo_ms)
         )
-        if self.config.enable_visual_embedding_cache:
+        if getattr(self.config, "enable_visual_embedding_cache", False):
             self.model_runner.hydrate_visual_embedding_cache(seq)
         self.metrics.on_request_submitted(seq, timestamp_ns=arrival_ns)
         try:
@@ -1171,6 +1180,50 @@ class LLMEngine:
 
         return self.model_runner.visual_embedding_cache_metadata()
 
+    def multimodal_prefix_cache_metadata(self) -> dict[str, object]:
+        """Return compact-prefix residency, benefit and measured-run counters."""
+
+        metadata = dict(
+            self.scheduler.block_manager.multimodal_prefix_cache_metadata()
+        )
+        kv_cache = self.model_runner.kv_cache
+        bytes_per_block_per_rank = (
+            int(kv_cache[:, :, 0].numel()) * kv_cache.element_size()
+        )
+        scale_cache = getattr(self.model_runner, "kv_scale_cache", None)
+        if scale_cache is not None:
+            bytes_per_block_per_rank += (
+                int(scale_cache[:, :, 0].numel())
+                * scale_cache.element_size()
+            )
+        total_bytes_per_block = (
+            bytes_per_block_per_rank * self.config.tensor_parallel_size
+        )
+        metadata.update(
+            {
+                "bytes_per_block_all_ranks": total_bytes_per_block,
+                "resident_bytes_all_ranks": (
+                    int(metadata["resident_blocks"])
+                    * total_bytes_per_block
+                ),
+                "max_bytes_all_ranks": (
+                    int(metadata["max_blocks"])
+                    * total_bytes_per_block
+                ),
+                "cow_copied_bytes_all_ranks": (
+                    int(metadata["cow_copied_rows"])
+                    * total_bytes_per_block
+                    // self.config.kvcache_block_size
+                ),
+                "cow_avoided_bytes_all_ranks": (
+                    int(metadata["copy_avoided_rows"])
+                    * total_bytes_per_block
+                    // self.config.kvcache_block_size
+                ),
+            }
+        )
+        return metadata
+
     def reset_metrics(self) -> None:
         """Reset request/batch/scheduler ledgers between idle benchmark runs."""
 
@@ -1178,6 +1231,7 @@ class LLMEngine:
         if reset is None:
             raise RuntimeError("configured metrics sink cannot be reset")
         self.scheduler.reset_metrics()
+        self.scheduler.block_manager.reset_multimodal_prefix_cache_metrics()
         self._cooperative_prefill_deferred_decode_steps = 0
         self._cooperative_prefill_atomic_batches = 0
         self._cooperative_prefill_underfilled_batches = 0

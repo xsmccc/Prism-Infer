@@ -38,6 +38,7 @@ class _PrefillCandidate:
     sequence: Sequence
     token_count: int
     vision_patches: int
+    copy_prefix: tuple[tuple[int, int, int], ...] = ()
 
 
 @dataclass(slots=True)
@@ -49,6 +50,7 @@ class _PrefillBatchBuilder:
     max_vision_patches: int
     sequences: list[Sequence] = field(default_factory=list)
     token_counts: list[int] = field(default_factory=list)
+    copy_prefix: list[tuple[int, int, int]] = field(default_factory=list)
     num_tokens: int = 0
     num_vision_patches: int = 0
 
@@ -81,6 +83,7 @@ class _PrefillBatchBuilder:
             raise ValueError("prefill candidate exceeds batch resource limits")
         self.sequences.append(candidate.sequence)
         self.token_counts.append(candidate.token_count)
+        self.copy_prefix.extend(candidate.copy_prefix)
         self.num_tokens += candidate.token_count
         self.num_vision_patches += candidate.vision_patches
 
@@ -218,6 +221,7 @@ class Scheduler:
     ) -> AdmissionDecision:
         if seq.seq_id in self.requests:
             raise RuntimeError(f"duplicate request id: {seq.seq_id}")
+        self.block_manager.cached_prefix_tokens(seq)
         self.requests[seq.seq_id] = seq
         decision = self.policy.admit(
             seq,
@@ -329,7 +333,7 @@ class Scheduler:
         )
         if token_count <= 0:
             return None
-        token_start = max(seq.num_cached_tokens, seq.num_computed_tokens)
+        token_start = seq.effective_prefill_start
         return _PrefillCandidate(
             sequence=seq,
             token_count=token_count,
@@ -369,7 +373,7 @@ class Scheduler:
         available_tokens: int,
         batch: _PrefillBatchBuilder,
     ) -> _PrefillCandidate:
-        self.block_manager.allocate(seq)
+        copy_prefix = self.block_manager.allocate(seq)
         # Prefix-cache hits are already materialized. Chunk progress begins
         # after that prefix rather than recomputing it.
         seq.num_computed_tokens = max(seq.num_computed_tokens, seq.num_cached_tokens)
@@ -377,6 +381,13 @@ class Scheduler:
             seq,
             available_tokens=available_tokens,
         )
+        if candidate is not None:
+            candidate = _PrefillCandidate(
+                sequence=candidate.sequence,
+                token_count=candidate.token_count,
+                vision_patches=candidate.vision_patches,
+                copy_prefix=copy_prefix,
+            )
         if candidate is None:
             # A fully cached prompt still needs a model step to produce the
             # next-token logits; current prefix caching intentionally never
@@ -413,6 +424,8 @@ class Scheduler:
             and batch.has_sequence_capacity
             and not batch.requires_dedicated_batch
         ):
+            for waiting_seq in self.waiting:
+                self.block_manager.cached_prefix_tokens(waiting_seq)
             waiting_indices = tuple(
                 index
                 for index, seq in enumerate(self.waiting)
@@ -495,6 +508,9 @@ class Scheduler:
             phase=BatchPhase.PREFILL,
             sequences=tuple(batch.sequences),
             scheduled_token_counts=tuple(batch.token_counts),
+            kv_transfers=KVTransferPlan(
+                copy_prefix=tuple(batch.copy_prefix),
+            ),
             policy_name=self.policy.name,
             created_ns=self.clock_ns(),
         )

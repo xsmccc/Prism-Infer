@@ -19,6 +19,9 @@
 > P16 steady-state Goodput 点：以本文所在提交为准；正式 artifact 为
 > `data/p16_goodput/p16_visual_embedding_cache_n600_s20260717_r1.json`
 > （SHA256 `a66fa5f311c109d23dcb37b8b3f64a31323960b4a96ba95088340e4e81e7357e`）
+> P17 content-addressed prefix-cache 点：以本文所在提交为准；正式 n600 artifact 为
+> `data/p17_repeat_matrix/p17_repeat100_n600_s20260717_r2.json`
+> （SHA256 `fc974c728223063974d654be8b8db87eb97f050824ddcca85e6a9f07a5997e0f`）
 > 当前 native network-serving 候选：base `25eeb72`；最终实现以本文所在提交为准
 > 更新日期: 2026-07-30
 
@@ -29,6 +32,10 @@
 
 | 结论 | 范围 | 证据 |
 |---|---|---|
+| P17 已实现跨媒体对象的安全内容寻址压缩多模态前缀缓存 | Qwen3-VL-8B、单进程；身份覆盖模型/processor namespace、精确媒体内容与布局、截至最后视觉占位符的 prompt prefix；不支持的对象 fail closed | fresh-object n60 100%-repeat 中 processor、Vision/DeepStack、compacted-prefix 均 36/36 命中；H1 cold/首个 CoW/尾页复用三次输出 SHA256 exact；详见 `P17_CONTENT_ADDRESSED_PREFIX_CACHE_RESULTS.md` |
+| P17 在高重复 fresh-object 负载中超过可用 SGLang cache-on 参考并与 vLLM 持平 | RTX 5090 UUID `GPU-a034...d79a`、Qwen3-VL-8B、n60、Poisson rate-4、seed20260717、warmup10、output64；每个请求重新创建媒体对象；三引擎启用各自可用官方缓存路径 | 100% repeat Prism/vLLM 为 `224.369/225.004 tok/s`，差 `0.28%`；Prism 相对 SGLang `222.538 raw/215.120 Goodput` 高 `0.82%/4.30%`；0--50% repeat 仍由 vLLM 领先 |
+| P17 n600 100%-repeat 达到全部 class SLO 并保持压缩/回收 | 同一冻结 H3，600 requests；P17 safe content cache、compacted scaled-FP8 prefix KV、tail clone pool | raw/class-SLO Goodput `241.428 tok/s`、600/600 good、TTFT/TPOT p50 `146.418/13.041 ms`；KV bytes `4,282,122,240`（相对 BF16 `-48.44%`）、释放 480 页、零 terminal failure、退出显存释放 |
+| P17 同媒体不同问题只复用媒体不变量和视觉前缀 | fresh-object n60 qdiff；问题变化发生在最后视觉占位符之后，模板后缀精确匹配，否则 fail closed | 36/36 prompt-rebind、Vision/DeepStack 与 prefix-KV hits，60/60 SLO，`224.301 tok/s`；没有缓存问题后缀或生成 token |
 | P16 在冻结重复媒体 H3 上的 class-SLO Goodput 高于 vLLM/SGLang references | RTX 5090 UUID `GPU-a034...d79a`；Qwen3-VL-8B；600 requests、Poisson rate-4、seed20260717、warmup10、output64；三个视觉媒体对象重复 360 次；warm、单进程、exact identity cache | Prism `226.311 tok/s`、563/600 good；vLLM `212.108 tok/s`、527/600；SGLang `196.779 tok/s`、489/600；相对高 `6.70%/15.01%`，见 `P16_STEADY_STATE_GOODPUT_RESULTS.md` |
 | P16 的调度贡献与视觉复用贡献已分开测量 | 同一 n600 trace、prompt/arrival/SLO hash 与 P16 source；P15 FCFS、P16 cache-off、P16 cache-on 三档 | class-SLO Goodput `67.427 -> 171.538 -> 226.311 tok/s`；cache-on 相对 cache-off `+31.93%`；raw 均约 239–241 tok/s，说明主要收益来自 deadline attainment |
 | P16 exact encoder cache 只消除重复 ViT，不跳过生成 pipeline | 256 MiB GPU LRU；请求 modality + in-process media object identity；main + DeepStack 输出；n10 semantic profile | n600 measured window 360 hits/0 misses、3 entries、`109,182,976 B`；profile 中无 `model.vision.*`/cache-miss，仍有 language prefill、KV、paged attention、CUDA Graph decode 与 sampler；H1/H2 output64 hash exact |
@@ -85,6 +92,9 @@
 
 | 现象 | 必须同时说明 |
 |---|---|
+| P17 100% repeat n60 为 `224.369 tok/s`，超过 SGLang 且接近 vLLM | 只覆盖单进程、fresh-object 但 byte-identical 的高重复冻结负载；SGLang 0.5.15 单机路径没有可用的官方 multimodal global cache，属于有利于 SGLang 的 repeated-object/Radix 参考而非功能完全等价；相对 vLLM 的 `0.28%` 差距只能称统计持平 |
+| P17 n600 class-SLO Goodput `241.428 tok/s`、相对 P16 `+6.68%` | 比较的是同一 100%-repeat workload 中对象身份缓存到持久压缩前缀页复用的阶段差异；没有同协议 vLLM/SGLang n600 cache-on 数据，不能用于 n600 外部排名 |
+| P17 cache resident `233,570,304 B`、avoided copy `5,546,686,464 B` | 前者是缓存持有的跨层 KV 逻辑字节，后者是按有效尾页行累计的避免复制流量；都不是进程显存下降。n600 process peak 仍为 `24,006 MiB` |
 | P16 class-SLO Goodput `226.311 tok/s`，高于 vLLM/SGLang `6.70%/15.01%` | 只覆盖 warm、单进程、三个 exact media object 重复的冻结 workload；外部 frontend 与缓存能力不是字节级相同，属于 feature-enabled system result，不是 unique-media、冷启动、网络 content-hash cache 或通用 serving 排名 |
 | P16 n600 TPOT `14.329 ms` | 比 SGLang `14.392 ms` 低 `0.44%`，但比 vLLM `14.283 ms` 高 `0.32%`；只能称近似持平，不能把 n60 的 P15/P16 bounded TPOT 优势外推成 n600 vLLM TPOT 胜出 |
 | encoder cache resident `104.1 MiB` | 是缓存张量逻辑字节；process NVML peak 为 cache-on/off `24,004/24,002 MiB`，不构成整进程显存下降；缓存只覆盖 Vision Encoder main/DeepStack 输出 |
@@ -123,7 +133,10 @@
 
 - “Prism 全面超过 vLLM/SGLang”。
 - “Prism 在 unique-media、冷启动或通用 loaded/online H3 上全面超过 vLLM/SGLang”；
-  当前只允许陈述 P16 warm repeated-media frozen trace 的 bounded Goodput 结果。
+  当前只允许陈述 P17 fresh-object 高重复冻结负载的 bounded 结果，0--50% repeat
+  仍由 vLLM 领先。
+- “P17 是跨进程、跨节点、tenant-isolated 或网络共享缓存”；当前持久性仅指同一
+  engine/session 生命周期内跨请求持有。
 - “原生网络 serving 已与 vLLM/SGLang 完成完全同协议排名”；当前外部开发行使用各自
   原生入口，只有请求类别与 arrival trace 对齐。
 - “动态视觉 Tensor Graph 可用于 mixed-shape loaded serving”或“关闭它全面提升

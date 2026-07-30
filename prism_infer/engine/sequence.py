@@ -76,13 +76,13 @@ class Sequence:
         self.image_token_count = image_token_count
         self.video_token_id = video_token_id
         self.video_token_count = video_token_count
-        # Runtime-only references for the opt-in exact visual-embedding cache.
-        # They are intentionally excluded from request serialization.
-        self.visual_embedding_cache_key: tuple[
-            str,
-            tuple[int, ...],
-        ] | None = None
-        self.visual_embedding_cache_sources: tuple[object, ...] = ()
+        # Runtime-only content fingerprint for the exact visual-output cache.
+        # It is intentionally excluded from request serialization.
+        self.visual_embedding_cache_key: str | None = None
+        self.multimodal_prefix_cache_key: str | None = None
+        self.multimodal_prefix_cache_enabled = False
+        self.prefix_cache_candidate_tokens = 0
+        self.multimodal_prefix_cache_hit = False
         self.precomputed_visual_embeds: torch.Tensor | None = None
         self.precomputed_deepstack_visual_embeds: tuple[
             torch.Tensor,
@@ -229,6 +229,49 @@ class Sequence:
             if payload is not None
         )
 
+    @property
+    def effective_prefill_start(self) -> int:
+        """Logical prompt offset already computed or available from cache."""
+
+        return max(
+            self.num_cached_tokens,
+            self.num_computed_tokens,
+            self.prefix_cache_candidate_tokens,
+        )
+
+    @property
+    def prefill_vision_patch_count(self) -> int:
+        """Vision work remaining after an available multimodal-prefix hit."""
+
+        start = self.effective_prefill_start
+        if start == 0:
+            return self.vision_patch_count
+        if start >= self.num_prompt_tokens:
+            return 0
+        return self.vision_patch_count_for_prefill_range(
+            start,
+            self.num_prompt_tokens,
+        )
+
+    @property
+    def multimodal_prefix_boundary(self) -> int | None:
+        """Strict logical prefix ending immediately after visual placeholders."""
+
+        visual_token_ids = {
+            token_id
+            for token_id in (self.image_token_id, self.video_token_id)
+            if token_id is not None
+        }
+        visual_positions = [
+            index
+            for index, token_id in enumerate(self.prompt_token_ids)
+            if token_id in visual_token_ids
+        ]
+        if not visual_positions:
+            return None
+        boundary = visual_positions[-1] + 1
+        return boundary if boundary < self.num_prompt_tokens else None
+
     def vision_patch_count_for_prefill_range(self, start: int, end: int) -> int:
         """Return payload patches materialized by one atomic prefill range."""
 
@@ -323,6 +366,26 @@ class Sequence:
             raise ValueError("layout logical length must match sequence length at install")
         self.kv_layout = layout
 
+    def install_cached_prefix_layout(
+        self,
+        layout: KVCacheLayoutDescriptor,
+    ) -> None:
+        """Install a compacted prefix before its dense prompt suffix runs."""
+
+        if self.kv_layout is not None:
+            raise RuntimeError("sequence KV layout is already compacted")
+        if not 0 < self.num_cached_tokens < self.num_prompt_tokens:
+            raise ValueError("cached multimodal prefix must be a strict prompt prefix")
+        if self.num_computed_tokens != self.num_cached_tokens:
+            raise ValueError("cached and computed prefix lengths must agree")
+        if layout.logical_context_len != self.num_cached_tokens:
+            raise ValueError("cached layout logical length must match cached tokens")
+        layout.validate(
+            block_size=self.block_size,
+            block_table=self.block_table,
+        )
+        self.kv_layout = layout
+
     def block(self, i):  # 取第i个块对应的token子列表(用于hash匹配KV复用)
         if isinstance(i, bool) or not isinstance(i, int):
             raise TypeError(f"block index must be an integer, got {i!r}")
@@ -338,7 +401,7 @@ class Sequence:
     @property
     def remaining_prefill_tokens(self) -> int:
         """还需要 Prefill 多少 token"""
-        return max(0, self.num_prompt_tokens - self.num_computed_tokens)
+        return max(0, self.num_prompt_tokens - self.effective_prefill_start)
 
     def append_token(self, token_id: int):  # 追加新生成的token
         self.token_ids.append(token_id)
@@ -477,6 +540,13 @@ class Sequence:
         self.image_token_count = state.get("image_token_count", 0)
         self.video_token_id = state.get("video_token_id")
         self.video_token_count = state.get("video_token_count", 0)
+        self.visual_embedding_cache_key = None
+        self.multimodal_prefix_cache_key = None
+        self.multimodal_prefix_cache_enabled = False
+        self.prefix_cache_candidate_tokens = 0
+        self.multimodal_prefix_cache_hit = False
+        self.precomputed_visual_embeds = None
+        self.precomputed_deepstack_visual_embeds = ()
         self.visual_pruning_decision_record = state.get("visual_pruning_decision_record")
         layout_record = state.get("kv_layout")
         self.kv_layout = (
