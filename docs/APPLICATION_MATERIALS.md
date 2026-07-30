@@ -1,6 +1,6 @@
 # Prism-Infer 投递与面试材料
 
-> 更新日期：2026-07-29
+> 更新日期：2026-07-30
 > 使用规则：所有数字必须能回到 [CLAIMS](CLAIMS.md) 和对应证据；投递时选择与岗位
 > 匹配的 2–3 条，不要把本文件整段复制到一页简历。
 
@@ -12,7 +12,9 @@
 CUDA Graph、continuous batching、KV trace 与 content-aware visual KV physical
 compaction、per-token/per-KV-head scaled FP8，并用 `torch.compile`、CUDA Graph 与
 Systems trace 闭环优化 decode；冻结 H1/H2 中 BF16 TPOT 低于同协议 vLLM/SGLang，
-scaled-FP8 在约翻倍 KV capacity 下仍保持 TPOT 优势。
+scaled-FP8 在约翻倍 KV capacity 下仍保持 TPOT 优势；进一步通过 deadline-aware
+prefill coalescing 与 CPU preprocessing 资源隔离，在冻结 loaded trace 上把四次
+TPOT 中位数降至 `12.490 ms`。
 
 ### English
 
@@ -21,12 +23,20 @@ implemented model/vision execution, Paged KV, CUDA Graph decode, continuous batc
 KV tracing, content-aware physical visual-KV compaction, and dynamically scaled FP8 KV,
 backed by layered HF correctness, standard multimodal quality, and systems-profiling gates;
 on two frozen batch-1 RTX 5090 workloads, its BF16 TPOT was lower than matched
-vLLM/SGLang baselines, while scaled-FP8 nearly doubled KV capacity within the same budget.
+vLLM/SGLang baselines, while scaled-FP8 nearly doubled KV capacity within the same
+budget; deadline-aware prefill coalescing and host preprocessing isolation then
+reached a four-run loaded TPOT median of `12.490 ms`.
 
 ## 2. 推荐简历 bullets
 
 ### 2.1 ML Systems / Inference 版本
 
+- 基于 semantic profiler 将 loaded multimodal pipeline 拆解为 ViT block、language
+  layer、CUDA Graph replay 与 CPU preprocessing，定位默认 104 路 intra-op
+  线程导致的 CUDA launch starvation；设计 250 ms deadline-aware prefill
+  coalescing 并限制在线 CPU 并行度为 8，四次 frozen-trace 中位数达到
+  `215.628 tok/s`、TTFT `776.863 ms`、TPOT `12.490 ms`、class-SLO
+  Goodput `75.566 tok/s`。
 - 自实现 Qwen3-VL-8B text/vision/M-RoPE/DeepStack 与推理 engine 主路径，覆盖
   text、单图、多图、视频和 mixed batch；建立模块、full logits/PPL、greedy、
   CUDA Graph和长输出分层数值验证。
@@ -390,6 +400,7 @@ E2E → external”的完整证据链。
 | 外部复现 | [REPRODUCIBILITY](REPRODUCIBILITY.md) |
 | 600-request online closure | [P12_ONLINE_GOODPUT_RESULTS](P12_ONLINE_GOODPUT_RESULTS.md) |
 | phase-prefill 否决 | [P13_PHASE_DECOMPOSED_PREFILL_RESULTS](P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md) |
+| balanced loaded serving | [P15_BALANCED_MULTIMODAL_RESULTS](P15_BALANCED_MULTIMODAL_RESULTS.md) |
 | 秋招最终交付 | [FINAL_DELIVERY](FINAL_DELIVERY.md) |
 
 投递前最后检查：数字、commit和边界是否仍与这些权威文档一致；如果后续 P7.5复跑改变

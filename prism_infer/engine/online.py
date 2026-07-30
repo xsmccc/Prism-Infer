@@ -259,7 +259,7 @@ class OnlineServingSession:
     def _submit_ready_arrivals(
         self,
         state: _OnlineRunState,
-        preprocess_executor: ThreadPoolExecutor,
+        preprocess_executor: ThreadPoolExecutor | None = None,
     ) -> None:
         while state.pending:
             elapsed_s = state.elapsed_seconds(self.clock_ns())
@@ -276,6 +276,10 @@ class OnlineServingSession:
                 continue
             request_id = self.engine._allocate_request_id()
             state.internal_ids[request.request_key] = request_id
+            if preprocess_executor is None:
+                raise RuntimeError(
+                    "media arrivals require a preprocessing executor"
+                )
             state.preprocessing[request.request_key] = _PendingPreprocess(
                 request=request,
                 arrival_ns=arrival_ns,

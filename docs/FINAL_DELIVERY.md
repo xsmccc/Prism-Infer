@@ -1,11 +1,31 @@
 # Prism-Infer 秋招最终交付
 
-> 冻结日期：2026-07-29
-> 冻结分支：`codex/network-serving`
+> 冻结日期：2026-07-30
+> 冻结分支：`codex/p14-loaded-decode`
 > P12 closure 文档点：`96f46c4ee624d3fd5df22e9452ad18f285250898`
 > 正式 runtime commits：以 P10/P11/P12 各自 evidence ledger 为准（P12 rate-4
 > 为 `921de81/e883de5`）
 > 最终文档提交：以本文件所在 clean HEAD 为准
+
+## 0. P15 loaded-serving 更新
+
+P15 解决了 P14 “TPOT 达标但 TTFT/吞吐/Goodput 退化”的主要取舍。最终保留：
+
+- 250 ms deadline-aware prefill coalescing：至少三个请求时恢复 atomic batching，
+  underfilled/超时批次继续在 ViT block 与语言层边界协作执行；
+- 显式 `--online-cpu-intraop-threads=8`，避免单个异步媒体预处理任务使用默认
+  104 路 CPU intra-op 并行而饿死 CUDA Graph launch thread；
+- P14 的 B1--B8 exact-batch Graph、guarded FP8 candidate + FP32 rerank、
+  scaled-FP8 KV 与视觉物理压缩。
+
+冻结 60-request trace 的四次中位数为 `215.628 tok/s`、TTFT
+`776.863 ms`、TPOT `12.490 ms`、class-SLO Goodput `75.566 tok/s`。
+TPOT 相对 bounded vLLM/SGLang references 低 `8.56%/13.86%`；raw、TTFT 与
+Goodput 仍落后，不能写成全面 online 胜出。H1/H2 64-token hash exact，KV pool
+相对 BF16 仍节省 `48.44%`。
+
+完整结果、Profiler、失败候选与面试叙事见
+[P15_BALANCED_MULTIMODAL_RESULTS](P15_BALANCED_MULTIMODAL_RESULTS.md)。
 
 ## 1. 项目定位
 

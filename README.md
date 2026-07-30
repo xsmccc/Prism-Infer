@@ -32,6 +32,7 @@ OpenAI-compatible 或多机生产 serving 系统。
 | packed MLP gate/up | 已验证、默认启用 | RTX 5090 TP1；8 个 clean offline cell 的 decode TPOT 改善 `0.483%–0.762%`，不声称稳定 E2E 加速 |
 | compile + CUDA Graph decode hot path | H1/H2 三引擎闭环 | RTX 5090、TP1、batch1、greedy、output128；Prism BF16 与 scaled-FP8 TPOT 均低于同协议 vLLM/SGLang |
 | arrival-driven external H3 | 正式闭环、loaded goodput 未胜出 | 600 requests、Poisson、四类 conditional-video mix；raw throughput 距 vLLM/SGLang 不到 0.8%，但 SLO goodput 明显落后 |
+| P15 balanced loaded serving | 四次复测通过 | 60-request frozen trace；deadline-aware prefill coalescing + CPU preprocessing resource budget；TPOT 低于 vLLM/SGLang bounded references，raw/TTFT/Goodput 仍落后 |
 | phase-decomposed multimodal prefill | 已实现原型、已拒绝并删除 | H1 单请求 exact 且最大执行段缩短；同 trace loaded goodput/TTFT/TPOT 未通过保留门槛 |
 | dynamic-shape Vision tensor Graph | loaded serving 默认关闭 | 新 RTX 5090 的 600-request mixed trace 出现错误 token；保留 decode CUDA Graph |
 | vision-aware scheduler | 实验实现、默认关闭 | 有界旁路改善 TTFT/E2E 中位数与尾部，但 loaded SLO goodput 未胜出 |
@@ -101,12 +102,21 @@ OpenAI-compatible 或多机生产 serving 系统。
   将 mixed trace 的 prefill max 从 `446.229` 降至 `119.489 ms`，但同 trace
   class-aware goodput 从 `21.569` 降至 `14.197 tok/s`（-34.18%），TTFT p50
   `+16.5%`、TPOT p50 `+1.98%`，所以候选代码已删除，只保留失败证据。
+- P15 在同一 RTX 5090、Qwen3-VL-8B 与冻结 60-request loaded trace 上，将
+  underfilled prefill 设为 250 ms deadline-aware coalescing，并把在线 CPU intra-op
+  资源从默认 104 线程显式限制为 8，避免媒体预处理饿死 CUDA Graph 提交。四次
+  中位数为 `215.628 tok/s`、TTFT `776.863 ms`、TPOT `12.490 ms`、
+  class-SLO Goodput `75.566 tok/s`；TPOT 相对 vLLM/SGLang bounded references
+  低 `8.56%/13.86%`，但另外三项仍未超过外部系统。H1/H2 64-token hash exact，
+  KV bytes `-48.44%` 与视觉物理页回收保持不变。
 
 最终口径、环境和 raw evidence 路径见
 [P10 最终结果](docs/P10_FINAL_RESULTS.md)、
 [P11 结果](docs/P11_MULTIMODAL_COMPACTION_RESULTS.md) 与
 [P12 Online 结果](docs/P12_ONLINE_GOODPUT_RESULTS.md)、
 [P13 Phase Prefill 结果](docs/P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md) 与
+[P14 Loaded Decode 结果](docs/P14_LOADED_DECODE_RESULTS.md)、
+[P15 Balanced Serving 结果](docs/P15_BALANCED_MULTIMODAL_RESULTS.md) 与
 [Network Serving 结果](docs/NETWORK_SERVING_RESULTS.md)、
 [PERFORMANCE_REPORT](docs/PERFORMANCE_REPORT.md)。
 
@@ -383,6 +393,8 @@ python -m pytest -q tests -s
 - [P11 结果](docs/P11_MULTIMODAL_COMPACTION_RESULTS.md)：Vision Graph、模态自适应视觉 KV 正式质量与动态页复用。
 - [P12 Online 结果](docs/P12_ONLINE_GOODPUT_RESULTS.md)：600-request 多模态 arrival/SLO goodput 与 vLLM/SGLang 固定协议对比。
 - [P13 Phase Prefill 结果](docs/P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md)：可调度多模态 prefill 原型、correctness 问题、loaded 否决与删除。
+- [P14 Loaded Decode 结果](docs/P14_LOADED_DECODE_RESULTS.md)：block/layer cooperative prefill、B1--B8 Graph 与 guarded FP8 LM head。
+- [P15 Balanced Serving 结果](docs/P15_BALANCED_MULTIMODAL_RESULTS.md)：deadline-aware coalescing、CPU launch starvation 根因与四次 loaded 复测。
 - [秋招最终交付](docs/FINAL_DELIVERY.md)：项目定位、最终数字、简历 bullets、面试主线和交付边界。
 - [Claim Ledger](docs/CLAIMS.md)：允许、必须限定和禁止使用的结论。
 - [压缩报告](docs/COMPRESSION_REPORT.md) / [KV 分析报告](docs/KV_ANALYSIS_REPORT.md)。

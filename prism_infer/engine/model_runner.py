@@ -1521,10 +1521,20 @@ class ModelRunner:
             return False
         language_model = self.model.model.language_model
         with use_context(pending.device_batch.attention_context):
-            complete = language_model.advance_cooperative_forward(
-                pending.model_state,
-                max_layers=max_layers,
-            )
+            with profile_region(
+                "runner.prefill.language_layer_quantum",
+                metadata={
+                    "layers": max_layers,
+                    "next_layer": pending.model_state.next_layer,
+                    "tokens": int(
+                        pending.model_state.hidden_states.shape[0]
+                    ),
+                },
+            ):
+                complete = language_model.advance_cooperative_forward(
+                    pending.model_state,
+                    max_layers=max_layers,
+                )
             if complete:
                 hidden_states = language_model.finish_cooperative_forward(
                     pending.model_state,

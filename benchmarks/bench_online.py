@@ -693,6 +693,15 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260716)
     parser.add_argument("--warmup-requests", type=int, default=1)
     parser.add_argument("--max-tokens", type=int, default=32)
+    parser.add_argument(
+        "--online-cpu-intraop-threads",
+        type=int,
+        default=8,
+        help=(
+            "bound host preprocessing parallelism so media preparation cannot "
+            "starve the CUDA launch thread"
+        ),
+    )
     parser.add_argument("--max-model-len", type=int, default=1280)
     parser.add_argument("--max-num-batched-tokens", type=int, default=2048)
     parser.add_argument("--max-num-seqs", type=int, default=16)
@@ -795,9 +804,12 @@ def main() -> None:
         raise SystemExit("--requests must be positive and warmup must be >= 0")
     if args.max_tokens < 2:
         raise SystemExit("--max-tokens must be >= 2 for TPOT/goodput")
+    if args.online_cpu_intraop_threads <= 0:
+        raise SystemExit("--online-cpu-intraop-threads must be positive")
     if args.request_rate <= 0 and args.arrival_process != "burst":
         raise SystemExit("--request-rate must be positive")
 
+    torch.set_num_threads(args.online_cpu_intraop_threads)
     manifest = load_workload_manifest(args.manifest)
     if args.h3_profile is None:
         case = find_workload_case(manifest, args.case)
@@ -864,6 +876,7 @@ def main() -> None:
                     "request_count": args.requests,
                     "trace_sha256": trace_sha256,
                     "max_tokens": args.max_tokens,
+                    "online_cpu_intraop_threads": torch.get_num_threads(),
                 },
                 cuda_timing=True,
             )
@@ -987,7 +1000,7 @@ def main() -> None:
                     else args.cooperative_prefill_vision_block_quantum
                 ),
                 "cooperative_prefill_quantum_policy": (
-                    "one_quarter_latched_until_idle"
+                    "deadline_coalesced_atomic_or_quarter_latched"
                     if args.enable_cooperative_prefill
                     else "disabled"
                 ),
@@ -996,7 +1009,13 @@ def main() -> None:
                     (args.max_num_seqs + 3) // 4,
                 ),
                 "cooperative_prefill_sparse_quantum_floor": 4,
+                "cooperative_prefill_policy_runtime": (
+                    llm.cooperative_prefill_policy_metadata()
+                    if args.enable_cooperative_prefill
+                    else None
+                ),
                 "online_media_preprocess": "single_worker_async",
+                "online_cpu_intraop_threads": torch.get_num_threads(),
                 "media_preprocess_in_ttft": True,
             },
             "memory": {

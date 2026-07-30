@@ -41,6 +41,8 @@ from prism_infer.models.model_registry import validate_model_architecture
 
 
 _COOPERATIVE_PREFILL_SPARSE_DECODE_QUANTUM_FLOOR = 4
+_COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES = 3
+_COOPERATIVE_PREFILL_COALESCE_MAX_WAIT_NS = 250_000_000
 
 
 @dataclass(slots=True)
@@ -234,6 +236,9 @@ class LLMEngine:
             self.scheduler.block_manager,
         )
         self._pending_prefill: _PendingPrefill | None = None
+        self._cooperative_prefill_deferred_decode_steps = 0
+        self._cooperative_prefill_atomic_batches = 0
+        self._cooperative_prefill_underfilled_batches = 0
         self.metrics: MetricsSink = metrics_sink if metrics_sink is not None else EngineMetrics()
         atexit.register(self.exit)  # 注册退出清理函数(类似RAII析构+atexit)
 
@@ -429,6 +434,7 @@ class LLMEngine:
             self.metrics = EngineMetrics()
         clock_ns = getattr(self, "clock_ns", perf_counter_ns)
         arrival_ns = clock_ns() if submitted_ns is None else submitted_ns
+        seq.submitted_ns = arrival_ns
         self.metrics.on_request_submitted(seq, timestamp_ns=arrival_ns)
         try:
             decision = self.scheduler.add(
@@ -763,6 +769,9 @@ class LLMEngine:
             or not self.scheduler.has_decode_work()
         ):
             return False
+        if plan.batch_size >= _COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES:
+            self._cooperative_prefill_atomic_batches += 1
+            return False
         is_heavy_visual = (
             plan.num_scheduled_vision_patches
             >= self.config.heavy_prefill_vision_patch_threshold
@@ -772,6 +781,7 @@ class LLMEngine:
             and not self._cooperative_prefill_fine_grain_enabled()
         ):
             return False
+        self._cooperative_prefill_underfilled_batches += 1
         self.metrics.on_batch_planned(plan)
         clock_ns = getattr(self, "clock_ns", perf_counter_ns)
         started_ns = clock_ns()
@@ -821,6 +831,53 @@ class LLMEngine:
             ),
         )
 
+    def _should_coalesce_prefill(self) -> bool:
+        """Wait briefly for an efficient atomic prefill batch."""
+
+        if (
+            not getattr(self.config, "enable_cooperative_prefill", False)
+            or not self.scheduler.has_decode_work()
+        ):
+            return False
+        waiting = tuple(self.scheduler.waiting)
+        if (
+            not waiting
+            or len(waiting)
+            >= _COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES
+        ):
+            return False
+        submitted_ns = [
+            seq.submitted_ns
+            for seq in waiting
+            if seq.submitted_ns is not None
+        ]
+        if not submitted_ns:
+            return False
+        clock_ns = getattr(self, "clock_ns", perf_counter_ns)
+        oldest_age_ns = clock_ns() - min(submitted_ns)
+        return oldest_age_ns < _COOPERATIVE_PREFILL_COALESCE_MAX_WAIT_NS
+
+    def cooperative_prefill_policy_metadata(self) -> dict[str, object]:
+        """Return measured counters for the deadline-coalescing policy."""
+
+        return {
+            "coalesce_min_sequences": (
+                _COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES
+            ),
+            "coalesce_max_wait_ms": (
+                _COOPERATIVE_PREFILL_COALESCE_MAX_WAIT_NS / 1e6
+            ),
+            "deferred_decode_steps": (
+                self._cooperative_prefill_deferred_decode_steps
+            ),
+            "atomic_coalesced_batches": (
+                self._cooperative_prefill_atomic_batches
+            ),
+            "cooperative_underfilled_batches": (
+                self._cooperative_prefill_underfilled_batches
+            ),
+        }
+
     def _next_step_result(self, profile_session) -> StepResult:
         pending = getattr(self, "_pending_prefill", None)
         if pending is not None:
@@ -841,6 +898,10 @@ class LLMEngine:
             return self._execute_planned_step(plan, profile_session)
 
         with profile_region("engine.scheduler.schedule", cuda=False):
+            if self._should_coalesce_prefill():
+                plan = self.scheduler.schedule_decode()
+                self._cooperative_prefill_deferred_decode_steps += 1
+                return self._execute_planned_step(plan, profile_session)
             plan = self.scheduler.schedule()
         if self._start_cooperative_prefill_if_useful(plan):
             with profile_region("engine.scheduler.schedule", cuda=False):
@@ -904,6 +965,9 @@ class LLMEngine:
         if reset is None:
             raise RuntimeError("configured metrics sink cannot be reset")
         self.scheduler.reset_metrics()
+        self._cooperative_prefill_deferred_decode_steps = 0
+        self._cooperative_prefill_atomic_batches = 0
+        self._cooperative_prefill_underfilled_batches = 0
         reset()
 
     def request_state(self, request_id: int):

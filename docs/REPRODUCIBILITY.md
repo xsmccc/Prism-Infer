@@ -538,7 +538,58 @@ goodput req/s 也分别下降 `78.24%/8.16%`，均未达到进入 600-request fo
 `data/p13_phase/tuning/`；结果、命令、候选快照位置和 artifact hash 见
 [`P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md`](P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md)。
 
-## 13. 证据保存与验收
+## 13. P15 balanced loaded serving
+
+P15 使用相同的 60-request frozen trace，但关闭 loaded mixed-shape 下已知不安全的
+Vision tensor Graph，启用 block/layer cooperative prefill、deadline-aware
+coalescing，并显式记录 CPU intra-op 资源预算：
+
+```bash
+python benchmarks/bench_online.py \
+  --model "$PRISM_MODEL_PATH" \
+  --manifest benchmarks/workloads/p9_headline.json \
+  --h3-profile conditional_video \
+  --mode visual_compact_scaled_fp8_compile_graph \
+  --requests 60 --arrival-process poisson --request-rate 4 \
+  --seed 20260717 --warmup-requests 10 --max-tokens 64 \
+  --online-cpu-intraop-threads 8 \
+  --max-model-len 4096 --max-num-batched-tokens 4096 \
+  --max-num-seqs 8 --max-chunk-size 2048 \
+  --num-kvcache-blocks 220 --kvcache-block-size 256 \
+  --disable-prefix-caching \
+  --visual-pruning-keep-ratio 0.6 \
+  --visual-pruning-min-keep-tokens 768 \
+  --visual-pruning-video-min-keep-tokens 256 \
+  --visual-pruning-strategy uniform \
+  --enable-cooperative-prefill \
+  --cooperative-prefill-layer-quantum 1 \
+  --cooperative-prefill-vision-block-quantum 1 \
+  --class-slo-file data/p12_online/formal/p12_class_slo_vllm_r1_ce72f63.json \
+  --output data/p15_balanced/final_cpu8_q1_formal_n60_dirty_r1.json
+```
+
+正式复现必须启动四个独立进程并串行运行，不能并发占用同一 GPU。验收读取四次
+raw throughput、TTFT p50、TPOT p50 与 `class_aware_summary.aggregate_goodput`
+的中位数，同时检查：
+
+- `terminal_failures.count == 0`；
+- `engine.online_cpu_intraop_threads == 8`；
+- trace SHA256 为 `b7948e...e954b`；
+- KV total bytes 为 `4,282,122,240`；
+- H1/H2 isolated 64-token hash 与 P14 reference exact；
+- GPU UUID、模型 config hash、warmup、请求数和视觉策略一致。
+
+Semantic profiler 只能单独运行，不能把其 instrumented latency 混入 headline。
+最终命令在上述参数后增加：
+
+```bash
+--profile-output data/p15_balanced/final_cpu8_q1_semantic_profile_n10_dirty_r1.json
+```
+
+完整四次结果、correctness hash、rejected stream/worker candidates 与 claim 边界见
+[`P15_BALANCED_MULTIMODAL_RESULTS.md`](P15_BALANCED_MULTIMODAL_RESULTS.md)。
+
+## 14. 证据保存与验收
 
 `data/` 默认 gitignored。每次正式复现至少保存：
 

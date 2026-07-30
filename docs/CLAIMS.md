@@ -13,8 +13,11 @@
 > 当前 P12 online closure 文档点: `96f46c4`；正式 rate-4 runtime artifacts:
 > `921de81/e883de5`
 > P13 phase-prefill 候选: dirty selection evidence，已拒绝并从 retained source 删除
+> P14 loaded-decode retained 点：`7ea7f80`
+> P15 balanced-serving 点：以本文所在提交为准；正式 artifacts 位于
+> `data/p15_balanced/final_cpu8_q1_formal_n60_dirty_r1..r4.json`
 > 当前 native network-serving 候选：base `25eeb72`；最终实现以本文所在提交为准
-> 更新日期: 2026-07-29
+> 更新日期: 2026-07-30
 
 本表区分“已实现”“已验证”和“性能占优”。README、简历和面试中的数字必须能
 追溯到本表及对应 raw evidence。
@@ -23,6 +26,9 @@
 
 | 结论 | 范围 | 证据 |
 |---|---|---|
+| P15 在冻结 loaded trace 上的 TPOT 低于 vLLM/SGLang bounded references | RTX 5090 UUID `GPU-a034...d79a`；Qwen3-VL-8B；60 requests、Poisson rate-4、seed20260717、warmup10、output64；四次 final-code 复测 | Prism 四次 TPOT 中位数 `12.490 ms`，相对 vLLM `13.659 ms` 低 `8.56%`、相对 SGLang `14.500 ms` 低 `13.86%`；raw throughput、TTFT、Goodput 仍落后，见 `P15_BALANCED_MULTIMODAL_RESULTS.md` |
+| deadline-aware coalescing 与 CPU 资源预算消除了 P14 的主要 loaded tradeoff | 同一 60-request trace；250 ms underfilled deadline、min batch3、CPU intra-op8；P14/P15 各四次中位数 | raw `+16.68%`、TTFT `-68.83%`、TPOT `-10.33%`、class-SLO Goodput `8.18x`；最终为 `215.628 tok/s`、`776.863/12.490 ms`、`75.566 tok/s` |
+| P15 性能提升保持既有多模态正确性与压缩 | 最终 retained mode；isolated H1/H2 output64；四次 loaded n60 | H1/H2 token hash exact；KV pool `4,282,122,240` bytes、相对 BF16 `-48.44%`；loaded visual tokens `-33.94%`、physical blocks `-33.33%` |
 | Prism BF16 compile/Graph 在冻结 H1/H2 中 TPOT 低于 vLLM 与 SGLang | clean `4779342`；RTX 5090 UUID `GPU-7f63...f2eb`；Qwen3-VL-8B；TP1、batch1、greedy、output128；同 case 三引擎 prompt-token SHA256 exact；warmup2/repeat5 | H1 Prism/SGLang/vLLM 为 `9.8821/10.3520/10.5276 ms`；H2 为 `9.8680/10.3689/10.5278 ms`。Prism 相对 SGLang 低 `4.54%–4.83%`，相对 vLLM 低 `6.13%–6.27%`；见 `P10_FINAL_RESULTS.md` |
 | scaled-FP8 KV 在同约 4 GiB budget 下接近翻倍容量且保持冻结 H1/H2 TPOT 优势 | clean `4779342`；220 blocks、56,320-token capacity；同 prompt/GPU/protocol | H1/H2 TPOT `10.2363/10.2588 ms`，相对 SGLang 低 `1.06%–1.12%`、相对 vLLM 低 `2.55%–2.77%`；不是相对 Prism BF16 的加速 |
 | scaled-FP8 的 KV 与进程显存 Pareto 已在 Prism 内部实测 | NVML 采样与 latency 计时分离；BF16/scaled 同容量与同 budget 三格 | 同容量 KV bytes 节省 `48.4375%`，NVML process peak `23,938→21,966 MiB`，下降 `8.24%`；同约 4 GiB budget capacity `28,928→56,320`，提升 `94.69%`，NVML peak 仅 `+14 MiB` |
@@ -73,6 +79,8 @@
 
 | 现象 | 必须同时说明 |
 |---|---|
+| P15 loaded TPOT 中位数 `12.490 ms`，低于 vLLM/SGLang references | 只覆盖当前 RTX 5090、指定 Qwen3-VL-8B snapshot、60-request in-process frozen trace 与四次复测；Prism raw throughput 仍低 `3.07%/2.51%`，TTFT 与 class-SLO Goodput 也明显落后 |
+| CPU intra-op `104→8` 后 TTFT/TPOT/Goodput 大幅改善 | 是同进程媒体预处理与 CUDA launch 的资源隔离；预处理仍计入 TTFT，不是 GPU kernel 加速，也不证明 8 对所有 CPU 拓扑最优 |
 | uniform/unit-scale-FP8 组合曾观察到 `4.016x` peak running capacity | uniform quality FAIL；unit-scale FP8 quality 未通过；不是 online throughput |
 | 7-image aggregate active prompt bytes降至 `0.538x`；COCO batch4性能cell为`0.571x` | 都不是整个模型/GPU peak memory按相同比例下降 |
 | CUDA Graph 提升约 1.8 倍 | 是 Prism internal eager→Graph，不是对 vLLM speedup |

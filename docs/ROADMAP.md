@@ -859,6 +859,14 @@ CUDA Graph、counter-driven kernel、多模态调度和薄 serving 闭环。完�
 - P13 对上述阻塞实现了可撤回的 phase-decomposed 原型并完成 correctness/机制/60-request
   selection gate；`phase=512/1024` 的 class-aware goodput 分别回退
   `100%/34.18%`，候选已拒绝。
+- P14 在 exact ViT block/语言层边界实现 cooperative prefill，并闭合 B1--B8
+  CUDA Graph、exact fusion 与 guarded FP8 LM-head candidate/FP32 rerank；四次
+  loaded TPOT 中位数 `13.929 ms`，但 raw/TTFT/Goodput 退化。
+- P15 通过 250 ms deadline-aware prefill coalescing 与 8-thread online CPU
+  intra-op budget 修复 P14 的系统取舍。四次 loaded 中位数为
+  `215.628 tok/s`、TTFT `776.863 ms`、TPOT `12.490 ms`、class-SLO
+  Goodput `75.566 tok/s`；H1/H2 hash exact，KV bytes `-48.44%` 与视觉物理
+  compaction 保持。TPOT 低于 bounded vLLM/SGLang references，但另外三项仍落后。
 - P9 单卡主线不等待 TP2。任何 Torch/CUDA/NCCL 升级必须先单独决策，不能污染 P8
   已验证环境。
 
@@ -867,8 +875,9 @@ CUDA Graph、counter-driven kernel、多模态调度和薄 serving 闭环。完�
 当前没有必须继续扩张的主线优化。秋招投递以 `FINAL_DELIVERY.md` 的冻结叙事为准。
 后续只有在新增资源或明确研究目标时才开启新阶段：
 
-1. 若继续攻 online goodput，必须重新设计可抢占边界或视觉计算调度；P13 的机械切块
-   不能直接复活，候选先过 60-request selection gate，再进入 600-request formal。
+1. P15 已完成 60-request loaded selection 与四次复测；若继续攻 600-request
+   cross-runtime Goodput，必须沿用 deadline/coalescing 与 CPU resource evidence，
+   不能直接复活 P13 机械切块或已拒绝的 stream overlap。
 2. 若继续 content-aware physical compaction，先补标准质量 gate 和动态 allocator
    的真实 NVML 下降；达不到两项就不形成 headline。
 3. 网络 endpoint、TP2 和 weight-only quantization 都是独立扩展，不属于当前交付缺口；

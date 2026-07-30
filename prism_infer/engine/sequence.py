@@ -45,6 +45,7 @@ class Sequence:
             raise ValueError("pixel_values_videos and video_grid_thw must be provided together")
 
         self.seq_id = request_id
+        self.submitted_ns: int | None = None
         self.block_size = block_size
         self.lifecycle = RequestLifecycle(self.seq_id)
         self.token_ids = copy(token_ids)  # 浅拷贝prompt的token列表(值语义, 类似C++ vector拷贝)
@@ -345,6 +346,7 @@ class Sequence:
         is_prefill_payload = self.num_completion_tokens == 0
         return {
             "seq_id": self.seq_id,
+            "submitted_ns": self.submitted_ns,
             "request_state": self.status,
             "block_size": self.block_size,
             "num_tokens": self.num_tokens,
@@ -394,6 +396,16 @@ class Sequence:
             state["seq_id"],
             name="serialized seq_id",
         )
+        submitted_ns = state.get("submitted_ns")
+        if submitted_ns is not None and (
+            isinstance(submitted_ns, bool)
+            or not isinstance(submitted_ns, int)
+            or submitted_ns < 0
+        ):
+            raise ValueError(
+                "serialized submitted_ns must be a non-negative integer or None"
+            )
+        self.submitted_ns = submitted_ns
         request_state = state.get("request_state", RequestState.WAITING)
         self.lifecycle = RequestLifecycle(self.seq_id, state=request_state)
         serialized_block_size = state["block_size"]
