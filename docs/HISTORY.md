@@ -1,42 +1,113 @@
-# Prism-Infer 文档历史索引
+# Optimization History
 
-本文件只解释历史文档与当前权威文档的关系，不复制已经过期的阶段计划。
+This document keeps the reasoning that matters after removing phase-by-phase
+reports from the public repository.
 
-## 当前权威入口
+## 1. Build a correct multimodal engine
 
-- 当前阶段、完成状态与后续顺序：`docs/ROADMAP.md`
-- 可执行验证命令与 PASS 标准：`docs/VERIFICATION.md`
-- 性能数字、环境与适用边界：`docs/PERFORMANCE_REPORT.md`
-- 可用、受限与禁止的项目结论：`docs/CLAIMS.md`
-- 外部安装与分层复现：`README.md`、`docs/REPRODUCIBILITY.md`
-- 当前完整技术总结：`docs/TECHNICAL_REPORT.md`
-- 当前限制与恢复门禁：`docs/KNOWN_ISSUES.md`
-- 简历与面试措辞：`docs/APPLICATION_MATERIALS.md`（必须服从 claim ledger）
-- P8阶段验收与交接：`docs/P8_DELIVERY.md`
-- 阶段交付格式：`docs/STAGE_DELIVERY_TEMPLATE.md`
+The project began with a lightweight nano-vllm-style runtime and added the
+Qwen3-VL vision stack, DeepStack injection, 3D position IDs, M-RoPE, multi-image
+and video inputs, paged KV, chunked prefill, and continuous batching.
 
-这些文件优先于早期日计划、聊天记录和未汇总的实验日志。状态冲突时，以能追溯到
-clean commit、命令和 raw evidence 的最新记录为准。
+A major correctness failure was found later: flattened token/head tensors had
+been passed directly to SDPA in an environment without standalone
+FlashAttention, causing incorrect dimension interpretation. Replacing that
+path with a compatible varlen backend and a shape-correct per-sequence SDPA
+fallback invalidated older output hashes. This is why current claims require
+semantic references and exact prompt audits, not repeat hashes alone.
 
-## `DAY_*.md` 状态
+## 2. Profile before optimizing
 
-`docs/DAY_01.md` 与 `docs/DAY_02.md` 是 P1/P2早期逐日开发记录，已在 commit
-`311f055` 删除。它们只保留在 Git历史中，用于考古，不再属于工作树，也不作为当前
-需求、完成状态或性能 claim来源。
+Node-level profiling exposed an expensive logits path that converted the full
+LM-head weight to FP32 on every decode step. Keeping the model-precision
+projection and using a guarded exact selection path reduced that region from
+4.068 ms to 0.762 ms in the recorded profile and improved TPOT by
+1.216×–1.280× across five workloads.
 
-需要审阅历史内容时可只读查看：
+Packed gate/up projection then reduced Graph replay linear kernels from 253 to
+217 and total kernels from 2,000 to 1,964. The measured TPOT gain was only
+0.483%–0.762%, so it is described as a kernel-count optimization rather than a
+large end-to-end speedup.
 
-```bash
-git show 311f055^:docs/DAY_01.md
-git show 311f055^:docs/DAY_02.md
-```
+## 3. Establish compiler/Graph ownership
 
-禁止从历史日计划中的未完成 checkbox推断当前状态；必须回到 ROADMAP、VERIFICATION
-和对应阶段的 clean evidence重新判断。
+Early `torch.compile` experiments either graph-broke on mutable KV state or
+duplicated work already captured by CUDA Graph. The retained design compiles a
+stateless region, keeps page state in runtime-owned replay tensors, and
+captures fixed batch buckets.
 
-## 历史结论的使用规则
+This produced the final H1/H2 BF16 TPOT of 9.8821/9.8680 ms, lower than the
+tested vLLM and SGLang cells.
 
-1. 历史 benchmark只能标明当时 commit、硬件、配置和已知限制，不能替代当前数字。
-2. 被后续修复覆盖的 root cause仍可用于问题复盘，但当前行为以最新测试为准。
-3. 已删除或 superseded文档不能被 README、简历或面试材料当作完成证据。
-4. 任何恢复历史文档的提交都必须加醒目的 `HISTORICAL / NON-AUTHORITATIVE` banner。
+## 4. Treat KV compression as a representation problem
+
+Direct E4M3FN casting with unit scale reduced bytes but failed quality. The
+replacement stores per-token/per-KV-head FP32 K/V scales and carries them
+through the full KV lifecycle. It reduced allocated KV bytes by 48.44% and
+nearly doubled token capacity at the same budget while passing the frozen
+quality matrix.
+
+The scaled path is slightly slower than Prism BF16. The engineering result is
+capacity without losing the bounded external TPOT position, not free speed
+from quantization.
+
+## 5. Convert visual pruning into physical reclamation
+
+Logical attention pruning did not return memory to the allocator. The next
+design compacted retained KV rows, rewrote page tables, preserved logical
+M-RoPE positions, and released unused pages.
+
+Uniform and overly aggressive policies failed on longer visual tasks. The
+retained modality-aware floors balance image/mixed and video contexts. A
+capacity-constrained batch-2 cell confirmed that released pages can change a
+later scheduling outcome, rather than merely reducing an accounting number.
+
+## 6. Optimize loaded serving by Goodput
+
+Several candidates improved one local metric and harmed the workload:
+
+| Candidate | Observed outcome | Decision |
+|---|---|---|
+| Dynamic Vision Tensor Graph | reduced some overhead but emitted incorrect tokens in mixed-shape load | disabled |
+| Vision-aware bypass scheduling | better TTFT/E2E medians but Goodput -15.79% | not default |
+| Phase-decomposed multimodal prefill | reduced the largest prefill segment but Goodput -34.18% | removed |
+| Immediate heavy prefill | improved TTFT but fragmented decode cadence | rejected |
+| 100 ms cache-hit coalescing | raw throughput +0.015% but lost one SLO and reduced Goodput | rejected |
+| GQA4 and split-K paged attention kernels | 1.85×–1.90× slower at headline contexts | removed |
+
+The retained scheduler uses SLO slack and estimated cost. Limiting CPU
+intra-op threads also prevented media preprocessing from starving CUDA launch
+submission in the same process.
+
+## 7. Evolve media reuse into compressed prefix reuse
+
+An exact Vision/DeepStack cache first demonstrated strong repeated-media
+Goodput, but its key depended on Python object identity. That was not a safe
+cross-request semantic cache.
+
+The final design replaced identity with content SHA256 and separated:
+
+- exact prompt+media processor entries;
+- reusable media-layout tensors;
+- Vision/DeepStack outputs; and
+- compacted scaled-FP8 visual prefix pages.
+
+The cold path compacts the prefix before executing the question suffix, so
+cold and hit requests attend the same physical context. Full pages are shared;
+partial tails use CoW and a reusable tail pool. This removed the fairness flaw
+and sustained high-repeat performance with newly decoded media objects.
+
+## 8. Final assessment
+
+The project is complete as a focused inference-systems portfolio:
+
+- it has a self-owned multimodal model/runtime path;
+- it connects profiler evidence to compiler, kernel, memory, and scheduling
+  decisions;
+- it includes both retained and rejected candidates;
+- it has scoped wins against mature systems; and
+- it states where vLLM remains stronger.
+
+Further work should be a new research phase centered on cold multimodal
+prefill. Adding more generic CI gates, smoke tests, or feature breadth would
+not strengthen the current technical story.

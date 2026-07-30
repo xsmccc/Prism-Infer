@@ -1,0 +1,29 @@
+{
+  "record_type": "p12_class_slo",
+  "source": {
+    "framework": "vllm",
+    "framework_version": "0.25.1",
+    "profile": "conditional_video",
+    "request_rate_per_s": 1.0,
+    "ttft_formula": "5 * vllm_best_stable_low_load_p50_by_class",
+    "tpot_formula": "2 * vllm_best_stable_low_load_p50_by_class"
+  },
+  "classes": {
+    "guardrail_single_image_448": {
+      "ttft_ms": 490.3942160308361,
+      "tpot_ms": 21.26460274060567
+    },
+    "guardrail_text_short": {
+      "ttft_ms": 169.95273530483246,
+      "tpot_ms": 21.042734739326296
+    },
+    "h1_eight_image_448": {
+      "ttft_ms": 1352.745071053505,
+      "tpot_ms": 21.096245518752507
+    },
+    "h2_video_16x448": {
+      "ttft_ms": 1461.4979643374681,
+      "tpot_ms": 21.087430121879727
+    }
+  }
+}

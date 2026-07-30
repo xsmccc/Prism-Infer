@@ -35,7 +35,7 @@ common_args=(
   --enable-prefix-caching
   --mm-processor-cache-gb 1
   --class-slo-file
-  "${repo_root}/data/p12_online/formal/p12_class_slo_vllm_r1_ce72f63.json"
+  "${repo_root}/benchmarks/configs/h3_class_slo_vllm_0251.json"
 )
 
 run_cell() {

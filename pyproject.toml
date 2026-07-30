@@ -8,7 +8,7 @@ version = "0.3.0"
 authors = [{ name = "Xingkai Yu" }]
 license = { file = "LICENSE" }
 readme = "README.md"
-description = "A multi-modal inference engine with KV Cache optimization — built from nano-vllm"
+description = "A compression-aware multimodal inference engine for Qwen3-VL"
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "torch>=2.5,<2.12",
@@ -66,14 +66,13 @@ markers = [
     "integration: tests spanning multiple Prism-Infer components",
     "model: tests requiring a local full Qwen3-VL checkpoint",
     "gpu: tests requiring a CUDA-capable GPU",
-    "slow: tests unsuitable for the default CPU presubmit",
+    "slow: tests unsuitable for the default local run",
     "distributed: tests requiring more than one worker or GPU",
 ]
 
 [tool.ruff]
 target-version = "py310"
 line-length = 100
-extend-exclude = ["tools/debug"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]

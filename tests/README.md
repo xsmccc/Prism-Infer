@@ -1,30 +1,28 @@
-# Test tiers
+# Tests
 
-Prism-Infer keeps durable automated contracts under `tests/`. Test count is
-not treated as a cleanup target: a test is removed only when its behavior is
-duplicated or its contract is obsolete.
+The test directory covers contracts that protect Prism-Infer's inference path:
 
-The registered pytest markers define resource boundaries:
+- Qwen3-VL model structure, multimodal positions, and processor integration;
+- paged KV storage, scaled-FP8 quantization, and physical token compaction;
+- `torch.compile` and CUDA Graph execution boundaries;
+- scheduling, online serving, and request lifecycle behavior.
 
-- `unit`: deterministic CPU-capable logic;
-- `integration`: multiple Prism-Infer components;
-- `model`: a local Qwen3-VL checkpoint, with downloads forbidden;
-- `gpu`: CUDA execution;
-- `slow`: outside the default presubmit latency budget;
-- `distributed`: multiple processes or GPUs.
+Tests that only validated an old benchmark report, a profiling parser, or a
+retired development phase are intentionally not kept here. Performance claims
+are reproduced with the scripts under `benchmarks/`, on the GPU environment
+recorded in the results document.
 
-Run the CPU presubmit with:
+Run the focused logic tests with:
 
 ```bash
 python -m pytest -q -m "not model and not gpu and not slow and not distributed"
 ```
 
-Run the full local suite, allowing resource-gated tests to skip themselves:
+Run all tests whose local model and GPU requirements are available with:
 
 ```bash
 python -m pytest -q
 ```
 
-Exploratory scripts that print diagnostics without a stable assertion contract
-belong in `tools/debug/`, not here. Executable performance experiments belong
-in `benchmarks/`; tests for their schemas and pure helpers remain here.
+Resource-dependent tests declare `model`, `gpu`, `slow`, or `distributed`
+markers and skip when their prerequisites are absent.

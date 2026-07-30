@@ -7,6 +7,7 @@ build/
 *.log
 debug_*.py
 trace_*.py
+.venv
 .venv/
 .venv-local/
 /data/
@@ -15,4 +16,5 @@ trace_*.py
 *.safetensors
 *.bin
 .agents/
+.claude/
 .pytest_cache/

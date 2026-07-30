@@ -1,616 +1,162 @@
-# Prism-Infer 复现实验手册
+# Reproducibility
 
-> 更新日期：2026-07-24
-> 目标：让安装、correctness、quality 和 performance 证据分别可复现，禁止用低层
-> smoke 替代高层门禁。
+## 1. Environment
 
-## 1. 证据层级
+The published results were measured with:
 
-| 层级 | 需要模型 | 需要 GPU | 能证明什么 | 不能证明什么 |
-|---|:---:|:---:|---|---|
-| A. package smoke | 否 | 否 | 包可构建、核心依赖与 API 可导入 | 模型或 CUDA correctness |
-| B. CPU/focused tests | 否 | 否或小 CUDA | schema、调度、压缩合同、分析逻辑 | full 8B logits/E2E |
-| C. minimal 8B demo | 是 | 是 | 当前 snapshot 能完成一次 VL greedy | HF 对齐、稳定质量、性能 |
-| D. full correctness | 是 | 是 | 模块、logits/PPL、greedy、mixed/Graph 回归 | 正式性能 |
-| E. quality pair | 是/固定数据 | 是 | dense 与 compression 的相对质量和物理 KV | 通用 accuracy |
-| F. formal benchmark | 是 | 独占 GPU | 指定环境/workload 的 latency、memory、throughput | 其他硬件或 online server |
+```text
+GPU: NVIDIA GeForce RTX 5090 32 GB
+Driver: 580.105.08
+CUDA: 13.0
+Python: 3.12.3
+PyTorch: 2.11.0+cu130
+Transformers: 5.14.1
+vLLM: 0.25.1
+SGLang: 0.5.15.post1
+Model: Qwen3-VL-8B-Instruct
+Model revision: 0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
+```
 
-任一层失败都不能用更低层 PASS 覆盖。正式记录必须包含 commit、dirty state、模型
-config hash、GPU UUID、输入、sampling、backend、warmup/repeat 和同步边界。
+Different GPU, driver, CUDA, PyTorch, FlashAttention, or Triton combinations
+must be reported as a separate environment rather than merged into the
+published results.
 
-## 2. Fresh-environment 安装
+## 2. Installation
 
-先安装与本机 CUDA 匹配的 PyTorch，再执行：
+Install a PyTorch build that matches the host CUDA stack before installing
+Prism-Infer:
 
 ```bash
 git clone https://github.com/xsmccc/Prism-Infer.git
 cd Prism-Infer
 
-python3.12 -m venv .venv-repro
-source .venv-repro/bin/activate
+python3.12 -m venv .venv
+source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install -e ".[blackwell,quality,serving,dev]"
 ```
 
-项目不再把 Triton/FlashAttention 作为任意版本的强制 pip 依赖：Triton 版本应由
-PyTorch CUDA stack 约束，FlashAttention 应按 GPU/CUDA 平台单独安装。没有这些
-backend 时，部分 CPU/SDPA correctness 仍可运行，但不能复现正式 CUDA 性能。
-
-安装检查：
+Set the local model snapshot:
 
 ```bash
-python scripts/check_environment.py
+export PRISM_MODEL_PATH=/path/to/Qwen3-VL-8B-Instruct
+python scripts/check_environment.py --model "$PRISM_MODEL_PATH"
 ```
 
-2026-07-17 的隔离 venv smoke（复用宿主 CUDA/PyTorch stack）真实输出格式：
+The model directory must contain the tokenizer/processor configuration and
+all weight shards. The formal runs never download a model implicitly.
 
-```text
-Prism-Infer environment check
-status: PASS
-runtime: Python 3.12.3, Prism 0.3.0, Torch 2.6.0a0+ecf3bae40a.nv25.1, Transformers 5.13.0
-optional backends: triton=yes, flash_attn=yes
-cuda: available=True, version=12.8, devices=1
-gpu[0]: NVIDIA GeForce RTX 5090, cc=12.0, free/total=<dynamic> GiB
-model: NOT_CHECKED
-WARNING: model snapshot not checked; pass --model or set PRISM_MODEL_PATH
-```
-
-editable wheel metadata和 API import 同轮通过：
-
-```text
-Successfully built prism-infer
-Successfully installed prism-infer-0.3.0
-prism-infer=0.3.0
-llm=prism_infer.llm.LLM
-sampling=SamplingParams(temperature=0.0, max_tokens=1, ignore_eos=False)
-```
-
-该 audit 使用 `--system-site-packages` 复用 NGC CUDA stack；宿主已有的
-`nvidia-dali-cuda120`/`six` 冲突会让全环境 `pip check` 报错，但不来自 Prism
-依赖。真正从零安装仍必须由用户先选择硬件匹配的 PyTorch wheel/container。
-
-## 3. 不加载模型的可复制 smoke
-
-```bash
-python -m compileall prism_infer tests benchmarks scripts
-python -m pytest -q \
-  tests/test_check_environment.py \
-  tests/test_analysis_schema.py \
-  tests/test_visual_token_stats.py \
-  tests/test_visual_importance_scoring.py \
-  tests/test_compression_off.py \
-  tests/test_engine_contracts.py
-```
-
-commit `d547385` 后的同组实测：
-
-```text
-Running 40 items in this shard
-........................................ [100%]
-40 passed in 5.11s
-```
-
-这个结果只覆盖环境检查、schema/analysis、compression-off 和 engine contracts。
-
-## 4. 模型与 GPU preflight
-
-```bash
-export PRISM_MODEL_PATH=/path/to/Qwen3-VL-8B-Instruct/snapshot
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-
-python scripts/check_environment.py \
-  --model "$PRISM_MODEL_PATH" \
-  --require-cuda \
-  --min-free-gib 18
-```
-
-通过的 model 部分示例：
-
-```text
-model: PASS, type=qwen3_vl, weights=4 files/16.330 GiB
-model path: /path/to/Qwen3-VL-8B-Instruct/snapshot
-```
-
-`--min-free-gib 18` 是基于当前 full-engine allocator peak `17.4–17.5 GiB` 的启动
-门禁，不是通用硬件需求估算。2026-07-17 曾出现的外部隐藏负载会让脚本在加载权重前
-失败，例如：
-
-```text
-status: FAIL
-ERROR: GPU 0 has 14.696 GiB free; 18.000 GiB required
-```
-
-该事件随后恢复并由完整动态门禁关闭；不要因此删除fail-closed检查。不要降低门槛
-绕过OOM，也不要把有外部utilization的timing记为formal evidence。
-
-## 5. 最小 8B VL demo
+## 3. Functional example
 
 ```bash
 python example.py
 ```
 
-成功标准：进程正常退出、打印不超过 8 个 token IDs 和 decoded text、`llm.exit()`
-释放模型资源。输出结构：
+The example creates a synthetic image, generates eight greedy tokens, decodes
+the text, and closes the engine so GPU memory can be released.
 
-```text
-Token IDs: [<integer>, ...]
-Text: '<decoded text>'
-```
+## 4. Offline Prism cells
 
-历史 single-image correctness case 的 2-token样例为：
+The two headline cases are stored in
+`benchmarks/workloads/p9_headline.json`. Run each mode in a fresh process.
 
-```text
-single-image eager token_ids: [785, 2168]
-single-image graph token_ids: [785, 2168]
-```
-
-这组 token 来自对应固定测试输入，不承诺与 `example.py` 的图片/prompt 相同。
-
-## 6. Full-model correctness
-
-先跑最窄的结构与 logits 门禁：
+BF16 compiler/Graph profile:
 
 ```bash
-python -m pytest -q \
-  tests/test_full_model_structure.py \
-  tests/test_full_model.py \
-  tests/test_full_model_vl.py \
-  tests/test_llm_vl_generate.py -s
-```
-
-再跑多图、视频、mixed 和 Graph：
-
-```bash
-python -m pytest -q \
-  tests/test_full_model_vl_multi_image.py \
-  tests/test_full_model_vl_video.py \
-  tests/test_llm_vl_mixed_batch_generate.py \
-  tests/test_llm_vl_cuda_graph_decode.py \
-  tests/test_vl_logits_distribution.py -s
-```
-
-最后才运行完整 suite：
-
-```bash
-python -m pytest -q tests -s \
-  --junitxml=data/repro/full_regression.xml
-```
-
-当前 P9-008 post-fix 完整 suite artifact 为
-`data/p9_diagnostics/p9_008_full_regression_dirty.xml`：`468 passed, 1 skipped in
-300.37s`，JUnit字段为`469 tests / 0 failures / 0 errors / 1 skipped`。文件名中的
-`dirty`明确表示它是候选 diff 的 correctness 回归，不是 clean performance evidence；
-随后新增的 CPU static-buffer audit 在 focused suite 通过。后续 production 改动必须重新
-运行并报告新 JUnit，不能沿用该计数冒充当前结果。
-
-## 7. KV trace 最小实验
-
-生成 text/single-image/multi-image deterministic traces：
-
-```bash
-python scripts/run_kv_trace_samples.py \
-  --model "$PRISM_MODEL_PATH" \
-  --output-dir data/repro/kv_trace \
-  --max-tokens 2 \
-  --max-model-len 1024 \
-  --max-num-batched-tokens 1024
-```
-
-离线汇总和 visual-token score：
-
-```bash
-python scripts/analyze_kv_trace.py \
-  data/repro/kv_trace/single_image_description.jsonl \
-  --summary-json data/repro/kv_trace/single_image_description.summary.json \
-  --markdown data/repro/kv_trace/single_image_description.summary.md \
-  --svg data/repro/kv_trace/single_image_description.summary.svg
-
-python scripts/score_visual_tokens.py \
-  data/repro/kv_trace/single_image_description.jsonl \
-  --output-json data/repro/kv_trace/single_image_description.importance.json \
-  --markdown data/repro/kv_trace/single_image_description.importance.md
-```
-
-PASS：trace on/off greedy token一致；JSONL 通过 schema 校验；summary 中 token span、
-layer、K/V norm、attention/entropy 字段完整。trace timing 不能替代 uninstrumented
-benchmark。
-
-## 8. Dense 与 visual compaction 成对实验
-
-### 8.1 Synthetic single-image smoke
-
-```bash
-python benchmarks/bench_system.py \
-  --model "$PRISM_MODEL_PATH" \
-  --manifest benchmarks/workloads/p6_internal_smoke.json \
-  --case single_image_448 \
-  --modes off_graph,visual_compact_graph \
-  --max-tokens 32 --warmup 2 --repeat 5 \
-  --max-model-len 1024 --max-num-batched-tokens 1024 \
-  --max-num-seqs 1 --num-kvcache-blocks 16 \
-  --disable-prefix-caching \
-  --visual-pruning-keep-ratio 0.5 \
-  --visual-pruning-min-keep-tokens 32 \
-  --visual-pruning-strategy attention \
-  --visual-pruning-attention-last-n-layers 1 \
-  --output data/repro/single_image_off_compact.jsonl
-```
-
-这条命令用于 runner smoke 和同轮 observation。单 synthetic case 不能形成质量 claim。
-
-### 8.2 固定 7-image lexical quality gate
-
-先下载/校验 manifest 声明的 COCO 样例：
-
-```bash
-bash scripts/download_p6_real_samples.sh
-```
-
-分别运行两个 batch：
-
-```bash
-python benchmarks/bench_system.py \
-  --model "$PRISM_MODEL_PATH" \
-  --manifest benchmarks/workloads/p6_real_samples.json \
-  --case coco_fidelity_batch_a \
-  --modes off_graph,visual_compact_graph \
-  --max-tokens 32 --warmup 1 --repeat 1 \
-  --disable-prefix-caching \
-  --visual-pruning-strategy attention \
-  --visual-pruning-attention-last-n-layers 1 \
-  --output data/repro/coco_batch_a.jsonl
-
-python benchmarks/bench_system.py \
-  --model "$PRISM_MODEL_PATH" \
-  --manifest benchmarks/workloads/p6_real_samples.json \
-  --case coco_fidelity_batch_b \
-  --modes off_graph,visual_compact_graph \
-  --max-tokens 32 --warmup 1 --repeat 1 \
-  --disable-prefix-caching \
-  --visual-pruning-strategy attention \
-  --visual-pruning-attention-last-n-layers 1 \
-  --output data/repro/coco_batch_b.jsonl
-```
-
-汇总：
-
-```bash
-python scripts/summarize_p6_pruning_fidelity.py \
-  data/repro/coco_batch_a.jsonl \
-  data/repro/coco_batch_b.jsonl \
-  --baseline-mode off_graph \
-  --max-task-quality-drop 0.01 \
-  --json-output data/repro/coco_quality_summary.json \
-  --markdown-output data/repro/coco_quality_summary.md
-```
-
-clean `e51c16d` 的历史期望边界：
-
-```text
-token-F1 macro: 0.321635 -> 0.318347, drop 0.003288, PASS
-ROUGE-L macro:  0.289116 -> 0.285406, drop 0.003710, PASS
-physical prompt tokens ratio: 0.535x
-active prompt bytes ratio:    0.538x
-```
-
-新环境不要求逐位复刻 latency，但 correctness/quality 超阈值时必须 FAIL，不能只报告
-显存收益。
-
-## 9. Online engine harness
-
-```bash
-python benchmarks/bench_online.py \
-  --model "$PRISM_MODEL_PATH" \
-  --manifest benchmarks/workloads/p6_internal_smoke.json \
-  --case single_image_448 \
-  --mode off_graph \
-  --requests 8 \
-  --arrival-process constant \
-  --request-rate 4 \
-  --max-tokens 8 \
-  --max-model-len 1024 \
-  --max-num-batched-tokens 1024 \
-  --max-num-seqs 8 \
-  --num-kvcache-blocks 16 \
-  --ttft-slo-ms 1000 \
-  --tpot-slo-ms 50 \
-  --output data/repro/online_single_image.json
-```
-
-记录必须包含 arrival offsets、queue/TTFT/TPOT p50/p90/p99、throughput、goodput、
-request terminal state、peak active/KV blocks 和 preemption。它是进程内 engine
-harness，不含网络协议、序列化或多进程 server 开销。
-
-## 10. Packed MLP P7.5 完整复现
-
-组件correctness与formal micro：
-
-```bash
-python benchmarks/bench_packed_mlp.py \
-  --batch-sizes 1,2,4,8,210,408,988 \
-  --warmup 20 --repeat 100 \
-  --require-formal-environment \
-  --output data/p7_optimization/p75_packed_mlp_micro.json
-
-python -m pytest -q \
-  tests/test_p7_packed_mlp.py \
-  tests/test_qwen3_vl.py \
-  tests/test_full_model_structure.py \
-  tests/test_qwen3_vl_attention_kv.py \
-  tests/test_model_runner_vl_cudagraph.py \
-  tests/test_model_runner_vl_prefill.py
-```
-
-full-engine单变量A/B只改变projection mode：
-
-```bash
-for projection in legacy packed; do
-  python benchmarks/bench_system.py \
-    --model "$PRISM_MODEL_PATH" \
-    --manifest benchmarks/workloads/p6_internal_smoke.json \
-    --case single_image_448 \
-    --modes off_graph \
-    --mlp-projection-mode "$projection" \
-    --max-tokens 32 --warmup 2 --repeat 5 \
-    --max-model-len 1280 --max-num-batched-tokens 2048 \
-    --max-num-seqs 1 --num-kvcache-blocks 16 \
-    --disable-prefix-caching \
-    --output "data/p7_optimization/p75_single_${projection}.jsonl"
-done
-```
-
-HF gate运行`tests/test_vl_logits_distribution.py`；online runner同样接受
-`--mlp-projection-mode legacy|packed`并在schema-v2记录。Systems trace使用第8节
-CUDA Profiler API做两次node capture，再由`benchmarks/analyze_nsys.py`读取SQLite。
-
-本环境期望边界：七个micro cases bitwise exact；8个offline cells token exact且
-packed/legacy TPOT为`0.9924x–0.9952x`；Systems linear `253 -> 217`、总kernels
-`2,000 -> 1,964`；HF model-precision logits/PPL diff为`0`。机器可读汇总见
-`data/p7_optimization/p75_summary_021d4e2.json`。这些数字不保证跨GPU复刻，也不形成
-稳定E2E或online speedup claim。若baseline污染，`formal_eligible=false`记录仍不得进入
-headline。
-
-## 11. P9 eager/CUDA Graph fresh-process 基线
-
-P9-D 不直接用 `bench_system.py --modes A,B` 形成正式 ratio，因为该入口会在同一个已
-初始化 CUDA 的 Python 进程中依次运行多个 mode。正式基线使用标准库 parent
-`run_p9_process_matrix.py`，每个 mode/repeat 启动一个 child，并在 child 前后检查同一
-物理 GPU UUID。
-
-当前 H1 runtime baseline 固定：SDPA vision、model-precision logits、packed MLP、
-output128、warmup2、每 mode 5 个 fresh processes、ABBA/BAAB、batch1/4、
-`max_model_len=4096`、`max_num_batched_tokens=16384`、`max_num_seqs=4`。先确认：
-
-```bash
-export PRISM_MODEL_PATH=/data/models/Qwen3-VL-8B-Instruct/\
-0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
-export P9_GPU_UUID=GPU-662a2fa1-37e4-cc52-0a51-27557dba315b
-export RUN_TAG="$(git rev-parse --short HEAD)_$(date -u +%Y%m%dT%H%M%SZ)"
-
-git status --short
-nvidia-smi --query-gpu=uuid,name,memory.used,utilization.gpu \
-  --format=csv,noheader,nounits
-```
-
-BF16 KV eager/model-only Graph：
-
-```bash
-for batch in 1 4; do
-  .venv-local/bin/python benchmarks/run_p9_process_matrix.py \
-    --python "$(pwd)/.venv-local/bin/python" \
-    --model "$PRISM_MODEL_PATH" \
-    --manifest benchmarks/workloads/p9_headline.json \
-    --case h1_eight_image_448 \
-    --mode-a off_eager --mode-b off_graph \
-    --expected-gpu-uuid "$P9_GPU_UUID" --cuda-visible-devices 0 \
-    --fresh-process-repeats 5 --warmup 2 --max-tokens 128 \
-    --batch-size "$batch" --max-model-len 4096 \
-    --max-num-batched-tokens 16384 --max-num-seqs 4 \
-    --num-kvcache-blocks 113 --kvcache-block-size 256 \
-    --vision-attention-backend sdpa \
-    --bootstrap-seed 20260717 --bootstrap-resamples 10000 \
-    --output "data/p9_baseline/h1_bf16_b${batch}_${RUN_TAG}.jsonl"
-done
-```
-
-scaled-FP8 KV eager/model-only Graph：
-
-```bash
-for batch in 1 4; do
-  .venv-local/bin/python benchmarks/run_p9_process_matrix.py \
-    --python "$(pwd)/.venv-local/bin/python" \
-    --model "$PRISM_MODEL_PATH" \
-    --manifest benchmarks/workloads/p9_headline.json \
-    --case h1_eight_image_448 \
-    --mode-a scaled_fp8_kv --mode-b scaled_fp8_kv_graph \
-    --expected-gpu-uuid "$P9_GPU_UUID" --cuda-visible-devices 0 \
-    --fresh-process-repeats 5 --warmup 2 --max-tokens 128 \
-    --batch-size "$batch" --max-model-len 4096 \
-    --max-num-batched-tokens 16384 --max-num-seqs 4 \
-    --num-kvcache-blocks 220 --kvcache-block-size 256 \
-    --vision-attention-backend sdpa \
-    --bootstrap-seed 20260717 --bootstrap-resamples 10000 \
-    --output "data/p9_baseline/h1_scaled_fp8_b${batch}_${RUN_TAG}.jsonl"
-done
-```
-
-113 个 BF16 blocks 的 payload 为 `4,265,607,168 B`；220 个 scaled-FP8 blocks 的
-payload+scale 为 `4,282,122,240 B`，都不超过冻结的 4 GiB pool，并且再增加一个 block
-就会超出。这里仅用于建立 P9-D runtime baseline；page table、allocator metadata、unique
-storage 和 fragmentation 尚未统一计入，不能把这组数字冒充 P9-C.3 的 full-physical
-Gate A 结果。
-
-2026-07-20 已完成的 clean formal artifacts：
-
-- BF16 batch1（commit `460d21a`）：aggregate
-  `data/p9_baseline/h1_bf16_b1.jsonl`，SHA256
-  `3d260e001d8f1f37005058d9ad2daf7c327bcebb7a743d2c4316d043310e29a1`；manifest
-  SHA256 `23c7d1d250a21bae98eed2fa32b3ca413b8ec8d2b0588d2e8cc0ec745e4deb54`。
-- BF16 batch4（commit `40466b6`）：aggregate
-  `data/p9_baseline/h1_bf16_b4_exact_small_40466b6.jsonl`，SHA256
-  `700dd64fa9a56602a252f8c39918b65286fb8c0acceeac71e4330f239201fc6d`；manifest
-  SHA256 `26e7c523fb009a6d95981240439ecf559df4bc37eb689d67661543dca87dbdb4`。
-- scaled-FP8 batch1（commit `d28e68a`）：aggregate
-  `data/p9_baseline/h1_scaled_fp8_b1_d28e68a.jsonl`，SHA256
-  `d23d19d42a368c491874a24969c44603e5e50015f5c05b484c262ee6fefd9f61`；manifest
-  SHA256 `c778736b342357d0eee1eb9de873269653ebd00bd70a4855131f1092c699c6c0`。
-- scaled-FP8 batch4（commit `d28e68a`）：aggregate
-  `data/p9_baseline/h1_scaled_fp8_b4_d28e68a.jsonl`，SHA256
-  `1fc08774b5ea2359115501f642f970dbcaf4b849c186fbd30a7398fed80b367f`；manifest
-  SHA256 `12d8af92a67a5a98ba0ebe4288f73ae99f19bfe28811dabfabb932fa53f9a31b`。
-
-| KV / traffic | Decode step，eager → Graph | E2E，eager → Graph |
-|---|---:|---:|
-| BF16 batch1 | `31.698 → 19.168 ms`，改善 39.53%，CI `[38.84%, 40.07%]` | `4493.45 → 2810.26 ms`，改善 37.46%，CI `[33.72%, 38.69%]` |
-| BF16 batch4 | `32.608 → 20.519 ms`，改善 37.07%，CI `[36.62%, 38.34%]` | `5969.98 → 4348.14 ms`，改善 27.17%，CI `[25.14%, 28.52%]` |
-| scaled-FP8 batch1 | `34.739 → 19.162 ms`，改善 44.84%，CI `[44.50%, 47.97%]` | `4898.21 → 2810.74 ms`，改善 42.62%，CI `[39.57%, 44.98%]` |
-| scaled-FP8 batch4 | `35.669 → 19.998 ms`，改善 43.93%，CI `[43.65%, 45.17%]` | `6245.12 → 4200.98 ms`，改善 32.73%，CI `[30.60%, 34.93%]` |
-
-四个 manifest 均为 `status=completed`、`formal_eligible=true`、15/15 comparability
-PASS、token/text exact。batch4 的实际 Graph 轨迹为
-`1→1:2 / 2→2:2 / 3→3:2 / 4→4:124`；batch1 的 127 个 decode steps 全为 `1→1`。
-修复前的 BF16 batch4 artifact `h1_bf16_b4.{jsonl,manifest.json}` 仍保留，manifest 为
-`status=failed_comparability`：它证明旧 sparse policy 的 `3→4` 会导致 token 分叉，不能
-被修复后结果覆盖或删除。
-
-TTFT 单独判定，不能由 decode/E2E 收益外推。BF16 batch1/batch4、scaled-FP8 batch4 的
-TTFT CI 均跨零；scaled-FP8 batch1 preprocessing-inclusive TTFT CI 也跨零，但 engine TTFT
-从 `281.480` 增至 `290.818 ms`，正式回退 3.32%，95% CI `[0.55%, 37.35%]`。Graph raw
-中的 `386.608 ms` 高值按冻结协议保留。该问题记录为 P9-009，下一步用 NSYS 分解 prefill、
-host timeline、同步和 Graph 常驻资源影响，不通过删除 outlier 或无预注册重跑改变结论。
-
-每个输出对应：aggregate JSONL、`.manifest.json`、`_runs/` 下的逐 process JSONL 和
-stderr。只有 manifest 同时满足 `status=completed`、全部 comparability checks、
-`formal_eligible=true`、token exact、同 UUID 前后 idle/release，才能进入后续 NSYS/NCU
-归因。一次 run 失败时保留整个失败 cell，不手工删 outlier。
-
-## 12. P12 online H3 与 P13 rejected evidence
-
-P12 的 headline 不是离线单请求 latency，而是冻结到达流上的 class-aware online
-结果。必须固定 `conditional_video` trace、`seed=20260717`、`60` 或 `600` 个请求、
-`warmup=10`、`output=64`、相同 class SLO，并分别保留 raw throughput、SLO goodput、
-queue、TTFT、TPOT、E2E、KV 容量和 NVML 峰值。Prism 的 600-request rate=4 正式命令为：
-
-```bash
-python benchmarks/bench_online.py \
+python benchmarks/bench_external_prism.py \
   --model "$PRISM_MODEL_PATH" \
   --manifest benchmarks/workloads/p9_headline.json \
-  --h3-profile conditional_video \
-  --mode visual_compact_scaled_fp8_compile_graph \
-  --requests 600 --arrival-process poisson --request-rate 4 \
-  --seed 20260717 --warmup-requests 10 --max-tokens 64 \
-  --max-model-len 4096 --max-num-batched-tokens 4096 \
-  --max-num-seqs 8 --max-chunk-size 2048 \
-  --max-consecutive-prefill-batches 1 \
-  --num-kvcache-blocks 220 --kvcache-block-size 256 \
-  --disable-prefix-caching \
-  --visual-pruning-keep-ratio 0.6 \
-  --visual-pruning-min-keep-tokens 768 \
-  --visual-pruning-video-min-keep-tokens 256 \
-  --visual-pruning-strategy uniform \
-  --mlp-projection-mode packed \
-  --enable-vision-tensor-cudagraph \
-  --class-slo-file data/p12_online/formal/p12_class_slo_vllm_r1_ce72f63.json \
-  --output data/p12_online/repro/prism_conditional_r4.json
+  --case h1_eight_image_448 \
+  --execution-backend compile_graph \
+  --compression-mode off \
+  --num-kvcache-blocks 113 \
+  --kvcache-block-size 256 \
+  --warmup 2 \
+  --repeat 5 \
+  --max-tokens 128 \
+  --output data/repro/prism_h1_bf16.json
 ```
 
-外部基线分别使用 `benchmarks/bench_online_vllm.py` 与
-`benchmarks/bench_online_sglang.py`。先以 vLLM rate=1 生成一次冻结的 class SLO
-文件，再把同一文件传给三套系统的 rate=4 命令；外部基线还必须固定相同 model、
-manifest、trace、seed、warmup、output length、4 GiB KV budget 和 attention backend。
-vLLM 使用 `--kv-cache-memory-bytes 4294967296 --block-size 256`，SGLang 使用
-`--max-total-tokens 28928`；完整环境与正式输出见
-[`P12_ONLINE_GOODPUT_RESULTS.md`](P12_ONLINE_GOODPUT_RESULTS.md)。
-
-验收时读取 `class_aware_summary`，不能用不区分请求类别的 generic summary 代替；
-同时检查 `terminal_failures.count`、token correctness、GPU UUID、commit/dirty state
-和运行结束后的显存释放。P12 正式结论绑定 runtime artifacts 内嵌的 clean
-`921de81/e883de5` 协议点及文档列出的 SHA256；`96f46c4` 是汇总这些证据并删除
-负收益 cadence 代码后的 closure 文档点，不能替代运行时 commit。
-
-P13 的 phase-decomposed/chunked multimodal prefill 是 rejected candidate：H1
-单请求能保持 64-token exact，但冻结 H3 rate=4、60-request 候选选择中，
-`phase=512/1024` 的 class-aware goodput 分别下降 `100%/34.18%`；辅助的 generic
-goodput req/s 也分别下降 `78.24%/8.16%`，均未达到进入 600-request formal gate
-的条件。该实现已从工作树撤回，当前 HEAD 不提供开关，禁止把它写成已交付优化。
-原始诊断保存在服务器 gitignored 的
-`data/p13_phase/tuning/`；结果、命令、候选快照位置和 artifact hash 见
-[`P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md`](P13_PHASE_DECOMPOSED_PREFILL_RESULTS.md)。
-
-## 13. P15 balanced loaded serving
-
-P15 使用相同的 60-request frozen trace，但关闭 loaded mixed-shape 下已知不安全的
-Vision tensor Graph，启用 block/layer cooperative prefill、deadline-aware
-coalescing，并显式记录 CPU intra-op 资源预算：
+Capacity profile:
 
 ```bash
-python benchmarks/bench_online.py \
+python benchmarks/bench_external_prism.py \
   --model "$PRISM_MODEL_PATH" \
   --manifest benchmarks/workloads/p9_headline.json \
-  --h3-profile conditional_video \
-  --mode visual_compact_scaled_fp8_compile_graph \
-  --requests 60 --arrival-process poisson --request-rate 4 \
-  --seed 20260717 --warmup-requests 10 --max-tokens 64 \
-  --online-cpu-intraop-threads 8 \
-  --max-model-len 4096 --max-num-batched-tokens 4096 \
-  --max-num-seqs 8 --max-chunk-size 2048 \
-  --num-kvcache-blocks 220 --kvcache-block-size 256 \
-  --disable-prefix-caching \
-  --visual-pruning-keep-ratio 0.6 \
-  --visual-pruning-min-keep-tokens 768 \
-  --visual-pruning-video-min-keep-tokens 256 \
-  --visual-pruning-strategy uniform \
-  --enable-cooperative-prefill \
-  --cooperative-prefill-layer-quantum 1 \
-  --cooperative-prefill-vision-block-quantum 1 \
-  --class-slo-file data/p12_online/formal/p12_class_slo_vllm_r1_ce72f63.json \
-  --output data/p15_balanced/final_cpu8_q1_formal_n60_dirty_r1.json
+  --case h1_eight_image_448 \
+  --execution-backend compile_graph \
+  --compression-mode scaled_fp8_kv \
+  --num-kvcache-blocks 220 \
+  --kvcache-block-size 256 \
+  --warmup 2 \
+  --repeat 5 \
+  --max-tokens 128 \
+  --output data/repro/prism_h1_scaled_fp8.json
 ```
 
-正式复现必须启动四个独立进程并串行运行，不能并发占用同一 GPU。验收读取四次
-raw throughput、TTFT p50、TPOT p50 与 `class_aware_summary.aggregate_goodput`
-的中位数，同时检查：
+Replace the case with `h2_video_16x448` for H2. Use
+`--sample-process-memory` only for a separate memory artifact; NVML sampling
+must not be enabled in the latency headline.
 
-- `terminal_failures.count == 0`；
-- `engine.online_cpu_intraop_threads == 8`；
-- trace SHA256 为 `b7948e...e954b`；
-- KV total bytes 为 `4,282,122,240`；
-- H1/H2 isolated 64-token hash 与 P14 reference exact；
-- GPU UUID、模型 config hash、warmup、请求数和视觉策略一致。
-
-Semantic profiler 只能单独运行，不能把其 instrumented latency 混入 headline。
-最终命令在上述参数后增加：
-
-```bash
---profile-output data/p15_balanced/final_cpu8_q1_semantic_profile_n10_dirty_r1.json
-```
-
-完整四次结果、correctness hash、rejected stream/worker candidates 与 claim 边界见
-[`P15_BALANCED_MULTIMODAL_RESULTS.md`](P15_BALANCED_MULTIMODAL_RESULTS.md)。
-
-## 14. 证据保存与验收
-
-`data/` 默认 gitignored。每次正式复现至少保存：
+External adapters are:
 
 ```text
-命令与 stdout/stderr
-raw JSON/JSONL 或 JUnit
-机器可读 summary
-commit + git_dirty
-model config SHA256
-GPU name/UUID/driver/CUDA
-启动前 memory/utilization
-warmup/repeat 与 timing scope
+benchmarks/bench_external_vllm.py
+benchmarks/bench_external_sglang.py
 ```
 
-交付检查：
+For a fair comparison, record exact prompt-token hashes, cache budget, block
+size, output length, warmup/repeat, attention backend, and framework version.
+
+## 5. Fresh-object repeat matrix
+
+The repository includes the workload, class SLO thresholds, and runners:
 
 ```bash
-git diff --check
-git status --short
+P17_RUN_REVISION=repro \
+  benchmarks/run_p17_repeat_matrix.sh \
+  "$PRISM_MODEL_PATH" \
+  data/p17_repeat_matrix
+
+benchmarks/run_p17_vllm_repeat_matrix.sh \
+  "$PRISM_MODEL_PATH" \
+  data/p17_repeat_matrix
 ```
 
-只有 clean commit、完整 comparability/correctness gate 和未污染 GPU 上的结果可形成
-formal performance claim。其余结果必须标成 smoke、diagnostic、dirty validation 或
-blocked。
+Each runner materializes repeat rates of 0%, 25%, 50%, 75%, and 100%, plus a
+100% same-media/different-question cell. The Prism runner uses
+`visual_compact_scaled_fp8_compile_graph`, SLO-aware scheduling, 220 KV pages,
+and a content-addressed cache. The vLLM runner enables prefix caching and its
+multimodal processor cache.
+
+The frozen class thresholds are in
+`benchmarks/configs/h3_class_slo_vllm_0251.json`. They were derived from the
+vLLM 0.25.1 low-load p50 by class: 5× for TTFT and 2× for TPOT.
+
+SGLang 0.5.15.post1 did not expose an equivalent single-node multimodal global
+cache path in this environment. Its reported reference uses Radix caching and
+repeated media objects; it is a useful but not feature-identical comparison.
+
+## 6. Correctness protocol
+
+Before interpreting a performance cell, verify:
+
+1. model revision, model dtype, GPU UUID, driver, CUDA, and package versions;
+2. clean source commit and complete command line;
+3. exact input and prompt-token SHA256;
+4. identical request order, arrivals, output length, warmup, and repeats;
+5. deterministic same-shape greedy output;
+6. H1/H2 isolated output hashes for optimized fast paths;
+7. valid logical/physical KV lengths and page ownership counters;
+8. zero terminal failure for loaded runs; and
+9. process memory is released after engine exit.
+
+The tests under `tests/` protect implementation contracts. They do not replace
+the GPU benchmark protocol and are not used as a performance claim.
+
+## 7. Evidence retention
+
+Raw JSON, logs, Nsight traces, model weights, and dataset media are intentionally
+not committed to Git because of size and licensing. Every published summary
+must retain the model revision, source commit, GPU UUID, input hashes, and raw
+artifact SHA256 alongside the external evidence archive.
