@@ -11,6 +11,8 @@ except ImportError:
     pytest = None
 
 from conftest import get_model_path, require_transformers
+from test_processor_pipeline_video import demo_video_frames
+
 from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.vl_inputs import (
@@ -21,8 +23,6 @@ from prism_infer.engine.vl_inputs import (
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 from prism_infer.sampling_params import SamplingParams
 from prism_infer.utils.context import get_context, reset_context
-from test_processor_pipeline_video import demo_video_frames
-
 
 pytestmark = (
     []
@@ -203,7 +203,7 @@ def test_prepare_decode_mixed_text_vl_batch_positions():
     text_seq = _text_sequence(0)
     image_seq = _vl_sequence("single", 1)
     video_seq = _vl_sequence("video", 2)
-    for token, seq in zip([11, 22, 33], [text_seq, image_seq, video_seq]):
+    for token, seq in zip([11, 22, 33], [text_seq, image_seq, video_seq], strict=False):
         seq.append_token(token)
 
     model_inputs = runner.prepare_decode([text_seq, image_seq, video_seq])

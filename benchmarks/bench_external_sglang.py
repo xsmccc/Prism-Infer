@@ -10,29 +10,27 @@ import json
 import math
 import statistics
 import sys
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Iterator
+from typing import Any
 
 import cv2
 import numpy as np
 import pynvml
 import torch
 from PIL import Image
-from transformers import AutoProcessor
-
 from sglang.srt.entrypoints.engine import Engine
 from sglang.srt.managers.io_struct import GenerateReqInput
 from sglang.srt.utils.video_decoder import VideoDecoderWrapper
-
+from transformers import AutoProcessor
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
-
 
 EXTERNAL_SCHEMA_VERSION = 2
 DEFAULT_VIDEO_FPS = 24.0
@@ -327,11 +325,7 @@ def main() -> None:
         ttft_ms = [(arrival_times[0] - started) * 1000.0]
         if len(arrival_times) < 2:
             raise RuntimeError("SGLang TPOT measurement requires at least two output tokens")
-        tpot_ms = [
-            (arrival_times[-1] - arrival_times[0])
-            * 1000.0
-            / (len(arrival_times) - 1)
-        ]
+        tpot_ms = [(arrival_times[-1] - arrival_times[0]) * 1000.0 / (len(arrival_times) - 1)]
         return token_ids, prompt_tokens, prompt_token_ids, elapsed_ms, ttft_ms, tpot_ms
 
     try:
@@ -404,9 +398,7 @@ def main() -> None:
                 "prompt_tokens_per_request": prompt_tokens,
                 "prompt_token_ids_sha256": _sha256(audited_prompt_ids),
                 "media_identity": [
-                    request["video_staging"]
-                    for request in requests
-                    if "video_staging" in request
+                    request["video_staging"] for request in requests if "video_staging" in request
                 ],
                 "max_tokens": args.max_tokens,
                 "preprocessing_included_in_e2e": True,

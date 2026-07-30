@@ -41,7 +41,6 @@ from benchmarks.multimodal_cache_workload import (
 )
 from prism_infer.analysis.online_serving import summarize_distribution
 
-
 H3_PROFILES = ("primary", "conditional_video")
 TERMINAL_FINISH_REASONS = {"eos", "length", "stop"}
 
@@ -196,25 +195,27 @@ def _h3_schedule(
         request_by_class[case_id] = requests[0]
     request_classes = [period[index % len(period)] for index in range(count)]
     requests = [request_by_class[case_id] for case_id in request_classes]
-    return requests, request_classes, {
-        "profile": profile,
-        "class_field": field,
-        "class_schedule": h3["class_schedule"],
-        "materialized_schedule_algorithm": (
-            "smooth_weighted_round_robin_integer_counts"
-        ),
-        "period": list(period),
-        "classes": classes,
-        "arrival_process": h3["arrival_process"],
-        "request_rates_per_second": h3["request_rates_per_second"],
-        "completed_requests_per_run": h3["completed_requests_per_run"],
-        "arrival_seeds": h3["arrival_seeds"],
-        "max_tokens": h3["max_tokens"],
-        "max_model_len": h3["max_model_len"],
-        "ttft_slo_formula": h3["ttft_slo_formula"],
-        "tpot_slo_formula": h3["tpot_slo_formula"],
-        "goodput_unit": h3["goodput_unit"],
-    }
+    return (
+        requests,
+        request_classes,
+        {
+            "profile": profile,
+            "class_field": field,
+            "class_schedule": h3["class_schedule"],
+            "materialized_schedule_algorithm": ("smooth_weighted_round_robin_integer_counts"),
+            "period": list(period),
+            "classes": classes,
+            "arrival_process": h3["arrival_process"],
+            "request_rates_per_second": h3["request_rates_per_second"],
+            "completed_requests_per_run": h3["completed_requests_per_run"],
+            "arrival_seeds": h3["arrival_seeds"],
+            "max_tokens": h3["max_tokens"],
+            "max_model_len": h3["max_model_len"],
+            "ttft_slo_formula": h3["ttft_slo_formula"],
+            "tpot_slo_formula": h3["tpot_slo_formula"],
+            "goodput_unit": h3["goodput_unit"],
+        },
+    )
 
 
 def _protocol_conformance(
@@ -302,9 +303,7 @@ def _run_arrivals(
     records = []
     prompt_ids = []
     output_ids = []
-    for index, (case_id, offset_s) in enumerate(
-        zip(request_classes, offsets_s, strict=True)
-    ):
+    for index, (case_id, offset_s) in enumerate(zip(request_classes, offsets_s, strict=True)):
         request_id = f"{key_prefix}-{index:05d}"
         output = latest_outputs[request_id]
         generated = list(output.outputs[0].token_ids)
@@ -327,16 +326,11 @@ def _run_arrivals(
                 "output_tokens": len(generated),
                 "token_ids": generated,
                 "arrival_offset_s": offset_s,
-                "controller_submit_delay_ms": (
-                    observed_submit[request_id] - arrival
-                )
-                * 1000.0,
+                "controller_submit_delay_ms": (observed_submit[request_id] - arrival) * 1000.0,
                 "queue_ms": queue_ms,
                 "ttft_ms": (first - arrival) * 1000.0,
                 "tpot_ms": (
-                    0.0
-                    if len(generated) <= 1
-                    else (end - first) * 1000.0 / (len(generated) - 1)
+                    0.0 if len(generated) <= 1 else (end - first) * 1000.0 / (len(generated) - 1)
                 ),
                 "latency_ms": (end - arrival) * 1000.0,
             }
@@ -368,9 +362,7 @@ def _summarize_by_class(
     rows = {}
     for case_id, records in sorted(grouped.items()):
         completed = [
-            record
-            for record in records
-            if record["finish_reason"] in TERMINAL_FINISH_REASONS
+            record for record in records if record["finish_reason"] in TERMINAL_FINISH_REASONS
         ]
         row = {
             "counts": {
@@ -379,19 +371,14 @@ def _summarize_by_class(
             },
             "latency_ms": {
                 name: summarize_distribution(
-                    [
-                        float(record[name])
-                        for record in completed
-                        if record[name] is not None
-                    ]
+                    [float(record[name]) for record in completed if record[name] is not None]
                 )
                 for name in ("queue_ms", "ttft_ms", "tpot_ms", "latency_ms")
             },
             "throughput": {
                 "requests_per_s": len(completed) / duration_s,
                 "output_tokens_per_s": (
-                    sum(int(record["output_tokens"]) for record in completed)
-                    / duration_s
+                    sum(int(record["output_tokens"]) for record in completed) / duration_s
                 ),
             },
         }
@@ -403,22 +390,16 @@ def _summarize_by_class(
                 if float(record["ttft_ms"]) <= thresholds["ttft_ms"]
                 and float(record["tpot_ms"]) <= thresholds["tpot_ms"]
             ]
-            meeting_tokens = sum(
-                int(record["output_tokens"]) for record in meeting
-            )
+            meeting_tokens = sum(int(record["output_tokens"]) for record in meeting)
             row["slo"] = {
                 "thresholds_ms": thresholds,
                 "requests_meeting_both": len(meeting),
                 "output_tokens_meeting_both": meeting_tokens,
-                "request_attainment": (
-                    len(meeting) / len(completed) if completed else 0.0
-                ),
+                "request_attainment": (len(meeting) / len(completed) if completed else 0.0),
                 "goodput_output_tokens_per_s": meeting_tokens / duration_s,
             }
         rows[case_id] = row
-    output_tokens = sum(
-        int(record["output_tokens"]) for record in run["requests"]
-    )
+    output_tokens = sum(int(record["output_tokens"]) for record in run["requests"])
     summary = {
         "by_class": rows,
         "throughput": {
@@ -427,12 +408,8 @@ def _summarize_by_class(
         },
     }
     if class_slos is not None:
-        meeting_requests = sum(
-            int(row["slo"]["requests_meeting_both"]) for row in rows.values()
-        )
-        meeting_tokens = sum(
-            int(row["slo"]["output_tokens_meeting_both"]) for row in rows.values()
-        )
+        meeting_requests = sum(int(row["slo"]["requests_meeting_both"]) for row in rows.values())
+        meeting_tokens = sum(int(row["slo"]["output_tokens_meeting_both"]) for row in rows.values())
         summary["slo_goodput"] = {
             "requests_meeting_both": meeting_requests,
             "output_tokens_meeting_both": meeting_tokens,
@@ -456,8 +433,7 @@ def _prompt_audit(
         "prompt_tokens_per_request": list(map(len, prompt_ids)),
         "prompt_token_ids_sha256": _canonical_sha256(prompt_ids),
         "prompt_token_ids_sha256_by_class": {
-            case_id: _canonical_sha256(rows)
-            for case_id, rows in sorted(by_class.items())
+            case_id: _canonical_sha256(rows) for case_id, rows in sorted(by_class.items())
         },
     }
 
@@ -477,9 +453,7 @@ def _load_class_slos(
         raise ValueError("P12 class SLO profile does not match the run")
     classes = payload.get("classes", {})
     if set(classes) != expected_classes:
-        raise ValueError(
-            f"P12 class SLO classes differ: {set(classes)} != {expected_classes}"
-        )
+        raise ValueError(f"P12 class SLO classes differ: {set(classes)} != {expected_classes}")
     normalized = {}
     for case_id, thresholds in classes.items():
         ttft_ms = float(thresholds["ttft_ms"])
@@ -565,13 +539,8 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     if args.requests <= 0 or args.warmup_requests < 0 or args.max_tokens < 2:
-        raise SystemExit(
-            "--requests must be positive, warmup non-negative and max-tokens >= 2"
-        )
-    if (
-        args.media_repeat_rate is not None
-        and not 0.0 <= args.media_repeat_rate <= 1.0
-    ):
+        raise SystemExit("--requests must be positive, warmup non-negative and max-tokens >= 2")
+    if args.media_repeat_rate is not None and not 0.0 <= args.media_repeat_rate <= 1.0:
         raise SystemExit("--media-repeat-rate must be in [0, 1]")
 
     manifest_path = Path(args.manifest)
@@ -591,11 +560,7 @@ def main() -> None:
         )
         requests, cache_workload = build_multimodal_cache_workload(
             requests,
-            repeat_rate=(
-                1.0
-                if args.media_repeat_rate is None
-                else args.media_repeat_rate
-            ),
+            repeat_rate=(1.0 if args.media_repeat_rate is None else args.media_repeat_rate),
             vary_questions=args.vary_media_questions,
         )
     offsets_s = _arrival_offsets(
@@ -607,12 +572,9 @@ def main() -> None:
     conformance = _protocol_conformance(h3_contract, args)
     git = collect_git_metadata(REPO_ROOT, strict=True)
     if args.formal and (git.dirty or not conformance["full_frozen_h3"]):
-        raise SystemExit(
-            "--formal requires a clean harness and the complete frozen H3 contract"
-        )
+        raise SystemExit("--formal requires a clean harness and the complete frozen H3 contract")
     if args.slo_output and (
-        not args.formal
-        or args.request_rate != min(h3_contract["request_rates_per_second"])
+        not args.formal or args.request_rate != min(h3_contract["request_rates_per_second"])
     ):
         raise SystemExit("--slo-output requires a formal lowest-rate H3 run")
     class_slos = None
@@ -623,13 +585,8 @@ def main() -> None:
             expected_classes=set(request_classes),
             expected_profile=args.h3_profile,
         )
-    elif (
-        args.formal
-        and args.request_rate != min(h3_contract["request_rates_per_second"])
-    ):
-        raise SystemExit(
-            "formal loaded-rate H3 runs require --class-slo-file"
-        )
+    elif args.formal and args.request_rate != min(h3_contract["request_rates_per_second"]):
+        raise SystemExit("formal loaded-rate H3 runs require --class-slo-file")
 
     processor = AutoProcessor.from_pretrained(args.model, local_files_only=True)
     image_limit = max(
@@ -674,12 +631,10 @@ def main() -> None:
         ignore_eos=True,
     )
     warmup_requests = [
-        warmup_pool[index % len(warmup_pool)]
-        for index in range(args.warmup_requests)
+        warmup_pool[index % len(warmup_pool)] for index in range(args.warmup_requests)
     ]
     warmup_classes = [
-        request_classes[index % len(request_classes)]
-        for index in range(args.warmup_requests)
+        request_classes[index % len(request_classes)] for index in range(args.warmup_requests)
     ]
     if args.warmup_requests:
         _run_arrivals(
@@ -705,10 +660,7 @@ def main() -> None:
     )
     torch.cuda.synchronize()
     process_device_memory = process_memory_sampler.stop()
-    if any(
-        record["finish_reason"] not in TERMINAL_FINISH_REASONS
-        for record in run["requests"]
-    ):
+    if any(record["finish_reason"] not in TERMINAL_FINISH_REASONS for record in run["requests"]):
         raise RuntimeError("vLLM online run contains a non-completed request")
 
     effective_backend = _effective_backend(llm, enforce_eager=False)
@@ -767,9 +719,7 @@ def main() -> None:
             "request_rate_per_s": args.request_rate,
             "seed": args.seed,
             "offsets_s": offsets_s,
-            "trace_sha256": _canonical_sha256(
-                {"classes": request_classes, "offsets_s": offsets_s}
-            ),
+            "trace_sha256": _canonical_sha256({"classes": request_classes, "offsets_s": offsets_s}),
         },
         "backend": {
             **effective_backend,
@@ -778,9 +728,7 @@ def main() -> None:
             "prefix_caching": args.enable_prefix_caching,
             "mm_processor_cache_gb": args.mm_processor_cache_gb,
             "kv_cache_memory_bytes_requested": args.kv_cache_memory_bytes,
-            "kv_cache_memory_bytes_effective": (
-                vllm_config.cache_config.kv_cache_memory_bytes
-            ),
+            "kv_cache_memory_bytes_effective": (vllm_config.cache_config.kv_cache_memory_bytes),
         },
         "memory": {
             "process_device": process_device_memory,
@@ -816,12 +764,8 @@ def main() -> None:
                 "git_dirty": git.dirty,
                 "h3_conformance": conformance,
                 "class_summary": class_summary,
-                "prompt_token_ids_sha256": prompt_audit[
-                    "prompt_token_ids_sha256"
-                ],
-                "output_token_ids_sha256": record["correctness"][
-                    "output_token_ids_sha256"
-                ],
+                "prompt_token_ids_sha256": prompt_audit["prompt_token_ids_sha256"],
+                "output_token_ids_sha256": record["correctness"]["output_token_ids_sha256"],
                 "controller": run["controller"],
             },
             indent=2,

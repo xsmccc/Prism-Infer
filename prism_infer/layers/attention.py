@@ -17,8 +17,10 @@ from prism_infer.ops.kv_cache_store import (
     FP8_CACHE_DTYPES,
     HAS_TRITON,
     _store_kvcache_eager,
-    is_fp8_cache_tensor as _is_fp8_cache_tensor,
     store_kvcache,
+)
+from prism_infer.ops.kv_cache_store import (
+    is_fp8_cache_tensor as _is_fp8_cache_tensor,
 )
 from prism_infer.ops.paged_attention_reference import (
     paged_decode_attention_reference,
@@ -27,10 +29,11 @@ from prism_infer.ops.paged_attention_reference import (
 )
 from prism_infer.ops.paged_decode import (
     HAS_TRITON as HAS_PAGED_DECODE_TRITON,
+)
+from prism_infer.ops.paged_decode import (
     paged_decode_attention,
 )
 from prism_infer.utils.context import Context, get_context
-
 
 # FlashAttention is optional and selected only for compatible CUDA paths.
 try:
@@ -188,11 +191,7 @@ class Attention(nn.Module):
                     causal=True,
                     deterministic=True,
                 )
-        if (
-            HAS_VLLM_PAGED_FLASH_ATTN
-            and q.is_cuda
-            and q.dtype in (torch.float16, torch.bfloat16)
-        ):
+        if HAS_VLLM_PAGED_FLASH_ATTN and q.is_cuda and q.dtype in (torch.float16, torch.bfloat16):
             with profile_region("attention.prefill.vllm_flash_attn_varlen"):
                 return vllm_paged_flash_attn(
                     q,

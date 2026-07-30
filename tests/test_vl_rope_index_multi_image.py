@@ -1,12 +1,11 @@
 """P3.1 Qwen3-VL 多图 3D position ids 验证。"""
 
 import pytest
+from conftest import get_model_path, hf_qwen3_vl_rope_index, require_transformers
 from PIL import Image
 
-from conftest import get_model_path, hf_qwen3_vl_rope_index, require_transformers
 from prism_infer.engine.vl_inputs import prepare_image_inputs
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
-
 
 pytestmark = [pytest.mark.model, pytest.mark.integration]
 

@@ -38,7 +38,7 @@ class _DeterministicExecutor:
     def execute(self, plan) -> ExecutionResult:
         token_ids: list[int | None] = []
         if plan.is_prefill:
-            for seq, count in zip(plan.sequences, plan.scheduled_token_counts):
+            for seq, count in zip(plan.sequences, plan.scheduled_token_counts, strict=False):
                 seq.num_computed_tokens += count
                 seq.num_cached_tokens = seq.num_computed_tokens
                 token_ids.append(None if not seq.is_prefill_finished else 1000 + seq.seq_id)
@@ -147,10 +147,7 @@ def test_online_media_processor_cache_reuses_equal_content_across_objects() -> N
         processor_calls.append(image)
         content_value = sum(image)
         return SimpleNamespace(
-            pixel_values=(
-                torch.arange(8, dtype=torch.float32).reshape(2, 4)
-                + content_value
-            ),
+            pixel_values=(torch.arange(8, dtype=torch.float32).reshape(2, 4) + content_value),
             image_grid_thw=torch.tensor([[1, 2, 2]]),
             image_token_id=42,
             image_token_count=2,
@@ -165,12 +162,10 @@ def test_online_media_processor_cache_reuses_equal_content_across_objects() -> N
         ),
         vl_processor=None,
         _process_image_inputs=process_image,
-        _prepare_image_sequence=lambda inputs, _sampling, request_id: (
-            SimpleNamespace(
-                inputs=inputs,
-                request_id=request_id,
-                visual_embedding_cache_key=None,
-            )
+        _prepare_image_sequence=lambda inputs, _sampling, request_id: SimpleNamespace(
+            inputs=inputs,
+            request_id=request_id,
+            visual_embedding_cache_key=None,
         ),
     )
     session = OnlineServingSession(engine)

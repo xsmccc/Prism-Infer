@@ -1,10 +1,9 @@
 """P4.5 KV Engine hardening 回归测试。"""
 
-from types import SimpleNamespace
+import pickle
 from collections.abc import Iterator
 from contextlib import contextmanager
-
-import pickle
+from types import SimpleNamespace
 
 import pytest
 import torch

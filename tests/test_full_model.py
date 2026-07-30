@@ -4,14 +4,10 @@
 策略: 两个模型永不同时占用 GPU, 各自加载→跑 forward→释放。
 """
 
-import sys
-
 import gc
 
 import pytest
 import torch
-
-sys.path.insert(0, "/data/Prism-Infer")
 from conftest import get_model_path
 
 pytestmark = [
@@ -58,6 +54,7 @@ def run_hf_forward(input_ids):
 def run_our_forward(input_ids):
     """创建我们的模型, 从 HF CPU 加载权重到 GPU, 跑 forward, 释放, 返回 logits."""
     from transformers import Qwen3VLForConditionalGeneration
+
     from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 
     # 1. 加载 HF 到 CPU (仅用于提取权重)

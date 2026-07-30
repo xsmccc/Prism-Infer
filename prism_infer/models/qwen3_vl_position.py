@@ -22,7 +22,6 @@ from prism_infer.models.qwen3_vl_architecture import (
     VISION_GRID_TEMPORAL_AXIS,
 )
 
-
 BATCHED_TOKEN_IDS_RANK = 2
 VISION_GRID_MATRIX_RANK = 2
 VisualKind = Literal["image", "video"]
@@ -477,8 +476,8 @@ def get_qwen3_vl_rope_index_from_config(
         image_grid_thw=image_grid_thw,
         video_grid_thw=video_grid_thw,
         attention_mask=attention_mask,
-        image_token_id=int(getattr(config, "image_token_id")),
-        video_token_id=int(getattr(config, "video_token_id")),
-        vision_start_token_id=int(getattr(config, "vision_start_token_id")),
-        spatial_merge_size=int(getattr(vision_config, "spatial_merge_size")),
+        image_token_id=int(config.image_token_id),
+        video_token_id=int(config.video_token_id),
+        vision_start_token_id=int(config.vision_start_token_id),
+        spatial_merge_size=int(vision_config.spatial_merge_size),
     )

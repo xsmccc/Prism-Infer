@@ -2,13 +2,12 @@
 
 import pytest
 import torch
-from PIL import Image
-
 from conftest import get_model_path
-from prism_infer import LLM
-from prism_infer.sampling_params import SamplingParams
+from PIL import Image
 from test_processor_pipeline_video import demo_video_frames
 
+from prism_infer import LLM
+from prism_infer.sampling_params import SamplingParams
 
 pytestmark = [
     pytest.mark.model,
@@ -85,7 +84,7 @@ def _run_single_requests(
 
 
 def _first_mismatch(left: list[int], right: list[int]) -> int | None:
-    for idx, (a, b) in enumerate(zip(left, right)):
+    for idx, (a, b) in enumerate(zip(left, right, strict=False)):
         if a != b:
             return idx
     if len(left) != len(right):

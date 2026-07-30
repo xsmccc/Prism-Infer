@@ -54,7 +54,6 @@ from prism_infer.analysis.performance_profile import (
 from prism_infer.engine.kv_quantization import kv_cache_storage_bytes
 from prism_infer.engine.online import OnlineRequest, OnlineServingSession
 
-
 P12_ONLINE_MODES = (
     "off_eager",
     "off_graph",
@@ -186,10 +185,7 @@ def _online_requests(
         request_rate=request_rate,
         seed=seed,
     )
-    if (
-        ttft_slo_ms_by_request is not None
-        and len(ttft_slo_ms_by_request) != count
-    ):
+    if ttft_slo_ms_by_request is not None and len(ttft_slo_ms_by_request) != count:
         raise ValueError("per-request TTFT SLO count must match online requests")
     return tuple(
         OnlineRequest(
@@ -197,11 +193,7 @@ def _online_requests(
             arrival_offset_s=offset,
             payload=payloads[index % len(payloads)],
             sampling_params=sampling,
-            ttft_slo_ms=(
-                None
-                if ttft_slo_ms_by_request is None
-                else ttft_slo_ms_by_request[index]
-            ),
+            ttft_slo_ms=(None if ttft_slo_ms_by_request is None else ttft_slo_ms_by_request[index]),
         )
         for index, offset in enumerate(offsets)
     )
@@ -263,25 +255,27 @@ def _h3_payload_schedule(
         payload_by_case[case_id] = payloads[0]
     request_classes = [period[index % len(period)] for index in range(count)]
     payloads = [payload_by_case[case_id] for case_id in request_classes]
-    return payloads, request_classes, {
-        "profile": profile,
-        "class_field": field,
-        "class_schedule": h3.get("class_schedule"),
-        "materialized_schedule_algorithm": (
-            "smooth_weighted_round_robin_integer_counts"
-        ),
-        "period": list(period),
-        "classes": classes,
-        "arrival_process": h3.get("arrival_process"),
-        "request_rates_per_second": h3.get("request_rates_per_second"),
-        "completed_requests_per_run": h3.get("completed_requests_per_run"),
-        "arrival_seeds": h3.get("arrival_seeds"),
-        "max_tokens": h3.get("max_tokens"),
-        "max_model_len": h3.get("max_model_len"),
-        "ttft_slo_formula": h3.get("ttft_slo_formula"),
-        "tpot_slo_formula": h3.get("tpot_slo_formula"),
-        "goodput_unit": h3.get("goodput_unit"),
-    }
+    return (
+        payloads,
+        request_classes,
+        {
+            "profile": profile,
+            "class_field": field,
+            "class_schedule": h3.get("class_schedule"),
+            "materialized_schedule_algorithm": ("smooth_weighted_round_robin_integer_counts"),
+            "period": list(period),
+            "classes": classes,
+            "arrival_process": h3.get("arrival_process"),
+            "request_rates_per_second": h3.get("request_rates_per_second"),
+            "completed_requests_per_run": h3.get("completed_requests_per_run"),
+            "arrival_seeds": h3.get("arrival_seeds"),
+            "max_tokens": h3.get("max_tokens"),
+            "max_model_len": h3.get("max_model_len"),
+            "ttft_slo_formula": h3.get("ttft_slo_formula"),
+            "tpot_slo_formula": h3.get("tpot_slo_formula"),
+            "goodput_unit": h3.get("goodput_unit"),
+        },
+    )
 
 
 def _canonical_sha256(value: object) -> str:
@@ -313,8 +307,7 @@ def _prompt_audit(
         "prompt_tokens_per_request": prompt_counts,
         "prompt_token_ids_sha256": _canonical_sha256(prompt_ids),
         "prompt_token_ids_sha256_by_class": {
-            case_id: _canonical_sha256(rows)
-            for case_id, rows in sorted(by_class.items())
+            case_id: _canonical_sha256(rows) for case_id, rows in sorted(by_class.items())
         },
     }
 
@@ -339,27 +332,13 @@ def _visual_compaction_summary(
     def aggregate(rows: list[dict[str, object]]) -> dict[str, int]:
         return {
             "decisions": len(rows),
-            "effective_reclaims": sum(
-                bool(row.get("released_block_ids")) for row in rows
-            ),
-            "logical_prompt_tokens": sum(
-                int(row["logical_prompt_tokens"]) for row in rows
-            ),
-            "physical_prompt_tokens": sum(
-                int(row["physical_prompt_kv_tokens"]) for row in rows
-            ),
-            "released_blocks": sum(
-                len(row.get("released_block_ids", [])) for row in rows
-            ),
-            "dense_prompt_blocks": sum(
-                len(row.get("old_block_table", [])) for row in rows
-            ),
-            "physical_prompt_blocks": sum(
-                len(row.get("new_block_table", [])) for row in rows
-            ),
-            "dropped_visual_tokens": sum(
-                int(row["dropped_visual_tokens"]) for row in rows
-            ),
+            "effective_reclaims": sum(bool(row.get("released_block_ids")) for row in rows),
+            "logical_prompt_tokens": sum(int(row["logical_prompt_tokens"]) for row in rows),
+            "physical_prompt_tokens": sum(int(row["physical_prompt_kv_tokens"]) for row in rows),
+            "released_blocks": sum(len(row.get("released_block_ids", [])) for row in rows),
+            "dense_prompt_blocks": sum(len(row.get("old_block_table", [])) for row in rows),
+            "physical_prompt_blocks": sum(len(row.get("new_block_table", [])) for row in rows),
+            "dropped_visual_tokens": sum(int(row["dropped_visual_tokens"]) for row in rows),
         }
 
     by_class: dict[str, list[dict[str, object]]] = {}
@@ -367,10 +346,7 @@ def _visual_compaction_summary(
         by_class.setdefault(case_id, []).append(record)
     return {
         **aggregate([record for _, record in decisions]),
-        "by_class": {
-            case_id: aggregate(rows)
-            for case_id, rows in sorted(by_class.items())
-        },
+        "by_class": {case_id: aggregate(rows) for case_id, rows in sorted(by_class.items())},
     }
 
 
@@ -386,9 +362,7 @@ def _execution_evidence(llm, run_record: dict[str, object]) -> dict[str, object]
     replay_counts = []
     if cuda_graph["enabled"]:
         for actual_batch_size, count in sorted(decode_batch_counts.items()):
-            captured_batch_size = next(
-                size for size in capture_sizes if size >= actual_batch_size
-            )
+            captured_batch_size = next(size for size in capture_sizes if size >= actual_batch_size)
             replay_counts.append(
                 {
                     "actual_batch_size": actual_batch_size,
@@ -409,9 +383,7 @@ def _execution_evidence(llm, run_record: dict[str, object]) -> dict[str, object]
             ),
         },
         "torch_compile": llm.model_runner.compile_metadata(),
-        "vision_tensor_cudagraph": (
-            llm.model_runner.vision_tensor_cudagraph_metadata()
-        ),
+        "vision_tensor_cudagraph": (llm.model_runner.vision_tensor_cudagraph_metadata()),
     }
 
 
@@ -426,9 +398,7 @@ def _terminal_failure_summary(
         if result.finish_reason not in {"rejected", "cancelled"}:
             continue
         seq = llm.scheduler.requests[result.request_id]
-        transition = (
-            None if not seq.lifecycle.transitions else seq.lifecycle.transitions[-1]
-        )
+        transition = None if not seq.lifecycle.transitions else seq.lifecycle.transitions[-1]
         detail = None if transition is None else transition.reason
         reason_key = detail or result.finish_reason
         reasons[reason_key] = reasons.get(reason_key, 0) + 1
@@ -507,18 +477,14 @@ def _summarize_by_class(
         request_classes,
         strict=True,
     ):
-        grouped.setdefault(case_id, []).append(
-            metrics_by_id[int(result["request_id"])]
-        )
+        grouped.setdefault(case_id, []).append(metrics_by_id[int(result["request_id"])])
 
     total_good_requests = 0
     total_good_output_tokens = 0
     rows: dict[str, object] = {}
     for case_id, records in sorted(grouped.items()):
         completed = [
-            record
-            for record in records
-            if record.get("finish_reason") in {"eos", "length"}
+            record for record in records if record.get("finish_reason") in {"eos", "length"}
         ]
         slo = class_slos.get(case_id)
         good: list[dict[str, object]] = []
@@ -530,34 +496,22 @@ def _summarize_by_class(
                 and float(record["tpot_ms"]) <= slo["tpot_ms"]
             ]
         total_good_requests += len(good)
-        total_good_output_tokens += sum(
-            int(record["output_tokens"]) for record in good
-        )
+        total_good_output_tokens += sum(int(record["output_tokens"]) for record in good)
         rows[case_id] = {
             "slo": slo,
             "counts": {
                 "submitted": len(records),
                 "completed": len(completed),
-                "rejected": sum(
-                    record.get("finish_reason") == "rejected"
-                    for record in records
-                ),
-                "cancelled": sum(
-                    record.get("finish_reason") == "cancelled"
-                    for record in records
-                ),
+                "rejected": sum(record.get("finish_reason") == "rejected" for record in records),
+                "cancelled": sum(record.get("finish_reason") == "cancelled" for record in records),
                 "good": None if slo is None else len(good),
             },
             "latency_ms": {
                 "queue": summarize_distribution(
                     [float(record["queue_ms"]) for record in completed]
                 ),
-                "ttft": summarize_distribution(
-                    [float(record["ttft_ms"]) for record in completed]
-                ),
-                "tpot": summarize_distribution(
-                    [float(record["tpot_ms"]) for record in completed]
-                ),
+                "ttft": summarize_distribution([float(record["ttft_ms"]) for record in completed]),
+                "tpot": summarize_distribution([float(record["tpot_ms"]) for record in completed]),
                 "request": summarize_distribution(
                     [float(record["latency_ms"]) for record in completed]
                 ),
@@ -565,8 +519,7 @@ def _summarize_by_class(
             "throughput": {
                 "requests_per_s": len(completed) / duration_s,
                 "output_tokens_per_s": (
-                    sum(int(record["output_tokens"]) for record in completed)
-                    / duration_s
+                    sum(int(record["output_tokens"]) for record in completed) / duration_s
                 ),
             },
             "goodput": (
@@ -575,12 +528,9 @@ def _summarize_by_class(
                 else {
                     "requests_per_s": len(good) / duration_s,
                     "output_tokens_per_s": (
-                        sum(int(record["output_tokens"]) for record in good)
-                        / duration_s
+                        sum(int(record["output_tokens"]) for record in good) / duration_s
                     ),
-                    "fraction_of_completed": (
-                        0.0 if not completed else len(good) / len(completed)
-                    ),
+                    "fraction_of_completed": (0.0 if not completed else len(good) / len(completed)),
                 }
             ),
         }
@@ -607,8 +557,7 @@ def _h3_conformance(
         return None
     checks = {
         "arrival_process": args.arrival_process == h3_contract["arrival_process"],
-        "request_rate": args.request_rate
-        in h3_contract["request_rates_per_second"],
+        "request_rate": args.request_rate in h3_contract["request_rates_per_second"],
         "requests": args.requests == h3_contract["completed_requests_per_run"],
         "seed": args.seed in h3_contract["arrival_seeds"],
         "warmup_requests": args.warmup_requests == 10,
@@ -647,20 +596,12 @@ def _build_engine(args: argparse.Namespace):
         max_queue_size=args.max_queue_size,
         scheduler_policy=args.scheduler_policy,
         max_consecutive_prefill_batches=(args.max_consecutive_prefill_batches),
-        heavy_prefill_vision_patch_threshold=(
-            args.heavy_prefill_vision_patch_threshold
-        ),
-        min_decode_batches_between_heavy_prefills=(
-            args.min_decode_batches_between_heavy_prefills
-        ),
-        max_light_prefill_bypasses_per_heavy=(
-            args.max_light_prefill_bypasses_per_heavy
-        ),
+        heavy_prefill_vision_patch_threshold=(args.heavy_prefill_vision_patch_threshold),
+        min_decode_batches_between_heavy_prefills=(args.min_decode_batches_between_heavy_prefills),
+        max_light_prefill_bypasses_per_heavy=(args.max_light_prefill_bypasses_per_heavy),
         visual_pruning_keep_ratio=args.visual_pruning_keep_ratio,
         visual_pruning_min_keep_tokens=args.visual_pruning_min_keep_tokens,
-        visual_pruning_video_min_keep_tokens=(
-            args.visual_pruning_video_min_keep_tokens
-        ),
+        visual_pruning_video_min_keep_tokens=(args.visual_pruning_video_min_keep_tokens),
         visual_pruning_strategy=args.visual_pruning_strategy,
         visual_pruning_attention_last_n_layers=(args.visual_pruning_attention_last_n_layers),
         logits_precision=mode.logits_precision or args.logits_precision,
@@ -671,12 +612,8 @@ def _build_engine(args: argparse.Namespace):
         enable_fused_add_rmsnorm=mode.fused_add_rmsnorm,
         enable_packed_kv_projection=mode.packed_kv_projection,
         enable_cooperative_prefill=args.enable_cooperative_prefill,
-        cooperative_prefill_layer_quantum=(
-            args.cooperative_prefill_layer_quantum
-        ),
-        cooperative_prefill_vision_block_quantum=(
-            args.cooperative_prefill_vision_block_quantum
-        ),
+        cooperative_prefill_layer_quantum=(args.cooperative_prefill_layer_quantum),
+        cooperative_prefill_vision_block_quantum=(args.cooperative_prefill_vision_block_quantum),
         enable_vision_tensor_cudagraph=args.enable_vision_tensor_cudagraph,
         enable_visual_embedding_cache=args.enable_visual_embedding_cache,
         vision_attention_backend="sdpa",
@@ -844,10 +781,7 @@ def main() -> None:
         raise SystemExit("--online-cpu-intraop-threads must be positive")
     if args.request_rate <= 0 and args.arrival_process != "burst":
         raise SystemExit("--request-rate must be positive")
-    if (
-        args.media_repeat_rate is not None
-        and not 0.0 <= args.media_repeat_rate <= 1.0
-    ):
+    if args.media_repeat_rate is not None and not 0.0 <= args.media_repeat_rate <= 1.0:
         raise SystemExit("--media-repeat-rate must be in [0, 1]")
 
     torch.set_num_threads(args.online_cpu_intraop_threads)
@@ -875,11 +809,7 @@ def main() -> None:
         )
         payloads, cache_workload = build_multimodal_cache_workload(
             payloads,
-            repeat_rate=(
-                1.0
-                if args.media_repeat_rate is None
-                else args.media_repeat_rate
-            ),
+            repeat_rate=(1.0 if args.media_repeat_rate is None else args.media_repeat_rate),
             vary_questions=args.vary_media_questions,
         )
     class_slos, class_slo_source = _load_class_slos(
@@ -887,11 +817,7 @@ def main() -> None:
         request_classes=request_classes,
     )
     ttft_slo_ms_by_request = [
-        (
-            class_slos[case_id]["ttft_ms"]
-            if case_id in class_slos
-            else None
-        )
+        (class_slos[case_id]["ttft_ms"] if case_id in class_slos else None)
         for case_id in request_classes
     ]
     sampling = SamplingParams(
@@ -915,9 +841,7 @@ def main() -> None:
                 seed=args.seed,
                 sampling=sampling,
                 key_prefix="warmup",
-                ttft_slo_ms_by_request=ttft_slo_ms_by_request[
-                    : args.warmup_requests
-                ],
+                ttft_slo_ms_by_request=ttft_slo_ms_by_request[: args.warmup_requests],
             )
             serving_session.run(warmup)
             llm.reset_metrics()
@@ -1032,46 +956,30 @@ def main() -> None:
                 "max_queue_size": args.max_queue_size,
                 "scheduler_policy": args.scheduler_policy,
                 "max_consecutive_prefill_batches": (args.max_consecutive_prefill_batches),
-                "heavy_prefill_vision_patch_threshold": (
-                    args.heavy_prefill_vision_patch_threshold
-                ),
+                "heavy_prefill_vision_patch_threshold": (args.heavy_prefill_vision_patch_threshold),
                 "min_decode_batches_between_heavy_prefills": (
                     args.min_decode_batches_between_heavy_prefills
                 ),
-                "max_light_prefill_bypasses_per_heavy": (
-                    args.max_light_prefill_bypasses_per_heavy
-                ),
+                "max_light_prefill_bypasses_per_heavy": (args.max_light_prefill_bypasses_per_heavy),
                 "num_kvcache_blocks": args.num_kvcache_blocks,
                 "kvcache_block_size": args.kvcache_block_size,
                 "enable_prefix_caching": args.enable_prefix_caching,
                 "logits_precision": mode.logits_precision or args.logits_precision,
                 "mlp_projection_mode": args.mlp_projection_mode,
                 "visual_pruning_keep_ratio": args.visual_pruning_keep_ratio,
-                "visual_pruning_min_keep_tokens": (
-                    args.visual_pruning_min_keep_tokens
-                ),
-                "visual_pruning_video_min_keep_tokens": (
-                    args.visual_pruning_video_min_keep_tokens
-                ),
+                "visual_pruning_min_keep_tokens": (args.visual_pruning_min_keep_tokens),
+                "visual_pruning_video_min_keep_tokens": (args.visual_pruning_video_min_keep_tokens),
                 "visual_pruning_strategy": args.visual_pruning_strategy,
-                "vision_tensor_cudagraph": (
-                    args.enable_vision_tensor_cudagraph
-                ),
-                "visual_embedding_cache": (
-                    llm.visual_embedding_cache_metadata()
-                ),
-                "multimodal_prefix_cache": (
-                    llm.multimodal_prefix_cache_metadata()
-                ),
+                "vision_tensor_cudagraph": (args.enable_vision_tensor_cudagraph),
+                "visual_embedding_cache": (llm.visual_embedding_cache_metadata()),
+                "multimodal_prefix_cache": (llm.multimodal_prefix_cache_metadata()),
                 "cooperative_prefill": args.enable_cooperative_prefill,
                 "cooperative_prefill_scope": (
                     "heavy_visual_then_all_loaded"
                     if args.enable_cooperative_prefill
                     else "disabled"
                 ),
-                "cooperative_prefill_layer_quantum": (
-                    args.cooperative_prefill_layer_quantum
-                ),
+                "cooperative_prefill_layer_quantum": (args.cooperative_prefill_layer_quantum),
                 "cooperative_prefill_vision_block_quantum": (
                     args.cooperative_prefill_layer_quantum
                     if args.cooperative_prefill_vision_block_quantum is None
@@ -1134,8 +1042,7 @@ def main() -> None:
                     "cuda": torch.version.cuda,
                     "torch": torch.__version__,
                     "completed_requests": sum(
-                        request["state"] == "finished"
-                        for request in run_record["requests"]
+                        request["state"] == "finished" for request in run_record["requests"]
                     ),
                     "terminal_failure_count": record["terminal_failures"]["count"],
                     "output_token_ids_sha256": _canonical_sha256(

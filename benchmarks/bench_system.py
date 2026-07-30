@@ -169,10 +169,7 @@ MODE_SPECS = {
     "scaled_fp8_kv_tuned_norms_graph": ModeSpec(
         name="scaled_fp8_kv_tuned_norms_graph",
         execution="cuda_graph",
-        attention=(
-            "prefill_sdpa_decode_fused_qk_add_rmsnorm_"
-            "scaled_fp8_paged_triton_bn256"
-        ),
+        attention=("prefill_sdpa_decode_fused_qk_add_rmsnorm_scaled_fp8_paged_triton_bn256"),
         compression="scaled_fp8_kv",
         enforce_eager=False,
         logits_precision="selective_fp32",
@@ -249,10 +246,7 @@ MODE_SPECS = {
     "bf16_compile_graph": ModeSpec(
         name="bf16_compile_graph",
         execution="compile_graph",
-        attention=(
-            "prefill_sdpa_decode_fused_norms_mrope_"
-            "packed_kv_bf16_paged_bn256"
-        ),
+        attention=("prefill_sdpa_decode_fused_norms_mrope_packed_kv_bf16_paged_bn256"),
         compression="off",
         enforce_eager=False,
         decode_compile_region="stateless",
@@ -281,8 +275,7 @@ MODE_SPECS = {
         name="visual_compact_scaled_fp8_compile_graph",
         execution="compile_graph",
         attention=(
-            "prefill_sdpa_decode_fused_norms_mrope_"
-            "packed_kv_compact_scaled_fp8_paged_bn256"
+            "prefill_sdpa_decode_fused_norms_mrope_packed_kv_compact_scaled_fp8_paged_bn256"
         ),
         compression="visual_compact_scaled_fp8",
         enforce_eager=False,
@@ -618,9 +611,7 @@ def _build_llm(
         visual_pruning_attention_last_n_layers=(args.visual_pruning_attention_last_n_layers),
         logits_precision=mode.logits_precision or args.logits_precision,
         mlp_projection_mode=args.mlp_projection_mode,
-        paged_decode_block_n=(
-            mode.paged_decode_block_n or args.paged_decode_block_n
-        ),
+        paged_decode_block_n=(mode.paged_decode_block_n or args.paged_decode_block_n),
         enable_fused_qk_rmsnorm=mode.fused_qk_rmsnorm,
         enable_fused_qk_mrope=mode.fused_qk_mrope,
         enable_fused_add_rmsnorm=mode.fused_add_rmsnorm,
@@ -688,6 +679,7 @@ def _build_record(
                 for result in results
                 for replay_size in result.cuda_graph_replay_batch_sizes
             ),
+            strict=False,
         )
     )
     record: dict[str, Any] = {

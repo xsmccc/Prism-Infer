@@ -45,9 +45,7 @@ class _PrefillHostBatch:
     video_value_chunks: list[torch.Tensor] = field(default_factory=list)
     video_grid_chunks: list[torch.Tensor] = field(default_factory=list)
     visual_embed_chunks: list[torch.Tensor] = field(default_factory=list)
-    deepstack_visual_embed_chunks: list[list[torch.Tensor]] = field(
-        default_factory=list
-    )
+    deepstack_visual_embed_chunks: list[list[torch.Tensor]] = field(default_factory=list)
 
 
 class ModelInputPreparer:
@@ -139,7 +137,7 @@ class ModelInputPreparer:
             raise TypeError("prefill_slices must be an immutable tuple")
         if len(prefill_slices) != len(seqs):
             raise ValueError("prefill_slices must match prefill sequences")
-        for seq, prefill_slice in zip(seqs, prefill_slices):
+        for seq, prefill_slice in zip(seqs, prefill_slices, strict=False):
             if not isinstance(prefill_slice, PrefillSlice):
                 raise TypeError("prefill_slices must contain PrefillSlice values")
             if prefill_slice.sequence_id != seq.seq_id:
@@ -196,10 +194,7 @@ class ModelInputPreparer:
                     f"expected={expected_tokens}"
                 )
             if observed_tokens:
-                if (
-                    int(seq.precomputed_visual_embeds.shape[0])
-                    != expected_tokens
-                ):
+                if int(seq.precomputed_visual_embeds.shape[0]) != expected_tokens:
                     raise ValueError(
                         "cached visual embedding rows do not match placeholders: "
                         f"seq={seq.seq_id} "
@@ -208,20 +203,12 @@ class ModelInputPreparer:
                     )
                 deepstack = seq.precomputed_deepstack_visual_embeds
                 if not deepstack:
-                    raise RuntimeError(
-                        "cached visual embeddings are missing DeepStack outputs"
-                    )
+                    raise RuntimeError("cached visual embeddings are missing DeepStack outputs")
                 if not host.deepstack_visual_embed_chunks:
-                    host.deepstack_visual_embed_chunks = [
-                        [] for _ in deepstack
-                    ]
+                    host.deepstack_visual_embed_chunks = [[] for _ in deepstack]
                 if len(host.deepstack_visual_embed_chunks) != len(deepstack):
-                    raise RuntimeError(
-                        "cached visual requests have inconsistent DeepStack depth"
-                    )
-                host.visual_embed_chunks.append(
-                    seq.precomputed_visual_embeds
-                )
+                    raise RuntimeError("cached visual requests have inconsistent DeepStack depth")
+                host.visual_embed_chunks.append(seq.precomputed_visual_embeds)
                 for chunks, value in zip(
                     host.deepstack_visual_embed_chunks,
                     deepstack,
@@ -313,9 +300,7 @@ class ModelInputPreparer:
 
         query_length = token_end - query_start
         physical_query_start = (
-            query_start
-            if seq.kv_layout is None
-            else seq.kv_layout.physical_kv_len
+            query_start if seq.kv_layout is None else seq.kv_layout.physical_kv_len
         )
         key_length = physical_query_start + query_length
         host.cu_seqlens_q.append(host.cu_seqlens_q[-1] + query_length)
@@ -325,9 +310,7 @@ class ModelInputPreparer:
 
         if not seq.block_table:  # warmup does not own KV pages
             return
-        required_blocks = (
-            key_length + self.block_size - 1
-        ) // self.block_size
+        required_blocks = (key_length + self.block_size - 1) // self.block_size
         if len(seq.block_table) < required_blocks:
             raise RuntimeError(
                 "prefill block_table does not cover scheduled tokens: "
@@ -351,9 +334,7 @@ class ModelInputPreparer:
         has_raw = bool(host.pixel_value_chunks or host.video_value_chunks)
         has_cached = bool(host.visual_embed_chunks)
         if has_raw and has_cached:
-            raise RuntimeError(
-                "one prefill batch cannot mix raw and cached visual payloads"
-            )
+            raise RuntimeError("one prefill batch cannot mix raw and cached visual payloads")
         visual_embeds = (
             None
             if not host.visual_embed_chunks
@@ -396,7 +377,7 @@ class ModelInputPreparer:
             return None
         incomplete = [
             prefill_slice.sequence_id
-            for seq, prefill_slice in zip(seqs, prefill_slices)
+            for seq, prefill_slice in zip(seqs, prefill_slices, strict=False)
             if prefill_slice.token_start != 0 or prefill_slice.token_end != seq.num_prompt_tokens
         ]
         if incomplete:
@@ -437,7 +418,7 @@ class ModelInputPreparer:
             )
 
         host = _PrefillHostBatch()
-        for seq, prefill_slice in zip(seqs, slices):
+        for seq, prefill_slice in zip(seqs, slices, strict=False):
             self._append_prefill_sequence(
                 host,
                 seq,
@@ -465,12 +446,9 @@ class ModelInputPreparer:
                     (
                         prefill_slice.token_end
                         if seq.kv_layout is None
-                        else (
-                            seq.kv_layout.physical_kv_len
-                            + prefill_slice.num_tokens
-                        )
+                        else (seq.kv_layout.physical_kv_len + prefill_slice.num_tokens)
                     )
-                    for seq, prefill_slice in zip(seqs, slices)
+                    for seq, prefill_slice in zip(seqs, slices, strict=False)
                 ],
                 dtype=torch.int32,
             )
@@ -497,9 +475,7 @@ class ModelInputPreparer:
             seqs,
             slices,
             has_visual_payload=bool(
-                host.pixel_value_chunks
-                or host.video_value_chunks
-                or host.visual_embed_chunks
+                host.pixel_value_chunks or host.video_value_chunks or host.visual_embed_chunks
             ),
             compression_metadata=compression_metadata,
         )
@@ -559,9 +535,7 @@ class ModelInputPreparer:
             )
 
         batch_size = len(seqs)
-        position_values = (
-            mrope_positions * MROPE_AXIS_COUNT if uses_mrope else text_positions
-        )
+        position_values = mrope_positions * MROPE_AXIS_COUNT if uses_mrope else text_positions
         packed_model_inputs = self._to_decode_staging_tensor(
             [*input_ids, *position_values],
             dtype=torch.int64,
@@ -569,15 +543,12 @@ class ModelInputPreparer:
         input_ids_tensor = packed_model_inputs[:batch_size]
         positions_flat = packed_model_inputs[batch_size:]
         positions_tensor = (
-            positions_flat.view(MROPE_AXIS_COUNT, batch_size)
-            if uses_mrope
-            else positions_flat
+            positions_flat.view(MROPE_AXIS_COUNT, batch_size) if uses_mrope else positions_flat
         )
 
         max_blocks = max(len(seq.block_table) for seq in seqs)
         padded_block_tables = [
-            seq.block_table + [-1] * (max_blocks - len(seq.block_table))
-            for seq in seqs
+            seq.block_table + [-1] * (max_blocks - len(seq.block_table)) for seq in seqs
         ]
         packed_attention_metadata = self._to_decode_staging_tensor(
             [
@@ -644,7 +615,7 @@ class ModelInputPreparer:
                         self.block_size,
                         device=block_tables.device,
                     )
-                    for seq, record in zip(seqs, records)
+                    for seq, record in zip(seqs, records, strict=False)
                 )
 
         return PreparedModelInputs(

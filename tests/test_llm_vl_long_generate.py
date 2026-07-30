@@ -4,14 +4,13 @@ import gc
 
 import pytest
 import torch
+from conftest import get_model_path, require_transformers
 from PIL import Image
+from test_processor_pipeline_video import demo_video_frames
 from transformers import Qwen3VLForConditionalGeneration
 
-from conftest import get_model_path, require_transformers
 from prism_infer import LLM
 from prism_infer.sampling_params import SamplingParams
-from test_processor_pipeline_video import demo_video_frames
-
 
 pytestmark = [
     pytest.mark.model,
@@ -118,7 +117,7 @@ def _prism_generate_tokens(llm: LLM, case: dict) -> list[int]:
 
 
 def _first_mismatch(left: list[int], right: list[int]) -> int | None:
-    for idx, (a, b) in enumerate(zip(left, right)):
+    for idx, (a, b) in enumerate(zip(left, right, strict=False)):
         if a != b:
             return idx
     if len(left) != len(right):

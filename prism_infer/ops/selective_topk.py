@@ -56,11 +56,7 @@ if HAS_SELECTIVE_TOPK_TRITON:
         selected_local_ids = top_keys & 0xFFFF
         selected_global_ids = tile_id * TILE_SIZE + selected_local_ids
 
-        output_ids = (
-            batch_id * TILE_COUNT * TOP_K
-            + tile_id * TOP_K
-            + tl.arange(0, TOP_K)
-        )
+        output_ids = batch_id * TILE_COUNT * TOP_K + tile_id * TOP_K + tl.arange(0, TOP_K)
         selected_values = tl.load(
             logits_ptr + batch_id * VOCAB_SIZE + selected_global_ids,
             mask=selected_global_ids < VOCAB_SIZE,
@@ -93,9 +89,7 @@ if HAS_SELECTIVE_TOPK_TRITON:
         top_keys = tl.topk(keys, TOP_K)
         selected_candidate_ids = top_keys & 0xFFFF
         selected_global_ids = tl.load(
-            candidate_ids_ptr
-            + batch_id * CANDIDATE_COUNT
-            + selected_candidate_ids
+            candidate_ids_ptr + batch_id * CANDIDATE_COUNT + selected_candidate_ids
         )
         tl.store(
             output_ids_ptr + batch_id * TOP_K + tl.arange(0, TOP_K),
@@ -115,9 +109,7 @@ if HAS_SELECTIVE_TOPK_TRITON:
         batch_id = tl.program_id(0)
         candidate_offset = tl.program_id(1)
         hidden_offsets = tl.arange(0, BLOCK_SIZE)
-        candidate_id = tl.load(
-            candidate_ids_ptr + batch_id * TOP_K + candidate_offset
-        )
+        candidate_id = tl.load(candidate_ids_ptr + batch_id * TOP_K + candidate_offset)
         hidden = tl.load(
             hidden_ptr + batch_id * HIDDEN_SIZE + hidden_offsets,
             mask=hidden_offsets < HIDDEN_SIZE,
@@ -247,8 +239,7 @@ def rerank_greedy_candidates(
         raise ValueError("LM-head weight and hidden size must match")
     if not 1 <= batch_size <= MAX_SELECTIVE_TOPK_BATCH:
         raise ValueError(
-            "selective FP32 reranking supports batch sizes 1 through "
-            f"{MAX_SELECTIVE_TOPK_BATCH}"
+            f"selective FP32 reranking supports batch sizes 1 through {MAX_SELECTIVE_TOPK_BATCH}"
         )
     if top_k <= 0 or top_k & (top_k - 1):
         raise ValueError("selective FP32 reranking candidate count must be a power of two")

@@ -1,10 +1,10 @@
-"""Low-overhead engine/request metrics implementing the P7 contracts."""
+"""Low-overhead metrics for engine, batch and request lifecycle contracts."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence as TypingSequence
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Sequence as TypingSequence
 
 from prism_infer.engine.contracts import (
     BatchPlan,
@@ -41,7 +41,9 @@ class RequestMetrics:
         )
         inter_token_ms = [
             (current - previous) / 1e6
-            for previous, current in zip(self.token_timestamps_ns, self.token_timestamps_ns[1:])
+            for previous, current in zip(
+                self.token_timestamps_ns, self.token_timestamps_ns[1:], strict=False
+            )
         ]
         tpot_ms = None if not inter_token_ms else sum(inter_token_ms) / len(inter_token_ms)
         return {
@@ -142,7 +144,7 @@ class EngineMetrics:
                     compaction_count=result.compaction_count,
                 )
             )
-            for seq, token_id in zip(plan.sequences, result.token_ids):
+            for seq, token_id in zip(plan.sequences, result.token_ids, strict=False):
                 if token_id is None:
                     continue
                 request = self._requests.get(seq.seq_id)

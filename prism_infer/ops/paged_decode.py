@@ -360,7 +360,8 @@ def _validate_paged_geometry(
     if block_tables.shape[0] < batch or context_lens.shape[0] < batch:
         raise ValueError(
             "block_tables/context_lens batch must cover q batch, "
-            f"got q={batch}, block_tables={block_tables.shape[0]}, context_lens={context_lens.shape[0]}"
+            f"got q={batch}, block_tables={block_tables.shape[0]}, "
+            f"context_lens={context_lens.shape[0]}"
         )
 
     block_d = _next_power_of_2(head_dim)

@@ -19,7 +19,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -34,7 +33,6 @@ from prism_infer.analysis.p9_quality_materialization import (
     write_json_atomic,
     write_jsonl_atomic,
 )
-
 
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data/p9_quality/materialized"
 DEFAULT_SELECTION_OUTPUT = REPO_ROOT / "benchmarks/workloads/p9_quality_selection.json"
@@ -152,9 +150,7 @@ def _extract_member(
     output_root: Path,
 ) -> dict[str, Any]:
     suffix = _safe_suffix(info, media_type=media_type)
-    staging_identity = hashlib.sha256(
-        f"{archive_name}\0{info.filename}".encode("utf-8")
-    ).hexdigest()
+    staging_identity = hashlib.sha256(f"{archive_name}\0{info.filename}".encode()).hexdigest()
     staging = output_root / ".staging" / f"{staging_identity}{suffix}.tmp"
     staging.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()

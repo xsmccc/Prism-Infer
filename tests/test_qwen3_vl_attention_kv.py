@@ -265,10 +265,12 @@ def test_engine_attention_decode_reads_paged_kv_cache():
     print(f"decode engine output shape: {list(engine_o.shape)}")
     print(f"decode reference output shape: {list(ref_o.shape)}")
     print(
-        f"decode engine mean/std: {engine_o.float().mean().item():.6e} / {engine_o.float().std().item():.6e}"
+        f"decode engine mean/std: {engine_o.float().mean().item():.6e} / "
+        f"{engine_o.float().std().item():.6e}"
     )
     print(
-        f"decode reference mean/std: {ref_o.float().mean().item():.6e} / {ref_o.float().std().item():.6e}"
+        f"decode reference mean/std: {ref_o.float().mean().item():.6e} / "
+        f"{ref_o.float().std().item():.6e}"
     )
     print(f"decode output max diff: {diff.max().item():.6e}")
     print(f"decode output mean diff: {diff.float().mean().item():.6e}")

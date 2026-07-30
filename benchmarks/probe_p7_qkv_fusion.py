@@ -16,7 +16,6 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -87,6 +86,7 @@ def main() -> None:
                     ("q", "k", "v"),
                     packed,
                     separate,
+                    strict=False,
                 )
             }
             cases.append(

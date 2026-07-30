@@ -237,7 +237,9 @@ def main() -> None:
                 for key, baseline_tokens in baseline.items():
                     current_tokens = record["outputs"][key]
                     row_total = min(len(baseline_tokens), len(current_tokens))
-                    row_matched = sum(a == b for a, b in zip(baseline_tokens, current_tokens))
+                    row_matched = sum(
+                        a == b for a, b in zip(baseline_tokens, current_tokens, strict=False)
+                    )
                     total += row_total
                     matched += row_matched
                     per_case[key] = {

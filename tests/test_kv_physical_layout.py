@@ -1,8 +1,8 @@
 """P6.4 logical/physical KV layout contract tests。"""
 
 import pickle
-from contextlib import contextmanager
 from collections.abc import Iterator
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -10,11 +10,11 @@ import torch
 
 from prism_infer.engine.block_manager import BlockManager
 from prism_infer.engine.kv_layout import (
-    KVCacheLayoutDescriptor,
     KV_LAYOUT_VISUAL_COMPACT,
+    KVCacheLayoutDescriptor,
 )
-from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.model_runner import ModelRunner
+from prism_infer.engine.sequence import Sequence
 from prism_infer.utils.context import get_context, reset_context
 
 

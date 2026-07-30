@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from prism_infer.config import ExecutionBackendName
+from prism_infer.engine.compression import compression_supports_cuda_graph
 from prism_infer.engine.contracts import (
     BatchPhase,
     BatchPlan,
@@ -18,7 +19,6 @@ from prism_infer.engine.contracts import (
     ExecutionResult,
     PreparedModelInputs,
 )
-from prism_infer.engine.compression import compression_supports_cuda_graph
 from prism_infer.observability import profile_region
 from prism_infer.utils.context import use_context
 
@@ -31,11 +31,11 @@ class ModelExecutionBackend(ABC):
 
     name: ExecutionBackendName
 
-    def __init__(self, runner: "ModelRunner") -> None:
+    def __init__(self, runner: ModelRunner) -> None:
         self._runner: ModelRunner | None = runner
 
     @property
-    def runner(self) -> "ModelRunner":
+    def runner(self) -> ModelRunner:
         if self._runner is None:
             raise RuntimeError("execution backend was released")
         return self._runner
@@ -120,10 +120,7 @@ class ModelExecutionBackend(ABC):
             with profile_region("runner.run_model"):
                 logits = self.forward_logits(device_batch)
             if runner.rank == 0:
-                if (
-                    device_batch.sampling_mode != "greedy"
-                    and device_batch.temperatures is None
-                ):
+                if device_batch.sampling_mode != "greedy" and device_batch.temperatures is None:
                     raise RuntimeError("rank 0 non-greedy DeviceBatch requires temperatures")
                 with profile_region("runner.sampler"):
                     token_ids = tuple(
@@ -148,7 +145,7 @@ class ModelExecutionBackend(ABC):
         self._release_resources(runner)
         self._runner = None
 
-    def _release_resources(self, runner: "ModelRunner") -> None:
+    def _release_resources(self, runner: ModelRunner) -> None:
         return None
 
 
@@ -165,7 +162,7 @@ class EagerExecutionBackend(ModelExecutionBackend):
 class CompileExecutionBackend(EagerExecutionBackend):
     name = ExecutionBackendName.COMPILE
 
-    def __init__(self, runner: "ModelRunner") -> None:
+    def __init__(self, runner: ModelRunner) -> None:
         super().__init__(runner)
         if runner.config.decode_compile_region != "attention":
             raise ValueError("compile backend requires decode_compile_region='attention'")
@@ -183,10 +180,7 @@ class CudaGraphExecutionBackend(ModelExecutionBackend):
     def execute(self, device_batch: DeviceBatch) -> ExecutionResult:
         if not isinstance(device_batch, DeviceBatch):
             raise TypeError(f"execute requires DeviceBatch, got {type(device_batch).__name__}")
-        if (
-            device_batch.phase is BatchPhase.DECODE
-            and device_batch.sampling_mode == "greedy"
-        ):
+        if device_batch.phase is BatchPhase.DECODE and device_batch.sampling_mode == "greedy":
             runner = self.runner
             with use_context(device_batch.attention_context):
                 with profile_region("runner.run_model"):
@@ -224,7 +218,7 @@ class CudaGraphExecutionBackend(ModelExecutionBackend):
             )
         return self.runner.run_model_cudagraph(device_batch.model_inputs)
 
-    def _release_resources(self, runner: "ModelRunner") -> None:
+    def _release_resources(self, runner: ModelRunner) -> None:
         for name in (
             "graphs",
             "greedy_graphs",
@@ -243,15 +237,13 @@ class CompileGraphExecutionBackend(CudaGraphExecutionBackend):
 
     name = ExecutionBackendName.COMPILE_GRAPH
 
-    def __init__(self, runner: "ModelRunner") -> None:
+    def __init__(self, runner: ModelRunner) -> None:
         super().__init__(runner)
         if runner.config.decode_compile_region != "stateless":
-            raise ValueError(
-                "compile_graph backend requires decode_compile_region='stateless'"
-            )
+            raise ValueError("compile_graph backend requires decode_compile_region='stateless'")
 
 
-def create_execution_backend(runner: "ModelRunner") -> ModelExecutionBackend:
+def create_execution_backend(runner: ModelRunner) -> ModelExecutionBackend:
     """Construct exactly one backend from the validated startup config."""
 
     backend = ExecutionBackendName(runner.config.execution_backend)

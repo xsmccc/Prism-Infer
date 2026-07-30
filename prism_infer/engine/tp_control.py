@@ -8,7 +8,6 @@ from enum import Enum
 from multiprocessing.connection import Connection, wait
 from time import perf_counter
 
-
 DEFAULT_TP_CONTROL_TIMEOUT_SECONDS = 120
 
 
@@ -91,7 +90,7 @@ class TPControlPlane:
         self,
         method_name: str,
         args: tuple[object, ...],
-    ) -> "TPCommand":
+    ) -> TPCommand:
         try:
             method = TPMethod(method_name)
         except (TypeError, ValueError) as exc:
@@ -114,7 +113,7 @@ class TPControlPlane:
         command = deserialize_command(data)
         return command.method.value, list(command.args)
 
-    def read_command(self) -> "TPCommand":
+    def read_command(self) -> TPCommand:
         if self.world_size <= 1 or self.rank <= 0:
             raise RuntimeError("only TP worker ranks can read control commands")
         if not isinstance(self.channel, Connection):
@@ -129,7 +128,7 @@ class TPControlPlane:
         self,
         method_name: str,
         args: tuple[object, ...],
-    ) -> tuple["TPCommand", int]:
+    ) -> tuple[TPCommand, int]:
         if self.world_size <= 1 or self.rank != 0:
             raise RuntimeError("only TP rank 0 can broadcast control commands")
         command = self.next_command(method_name, args)
@@ -150,7 +149,7 @@ class TPControlPlane:
                 ) from exc
         return command, len(data)
 
-    def send_response(self, response: "TPResponse") -> None:
+    def send_response(self, response: TPResponse) -> None:
         if not isinstance(self.channel, Connection):
             raise TypeError("TP worker control channel is not a Connection")
         data = serialize_response(response)
@@ -161,7 +160,7 @@ class TPControlPlane:
                 f"TP worker rank {self.rank} failed to send command response"
             ) from exc
 
-    def await_responses(self, command: "TPCommand") -> None:
+    def await_responses(self, command: TPCommand) -> None:
         """Wait for one matching ACK/error from every worker with a deadline."""
 
         channels = self.rank0_channels()
@@ -212,7 +211,7 @@ class TPControlPlane:
 
     @staticmethod
     def _timeout_error(
-        command: "TPCommand",
+        command: TPCommand,
         pending: dict[int, Connection],
     ) -> TimeoutError:
         return TimeoutError(
@@ -289,7 +288,7 @@ class TPResponse:
             raise ValueError("failed TP response requires traceback_text")
 
     @classmethod
-    def ok(cls, command: TPCommand, *, worker_rank: int) -> "TPResponse":
+    def ok(cls, command: TPCommand, *, worker_rank: int) -> TPResponse:
         return cls(
             request_id=command.request_id,
             worker_rank=worker_rank,
@@ -304,7 +303,7 @@ class TPResponse:
         worker_rank: int,
         error: BaseException,
         traceback_text: str,
-    ) -> "TPResponse":
+    ) -> TPResponse:
         return cls(
             request_id=command.request_id,
             worker_rank=worker_rank,

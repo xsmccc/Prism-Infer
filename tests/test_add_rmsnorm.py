@@ -21,9 +21,9 @@ def test_prefill_fused_add_rmsnorm_keeps_native_reduction_exact() -> None:
         expected_added = values + residual
         expected_float = expected_added.float()
         expected_variance = expected_float.pow(2).mean(-1, keepdim=True)
-        expected = weight * (
-            expected_float * torch.rsqrt(expected_variance + eps)
-        ).to(torch.bfloat16)
+        expected = weight * (expected_float * torch.rsqrt(expected_variance + eps)).to(
+            torch.bfloat16
+        )
 
         actual, actual_added = fused_add_rmsnorm_prefill(
             values,

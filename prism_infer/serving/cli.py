@@ -23,7 +23,9 @@ def _load_engine_options(path: str | None) -> dict[str, object]:
         raise ValueError(f"cannot read engine config {config_path}: {exc}") from exc
     if not isinstance(payload, dict) or any(not isinstance(key, str) for key in payload):
         raise ValueError("engine config must be a JSON object with string keys")
-    protected = sorted({"model", "metrics_sink", "clock_ns", "request_id_allocator"} & payload.keys())
+    protected = sorted(
+        {"model", "metrics_sink", "clock_ns", "request_id_allocator"} & payload.keys()
+    )
     if protected:
         raise ValueError(f"engine config cannot override CLI-owned fields: {protected}")
     return payload
@@ -81,9 +83,7 @@ def main() -> None:
     try:
         import uvicorn
     except ImportError as exc:
-        raise RuntimeError(
-            "network serving requires `pip install 'prism-infer[serving]'`"
-        ) from exc
+        raise RuntimeError("network serving requires `pip install 'prism-infer[serving]'`") from exc
     uvicorn.run(
         app,
         host=args.host,

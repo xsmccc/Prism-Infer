@@ -121,16 +121,10 @@ def compile_decode_fp8_lm_head(
         weight_scale: torch.Tensor,
     ) -> torch.Tensor:
         hidden_scale = (
-            hidden_states.float()
-            .abs()
-            .amax(dim=-1, keepdim=True)
-            .clamp_min(1e-12)
-            / fp8_max
+            hidden_states.float().abs().amax(dim=-1, keepdim=True).clamp_min(1e-12) / fp8_max
         )
         hidden_fp8 = (
-            (hidden_states.float() / hidden_scale)
-            .clamp(-fp8_max, fp8_max)
-            .to(torch.float8_e4m3fn)
+            (hidden_states.float() / hidden_scale).clamp(-fp8_max, fp8_max).to(torch.float8_e4m3fn)
         )
         return torch._scaled_mm(
             hidden_fp8,
@@ -719,14 +713,11 @@ class Qwen3VLTextMLP(nn.Module):
             raise RuntimeError("block-4 gate-up requires packed projection mode")
         if self._decode_gate_up_weight_fp8 is not None:
             raise RuntimeError("block-4 gate-up weight was already prepared")
-        weight_fp8, scales = compress_block4_gate_up_weight(
-            self.gate_up_proj.weight
-        )
+        weight_fp8, scales = compress_block4_gate_up_weight(self.gate_up_proj.weight)
         self._decode_gate_up_weight_fp8 = weight_fp8
         self._decode_gate_up_scales = scales
         return (
-            weight_fp8.numel() * weight_fp8.element_size()
-            + scales.numel() * scales.element_size()
+            weight_fp8.numel() * weight_fp8.element_size() + scales.numel() * scales.element_size()
         )
 
     def _apply(self, fn, recurse: bool = True):
@@ -1100,13 +1091,11 @@ class Qwen3VLTextModel(nn.Module):
         for layer_index in range(state.next_layer, layer_end):
             layer = self.layers[layer_index]
             if state.use_fused_add_rmsnorm:
-                state.hidden_states, state.residual = (
-                    layer.forward_fused_add_rmsnorm(
-                        state.hidden_states,
-                        state.residual,
-                        state.position_embeddings,
-                        prefill=state.is_prefill,
-                    )
+                state.hidden_states, state.residual = layer.forward_fused_add_rmsnorm(
+                    state.hidden_states,
+                    state.residual,
+                    state.position_embeddings,
+                    prefill=state.is_prefill,
                 )
             else:
                 state.hidden_states = layer(
@@ -1114,9 +1103,8 @@ class Qwen3VLTextModel(nn.Module):
                     position_embeddings=state.position_embeddings,
                     attention_mask=state.attention_mask,
                 )
-            if (
-                state.deepstack_visual_embeds is not None
-                and layer_index < len(state.deepstack_visual_embeds)
+            if state.deepstack_visual_embeds is not None and layer_index < len(
+                state.deepstack_visual_embeds
             ):
                 if state.use_fused_add_rmsnorm:
                     state.hidden_states = state.hidden_states + state.residual
@@ -1143,11 +1131,7 @@ class Qwen3VLTextModel(nn.Module):
                 f"{state.next_layer}/{len(self.layers)} layers"
             )
         if state.use_fused_add_rmsnorm:
-            fused_op = (
-                fused_add_rmsnorm_prefill
-                if state.is_prefill
-                else fused_add_rmsnorm
-            )
+            fused_op = fused_add_rmsnorm_prefill if state.is_prefill else fused_add_rmsnorm
             hidden_states, _ = fused_op(
                 state.hidden_states,
                 state.residual,
@@ -1343,7 +1327,7 @@ class Qwen3VLModel(nn.Module):
                 deepstack_parts = [[] for _ in deepstack]
             if len(deepstack) != len(deepstack_parts):
                 raise RuntimeError("vision microbatches returned inconsistent DeepStack")
-            for layer_parts, layer_output in zip(deepstack_parts, deepstack):
+            for layer_parts, layer_output in zip(deepstack_parts, deepstack, strict=False):
                 layer_parts.append(layer_output)
 
         return (
@@ -1475,12 +1459,9 @@ class Qwen3VLModel(nn.Module):
                     f"{int(visual_pos_masks.sum().item())}"
                 )
             if not deepstack_visual_embeds or any(
-                value.shape != visual_embeds.shape
-                for value in deepstack_visual_embeds
+                value.shape != visual_embeds.shape for value in deepstack_visual_embeds
             ):
-                raise ValueError(
-                    "precomputed DeepStack embeddings must match visual_embeds"
-                )
+                raise ValueError("precomputed DeepStack embeddings must match visual_embeds")
             visual_mask = visual_pos_masks.unsqueeze(-1).expand_as(inputs_embeds)
             inputs_embeds = inputs_embeds.masked_scatter(
                 visual_mask,
@@ -1495,12 +1476,12 @@ class Qwen3VLModel(nn.Module):
                 resolved_deepstack_visual_embeds = deepstack_by_modality[0]
             else:
                 resolved_deepstack_visual_embeds = []
-                for layer_embeds in zip(*deepstack_by_modality):
+                for layer_embeds in zip(*deepstack_by_modality, strict=False):
                     joint = layer_embeds[0].new_zeros(
                         visual_pos_masks.sum(),
                         layer_embeds[0].shape[-1],
                     )
-                    for mask, embeds in zip(visual_masks, layer_embeds):
+                    for mask, embeds in zip(visual_masks, layer_embeds, strict=False):
                         modality_mask = mask[visual_pos_masks]
                         joint[modality_mask, :] = embeds.to(joint.device, joint.dtype)
                     resolved_deepstack_visual_embeds.append(joint)
@@ -1687,10 +1668,7 @@ class Qwen3VLForCausalLM(nn.Module):
             else:
                 logits = self.lm_head(hidden_states)
                 candidate_count = SELECTIVE_FP32_LOGITS_TOP_K
-            if (
-                logits.dtype == torch.bfloat16
-                and logits.shape[0] <= MAX_SELECTIVE_TOPK_BATCH
-            ):
+            if logits.dtype == torch.bfloat16 and logits.shape[0] <= MAX_SELECTIVE_TOPK_BATCH:
                 top_ids = selective_topk_indices(
                     logits,
                     k=candidate_count,
@@ -1730,13 +1708,9 @@ class Qwen3VLForCausalLM(nn.Module):
         if torch.cuda.get_device_capability(weight.device) < (9, 0):
             raise RuntimeError("decode FP8 LM head requires FP8 tensor-core hardware")
         fp8_max = torch.finfo(torch.float8_e4m3fn).max
-        weight_scale = (
-            weight.float().abs().amax(dim=1, keepdim=True) / fp8_max
-        ).clamp_min(1e-12)
+        weight_scale = (weight.float().abs().amax(dim=1, keepdim=True) / fp8_max).clamp_min(1e-12)
         weight_fp8 = (
-            (weight.float() / weight_scale)
-            .clamp(-fp8_max, fp8_max)
-            .to(torch.float8_e4m3fn)
+            (weight.float() / weight_scale).clamp(-fp8_max, fp8_max).to(torch.float8_e4m3fn)
         )
         weight_scale = weight_scale.t().contiguous()
         self._decode_lm_head_weight_fp8 = weight_fp8
@@ -1749,10 +1723,7 @@ class Qwen3VLForCausalLM(nn.Module):
 
         layers = list(self.model.language_model.layers)
         required_bytes = sum(
-            (
-                layer.mlp.gate_up_proj.weight.numel()
-                + layer.mlp.gate_up_proj.weight.numel() // 4 * 2
-            )
+            (layer.mlp.gate_up_proj.weight.numel() + layer.mlp.gate_up_proj.weight.numel() // 4 * 2)
             for layer in layers
         )
         free_bytes, _ = torch.cuda.mem_get_info(
@@ -1766,10 +1737,7 @@ class Qwen3VLForCausalLM(nn.Module):
                 f"2 GiB runtime reserve; free={free_bytes}, "
                 f"required={required_bytes + reserve_bytes}"
             )
-        compressed_bytes = sum(
-            layer.mlp.prepare_decode_block4_gate_up()
-            for layer in layers
-        )
+        compressed_bytes = sum(layer.mlp.prepare_decode_block4_gate_up() for layer in layers)
         if compressed_bytes != required_bytes:
             raise RuntimeError(
                 "decode block-4 gate-up compressed byte accounting mismatch: "

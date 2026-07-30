@@ -14,6 +14,7 @@
 # C++ 类比: 整个文件 ≈ inference engine 的 execute() 函数
 # ═══════════════════════════════════════════════════════════════
 
+import traceback
 from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -21,7 +22,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 from multiprocessing.connection import Connection
 from time import perf_counter
-import traceback
 
 import torch
 import torch.distributed as dist  # 分布式通信 (NCCL)
@@ -31,24 +31,18 @@ from prism_infer.analysis.schema_constants import (
     DECODE_COMPILE_STATELESS_SUBGRAPH,
     DECODE_COMPILE_SUBGRAPH,
 )
-from prism_infer.observability import (
-    is_trace_enabled,
-    profile_region,
-    register_model_config,
-)
 from prism_infer.config import (
-    Config,
     MAX_CUDA_GRAPH_BATCH_SIZE,
+    Config,
 )
 from prism_infer.engine.compression import (
     build_compression_metadata,
     build_visual_pruning_config,
     compression_mode_supports_cuda_graph,
-    compression_supports_cuda_graph,
     compression_mode_uses_fp8_payload,
     compression_mode_uses_token_head_scales,
+    compression_supports_cuda_graph,
 )
-from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.contracts import (
     BatchPhase,
     BatchPlan,
@@ -58,14 +52,15 @@ from prism_infer.engine.contracts import (
     PrefillSlice,
     PreparedModelInputs,
 )
-from prism_infer.engine.kv_layout import KVCompactionPlan
 from prism_infer.engine.execution_backend import create_execution_backend
 from prism_infer.engine.input_preparation import ModelInputPreparer
+from prism_infer.engine.kv_layout import KVCompactionPlan
 from prism_infer.engine.kv_quantization import (
     KV_COMPONENT_COUNT,
     KV_SCALE_DTYPE,
     kv_block_storage_bytes,
 )
+from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.tp_control import (
     TPCommand,
     TPControlPlane,
@@ -75,25 +70,29 @@ from prism_infer.engine.tp_control import (
 from prism_infer.engine.visual_pruning import (
     finalize_attention_pruning_decisions,
 )
+from prism_infer.observability import (
+    is_trace_enabled,
+    profile_region,
+    register_model_config,
+)
 from prism_infer.ops.kv_compaction import compact_kv_slots
 
 try:
     from prism_infer.models.qwen3 import Qwen3ForCausalLM  # Qwen3 纯文本模型 (legacy)
 except ImportError:
     Qwen3ForCausalLM = None  # VL 项目中纯文本模型可能不存在, 用 VL 版替代
+from prism_infer.layers.sampler import (  # 采样器 (温度采样/贪婪)
+    SAMPLING_NUMERICAL_EPSILON,
+    Sampler,
+)
+from prism_infer.models.model_registry import ModelFamily, resolve_model_family
 from prism_infer.models.qwen3_vl import (
     Qwen3VLForCausalLM,
     Qwen3VLTextForwardState,
     compile_decode_fp8_lm_head,
     compile_decode_o_proj,
 )
-from prism_infer.models.model_registry import ModelFamily, resolve_model_family
 from prism_infer.models.qwen3_vl_architecture import MROPE_AXIS_COUNT
-from prism_infer.vision.vision_encoder import VisionEncoderForwardState
-from prism_infer.layers.sampler import (  # 采样器 (温度采样/贪婪)
-    SAMPLING_NUMERICAL_EPSILON,
-    Sampler,
-)
 from prism_infer.utils.context import (
     Context,
     get_context,
@@ -102,7 +101,7 @@ from prism_infer.utils.context import (
     use_context,
 )
 from prism_infer.utils.loader import load_model  # 权重加载
-
+from prism_infer.vision.vision_encoder import VisionEncoderForwardState
 
 CUDA_GRAPH_EXACT_BATCH_LIMIT = 8
 CUDA_GRAPH_BATCH_BUCKET_STRIDE = 16
@@ -269,14 +268,12 @@ class ModelRunner:
                 mlp_projection_mode=self.config.mlp_projection_mode,
                 vision_encoder_microbatch_patches=(self.config.vision_encoder_microbatch_patches),
                 vision_attention_backend=self.config.vision_attention_backend,
-                enable_vision_tensor_cudagraph=(
-                    self.config.enable_vision_tensor_cudagraph
-                ),
+                enable_vision_tensor_cudagraph=(self.config.enable_vision_tensor_cudagraph),
             )
             self.model.logits_precision = self.config.logits_precision
             for layer in self.model.model.language_model.layers:
-                layer.self_attn.fused_qk_rmsnorm_enabled = (
-                    getattr(self.config, "enable_fused_qk_rmsnorm", False)
+                layer.self_attn.fused_qk_rmsnorm_enabled = getattr(
+                    self.config, "enable_fused_qk_rmsnorm", False
                 )
                 layer.self_attn.fused_qk_mrope_enabled = getattr(
                     self.config,
@@ -315,9 +312,7 @@ class ModelRunner:
                 if self.is_vl_model and self.config.enable_decode_block4_gate_up:
                     torch.cuda.synchronize()
                     quantize_start = perf_counter()
-                    self.decode_block4_gate_up_bytes = (
-                        self.model.prepare_decode_block4_gate_up()
-                    )
+                    self.decode_block4_gate_up_bytes = self.model.prepare_decode_block4_gate_up()
                     torch.cuda.synchronize()
                     self.decode_block4_gate_up_quantization_ms = (
                         perf_counter() - quantize_start
@@ -528,9 +523,7 @@ class ModelRunner:
                 pixel_values_videos=inputs.pixel_values_videos,
                 video_grid_thw=inputs.video_grid_thw,
                 visual_embeds=inputs.visual_embeds,
-                deepstack_visual_embeds=(
-                    inputs.deepstack_visual_embeds
-                ),
+                deepstack_visual_embeds=(inputs.deepstack_visual_embeds),
             )
         return self.model(inputs.input_ids, inputs.position_ids)
 
@@ -556,9 +549,7 @@ class ModelRunner:
         entry: _VisualEmbeddingCacheEntry,
     ) -> None:
         seq.precomputed_visual_embeds = entry.visual_embeds
-        seq.precomputed_deepstack_visual_embeds = (
-            entry.deepstack_visual_embeds
-        )
+        seq.precomputed_deepstack_visual_embeds = entry.deepstack_visual_embeds
 
     @torch.inference_mode()
     def hydrate_visual_embedding_cache(self, seq: Sequence) -> None:
@@ -567,9 +558,7 @@ class ModelRunner:
         if not self.config.enable_visual_embedding_cache:
             return
         if self.world_size != 1 or not self.is_vl_model:
-            raise RuntimeError(
-                "visual embedding cache currently requires Qwen3-VL with TP1"
-            )
+            raise RuntimeError("visual embedding cache currently requires Qwen3-VL with TP1")
         key = seq.visual_embedding_cache_key
         if key is None:
             return
@@ -585,11 +574,7 @@ class ModelRunner:
             (seq.pixel_values, seq.image_grid_thw),
             (seq.pixel_values_videos, seq.video_grid_thw),
         ]
-        present = [
-            (payload, grid)
-            for payload, grid in payloads
-            if payload is not None
-        ]
+        present = [(payload, grid) for payload, grid in payloads if payload is not None]
         if len(present) != 1:
             raise RuntimeError(
                 "visual embedding cache requires exactly one visual modality "
@@ -610,21 +595,14 @@ class ModelRunner:
                 "seq_id": seq.seq_id,
             },
         ):
-            visual_embeds, deepstack = (
-                self.model.model._encode_visual_payload(payload, grid)
-            )
+            visual_embeds, deepstack = self.model.model._encode_visual_payload(payload, grid)
         visual_embeds = visual_embeds.detach()
-        deepstack_visual_embeds = tuple(
-            value.detach() for value in deepstack
-        )
+        deepstack_visual_embeds = tuple(value.detach() for value in deepstack)
         expected_rows = seq.image_token_count + seq.video_token_count
         if (
             int(visual_embeds.shape[0]) != expected_rows
             or not deepstack_visual_embeds
-            or any(
-                value.shape != visual_embeds.shape
-                for value in deepstack_visual_embeds
-            )
+            or any(value.shape != visual_embeds.shape for value in deepstack_visual_embeds)
         ):
             raise RuntimeError(
                 "Vision Encoder cache output does not match visual placeholders: "
@@ -650,9 +628,7 @@ class ModelRunner:
             > VISUAL_EMBEDDING_CACHE_MAX_BYTES
         ):
             _, evicted = self._visual_embedding_cache.popitem(last=False)
-            self._visual_embedding_cache_resident_bytes -= (
-                evicted.storage_bytes
-            )
+            self._visual_embedding_cache_resident_bytes -= evicted.storage_bytes
             self._visual_embedding_cache_evictions += 1
         self._visual_embedding_cache[key] = entry
         self._visual_embedding_cache_resident_bytes += storage_bytes
@@ -670,9 +646,7 @@ class ModelRunner:
             "hits": self._visual_embedding_cache_hits,
             "misses": self._visual_embedding_cache_misses,
             "evictions": self._visual_embedding_cache_evictions,
-            "oversize_skips": (
-                self._visual_embedding_cache_oversize_skips
-            ),
+            "oversize_skips": (self._visual_embedding_cache_oversize_skips),
         }
 
     def reset_visual_embedding_cache_metrics(self) -> None:
@@ -698,9 +672,7 @@ class ModelRunner:
             for attention in attention_layers:
                 attention.enable_decode_compile(
                     mode=self.config.decode_compile_mode,
-                    emulate_precision_casts=(
-                        self.config.decode_compile_emulate_precision_casts
-                    ),
+                    emulate_precision_casts=(self.config.decode_compile_emulate_precision_casts),
                     force_same_precision=(self.config.decode_compile_force_same_precision),
                 )
             self.decode_compile_first_call_pending = True
@@ -718,9 +690,7 @@ class ModelRunner:
         quantize_start = perf_counter()
         fp8_lm_head_inputs = self.model.prepare_decode_fp8_greedy_lm_head()
         torch.cuda.synchronize()
-        self.decode_fp8_lm_head_quantization_ms = (
-            perf_counter() - quantize_start
-        ) * 1000.0
+        self.decode_fp8_lm_head_quantization_ms = (perf_counter() - quantize_start) * 1000.0
         compiled_fp8_lm_head = compile_decode_fp8_lm_head(
             mode=self.config.decode_compile_mode,
             emulate_precision_casts=self.config.decode_compile_emulate_precision_casts,
@@ -785,12 +755,8 @@ class ModelRunner:
             "activation_dtype": "bfloat16" if enabled else "model",
             "group_size": 4 if enabled else 0,
             "fused_epilogue": "swiglu" if enabled else "none",
-            "compressed_weight_bytes": (
-                self.decode_block4_gate_up_bytes if enabled else 0
-            ),
-            "quantization_ms": (
-                self.decode_block4_gate_up_quantization_ms if enabled else 0.0
-            ),
+            "compressed_weight_bytes": (self.decode_block4_gate_up_bytes if enabled else 0),
+            "quantization_ms": (self.decode_block4_gate_up_quantization_ms if enabled else 0.0),
         }
 
     def vision_tensor_cudagraph_metadata(self) -> dict[str, object]:
@@ -1365,14 +1331,9 @@ class ModelRunner:
                 batch_size == captured_batch_size
                 and packed_model_inputs is not None
                 and packed_decode_metadata is not None
-                and packed_model_inputs.numel()
-                == graph_vars["packed_model_inputs"].numel()
-                and packed_decode_metadata.numel()
-                <= graph_vars["packed_decode_metadata"].numel()
-                and (
-                    batch_size == 1
-                    or block_table_width == graph_vars["block_tables"].size(1)
-                )
+                and packed_model_inputs.numel() == graph_vars["packed_model_inputs"].numel()
+                and packed_decode_metadata.numel() <= graph_vars["packed_decode_metadata"].numel()
+                and (batch_size == 1 or block_table_width == graph_vars["block_tables"].size(1))
             )
             if use_packed_staging:
                 if packed_model_inputs is not graph_vars["host_packed_model_inputs"]:
@@ -1383,16 +1344,14 @@ class ModelRunner:
                     ].copy_(packed_decode_metadata)
             else:
                 graph_vars["host_input_ids"][:batch_size] = input_ids
-                graph_vars["host_positions"][:, :batch_size] = (
-                    self._as_mrope_decode_positions(model_inputs.position_ids)
+                graph_vars["host_positions"][:, :batch_size] = self._as_mrope_decode_positions(
+                    model_inputs.position_ids
                 )
                 graph_vars["host_slot_mapping"].fill_(-1)
                 graph_vars["host_slot_mapping"][:batch_size] = context.slot_mapping
                 graph_vars["host_context_lens"].zero_()
                 graph_vars["host_context_lens"][:batch_size] = context.context_lens
-                graph_vars["host_decode_max_context_len"].copy_(
-                    context.decode_max_context_len
-                )
+                graph_vars["host_decode_max_context_len"].copy_(context.decode_max_context_len)
                 graph_vars["host_block_tables"].fill_(-1)
                 graph_vars["host_block_tables"][
                     :batch_size,
@@ -1413,7 +1372,7 @@ class ModelRunner:
 
     @torch.inference_mode()
     def run_model(self, model_inputs: DeviceModelInputs, is_prefill: bool):
-        """Compatibility adapter for direct pre-P9 runner callers."""
+        """Compatibility adapter for direct legacy runner callers."""
 
         compression_requires_eager = not compression_supports_cuda_graph(
             get_context().compression_metadata
@@ -1502,9 +1461,7 @@ class ModelRunner:
         deepstack_visual_embeds = inputs.deepstack_visual_embeds
         if pending.vision_payloads:
             if visual_embeds is not None:
-                raise RuntimeError(
-                    "cooperative prefill cannot mix raw and cached vision inputs"
-                )
+                raise RuntimeError("cooperative prefill cannot mix raw and cached vision inputs")
             modality_outputs = []
             for payload in pending.vision_payloads:
                 if (
@@ -1512,17 +1469,12 @@ class ModelRunner:
                     or not payload.main_parts
                     or payload.deepstack_parts is None
                 ):
-                    raise RuntimeError(
-                        "language forward started before vision completed"
-                    )
+                    raise RuntimeError("language forward started before vision completed")
                 modality_outputs.append(
                     (
                         payload.token_id,
                         torch.cat(payload.main_parts, dim=0),
-                        tuple(
-                            torch.cat(parts, dim=0)
-                            for parts in payload.deepstack_parts
-                        ),
+                        tuple(torch.cat(parts, dim=0) for parts in payload.deepstack_parts),
                     )
                 )
 
@@ -1540,14 +1492,11 @@ class ModelRunner:
             )
             deepstack_depth = len(modality_outputs[0][2])
             deepstack_visual_embeds = tuple(
-                visual_embeds.new_empty(visual_embeds.shape)
-                for _ in range(deepstack_depth)
+                visual_embeds.new_empty(visual_embeds.shape) for _ in range(deepstack_depth)
             )
             for token_id, main, deepstack in modality_outputs:
                 if len(deepstack) != deepstack_depth:
-                    raise RuntimeError(
-                        "vision modalities returned inconsistent DeepStack"
-                    )
+                    raise RuntimeError("vision modalities returned inconsistent DeepStack")
                 positions = torch.nonzero(
                     visual_token_ids == token_id,
                     as_tuple=False,
@@ -1576,14 +1525,12 @@ class ModelRunner:
                 visual_embeds=visual_embeds,
                 deepstack_visual_embeds=deepstack_visual_embeds,
             )
-            pending.model_state = (
-                self.model.model.language_model.begin_cooperative_forward(
-                    inputs_embeds=inputs_embeds,
-                    position_ids=inputs.position_ids,
-                    attention_mask=None,
-                    visual_pos_masks=visual_pos_masks,
-                    deepstack_visual_embeds=resolved_deepstack,
-                )
+            pending.model_state = self.model.model.language_model.begin_cooperative_forward(
+                inputs_embeds=inputs_embeds,
+                position_ids=inputs.position_ids,
+                attention_mask=None,
+                visual_pos_masks=visual_pos_masks,
+                deepstack_visual_embeds=resolved_deepstack,
             )
 
     def _advance_pending_vision(
@@ -1613,11 +1560,9 @@ class ModelRunner:
                     "patches": end - start,
                 },
             ):
-                payload.active_state = (
-                    self.model.model.visual.begin_cooperative_forward(
-                        payload.pixel_values[start:end],
-                        chunk_grid,
-                    )
+                payload.active_state = self.model.model.visual.begin_cooperative_forward(
+                    payload.pixel_values[start:end],
+                    chunk_grid,
                 )
 
         state = payload.active_state
@@ -1630,25 +1575,19 @@ class ModelRunner:
                 "patches": int(state.hidden_states.shape[0]),
             },
         ):
-            complete = (
-                self.model.model.visual.advance_cooperative_forward(
-                    state,
-                    max_blocks=max_blocks,
-                )
+            complete = self.model.model.visual.advance_cooperative_forward(
+                state,
+                max_blocks=max_blocks,
             )
         if not complete:
             return False
 
-        main, deepstack = (
-            self.model.model.visual.finish_cooperative_forward(state)
-        )
+        main, deepstack = self.model.model.visual.finish_cooperative_forward(state)
         payload.main_parts.append(main)
         if payload.deepstack_parts is None:
             payload.deepstack_parts = [[] for _ in deepstack]
         if len(deepstack) != len(payload.deepstack_parts):
-            raise RuntimeError(
-                "vision microbatches returned inconsistent DeepStack"
-            )
+            raise RuntimeError("vision microbatches returned inconsistent DeepStack")
         for parts, value in zip(
             payload.deepstack_parts,
             deepstack,
@@ -1659,9 +1598,7 @@ class ModelRunner:
         payload.next_microbatch += 1
         if payload.next_microbatch == len(payload.microbatches):
             pending.next_vision_payload += 1
-        return pending.next_vision_payload == len(
-            pending.vision_payloads
-        )
+        return pending.next_vision_payload == len(pending.vision_payloads)
 
     @torch.inference_mode()
     def begin_prefill_plan(self, plan: BatchPlan) -> _PendingPrefillExecution:
@@ -1706,9 +1643,7 @@ class ModelRunner:
             return True
         if pending.model_state is None:
             if max_vision_blocks is None:
-                max_vision_blocks = (
-                    self.config.cooperative_prefill_vision_block_quantum
-                )
+                max_vision_blocks = self.config.cooperative_prefill_vision_block_quantum
             vision_complete = self._advance_pending_vision(
                 pending,
                 max_blocks=max_vision_blocks,
@@ -1725,9 +1660,7 @@ class ModelRunner:
                 metadata={
                     "layers": max_layers,
                     "next_layer": pending.model_state.next_layer,
-                    "tokens": int(
-                        pending.model_state.hidden_states.shape[0]
-                    ),
+                    "tokens": int(pending.model_state.hidden_states.shape[0]),
                 },
             ):
                 complete = language_model.advance_cooperative_forward(
@@ -1792,9 +1725,7 @@ class ModelRunner:
             plan.phase is not BatchPhase.DECODE
             or plan.batch_size != 1
             or self.world_size != 1
-            or not compression_mode_supports_cuda_graph(
-                self.config.compression_mode
-            )
+            or not compression_mode_supports_cuda_graph(self.config.compression_mode)
             or getattr(self.config, "enable_visual_pruning_shadow", False)
             or is_trace_enabled()
             or 1 not in getattr(self, "graph_vars", {})
@@ -1817,9 +1748,7 @@ class ModelRunner:
 
         physical_context_len = seq.physical_kv_len
         host_metadata_values[0] = (
-            seq.block_table[-1] * self.block_size
-            + seq.physical_last_block_num_tokens
-            - 1
+            seq.block_table[-1] * self.block_size + seq.physical_last_block_num_tokens - 1
         )
         host_metadata_values[1] = physical_context_len
         host_metadata_values[2] = len(seq)
@@ -1859,9 +1788,7 @@ class ModelRunner:
                 temperatures=None,
                 execution_bucket=1,
                 sampling_mode="greedy",
-                kv_scale_views=(
-                    () if scale_cache is None else (scale_cache[0], scale_cache[1])
-                ),
+                kv_scale_views=(() if scale_cache is None else (scale_cache[0], scale_cache[1])),
             )
             cache = (seq.seq_id, device_batch)
             self._single_greedy_decode_batch_cache = cache
@@ -1895,7 +1822,7 @@ class ModelRunner:
         if any(not seq.block_table for seq in plan.sequences):
             return
         max_chunk = self.config.max_chunk_size
-        for seq, prefill_slice in zip(plan.sequences, plan.prefill_slices):
+        for seq, prefill_slice in zip(plan.sequences, plan.prefill_slices, strict=False):
             if prefill_slice.num_tokens > max_chunk:
                 raise ValueError(
                     "invalid scheduled prefill chunk: "
@@ -1925,7 +1852,7 @@ class ModelRunner:
                     build_visual_pruning_config(self.config),
                     scorer,
                 )
-        for index, (seq, prefill_slice) in enumerate(zip(seqs, plan.prefill_slices)):
+        for index, (seq, prefill_slice) in enumerate(zip(seqs, plan.prefill_slices, strict=False)):
             if (
                 seq.kv_layout is not None
                 and seq.kv_layout.logical_context_len < seq.num_prompt_tokens
@@ -1941,7 +1868,7 @@ class ModelRunner:
         is_prefill: bool,
         scheduled_token_counts: list[int] | None = None,
     ) -> list[int | None]:
-        """One-cycle compatibility adapter for direct P1-P7 runner calls."""
+        """One-cycle compatibility adapter for direct legacy runner calls."""
 
         if scheduled_token_counts is None:
             is_warmup = any(not seq.block_table for seq in seqs)
@@ -2055,20 +1982,16 @@ class ModelRunner:
             host_slot_mapping = host_packed_decode_metadata[:bs]
             host_context_lens = host_packed_decode_metadata[bs : 2 * bs]
             host_decode_max_context_len = host_packed_decode_metadata[3 * bs]
-            host_block_tables = host_packed_decode_metadata[
-                metadata_prefix_size:
-            ].view(bs, max_num_blocks)
+            host_block_tables = host_packed_decode_metadata[metadata_prefix_size:].view(
+                bs, max_num_blocks
+            )
 
             # warmup: 先跑一次, 让 CUDA 编译 kernel
-            slot_mapping.copy_(
-                torch.arange(bs, dtype=torch.int32, device=slot_mapping.device)
-            )
+            slot_mapping.copy_(torch.arange(bs, dtype=torch.int32, device=slot_mapping.device))
             context_lens.fill_(1)
             decode_max_context_len.fill_(1)
             block_tables.zero_()
-            host_slot_mapping.copy_(
-                torch.arange(bs, dtype=torch.int32, device="cpu")
-            )
+            host_slot_mapping.copy_(torch.arange(bs, dtype=torch.int32, device="cpu"))
             host_context_lens.fill_(1)
             host_decode_max_context_len.fill_(1)
             host_block_tables.zero_()
@@ -2111,9 +2034,9 @@ class ModelRunner:
                         DeviceModelInputs(input_ids[:bs], positions[:, :bs])
                     )
                     if compute_greedy_tokens is None:
-                        captured_greedy_tokens = self.model.compute_logits(
-                            outputs[:bs]
-                        ).argmax(dim=-1)
+                        captured_greedy_tokens = self.model.compute_logits(outputs[:bs]).argmax(
+                            dim=-1
+                        )
                     else:
                         captured_greedy_tokens = compute_greedy_tokens(outputs[:bs])
             # torch.cuda.graph(graph, pool):

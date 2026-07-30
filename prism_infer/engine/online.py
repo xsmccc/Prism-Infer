@@ -1,8 +1,11 @@
-"""Single-process online arrival loop built on the P7 engine contracts."""
+"""Single-process online arrival loop built on the engine contracts."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import OrderedDict, deque
+from collections.abc import Callable, Iterable
 from concurrent.futures import (
     FIRST_COMPLETED,
     Future,
@@ -10,19 +13,16 @@ from concurrent.futures import (
     wait,
 )
 from dataclasses import dataclass, field, replace
-import hashlib
-import json
 from math import isfinite
 from pathlib import Path
 from time import perf_counter_ns, sleep
-from typing import Any, Callable, Iterable
+from typing import Any
 
 import numpy as np
-from PIL import Image
 import torch
+from PIL import Image
 
 from prism_infer.sampling_params import SamplingParams
-
 
 NANOSECONDS_PER_SECOND = 1_000_000_000
 _ONLINE_MEDIA_FIELD_BY_TYPE = {
@@ -141,9 +141,7 @@ def _cache_namespace(engine: Any) -> str:
         if component is None:
             return None
         identity: dict[str, object] = {
-            "class": (
-                f"{type(component).__module__}.{type(component).__qualname__}"
-            )
+            "class": (f"{type(component).__module__}.{type(component).__qualname__}")
         }
         to_dict = getattr(component, "to_dict", None)
         if callable(to_dict):
@@ -152,22 +150,14 @@ def _cache_namespace(engine: Any) -> str:
 
     namespace = {
         "schema": _MEDIA_CACHE_KEY_SCHEMA,
-        "model_path": (
-            str(model_path.resolve()) if model_path is not None else ""
-        ),
+        "model_path": (str(model_path.resolve()) if model_path is not None else ""),
         "model_files": model_files,
         "image_max_pixels": getattr(config, "image_max_pixels", None),
         "video_max_pixels": getattr(config, "video_max_pixels", None),
         "processor": component_identity(processor),
-        "image_processor": component_identity(
-            getattr(processor, "image_processor", None)
-        ),
-        "video_processor": component_identity(
-            getattr(processor, "video_processor", None)
-        ),
-        "tokenizer": component_identity(
-            getattr(processor, "tokenizer", None)
-        ),
+        "image_processor": component_identity(getattr(processor, "image_processor", None)),
+        "video_processor": component_identity(getattr(processor, "video_processor", None)),
+        "tokenizer": component_identity(getattr(processor, "tokenizer", None)),
     }
     encoded = json.dumps(
         namespace,
@@ -279,9 +269,7 @@ class OnlineRequest:
             or not isfinite(float(self.ttft_slo_ms))
             or self.ttft_slo_ms <= 0
         ):
-            raise ValueError(
-                "ttft_slo_ms must be a finite positive number or None"
-            )
+            raise ValueError("ttft_slo_ms must be a finite positive number or None")
         if self.ttft_slo_ms is not None:
             object.__setattr__(self, "ttft_slo_ms", float(self.ttft_slo_ms))
 
@@ -399,8 +387,7 @@ def _rebind_cached_media_prompt(
     )
     while (
         common_suffix < max_suffix
-        and old_template_ids[-1 - common_suffix]
-        == new_template_ids[-1 - common_suffix]
+        and old_template_ids[-1 - common_suffix] == new_template_ids[-1 - common_suffix]
     ):
         common_suffix += 1
 
@@ -408,9 +395,7 @@ def _rebind_cached_media_prompt(
     if visual_token_id is None:
         visual_token_id = getattr(cached.inputs, "video_token_id", None)
     placeholder_positions = [
-        index
-        for index, token_id in enumerate(old_template_ids)
-        if token_id == visual_token_id
+        index for index, token_id in enumerate(old_template_ids) if token_id == visual_token_id
     ]
     if not placeholder_positions or common_prefix <= placeholder_positions[-1]:
         return None
@@ -606,9 +591,7 @@ class OnlineServingSession:
             request_id = self.engine._allocate_request_id()
             state.internal_ids[request.request_key] = request_id
             if preprocess_executor is None:
-                raise RuntimeError(
-                    "media arrivals require a preprocessing executor"
-                )
+                raise RuntimeError("media arrivals require a preprocessing executor")
             state.preprocessing[request.request_key] = _PendingPreprocess(
                 request=request,
                 arrival_ns=arrival_ns,
@@ -632,22 +615,15 @@ class OnlineServingSession:
         media_field = _ONLINE_MEDIA_FIELD_BY_TYPE.get(request_type)
         if media_field is None:
             raise RuntimeError(
-                "background preprocessing received unsupported type "
-                f"{request_type!r}"
+                f"background preprocessing received unsupported type {request_type!r}"
             )
         media = payload[media_field]
-        media_objects = (
-            tuple(media)
-            if isinstance(media, (list, tuple))
-            else (media,)
-        )
+        media_objects = tuple(media) if isinstance(media, (list, tuple)) else (media,)
         fingerprint_memo_key = (
             request_type,
             tuple(id(item) for item in media_objects),
         )
-        memoized = self._media_fingerprint_memo.get(
-            fingerprint_memo_key
-        )
+        memoized = self._media_fingerprint_memo.get(fingerprint_memo_key)
         if (
             memoized is not None
             and len(memoized.media_objects) == len(media_objects)
@@ -661,31 +637,20 @@ class OnlineServingSession:
             )
         ):
             media_fingerprint = memoized.fingerprint
-            self._media_fingerprint_memo.move_to_end(
-                fingerprint_memo_key
-            )
+            self._media_fingerprint_memo.move_to_end(fingerprint_memo_key)
             self._media_fingerprint_memo_hits += 1
         else:
             self._media_fingerprint_memo_misses += 1
             if memoized is not None:
-                del self._media_fingerprint_memo[
-                    fingerprint_memo_key
-                ]
+                del self._media_fingerprint_memo[fingerprint_memo_key]
             media_fingerprint = _content_fingerprint(*media_objects)
             if media_fingerprint is not None:
-                self._media_fingerprint_memo[
-                    fingerprint_memo_key
-                ] = _MediaFingerprintMemoEntry(
+                self._media_fingerprint_memo[fingerprint_memo_key] = _MediaFingerprintMemoEntry(
                     media_objects=media_objects,
                     fingerprint=media_fingerprint,
                 )
-                self._media_fingerprint_memo.move_to_end(
-                    fingerprint_memo_key
-                )
-                while (
-                    len(self._media_fingerprint_memo)
-                    > _ONLINE_MEDIA_CACHE_MAX_ENTRIES
-                ):
+                self._media_fingerprint_memo.move_to_end(fingerprint_memo_key)
+                while len(self._media_fingerprint_memo) > _ONLINE_MEDIA_CACHE_MAX_ENTRIES:
                     self._media_fingerprint_memo.popitem(last=False)
         cache_key = (
             self._cache_namespace,
@@ -698,23 +663,15 @@ class OnlineServingSession:
             request_type,
             media_fingerprint or "",
         )
-        cached = (
-            None
-            if media_fingerprint is None
-            else self._media_preprocess_cache.get(cache_key)
-        )
+        cached = None if media_fingerprint is None else self._media_preprocess_cache.get(cache_key)
         if cached is not None:
             self._media_preprocess_cache.move_to_end(cache_key)
             self._media_preprocess_cache_hits += 1
             inputs = cached.inputs
-            visual_embedding_fingerprint = (
-                cached.visual_embedding_fingerprint
-            )
+            visual_embedding_fingerprint = cached.visual_embedding_fingerprint
         else:
             layout_cached = (
-                None
-                if media_fingerprint is None
-                else self._media_layout_cache.get(layout_key)
+                None if media_fingerprint is None else self._media_layout_cache.get(layout_key)
             )
             inputs = (
                 None
@@ -733,9 +690,7 @@ class OnlineServingSession:
                 self._media_preprocess_cache_hits += 1
                 self._media_prompt_rebind_hits += 1
                 self._media_layout_cache.move_to_end(layout_key)
-                visual_embedding_fingerprint = (
-                    layout_cached.visual_embedding_fingerprint
-                )
+                visual_embedding_fingerprint = layout_cached.visual_embedding_fingerprint
             else:
                 self._media_preprocess_cache_misses += 1
                 if layout_cached is not None:
@@ -754,37 +709,26 @@ class OnlineServingSession:
                     )
                 else:
                     raise RuntimeError(
-                        "background preprocessing received unsupported type "
-                        f"{request_type!r}"
+                        f"background preprocessing received unsupported type {request_type!r}"
                     )
-                visual_embedding_fingerprint = (
-                    _visual_embedding_fingerprint(
-                        self._cache_namespace,
-                        request_type,
-                        inputs=inputs,
-                    )
+                visual_embedding_fingerprint = _visual_embedding_fingerprint(
+                    self._cache_namespace,
+                    request_type,
+                    inputs=inputs,
                 )
             if media_fingerprint is not None:
                 cache_entry = _MediaPreprocessCacheEntry(
                     inputs=inputs,
-                    visual_embedding_fingerprint=(
-                        visual_embedding_fingerprint
-                    ),
+                    visual_embedding_fingerprint=(visual_embedding_fingerprint),
                     prompt=payload["prompt"],
                 )
                 self._media_preprocess_cache[cache_key] = cache_entry
                 self._media_preprocess_cache.move_to_end(cache_key)
-                while (
-                    len(self._media_preprocess_cache)
-                    > _ONLINE_MEDIA_CACHE_MAX_ENTRIES
-                ):
+                while len(self._media_preprocess_cache) > _ONLINE_MEDIA_CACHE_MAX_ENTRIES:
                     self._media_preprocess_cache.popitem(last=False)
                 self._media_layout_cache[layout_key] = cache_entry
                 self._media_layout_cache.move_to_end(layout_key)
-                while (
-                    len(self._media_layout_cache)
-                    > _ONLINE_MEDIA_CACHE_MAX_ENTRIES
-                ):
+                while len(self._media_layout_cache) > _ONLINE_MEDIA_CACHE_MAX_ENTRIES:
                     self._media_layout_cache.popitem(last=False)
 
         if request_type in ("image", "images"):
@@ -807,12 +751,8 @@ class OnlineServingSession:
             "enable_visual_embedding_cache",
             False,
         ):
-            sequence.visual_embedding_cache_key = (
-                visual_embedding_fingerprint
-            )
-        sequence.multimodal_prefix_cache_key = (
-            visual_embedding_fingerprint
-        )
+            sequence.visual_embedding_cache_key = visual_embedding_fingerprint
+        sequence.multimodal_prefix_cache_key = visual_embedding_fingerprint
         return sequence
 
     def _admit_ready_preprocessing(self, state: _OnlineRunState) -> None:
@@ -864,12 +804,9 @@ class OnlineServingSession:
         if state.pending:
             wait_s = max(
                 0.0,
-                state.pending[0].arrival_offset_s
-                - state.elapsed_seconds(self.clock_ns()),
+                state.pending[0].arrival_offset_s - state.elapsed_seconds(self.clock_ns()),
             )
-        futures = [
-            pending.future for pending in state.preprocessing.values()
-        ]
+        futures = [pending.future for pending in state.preprocessing.values()]
         if futures:
             wait(
                 futures,
@@ -884,11 +821,7 @@ class OnlineServingSession:
         state: _OnlineRunState,
         preprocess_executor: ThreadPoolExecutor,
     ) -> None:
-        while (
-            state.pending
-            or state.preprocessing
-            or not self.engine.is_finished()
-        ):
+        while state.pending or state.preprocessing or not self.engine.is_finished():
             self._submit_ready_arrivals(state, preprocess_executor)
             self._admit_ready_preprocessing(state)
             self._apply_ready_cancellations(state)
@@ -945,12 +878,8 @@ class OnlineServingSession:
                 "uncacheable": self._media_preprocess_cache_uncacheable,
                 "prompt_rebind_hits": self._media_prompt_rebind_hits,
                 "prompt_rebind_misses": self._media_prompt_rebind_misses,
-                "fingerprint_memo_hits": (
-                    self._media_fingerprint_memo_hits
-                ),
-                "fingerprint_memo_misses": (
-                    self._media_fingerprint_memo_misses
-                ),
+                "fingerprint_memo_hits": (self._media_fingerprint_memo_hits),
+                "fingerprint_memo_misses": (self._media_fingerprint_memo_misses),
             },
         )
 

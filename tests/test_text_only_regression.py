@@ -1,11 +1,9 @@
 """P2.7 纯文本路径回归验证。"""
 
 import pytest
-
-from prism_infer import LLM, SamplingParams
-
 from conftest import get_model_path
 
+from prism_infer import LLM, SamplingParams
 
 pytestmark = [
     pytest.mark.model,

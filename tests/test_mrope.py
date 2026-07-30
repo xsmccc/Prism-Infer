@@ -2,9 +2,9 @@
 
 import pytest
 import torch
-from prism_infer.vision.mrope import MRope, apply_mrope, rotate_half
-
 from conftest import get_model_path, require_transformers
+
+from prism_infer.vision.mrope import MRope, apply_mrope, rotate_half
 
 
 @pytest.mark.model

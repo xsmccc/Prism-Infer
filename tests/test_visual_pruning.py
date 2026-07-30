@@ -196,10 +196,12 @@ def test_runtime_attention_scorer_matches_independent_reference():
     print(f"runtime attention k shape: {list(k.shape)}")
     print(f"runtime attention score shape: {list(actual.shape)}")
     print(
-        f"runtime attention actual mean/std: {actual.mean().item():.6e}/{actual.std(unbiased=False).item():.6e}"
+        f"runtime attention actual mean/std: {actual.mean().item():.6e}/"
+        f"{actual.std(unbiased=False).item():.6e}"
     )
     print(
-        f"runtime attention ref mean/std: {reference.mean().item():.6e}/{reference.std(unbiased=False).item():.6e}"
+        f"runtime attention ref mean/std: {reference.mean().item():.6e}/"
+        f"{reference.std(unbiased=False).item():.6e}"
     )
     print(f"runtime attention max diff: {max_diff:.6e}")
     assert max_diff < 1e-5

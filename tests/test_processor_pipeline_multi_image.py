@@ -4,9 +4,9 @@ from dataclasses import replace
 
 import pytest
 import torch
+from conftest import get_model_path, require_transformers
 from PIL import Image
 
-from conftest import get_model_path, require_transformers
 from prism_infer.engine.vl_inputs import (
     build_image_prompt,
     build_interleaved_image_prompt,
@@ -14,7 +14,6 @@ from prism_infer.engine.vl_inputs import (
     prepare_interleaved_image_inputs,
     validate_image_inputs,
 )
-
 
 pytestmark = [pytest.mark.model, pytest.mark.integration]
 

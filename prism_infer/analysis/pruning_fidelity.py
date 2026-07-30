@@ -16,7 +16,6 @@ from prism_infer.analysis.benchmark_schema import summarize_values
 from prism_infer.analysis.pareto_summary import stable_prefix_lengths
 from prism_infer.analysis.reference_quality import score_reference_batch
 
-
 PRUNING_FIDELITY_SCHEMA_VERSION = 2
 TASK_QUALITY_METRICS = ("token_f1", "rouge_l_f1")
 PRUNING_FIDELITY_LIMITATIONS = (

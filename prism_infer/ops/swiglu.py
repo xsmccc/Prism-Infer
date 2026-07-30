@@ -79,9 +79,7 @@ def fused_silu_mul(packed: torch.Tensor) -> torch.Tensor:
         device=packed.device,
     )
     if packed.shape[0] <= MAX_SWIGLU_BATCH:
-        _fused_swiglu_kernel[
-            (packed.shape[0], triton.cdiv(intermediate_size, SWIGLU_BLOCK_SIZE))
-        ](
+        _fused_swiglu_kernel[(packed.shape[0], triton.cdiv(intermediate_size, SWIGLU_BLOCK_SIZE))](
             packed,
             output,
             INTERMEDIATE_SIZE=intermediate_size,

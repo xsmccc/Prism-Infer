@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 from prism_infer.analysis.online_serving import (
     validate_online_benchmark_record,
@@ -103,7 +103,8 @@ def render_online_summary_markdown(summary: Mapping[str, object]) -> str:
         f"- all clean: `{summary.get('all_clean')}`",
         f"- commits: `{summary.get('commits')}`",
         "",
-        "| Case | Mode | Arrival | Rate | Requests | Good | Queue p99 | TTFT p99 | TPOT p99 | Req/s | Goodput/s | Peak active | Preempt S/R |",
+        "| Case | Mode | Arrival | Rate | Requests | Good | Queue p99 | TTFT p99 | "
+        "TPOT p99 | Req/s | Goodput/s | Peak active | Preempt S/R |",
         "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:

@@ -7,12 +7,12 @@ try:
 except ImportError:
     pytest = None
 
-from benchmarks.harness import materialize_requests
 from conftest import get_model_path
+
+from benchmarks.harness import materialize_requests
 from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import load_workload_manifest
 from prism_infer.engine.online import OnlineRequest, OnlineServingSession
-
 
 pytestmark = (
     []

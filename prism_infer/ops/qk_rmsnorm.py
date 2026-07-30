@@ -128,12 +128,8 @@ if HAS_QK_RMSNORM_TRITON:
         variance = tl.where(is_q, q_variance, k_variance)
         inverse_rms = libdevice.rsqrt(variance + EPS)
 
-        q_weight = (
-            tl.load(q_weight_ptr + offsets).to(tl.bfloat16).to(tl.float32)
-        )
-        k_weight = (
-            tl.load(k_weight_ptr + offsets).to(tl.bfloat16).to(tl.float32)
-        )
+        q_weight = tl.load(q_weight_ptr + offsets).to(tl.bfloat16).to(tl.float32)
+        k_weight = tl.load(k_weight_ptr + offsets).to(tl.bfloat16).to(tl.float32)
         weight = tl.where(is_q, q_weight, k_weight)
         normalized = _round_bfloat16(values * inverse_rms)
         output = _round_bfloat16(normalized * weight)
@@ -154,25 +150,15 @@ if HAS_QK_RMSNORM_TRITON:
             other=0.0,
         ).to(tl.float32)
         rotated_values = tl.where(is_q, q_rotated, k_rotated)
-        q_rotated_weight = (
-            tl.load(q_weight_ptr + rotated_offsets)
-            .to(tl.bfloat16)
-            .to(tl.float32)
-        )
-        k_rotated_weight = (
-            tl.load(k_weight_ptr + rotated_offsets)
-            .to(tl.bfloat16)
-            .to(tl.float32)
-        )
+        q_rotated_weight = tl.load(q_weight_ptr + rotated_offsets).to(tl.bfloat16).to(tl.float32)
+        k_rotated_weight = tl.load(k_weight_ptr + rotated_offsets).to(tl.bfloat16).to(tl.float32)
         rotated_weight = tl.where(
             is_q,
             q_rotated_weight,
             k_rotated_weight,
         )
         rotated_normalized = _round_bfloat16(rotated_values * inverse_rms)
-        rotated_output = _round_bfloat16(
-            rotated_normalized * rotated_weight
-        )
+        rotated_output = _round_bfloat16(rotated_normalized * rotated_weight)
         rotated_output = tl.where(
             offsets < HEAD_DIM // 2,
             -rotated_output,
@@ -184,16 +170,8 @@ if HAS_QK_RMSNORM_TRITON:
             row // Q_HEADS,
             k_row // K_HEADS,
         )
-        cos = (
-            tl.load(cos_ptr + token_row * HEAD_DIM + offsets)
-            .to(tl.bfloat16)
-            .to(tl.float32)
-        )
-        sin = (
-            tl.load(sin_ptr + token_row * HEAD_DIM + offsets)
-            .to(tl.bfloat16)
-            .to(tl.float32)
-        )
+        cos = tl.load(cos_ptr + token_row * HEAD_DIM + offsets).to(tl.bfloat16).to(tl.float32)
+        sin = tl.load(sin_ptr + token_row * HEAD_DIM + offsets).to(tl.bfloat16).to(tl.float32)
         direct_product = _round_bfloat16(output * cos)
         rotated_product = _round_bfloat16(rotated_output * sin)
         output = _round_bfloat16(direct_product + rotated_product)
@@ -258,9 +236,7 @@ if HAS_QK_RMSNORM_TRITON:
         squared = tl.where(valid, values * values, 0.0)
         variance = tl.sum(squared, axis=1)[:, None] / HEAD_DIM
         inverse_rms = libdevice.rsqrt(variance + EPS)
-        normalized = (
-            (values * inverse_rms).to(tl.float32).to(tl.bfloat16).to(tl.float32)
-        )
+        normalized = (values * inverse_rms).to(tl.float32).to(tl.bfloat16).to(tl.float32)
         output = (weight * normalized).to(tl.bfloat16).to(tl.float32)
 
         if APPLY_MROPE:
@@ -281,27 +257,16 @@ if HAS_QK_RMSNORM_TRITON:
             ).to(tl.float32)
             rotated_values = tl.where(is_q, q_rotated, k_rotated)
             q_rotated_weight = (
-                tl.load(q_weight_ptr + rotated_offsets)
-                .to(tl.bfloat16)
-                .to(tl.float32)
+                tl.load(q_weight_ptr + rotated_offsets).to(tl.bfloat16).to(tl.float32)
             )
             k_rotated_weight = (
-                tl.load(k_weight_ptr + rotated_offsets)
-                .to(tl.bfloat16)
-                .to(tl.float32)
+                tl.load(k_weight_ptr + rotated_offsets).to(tl.bfloat16).to(tl.float32)
             )
             rotated_weight = tl.where(is_q, q_rotated_weight, k_rotated_weight)
             rotated_normalized = (
-                (rotated_values * inverse_rms)
-                .to(tl.float32)
-                .to(tl.bfloat16)
-                .to(tl.float32)
+                (rotated_values * inverse_rms).to(tl.float32).to(tl.bfloat16).to(tl.float32)
             )
-            rotated_output = (
-                (rotated_weight * rotated_normalized)
-                .to(tl.bfloat16)
-                .to(tl.float32)
-            )
+            rotated_output = (rotated_weight * rotated_normalized).to(tl.bfloat16).to(tl.float32)
             rotated_output = tl.where(
                 offsets < HEAD_DIM // 2,
                 -rotated_output,
@@ -352,9 +317,7 @@ if HAS_QK_RMSNORM_TRITON:
                 mask=valid & ~is_q,
                 other=-1,
             )
-            cache_offsets = (
-                slots * K_HEADS * HEAD_DIM + kv_heads * HEAD_DIM + offsets
-            )
+            cache_offsets = slots * K_HEADS * HEAD_DIM + kv_heads * HEAD_DIM + offsets
             store_mask = valid & ~is_q & (slots >= 0)
             values_v = tl.load(
                 v_ptr + (rows - Q_ROWS) * HEAD_DIM + offsets,
@@ -407,11 +370,7 @@ def fused_qk_rmsnorm(
     for name, weight in (("q_weight", q_weight), ("k_weight", k_weight)):
         if tuple(weight.shape) != expected_weight_shape:
             raise ValueError(f"{name} must have shape {expected_weight_shape}")
-        if (
-            weight.device != q.device
-            or weight.dtype != q.dtype
-            or not weight.is_contiguous()
-        ):
+        if weight.device != q.device or weight.dtype != q.dtype or not weight.is_contiguous():
             raise ValueError(f"{name} must be contiguous BF16 on the Q/K device")
     if not isinstance(eps, float) or not math.isfinite(eps) or eps <= 0.0:
         raise ValueError(f"eps must be a positive finite float, got {eps!r}")
@@ -448,9 +407,7 @@ def fused_qk_rmsnorm(
                 or not cache.is_contiguous()
                 or tuple(cache.shape[-2:]) != tuple(k.shape[-2:])
             ):
-                raise ValueError(
-                    f"{name} must be contiguous BF16 with K head dimensions"
-                )
+                raise ValueError(f"{name} must be contiguous BF16 with K head dimensions")
         if (
             slot_mapping.dtype != torch.int32
             or slot_mapping.device != q.device
@@ -508,24 +465,18 @@ def fused_qk_rmsnorm_prefill(
     if q.ndim != 3 or k.ndim != 3:
         raise ValueError("prefill fused Q/K RMSNorm expects rank-3 Q and K")
     if q.device != k.device or not q.is_cuda:
-        raise ValueError(
-            "prefill fused Q/K RMSNorm requires one CUDA device"
-        )
+        raise ValueError("prefill fused Q/K RMSNorm requires one CUDA device")
     if q.dtype != torch.bfloat16 or k.dtype != torch.bfloat16:
         raise ValueError("prefill fused Q/K RMSNorm requires BF16 Q and K")
     if q.shape[0] != k.shape[0] or q.shape[-1] != k.shape[-1]:
-        raise ValueError(
-            "prefill fused Q/K RMSNorm requires matching token and head dimensions"
-        )
+        raise ValueError("prefill fused Q/K RMSNorm requires matching token and head dimensions")
     if q.shape[-1] != SUPPORTED_QK_RMSNORM_HEAD_DIM:
         raise ValueError(
             "prefill fused Q/K RMSNorm supports head_dim="
             f"{SUPPORTED_QK_RMSNORM_HEAD_DIM}, got {q.shape[-1]}"
         )
     if not q.is_contiguous() or not k.is_contiguous():
-        raise ValueError(
-            "prefill fused Q/K RMSNorm requires contiguous Q and K"
-        )
+        raise ValueError("prefill fused Q/K RMSNorm requires contiguous Q and K")
     expected_weight_shape = (q.shape[-1],)
     for name, weight in (("q_weight", q_weight), ("k_weight", k_weight)):
         if (
@@ -539,9 +490,7 @@ def fused_qk_rmsnorm_prefill(
                 f"{expected_weight_shape} on the Q/K device"
             )
     if not isinstance(eps, float) or not math.isfinite(eps) or eps <= 0.0:
-        raise ValueError(
-            f"eps must be a positive finite float, got {eps!r}"
-        )
+        raise ValueError(f"eps must be a positive finite float, got {eps!r}")
     expected_position_shape = (q.shape[0], q.shape[-1])
     for name, value in (("cos", cos), ("sin", sin)):
         if (
@@ -637,12 +586,7 @@ def can_use_prefill_qk_rmsnorm(
         return False
     if cos.device != q.device or sin.device != q.device:
         return False
-    return (
-        q.is_contiguous()
-        and k.is_contiguous()
-        and cos.is_contiguous()
-        and sin.is_contiguous()
-    )
+    return q.is_contiguous() and k.is_contiguous() and cos.is_contiguous() and sin.is_contiguous()
 
 
 def maybe_fused_qk_rmsnorm_prefill(

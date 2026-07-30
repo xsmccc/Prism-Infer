@@ -10,7 +10,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -24,7 +23,6 @@ from prism_infer.analysis.p9_quality_materialization import (
     selection_manifest_from_materialization,
     sha256_file,
 )
-
 
 DEFAULT_PROTOCOL = REPO_ROOT / "benchmarks/workloads/p9_quality_protocol.json"
 DEFAULT_SELECTION = REPO_ROOT / "benchmarks/workloads/p9_quality_selection.json"

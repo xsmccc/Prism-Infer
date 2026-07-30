@@ -19,7 +19,6 @@ from prism_infer.models.qwen3_vl_architecture import (
     ROTARY_PAIR_SIZE,
 )
 
-
 POSITION_ID_MATRIX_RANK = 2
 
 

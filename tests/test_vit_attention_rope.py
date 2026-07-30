@@ -3,12 +3,11 @@
 用 HF 生成的 cos/sin 作为 ground truth，验证我们的 apply_rotary_emb 输出。
 """
 
+import importlib.util
 import os
 
 import pytest
 import torch
-
-import importlib.util
 
 spec = importlib.util.spec_from_file_location(
     "vision_encoder",

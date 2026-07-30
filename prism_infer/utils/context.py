@@ -6,10 +6,12 @@
 # 替代 scheduler/request contract。
 # ═══════════════════════════════════════════════════════════════
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any
+
 import torch
 
 
@@ -30,7 +32,7 @@ class Context:
     packed_decode_metadata: torch.Tensor | None = None  # Graph replay 的连续 attention 元数据
     paged_decode_block_n: int = 32  # Triton decode token tile; CUDA Graph capture-stable
     trace_metadata: Any | None = None  # KV trace 元数据; 默认关闭时为 None
-    compression_metadata: Any | None = None  # KV 压缩元数据; P5.0 off baseline 为 no-op
+    compression_metadata: Any | None = None  # KV 压缩元数据; off baseline 为 no-op
     visual_pruning_slot_mappings: tuple[torch.Tensor, ...] = ()
     visual_pruning_scorer: Any | None = None  # prefill runtime attention score collector
 
@@ -76,7 +78,7 @@ class Context:
 # isolates concurrent threads/async tasks and supports exact nested restoration.
 _CONTEXT: ContextVar[Context] = ContextVar(
     "prism_infer_execution_context",
-    default=Context(),
+    default=Context(),  # noqa: B039 - Context is frozen and has immutable defaults.
 )
 
 

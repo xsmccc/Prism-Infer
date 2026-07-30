@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence as TypingSequence
 from dataclasses import dataclass
-from typing import Protocol, Sequence as TypingSequence
+from typing import Protocol
 
 from prism_infer.engine.sequence import Sequence
 
@@ -241,10 +242,8 @@ class VisionAwareSchedulerPolicy(FCFSSchedulerPolicy):
             return None
         if (
             not has_decode
-            or decode_batches_since_heavy_prefill
-            >= self.min_decode_batches_between_heavy_prefills
-            or light_prefill_bypasses_since_heavy
-            >= self.max_light_prefill_bypasses_per_heavy
+            or decode_batches_since_heavy_prefill >= self.min_decode_batches_between_heavy_prefills
+            or light_prefill_bypasses_since_heavy >= self.max_light_prefill_bypasses_per_heavy
             or not self.is_heavy_prefill(candidates[0].prefill_vision_patch_count)
         ):
             return 0
@@ -278,9 +277,7 @@ class SLOAwareSchedulerPolicy(FCFSSchedulerPolicy):
     def __post_init__(self) -> None:
         FCFSSchedulerPolicy.__post_init__(self)
         if self.heavy_prefill_vision_patch_threshold <= 0:
-            raise ValueError(
-                "heavy_prefill_vision_patch_threshold must be positive"
-            )
+            raise ValueError("heavy_prefill_vision_patch_threshold must be positive")
         if any(value <= 0 for value in self.prefill_reserve_ms_by_tier):
             raise ValueError("prefill reserve estimates must be positive")
 

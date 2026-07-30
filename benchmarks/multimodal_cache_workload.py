@@ -6,15 +6,13 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-
 _MEDIA_KEYS = ("image", "images", "video")
 
 
 def _copy_image(image: object, *, variant_id: int | None) -> Image.Image:
     if not isinstance(image, Image.Image):
         raise TypeError(
-            "multimodal cache workload requires decoded PIL images, got "
-            f"{type(image).__name__}"
+            f"multimodal cache workload requires decoded PIL images, got {type(image).__name__}"
         )
     copied = image.copy()
     if variant_id is None:
@@ -117,14 +115,10 @@ def build_multimodal_cache_workload(
         "requested_repeat_rate": repeat_rate,
         "repeated_media_requests": repeated_count,
         "unique_media_requests": media_count - repeated_count,
-        "realized_repeat_rate": (
-            repeated_count / media_count if media_count else None
-        ),
+        "realized_repeat_rate": (repeated_count / media_count if media_count else None),
         "media_object_policy": "fresh_decoded_objects_per_request",
         "unique_media_policy": "deterministic_binary_content_marker",
         "question_policy": (
-            "deterministic_different_suffix"
-            if vary_questions
-            else "original_question"
+            "deterministic_different_suffix" if vary_questions else "original_question"
         ),
     }

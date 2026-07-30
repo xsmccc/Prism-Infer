@@ -9,9 +9,10 @@ import json
 import os
 import random
 import sys
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import torch
 from PIL import Image
@@ -56,8 +57,8 @@ from prism_infer.engine.visual_pruning import (
     DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS,
     DEFAULT_VISUAL_PRUNING_KEEP_RATIO,
     DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
-    DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS,
     DEFAULT_VISUAL_PRUNING_STRATEGY,
+    DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS,
 )
 from prism_infer.engine.vl_inputs import (
     ImageInputs,
@@ -99,9 +100,7 @@ def _build_llm(
         image_max_pixels=runtime["image_max_pixels"],
         video_max_pixels=runtime["video_max_pixels"],
         visual_pruning_keep_ratio=compression_config["visual_pruning_keep_ratio"],
-        visual_pruning_min_keep_tokens=(
-            compression_config["visual_pruning_min_keep_tokens"]
-        ),
+        visual_pruning_min_keep_tokens=(compression_config["visual_pruning_min_keep_tokens"]),
         visual_pruning_video_min_keep_tokens=(
             compression_config["visual_pruning_video_min_keep_tokens"]
         ),
@@ -305,13 +304,9 @@ def main() -> None:
     compression_config = {
         "visual_pruning_keep_ratio": args.visual_pruning_keep_ratio,
         "visual_pruning_min_keep_tokens": args.visual_pruning_min_keep_tokens,
-        "visual_pruning_video_min_keep_tokens": (
-            args.visual_pruning_video_min_keep_tokens
-        ),
+        "visual_pruning_video_min_keep_tokens": (args.visual_pruning_video_min_keep_tokens),
         "visual_pruning_strategy": args.visual_pruning_strategy,
-        "visual_pruning_attention_last_n_layers": (
-            args.visual_pruning_attention_last_n_layers
-        ),
+        "visual_pruning_attention_last_n_layers": (args.visual_pruning_attention_last_n_layers),
     }
     run_contract = {
         "dataset": args.dataset,

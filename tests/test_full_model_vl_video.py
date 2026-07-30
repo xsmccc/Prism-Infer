@@ -6,17 +6,14 @@
 """
 
 import gc
-import sys
 
 import pytest
 import torch
-
-sys.path.insert(0, "/data/Prism-Infer")
 from conftest import get_model_path, require_transformers, with_hf_mm_token_type_ids
-from prism_infer.engine.vl_inputs import prepare_video_inputs
-from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 from test_processor_pipeline_video import demo_video_frames
 
+from prism_infer.engine.vl_inputs import prepare_video_inputs
+from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 
 pytestmark = [
     pytest.mark.model,
@@ -93,6 +90,7 @@ def run_our_vl_forward(inputs, position_ids: torch.Tensor) -> torch.Tensor:
     """运行 Prism-Infer 视频 forward，返回最后 token logits。"""
 
     from transformers import Qwen3VLForConditionalGeneration
+
     from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 
     print(f"  加载 HF 到 CPU 提取权重... (显存: {_gpu_mem():.1f} GB)")

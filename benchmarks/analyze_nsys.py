@@ -17,7 +17,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-
 _NANOSECONDS_PER_MILLISECOND = 1_000_000.0
 _NANOSECONDS_PER_MICROSECOND = 1_000.0
 _TOP_KERNEL_LIMIT = 20

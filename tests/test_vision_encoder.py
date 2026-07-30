@@ -4,13 +4,12 @@
 Ground truth: HF Qwen3VLVisionModel (model.visual)
 """
 
+import importlib.util
 import os
 
+import pytest
 import torch
 from torch import nn
-import pytest
-
-import importlib.util
 
 spec = importlib.util.spec_from_file_location(
     "vision_encoder",
@@ -52,7 +51,7 @@ def test_vision_tensor_region_split_is_exact() -> None:
     assert len(reference_deepstack) == len(actual_deepstack) == 3
     assert all(
         torch.equal(reference, actual)
-        for reference, actual in zip(reference_deepstack, actual_deepstack)
+        for reference, actual in zip(reference_deepstack, actual_deepstack, strict=False)
     )
     assert tensor_inputs[-1] == ((0, 8), (8, 16))
     tensor_shapes = [

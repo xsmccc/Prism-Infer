@@ -91,9 +91,7 @@ class _ProcessDeviceMemorySampler:
 
     def __init__(self, *, device_index: int = 0, interval_ms: float = 10.0) -> None:
         if pynvml is None:
-            raise RuntimeError(
-                "--sample-process-memory requires the nvidia-ml-py/pynvml package"
-            )
+            raise RuntimeError("--sample-process-memory requires the nvidia-ml-py/pynvml package")
         self.device_index = device_index
         self.interval_ms = interval_ms
         self._stop = Event()
@@ -281,9 +279,7 @@ def main() -> None:
         visual_pruning_keep_ratio=args.visual_pruning_keep_ratio,
         visual_pruning_min_keep_tokens=args.visual_pruning_min_keep_tokens,
         visual_pruning_strategy=args.visual_pruning_strategy,
-        visual_pruning_attention_last_n_layers=(
-            args.visual_pruning_attention_last_n_layers
-        ),
+        visual_pruning_attention_last_n_layers=(args.visual_pruning_attention_last_n_layers),
         logits_precision="selective_fp32",
         mlp_projection_mode="packed",
         paged_decode_block_n=256,
@@ -309,9 +305,7 @@ def main() -> None:
         attention_backend = "prism_triton_paged_scaled_fp8"
     else:
         attention_backend = "prism_triton_paged_visual_compact_scaled_fp8"
-    process_memory_sampler = (
-        _ProcessDeviceMemorySampler() if args.sample_process_memory else None
-    )
+    process_memory_sampler = _ProcessDeviceMemorySampler() if args.sample_process_memory else None
     if process_memory_sampler is not None:
         process_memory_sampler.start()
 
@@ -495,8 +489,7 @@ def main() -> None:
 
         expected_prompt_kv = stable_prompt_kv(prompt_kv_runs[0])
         if any(
-            stable_prompt_kv(prompt_kv) != expected_prompt_kv
-            for prompt_kv in prompt_kv_runs[1:]
+            stable_prompt_kv(prompt_kv) != expected_prompt_kv for prompt_kv in prompt_kv_runs[1:]
         ):
             raise RuntimeError("Prism prompt KV layout changed across measured repeats")
         audited_prompt_ids = prompt_token_runs[0]
@@ -509,9 +502,7 @@ def main() -> None:
         graph = llm.model_runner.cudagraph_metadata(1)
         compile_metadata = llm.model_runner.compile_metadata()
         block4_gate_up = llm.model_runner.block4_gate_up_metadata()
-        vision_tensor_cudagraph = (
-            llm.model_runner.vision_tensor_cudagraph_metadata()
-        )
+        vision_tensor_cudagraph = llm.model_runner.vision_tensor_cudagraph_metadata()
         record = {
             "schema_version": 1,
             "record_type": "external_system_benchmark",
@@ -559,9 +550,7 @@ def main() -> None:
                     "keep_ratio": args.visual_pruning_keep_ratio,
                     "min_keep_tokens": args.visual_pruning_min_keep_tokens,
                     "strategy": args.visual_pruning_strategy,
-                    "attention_last_n_layers": (
-                        args.visual_pruning_attention_last_n_layers
-                    ),
+                    "attention_last_n_layers": (args.visual_pruning_attention_last_n_layers),
                 },
                 "decode_block4_gate_up": block4_gate_up,
                 "vision_tensor_cudagraph": vision_tensor_cudagraph,
@@ -572,13 +561,9 @@ def main() -> None:
                 "compression": args.compression_mode,
                 "block_size": args.kvcache_block_size,
                 "blocks": llm.model_runner.num_kvcache_blocks,
-                "capacity_tokens": (
-                    llm.model_runner.num_kvcache_blocks * args.kvcache_block_size
-                ),
+                "capacity_tokens": (llm.model_runner.num_kvcache_blocks * args.kvcache_block_size),
                 "payload_dtype": str(kv_cache.dtype),
-                "scale_dtype": (
-                    "none" if kv_scale_cache is None else str(kv_scale_cache.dtype)
-                ),
+                "scale_dtype": ("none" if kv_scale_cache is None else str(kv_scale_cache.dtype)),
                 "payload_bytes": kv_storage.payload,
                 "scale_bytes": kv_storage.scales,
                 "total_bytes": kv_storage.total,
@@ -615,9 +600,7 @@ def main() -> None:
                 "full_end_to_end_scope": (
                     "request.materialize_plus_request_preprocessing_plus_engine"
                 ),
-                "full_ttft_scope": (
-                    "request.materialize_start_to_first_sampled_token_return"
-                ),
+                "full_ttft_scope": ("request.materialize_start_to_first_sampled_token_return"),
             },
             "correctness": {
                 "outputs_identical_across_repeats": True,

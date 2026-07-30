@@ -4,14 +4,13 @@ import pickle
 
 import pytest
 import torch
+from conftest import get_model_path, require_transformers
 from PIL import Image
 
-from conftest import get_model_path, require_transformers
 from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.vl_inputs import prepare_single_image_inputs
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 from prism_infer.sampling_params import SamplingParams
-
 
 pytestmark = [pytest.mark.model, pytest.mark.integration]
 

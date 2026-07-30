@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from math import isfinite
-from typing import Mapping, Sequence
-
 
 ONLINE_SUMMARY_SCHEMA_VERSION = 1
 ONLINE_BENCHMARK_SCHEMA_VERSION = 2

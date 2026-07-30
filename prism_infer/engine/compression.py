@@ -1,27 +1,24 @@
 """KV cache compression metadata and gates.
 
-P5 keeps the floating-point `off` baseline intact and introduces
-`visual_prune` as a logical retention strategy.  P5.3 adds `fp8_kv` as a
-physical KV storage baseline that keeps logical context unchanged but stores
-cache elements in float8.
+The floating-point ``off`` mode provides the uncompressed baseline.
+``visual_prune`` controls logical retention, while the FP8 modes select
+physical KV storage without changing the logical context contract.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict
-from dataclasses import dataclass
-from typing import Sequence as TypingSequence
+from collections.abc import Sequence as TypingSequence
+from dataclasses import asdict, dataclass
 
 from prism_infer.engine.visual_pruning import (
     DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS,
     DEFAULT_VISUAL_PRUNING_KEEP_RATIO,
     DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
-    DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS,
     DEFAULT_VISUAL_PRUNING_STRATEGY,
+    DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS,
     VisualPruningConfig,
     compute_pruning_decision,
 )
-
 
 COMPRESSION_OFF = "off"
 COMPRESSION_VISUAL_PRUNE = "visual_prune"
@@ -161,7 +158,7 @@ def compression_supports_cuda_graph(
 
 
 def build_visual_pruning_config(config) -> VisualPruningConfig:
-    """Build the config for P5.2 visual-pruning decisions."""
+    """Build a validated visual-pruning decision config."""
 
     return VisualPruningConfig(
         keep_ratio=float(
@@ -254,9 +251,7 @@ def _build_visual_pruning_records_by_batch(
                 and getattr(seq, "kv_layout", None) is not None
                 and cached_record is not None
             ):
-                records.append(
-                    _with_batch_index(cached_record, batch_index)
-                )
+                records.append(_with_batch_index(cached_record, batch_index))
                 continue
             if active and pruning_config.strategy == "attention":
                 # Runtime scores are collected in selected decoder layers.

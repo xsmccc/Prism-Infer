@@ -10,7 +10,6 @@ from typing import Any
 from prism_infer.analysis.benchmark_schema import validate_benchmark_record
 from prism_infer.analysis.pareto_summary import stable_prefix_lengths
 
-
 SUPPORTED_EXTERNAL_SCHEMA_VERSIONS = (1, 2)
 EXTERNAL_PROTOCOL_SCHEMA_VERSION = 2
 COMPARISON_PROFILES = ("diagnostic_matched", "best_stable")
@@ -435,7 +434,8 @@ def render_external_markdown(rows: Sequence[Mapping[str, Any]]) -> str:
     """渲染 external vs Prism 紧凑表格。"""
 
     lines = [
-        "| Profile | Prism mode | Framework | Case | Prompt P/E | Comparable | Why not | Stable prefix | Exact | TPOT P/E | E/P TPOT | "
+        "| Profile | Prism mode | Framework | Case | Prompt P/E | Comparable | Why not | "
+        "Stable prefix | Exact | TPOT P/E | E/P TPOT | "
         "Throughput P/E | E/P throughput | Memory MiB P/E | Memory comparable |",
         "|---|---|---|---|---:|:---:|---|---:|:---:|---:|---:|---:|---:|---:|:---:|",
     ]

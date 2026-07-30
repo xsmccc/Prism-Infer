@@ -53,7 +53,7 @@ class RequestState(Enum):
     WAITING = auto()
     PREFILLING = auto()
     DECODING = auto()
-    # Backwards-compatible name used by pre-P7 tests and integrations.
+    # Backwards-compatible name retained for existing tests and integrations.
     RUNNING = DECODING
     SWAPPED = auto()
     FINISHED = auto()
@@ -69,7 +69,7 @@ class RequestState(Enum):
         }
 
 
-# Preserve the public name imported throughout the P1-P6 code and tests.
+# Preserve the public name imported by legacy callers.
 SequenceStatus = RequestState
 
 

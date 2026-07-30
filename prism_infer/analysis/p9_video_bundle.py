@@ -24,13 +24,12 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from prism_infer.analysis.benchmark_schema import canonical_json_sha256
+from prism_infer.analysis.p9_quality_materialization import sha256_file
 from prism_infer.analysis.schema_constants import (
     RGB_CHANNEL_COUNT,
     SHA256_HEX_LENGTH,
 )
-from prism_infer.analysis.benchmark_schema import canonical_json_sha256
-from prism_infer.analysis.p9_quality_materialization import sha256_file
-
 
 RGB_FRAME_TENSOR_RANK = 3
 RGB_VIDEO_TENSOR_RANK = 4

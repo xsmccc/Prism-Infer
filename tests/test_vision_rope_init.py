@@ -6,8 +6,8 @@
 """
 
 import torch
-
 from conftest import require_transformers
+
 from prism_infer.vision.vision_encoder import VisionEncoder
 
 

@@ -5,12 +5,10 @@
 """
 
 import torch
-import sys
 
-sys.path.insert(0, "/data/Prism-Infer")
 from prism_infer.models.qwen3_vl import (
-    Qwen3VLTextModel,
     Qwen3VLModel,
+    Qwen3VLTextModel,
 )
 
 
@@ -259,7 +257,7 @@ def test_mismatch_raises():
     try:
         model(input_ids, pixel_values=pixel_values, image_grid_thw=torch.tensor([[1, 28, 28]]))
         print("  FAIL: 应抛错!")
-        assert False
+        raise AssertionError()
     except ValueError as e:
         assert "100" in str(e) and "196" in str(e), f"错误消息不对: {e}"
         print(f"  正确抛出: {e}")

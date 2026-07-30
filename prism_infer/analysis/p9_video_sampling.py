@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from PIL import Image
 
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
-
 
 VIDEO_DECODER_DISTRIBUTION = "opencv-python-headless"
 VIDEO_COLOR_CONVERSION = "BGR_to_RGB"
@@ -267,7 +267,8 @@ def sample_video_file(
             capture.release()
         _close_decoded_frames(decoded)
     frame_identity = [
-        _rgb_frame_identity(image, index=index) for image, index in zip(sampled, indices)
+        _rgb_frame_identity(image, index=index)
+        for image, index in zip(sampled, indices, strict=False)
     ]
     return sampled, {
         "source_kind": "video_file",
@@ -323,7 +324,8 @@ def sample_frame_manifest(
         with Image.open(path) as image:
             sampled.append(image.convert("RGB").copy())
     frame_identity = [
-        _rgb_frame_identity(image, index=index) for image, index in zip(sampled, indices)
+        _rgb_frame_identity(image, index=index)
+        for image, index in zip(sampled, indices, strict=False)
     ]
     return sampled, {
         "source_kind": "frame_directory",

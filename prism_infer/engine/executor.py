@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from prism_infer.observability import profile_region
 from prism_infer.engine.compression import (
     COMPRESSION_VISUAL_COMPACT,
     COMPRESSION_VISUAL_COMPACT_FP8,
@@ -16,6 +15,7 @@ from prism_infer.engine.contracts import (
     ExecutionResult,
     KVCacheManager,
 )
+from prism_infer.observability import profile_region
 
 
 class RunnerBackend(Protocol):
@@ -90,8 +90,7 @@ class ModelExecutor:
         runner_result = finish(pending)
         if not isinstance(runner_result, ExecutionResult):
             raise RuntimeError(
-                "rank-0 runner must return ExecutionResult, "
-                f"got {type(runner_result).__name__}"
+                f"rank-0 runner must return ExecutionResult, got {type(runner_result).__name__}"
             )
         return self._commit_visual_compaction(plan, runner_result)
 
@@ -160,8 +159,7 @@ class ModelExecutor:
                         seq.is_prefill_finished
                         or (
                             seq.multimodal_prefix_cache_enabled
-                            and seq.num_computed_tokens
-                            == seq.multimodal_prefix_boundary
+                            and seq.num_computed_tokens == seq.multimodal_prefix_boundary
                         )
                     )
                     if (

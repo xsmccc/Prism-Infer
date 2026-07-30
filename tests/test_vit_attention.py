@@ -3,13 +3,12 @@
 验证 ViT Attention 完整 forward 与 HF Qwen3VLVisionAttention 一致。
 """
 
+import importlib.util
 import os
 
 import pytest
 import torch
 import torch.nn.functional as F
-
-import importlib.util
 
 spec = importlib.util.spec_from_file_location(
     "vision_encoder",

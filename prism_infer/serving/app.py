@@ -56,7 +56,7 @@ class GenerateBody(BaseModel):
     stream: bool = False
 
     @model_validator(mode="after")
-    def validate_media(self) -> "GenerateBody":
+    def validate_media(self) -> GenerateBody:
         """拒绝模态和媒体字段不一致的歧义请求。"""
 
         if self.modality == "text" and self.media is not None:
@@ -71,9 +71,7 @@ class GenerateBody(BaseModel):
                     "video requests require an explicit list of sampled data:image frames"
                 )
             if any(not source.startswith("data:image/") for source in self.media):
-                raise ValueError(
-                    "video media lists must contain sampled data:image frame URLs"
-                )
+                raise ValueError("video media lists must contain sampled data:image frame URLs")
         return self
 
 

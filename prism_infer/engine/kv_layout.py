@@ -1,4 +1,4 @@
-"""P6.4 visual KV physical layout contract。
+"""Visual KV physical layout contract。
 
 该模块定义逻辑 token 位置与物理 KV 排布之间的稳定边界。KV 数据搬移、block
 分配和 attention kernel 仍由各自模块实现；descriptor/plan 只携带经过验证的
@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-
 
 KV_LAYOUT_SCHEMA_VERSION = 1
 KV_LAYOUT_DENSE = "dense"
@@ -82,10 +81,7 @@ class KVCacheLayoutDescriptor:
             raise ValueError("retained position count must equal compressed prompt KV length")
         if tuple(sorted(set(retained))) != retained:
             raise ValueError("retained original positions must be sorted and unique")
-        if retained and (
-            retained[0] < 0
-            or retained[-1] >= self.effective_compacted_logical_len
-        ):
+        if retained and (retained[0] < 0 or retained[-1] >= self.effective_compacted_logical_len):
             raise ValueError("retained original positions are outside prompt")
 
     def _validate_block_table(
@@ -99,9 +95,7 @@ class KVCacheLayoutDescriptor:
         final_physical_len = self.compressed_prompt_kv_len + (
             self.prompt_logical_len - self.effective_compacted_logical_len
         )
-        final_required_blocks = (
-            final_physical_len + block_size - 1
-        ) // block_size
+        final_required_blocks = (final_physical_len + block_size - 1) // block_size
         reserved_prefill_blocks = (
             self.logical_context_len < self.prompt_logical_len
             and required_blocks <= len(block_table) <= final_required_blocks
@@ -175,7 +169,7 @@ class KVCacheLayoutDescriptor:
         }
 
     @classmethod
-    def from_record(cls, record: dict[str, Any]) -> "KVCacheLayoutDescriptor":
+    def from_record(cls, record: dict[str, Any]) -> KVCacheLayoutDescriptor:
         """从 Sequence pickle record 恢复 descriptor。"""
 
         return cls(
@@ -247,15 +241,12 @@ class KVCompactionPlan:
             raise ValueError("plan retained positions must be sorted and unique")
         if (
             self.retained_original_positions
-            and self.retained_original_positions[-1]
-            >= self.effective_compacted_logical_len
+            and self.retained_original_positions[-1] >= self.effective_compacted_logical_len
         ):
             raise ValueError("plan retained positions exceed compacted prefix")
 
     def _validate_block_tables(self, block_size: int) -> None:
-        expected_blocks = (
-            self.effective_final_physical_prompt_len + block_size - 1
-        ) // block_size
+        expected_blocks = (self.effective_final_physical_prompt_len + block_size - 1) // block_size
         if len(self.new_block_table) != expected_blocks:
             raise ValueError("plan compact block count is inconsistent")
         if self.old_block_table[:expected_blocks] != self.new_block_table:

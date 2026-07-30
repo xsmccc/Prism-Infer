@@ -4,12 +4,11 @@ Ref: prism_infer/vision/vision_encoder.py
 Ground truth: HF Qwen3-VL visual.blocks[0].mlp
 """
 
+import importlib.util
 import os
 
 import pytest
 import torch
-
-import importlib.util
 
 spec = importlib.util.spec_from_file_location(
     "vision_encoder",

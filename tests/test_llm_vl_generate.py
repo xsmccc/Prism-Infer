@@ -4,15 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from conftest import get_model_path, require_transformers
 from PIL import Image
 from transformers import Qwen3VLForConditionalGeneration
 
-from conftest import get_model_path, require_transformers
 from prism_infer import LLM
 from prism_infer.engine.llm_engine import LLMEngine
 from prism_infer.engine.scheduler import Scheduler
 from prism_infer.sampling_params import SamplingParams
-
 
 pytestmark = [pytest.mark.model, pytest.mark.integration]
 

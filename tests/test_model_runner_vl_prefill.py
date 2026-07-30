@@ -11,14 +11,14 @@ except ImportError:
     pytest = None
 
 from conftest import get_model_path, require_transformers
+
 from prism_infer.engine.model_runner import ModelRunner
-from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.scheduler_policy import FCFSSchedulerPolicy
+from prism_infer.engine.sequence import Sequence
 from prism_infer.engine.vl_inputs import prepare_single_image_inputs
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 from prism_infer.sampling_params import SamplingParams
 from prism_infer.utils.context import get_context, reset_context
-
 
 pytestmark = (
     []

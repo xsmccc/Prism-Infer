@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 GIB = 1024**3
 CORE_DISTRIBUTIONS = (
     "prism-infer",

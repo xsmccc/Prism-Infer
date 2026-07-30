@@ -4,10 +4,11 @@ Ref: prism_infer/vision/vision_encoder.py
 Ground truth: HF Qwen3VLForConditionalGeneration.model.visual.patch_embed
 """
 
+import importlib.util
 import os
+
 import pytest
 import torch
-import importlib.util
 
 # 直接导入避免触发 flash_attn
 spec = importlib.util.spec_from_file_location(

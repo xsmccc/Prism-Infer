@@ -19,10 +19,10 @@ import numpy as np
 import xxhash
 
 from prism_infer.engine.block_pool import (
+    NO_BLOCK_HASH,
     Block,
     CpuBlockPool,
     GpuBlockPool,
-    NO_BLOCK_HASH,
 )
 from prism_infer.engine.kv_compaction_coordinator import KVCompactionCoordinator
 from prism_infer.engine.kv_layout import (
@@ -31,7 +31,6 @@ from prism_infer.engine.kv_layout import (
     KVCompactionPlan,
 )
 from prism_infer.engine.sequence import Sequence
-
 
 MULTIMODAL_PREFIX_CACHE_MAX_BLOCKS = 256
 
@@ -58,11 +57,7 @@ class _MultimodalPrefixCacheEntry:
 
     @property
     def benefit_per_block(self) -> float:
-        return (
-            self.benefit_tokens
-            * (1 + self.lifetime_hits)
-            / self.resident_blocks
-        )
+        return self.benefit_tokens * (1 + self.lifetime_hits) / self.resident_blocks
 
 
 # ─── BlockManager: 物理块分配器 ──────────────────────────────
@@ -161,17 +156,13 @@ class BlockManager:
     ) -> int:
         suffix_tokens = seq.num_prompt_tokens - entry.logical_prefix_len
         final_physical_tokens = entry.physical_prefix_len + suffix_tokens
-        final_blocks = (
-            final_physical_tokens + self.block_size - 1
-        ) // self.block_size
+        final_blocks = (final_physical_tokens + self.block_size - 1) // self.block_size
         suffix_blocks = final_blocks - len(entry.block_ids)
         has_idle_tail_clone = any(
-            self.blocks[block_id].ref_count == 1
-            for block_id in entry.tail_clone_block_ids
+            self.blocks[block_id].ref_count == 1 for block_id in entry.tail_clone_block_ids
         )
         partial_page_copy = int(
-            entry.physical_prefix_len % self.block_size != 0
-            and not has_idle_tail_clone
+            entry.physical_prefix_len % self.block_size != 0 and not has_idle_tail_clone
         )
         return suffix_blocks + partial_page_copy
 
@@ -195,9 +186,7 @@ class BlockManager:
     ) -> str | None:
         candidates = [
             (entry.benefit_per_block, order, cache_id)
-            for order, (cache_id, entry) in enumerate(
-                self._multimodal_prefix_cache.items()
-            )
+            for order, (cache_id, entry) in enumerate(self._multimodal_prefix_cache.items())
             if cache_id != protected_cache_id
         ]
         return min(candidates)[2] if candidates else None
@@ -316,26 +305,19 @@ class BlockManager:
                 self._gpu_pool.retain(idle_tail_clone)
                 seq.block_table.append(idle_tail_clone)
                 self._multimodal_prefix_cache_tail_clone_hits += 1
-                self._multimodal_prefix_cache_tail_clone_reused_rows += (
-                    tail_rows
-                )
+                self._multimodal_prefix_cache_tail_clone_reused_rows += tail_rows
             else:
                 canonical_tail = entry.block_ids[-1]
                 self._gpu_pool.retain(canonical_tail)
                 seq.block_table.append(canonical_tail)
                 pair = self.copy_on_write(seq)
                 if pair is None:
-                    raise RuntimeError(
-                        "shared compact prefix tail did not trigger CoW"
-                    )
+                    raise RuntimeError("shared compact prefix tail did not trigger CoW")
                 copy_prefix.append((*pair, tail_rows))
                 self._multimodal_prefix_cache_cow_copies += 1
                 self._multimodal_prefix_cache_cow_rows += tail_rows
                 copied_tail = pair[1]
-                if (
-                    self._multimodal_prefix_cache_blocks
-                    < self._multimodal_prefix_cache_max_blocks
-                ):
+                if self._multimodal_prefix_cache_blocks < self._multimodal_prefix_cache_max_blocks:
                     self._gpu_pool.retain(copied_tail)
                     entry.tail_clone_block_ids.append(copied_tail)
                     self._multimodal_prefix_cache_blocks += 1
@@ -343,9 +325,7 @@ class BlockManager:
 
         suffix_tokens = seq.num_prompt_tokens - entry.logical_prefix_len
         final_physical_tokens = entry.physical_prefix_len + suffix_tokens
-        final_blocks = (
-            final_physical_tokens + self.block_size - 1
-        ) // self.block_size
+        final_blocks = (final_physical_tokens + self.block_size - 1) // self.block_size
         while len(seq.block_table) < final_blocks:
             seq.block_table.append(self._allocate_free_block().block_id)
 
@@ -497,10 +477,7 @@ class BlockManager:
             )
         match = self._matching_multimodal_prefix(seq)
         if match is None:
-            if (
-                self.enable_prefix_caching
-                and seq.multimodal_prefix_cache_key is not None
-            ):
+            if self.enable_prefix_caching and seq.multimodal_prefix_cache_key is not None:
                 self._multimodal_prefix_cache_misses += 1
             return self._allocate_dense(seq)
         cache_id, entry = match
@@ -553,20 +530,15 @@ class BlockManager:
         if not seq.is_prefill_finished or seq.num_tokens != seq.num_prompt_tokens:
             raise RuntimeError("multimodal prefix admission requires completed prompt prefill")
         retained_positions = tuple(
-            position
-            for position in layout.retained_original_positions
-            if position < boundary
+            position for position in layout.retained_original_positions if position < boundary
         )
         physical_prefix_len = len(retained_positions)
         if physical_prefix_len <= 0:
             self._multimodal_prefix_cache_rejections += 1
             return False
-        prefix_blocks = (
-            physical_prefix_len + self.block_size - 1
-        ) // self.block_size
-        if (
-            prefix_blocks > self._multimodal_prefix_cache_max_blocks
-            or prefix_blocks > len(seq.block_table)
+        prefix_blocks = (physical_prefix_len + self.block_size - 1) // self.block_size
+        if prefix_blocks > self._multimodal_prefix_cache_max_blocks or prefix_blocks > len(
+            seq.block_table
         ):
             self._multimodal_prefix_cache_rejections += 1
             return False
@@ -578,10 +550,7 @@ class BlockManager:
         )
         existing = self._multimodal_prefix_cache.get(cache_id)
         if existing is not None:
-            if (
-                existing.key != media_key
-                or existing.prompt_prefix_token_ids != prompt_prefix
-            ):
+            if existing.key != media_key or existing.prompt_prefix_token_ids != prompt_prefix:
                 raise RuntimeError("multimodal prefix cache digest collision")
             self._multimodal_prefix_cache.move_to_end(cache_id)
             return False
@@ -650,27 +619,19 @@ class BlockManager:
                 self._multimodal_prefix_cache_cow_copies * self.block_size
             ),
             "tail_clone_hits": self._multimodal_prefix_cache_tail_clone_hits,
-            "tail_clone_admissions": (
-                self._multimodal_prefix_cache_tail_clone_admissions
-            ),
-            "tail_clone_evictions": (
-                self._multimodal_prefix_cache_tail_clone_evictions
-            ),
-            "tail_clone_reused_rows": (
-                self._multimodal_prefix_cache_tail_clone_reused_rows
-            ),
+            "tail_clone_admissions": (self._multimodal_prefix_cache_tail_clone_admissions),
+            "tail_clone_evictions": (self._multimodal_prefix_cache_tail_clone_evictions),
+            "tail_clone_reused_rows": (self._multimodal_prefix_cache_tail_clone_reused_rows),
             "copy_avoided_rows": (
                 self._multimodal_prefix_cache_cow_copies * self.block_size
                 - self._multimodal_prefix_cache_cow_rows
                 + self._multimodal_prefix_cache_tail_clone_reused_rows
             ),
             "resident_tail_clone_blocks": sum(
-                len(entry.tail_clone_block_ids)
-                for entry in self._multimodal_prefix_cache.values()
+                len(entry.tail_clone_block_ids) for entry in self._multimodal_prefix_cache.values()
             ),
             "resident_lifetime_hits": sum(
-                entry.lifetime_hits
-                for entry in self._multimodal_prefix_cache.values()
+                entry.lifetime_hits for entry in self._multimodal_prefix_cache.values()
             ),
         }
 
@@ -790,7 +751,7 @@ class BlockManager:
             )
         gpu_block_table = self._gpu_pool.validate_owned(seq.block_table)
         cpu_block_table = self._cpu_pool.allocate_many(len(gpu_block_table))
-        swap_map = list(zip(gpu_block_table, cpu_block_table))
+        swap_map = list(zip(gpu_block_table, cpu_block_table, strict=False))
         cpu_block_hashes: list[int] = []
         cpu_block_token_ids: list[list[int]] = []
         for gpu_id in gpu_block_table:
@@ -829,7 +790,7 @@ class BlockManager:
                 "swapped sequence is missing CPU block hash metadata; "
                 "cannot restore prefix-cache index safely"
             )
-        for block_hash, token_ids in zip(block_hashes, block_token_ids):
+        for block_hash, token_ids in zip(block_hashes, block_token_ids, strict=False):
             if block_hash == NO_BLOCK_HASH:
                 if token_ids:
                     raise RuntimeError("unhashed swapped block contains stale token metadata")
@@ -873,10 +834,11 @@ class BlockManager:
             new_block_table,
             cpu_block_hashes,
             cpu_block_token_ids,
+            strict=False,
         ):
             if block_hash != NO_BLOCK_HASH:
                 self._gpu_pool.register_hash(block_id, block_hash, token_ids)
-        swap_map = list(zip(cpu_block_table, new_block_table))
+        swap_map = list(zip(cpu_block_table, new_block_table, strict=False))
         self._cpu_pool.release_many(cpu_block_table)
         seq.block_table = new_block_table
         seq.cpu_block_table.clear()

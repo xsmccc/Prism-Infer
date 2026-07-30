@@ -16,7 +16,6 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -40,7 +39,6 @@ from prism_infer.analysis.p9_quality_materialization import (
     write_json_atomic,
     write_jsonl_atomic,
 )
-
 
 DEFAULT_PROTOCOL = REPO_ROOT / "benchmarks/workloads/p9_quality_protocol.json"
 DEFAULT_MVBENCH_MAP = REPO_ROOT / "benchmarks/workloads/p9_mvbench_media_map.json"

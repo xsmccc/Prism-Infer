@@ -12,7 +12,6 @@ from prism_infer.ops.block4_gate_up import (
 )
 from prism_infer.ops.swiglu import fused_silu_mul
 
-
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available() or torch.cuda.get_device_capability() != (12, 0),
     reason="block-4 gate-up requires an SM120 CUDA device",

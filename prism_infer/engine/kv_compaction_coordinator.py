@@ -67,8 +67,7 @@ class KVCompactionCoordinator:
             or compacted_logical_len != seq.multimodal_prefix_boundary
         ):
             raise RuntimeError(
-                "partial visual KV compaction must end at the cacheable "
-                "multimodal prefix boundary"
+                "partial visual KV compaction must end at the cacheable multimodal prefix boundary"
             )
         retained_positions = tuple(
             position
@@ -84,9 +83,7 @@ class KVCompactionCoordinator:
         final_physical_prompt_len = physical_prompt_len + (
             seq.num_prompt_tokens - compacted_logical_len
         )
-        new_num_blocks = (
-            final_physical_prompt_len + self.block_size - 1
-        ) // self.block_size
+        new_num_blocks = (final_physical_prompt_len + self.block_size - 1) // self.block_size
         old_block_table = tuple(seq.block_table)
         new_block_table = old_block_table[:new_num_blocks]
         released_block_ids = old_block_table[new_num_blocks:]
@@ -136,13 +133,9 @@ class KVCompactionCoordinator:
             {
                 "physical_compaction": True,
                 "logical_prompt_tokens": plan.logical_prompt_len,
-                "compacted_logical_tokens": (
-                    plan.effective_compacted_logical_len
-                ),
+                "compacted_logical_tokens": (plan.effective_compacted_logical_len),
                 "compacted_prefix_kv_tokens": plan.physical_prompt_len,
-                "physical_prompt_kv_tokens": (
-                    plan.effective_final_physical_prompt_len
-                ),
+                "physical_prompt_kv_tokens": (plan.effective_final_physical_prompt_len),
                 "old_block_table": list(plan.old_block_table),
                 "new_block_table": list(plan.new_block_table),
                 "released_block_ids": list(plan.released_block_ids),

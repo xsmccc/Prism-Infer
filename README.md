@@ -31,7 +31,7 @@ continuous batching、原生 HTTP/SSE 服务与面向 SLO 的调度路径。
 
 ## 核心结果
 
-所有数字均来自同一台 RTX 5090、Qwen3-VL-8B-Instruct、TP1 的冻结实验协议。
+所有数字均来自 RTX 5090、Qwen3-VL-8B-Instruct、TP1 的冻结实验协议。
 完整环境、输入和边界见 [结果](docs/RESULTS.md)。
 
 ### 1. Offline decode latency
@@ -151,7 +151,7 @@ prism_infer/
   ops/          paged decode、KV store/compaction 与 fused kernels
   serving/      原生 HTTP/SSE runtime
   analysis/     benchmark 与质量分析工具
-benchmarks/     offline、online、外部框架与 P17 workload
+benchmarks/     offline、online、外部框架与重复媒体 workload
 tests/          保留的模型、KV、Graph、调度和 serving 合同
 docs/           架构、结果、复现和结论边界
 ```

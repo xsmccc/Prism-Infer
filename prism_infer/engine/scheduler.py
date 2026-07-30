@@ -1,15 +1,15 @@
 """Request scheduling and KV ownership coordination.
 
-P7.2 keeps queue mutation here while moving policy decisions, immutable batch
-handoff and GPU execution behind explicit contracts.
+Queue mutation remains here while policy decisions, immutable batch handoff
+and GPU execution stay behind explicit contracts.
 """
 
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from time import perf_counter_ns
-from typing import Iterable
 
 from prism_infer.config import DEFAULT_MAX_VISION_PATCHES_PER_BATCH, Config
 from prism_infer.engine.block_manager import BlockManager
@@ -154,26 +154,18 @@ class Scheduler:
                 "enable_chunked_prefill": self.enable_chunked_prefill,
                 "max_chunk_size": self.max_chunk_size,
                 "max_queue_size": config.max_queue_size,
-                "max_consecutive_prefill_batches": (
-                    config.max_consecutive_prefill_batches
-                ),
+                "max_consecutive_prefill_batches": (config.max_consecutive_prefill_batches),
             }
             if policy_type in (
                 SLOAwareSchedulerPolicy,
                 VisionAwareSchedulerPolicy,
             ):
-                policy_options["heavy_prefill_vision_patch_threshold"] = (
-                    heavy_prefill_threshold
-                )
+                policy_options["heavy_prefill_vision_patch_threshold"] = heavy_prefill_threshold
             if policy_type is VisionAwareSchedulerPolicy:
                 policy_options.update(
                     {
-                        "min_decode_batches_between_heavy_prefills": (
-                            heavy_prefill_interval
-                        ),
-                        "max_light_prefill_bypasses_per_heavy": (
-                            max_light_prefill_bypasses
-                        ),
+                        "min_decode_batches_between_heavy_prefills": (heavy_prefill_interval),
+                        "max_light_prefill_bypasses_per_heavy": (max_light_prefill_bypasses),
                     }
                 )
             policy = policy_type(**policy_options)
@@ -275,9 +267,7 @@ class Scheduler:
             "light_prefill_bypasses": self.light_prefill_bypasses,
             "deadline_prefill_reorders": self.deadline_prefill_reorders,
             "cost_tier_batch_deferrals": self.cost_tier_batch_deferrals,
-            "light_prefill_bypasses_since_heavy": (
-                self.light_prefill_bypasses_since_heavy
-            ),
+            "light_prefill_bypasses_since_heavy": (self.light_prefill_bypasses_since_heavy),
             "peak_waiting": self.peak_waiting,
             "peak_running": self.peak_running,
             "peak_swapped": self.peak_swapped,
@@ -433,8 +423,7 @@ class Scheduler:
                     max_slo_cost_tier is None
                     or (
                         isinstance(self.policy, SLOAwareSchedulerPolicy)
-                        and self.policy.prefill_cost_tier(seq)
-                        < max_slo_cost_tier
+                        and self.policy.prefill_cost_tier(seq) < max_slo_cost_tier
                     )
                 )
             )
@@ -443,12 +432,8 @@ class Scheduler:
             relative_index = self.policy.waiting_prefill_index(
                 tuple(self.waiting[index] for index in waiting_indices),
                 has_decode=has_decode,
-                decode_batches_since_heavy_prefill=(
-                    self.decode_batches_since_heavy_prefill
-                ),
-                light_prefill_bypasses_since_heavy=(
-                    self.light_prefill_bypasses_since_heavy
-                ),
+                decode_batches_since_heavy_prefill=(self.decode_batches_since_heavy_prefill),
+                light_prefill_bypasses_since_heavy=(self.light_prefill_bypasses_since_heavy),
             )
             if relative_index is None:
                 if has_decode and isinstance(self.policy, VisionAwareSchedulerPolicy):
@@ -522,10 +507,7 @@ class Scheduler:
         # capacity pressure or mixed state falls through to the general path.
         if not self.swapped and len(self.running) == 1:
             seq = self.running[0]
-            if (
-                seq.status is RequestState.DECODING
-                and self.block_manager.can_append(seq)
-            ):
+            if seq.status is RequestState.DECODING and self.block_manager.can_append(seq):
                 block_count = len(seq.block_table)
                 cow_pair = self.block_manager.copy_on_write(seq)
                 self.block_manager.may_append(seq)
@@ -616,9 +598,7 @@ class Scheduler:
     def decode_work_count(self) -> int:
         """Return the number of requests eligible for a decode decision."""
 
-        return len(self.swapped) + sum(
-            seq.status is RequestState.DECODING for seq in self.running
-        )
+        return len(self.swapped) + sum(seq.status is RequestState.DECODING for seq in self.running)
 
     def schedule_decode(self) -> BatchPlan:
         """Schedule decode while a previously selected prefill remains in flight."""
@@ -632,9 +612,7 @@ class Scheduler:
 
     def _record_prefill_plan(self, plan: BatchPlan) -> BatchPlan:
         self.consecutive_prefill_batches += 1
-        if self.policy.is_heavy_prefill(
-            plan.num_scheduled_vision_patches
-        ):
+        if self.policy.is_heavy_prefill(plan.num_scheduled_vision_patches):
             self.decode_batches_since_heavy_prefill = 0
             self.light_prefill_bypasses_since_heavy = 0
             self.heavy_prefill_batches += 1
@@ -652,9 +630,7 @@ class Scheduler:
             self.policy,
             SLOAwareSchedulerPolicy,
         ):
-            raise RuntimeError(
-                "max_slo_cost_tier requires the SLO-aware scheduler"
-            )
+            raise RuntimeError("max_slo_cost_tier requires the SLO-aware scheduler")
         plan = self._prefill_plan(
             max_slo_cost_tier=max_slo_cost_tier,
             include_running_prefills=False,
@@ -716,7 +692,7 @@ class Scheduler:
             plan = None
 
         outputs: list[RequestOutput] = []
-        for seq, token_id in zip(seqs, token_ids):
+        for seq, token_id in zip(seqs, token_ids, strict=False):
             if token_id is None:
                 continue
             seq.append_token(token_id)

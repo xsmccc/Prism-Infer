@@ -1,11 +1,10 @@
 """P3.6 paged decode Triton kernel correctness 验证。"""
 
+import pytest
 import torch
 import torch.nn.functional as F
-import pytest
 
 from prism_infer.ops.paged_decode import HAS_TRITON, paged_decode_attention
-
 
 pytestmark = pytest.mark.gpu
 
@@ -132,10 +131,12 @@ def _run_case(
     print(f"paged kernel output shape: {list(kernel_out.shape)}")
     print(f"paged reference output shape: {list(ref_out.shape)}")
     print(
-        f"paged kernel mean/std: {kernel_out.float().mean().item():.6e} / {kernel_out.float().std().item():.6e}"
+        f"paged kernel mean/std: {kernel_out.float().mean().item():.6e} / "
+        f"{kernel_out.float().std().item():.6e}"
     )
     print(
-        f"paged reference mean/std: {ref_out.float().mean().item():.6e} / {ref_out.float().std().item():.6e}"
+        f"paged reference mean/std: {ref_out.float().mean().item():.6e} / "
+        f"{ref_out.float().std().item():.6e}"
     )
     print(f"paged kernel max diff: {diff.max().item():.6e}")
     print(f"paged kernel mean diff: {diff.float().mean().item():.6e}")

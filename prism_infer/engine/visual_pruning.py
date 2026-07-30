@@ -1,4 +1,4 @@
-"""Visual-token pruning decision helpers for P5.2 preparation.
+"""Visual-token pruning decision helpers.
 
 This module does not enable runtime compression by itself.  It only computes
 auditable visual-token retention decisions and can build an experimental
@@ -19,7 +19,6 @@ from math import ceil, isfinite
 
 import torch
 import torch.distributed as dist
-
 
 DEFAULT_VISUAL_PRUNING_KEEP_RATIO = 0.6
 DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS = 32
@@ -48,8 +47,7 @@ class VisualPruningConfig:
             raise ValueError(f"min_keep_tokens must be >= 1, got {self.min_keep_tokens}")
         if self.video_min_keep_tokens is not None and self.video_min_keep_tokens < 1:
             raise ValueError(
-                "video_min_keep_tokens must be >= 1 or None, got "
-                f"{self.video_min_keep_tokens}"
+                f"video_min_keep_tokens must be >= 1 or None, got {self.video_min_keep_tokens}"
             )
         if self.strategy not in ("uniform", "score", "attention"):
             raise ValueError(f"unsupported strategy: {self.strategy!r}")
@@ -189,7 +187,7 @@ class RuntimeVisualTokenScorer:
             values = scores.cpu().tolist()
             result[spec.seq_id] = {
                 token_index: float(score)
-                for token_index, score in zip(spec.visual_token_indices, values)
+                for token_index, score in zip(spec.visual_token_indices, values, strict=False)
             }
         return result
 
@@ -582,7 +580,7 @@ def finalize_attention_pruning_decisions(
         records.append(record)
     # Commit only after every sequence has produced a valid record.  A late
     # score/schema failure must not leave an earlier request partially mutated.
-    for seq, record in zip(seqs, records):
+    for seq, record in zip(seqs, records, strict=False):
         seq.visual_pruning_decision_record = record
     return tuple(records)
 

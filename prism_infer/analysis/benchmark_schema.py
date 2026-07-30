@@ -842,9 +842,7 @@ def _validate_enabled_cuda_graph(
         "decode_model_forward_logits_greedy",
     }
     if capture_scope not in allowed_capture_scopes:
-        raise ValueError(
-            "CUDA Graph execution requires a supported decode capture scope"
-        )
+        raise ValueError("CUDA Graph execution requires a supported decode capture scope")
     if selected_batch_size not in graph_batch_sizes:
         raise ValueError("selected CUDA Graph batch size is absent from captured sizes")
 

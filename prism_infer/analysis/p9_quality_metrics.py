@@ -15,9 +15,9 @@ from __future__ import annotations
 import random
 import re
 import string
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
-
+from typing import Any
 
 DOCVQA_ANLS_THRESHOLD = 0.5
 MUIRBENCH_RANDOM_FALLBACK_SEED = 42
@@ -133,7 +133,9 @@ def build_muirbench_prompt(question: str, options: Sequence[str]) -> str:
     labels = choice_labels(len(options))
     if not all(isinstance(option, str) for option in options):
         raise ValueError("MuirBench options must be strings")
-    choices = ["Choices:"] + [f"({label}) {option}" for label, option in zip(labels, options)]
+    choices = ["Choices:"] + [
+        f"({label}) {option}" for label, option in zip(labels, options, strict=False)
+    ]
     return "\n".join(
         (
             f"Question: {question}",
@@ -162,7 +164,7 @@ def parse_muirbench_response(
     if not isinstance(response, str):
         raise TypeError("MuirBench response must be a string")
     labels = choice_labels(len(options))
-    index_to_answer = dict(zip(labels, options))
+    index_to_answer = dict(zip(labels, options, strict=False))
     cleaned = response
     for character in (",", ".", "!", "?", ";", ":", "'"):
         cleaned = cleaned.strip(character)
@@ -208,7 +210,9 @@ def build_mvbench_prompt(question: str, candidates: Sequence[str]) -> str:
     labels = choice_labels(len(candidates))
     if not all(isinstance(candidate, str) for candidate in candidates):
         raise ValueError("MVBench candidates must be strings")
-    options = "".join(f"({label}) {candidate}\n" for label, candidate in zip(labels, candidates))
+    options = "".join(
+        f"({label}) {candidate}\n" for label, candidate in zip(labels, candidates, strict=False)
+    )
     return f"Question:{question}\nOption:\n{options}{MVBENCH_POST_PROMPT}"
 
 

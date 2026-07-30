@@ -15,7 +15,6 @@ from prism_infer.observability import profile_region
 from prism_infer.ops.kv_cache_store import is_fp8_cache_tensor
 from prism_infer.utils.context import Context
 
-
 MINIMUM_PAGED_CACHE_RANK = 3
 INDEX_VECTOR_RANK = 1
 

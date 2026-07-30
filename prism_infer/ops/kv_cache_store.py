@@ -18,7 +18,6 @@ from prism_infer.engine.kv_quantization import (
 )
 from prism_infer.observability import profile_region
 
-
 try:
     import triton
     import triton.language as tl

@@ -1,12 +1,11 @@
 """P3.2 Qwen3-VL 视频 3D position ids 验证。"""
 
 import pytest
-
 from conftest import get_model_path, hf_qwen3_vl_rope_index, require_transformers
-from prism_infer.engine.vl_inputs import prepare_video_inputs
-from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 from test_processor_pipeline_video import demo_video_frames
 
+from prism_infer.engine.vl_inputs import prepare_video_inputs
+from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 
 pytestmark = [pytest.mark.model, pytest.mark.integration]
 

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from math import isfinite, isqrt
 from typing import Any
 
-
 SUPPORTED_QWEN3_VL_MODEL_TYPES = frozenset({"qwen3_vl"})
 MROPE_AXIS_COUNT = 3
 MROPE_POSITION_TENSOR_RANK = 3
@@ -129,7 +128,7 @@ class Qwen3VLTextArchitecture:
     mrope_section: tuple[int, ...]
 
     @classmethod
-    def canonical(cls) -> "Qwen3VLTextArchitecture":
+    def canonical(cls) -> Qwen3VLTextArchitecture:
         return cls(
             vocab_size=CANONICAL_TEXT_VOCAB_SIZE,
             hidden_size=CANONICAL_TEXT_HIDDEN_SIZE,
@@ -144,7 +143,7 @@ class Qwen3VLTextArchitecture:
         )
 
     @classmethod
-    def from_config(cls, config: object) -> "Qwen3VLTextArchitecture":
+    def from_config(cls, config: object) -> Qwen3VLTextArchitecture:
         text = _text_config(config)
         hidden_size = _positive_int(
             _read(text, "hidden_size"),
@@ -230,7 +229,7 @@ class Qwen3VLVisionArchitecture:
     deepstack_visual_indexes: tuple[int, ...]
 
     @classmethod
-    def canonical(cls) -> "Qwen3VLVisionArchitecture":
+    def canonical(cls) -> Qwen3VLVisionArchitecture:
         return cls(
             hidden_size=CANONICAL_VISION_HIDDEN_SIZE,
             in_channels=CANONICAL_VISION_IN_CHANNELS,
@@ -246,7 +245,7 @@ class Qwen3VLVisionArchitecture:
         )
 
     @classmethod
-    def from_config(cls, config: object) -> "Qwen3VLVisionArchitecture":
+    def from_config(cls, config: object) -> Qwen3VLVisionArchitecture:
         vision = (
             _vision_config(config)
             if _read(config, "vision_config", "vision_config_dict", default=None) is not None
@@ -350,7 +349,7 @@ class Qwen3VLArchitecture:
     tie_word_embeddings: bool
 
     @classmethod
-    def canonical(cls) -> "Qwen3VLArchitecture":
+    def canonical(cls) -> Qwen3VLArchitecture:
         return cls(
             text=Qwen3VLTextArchitecture.canonical(),
             vision=Qwen3VLVisionArchitecture.canonical(),
@@ -361,7 +360,7 @@ class Qwen3VLArchitecture:
         )
 
     @classmethod
-    def from_config(cls, config: object) -> "Qwen3VLArchitecture":
+    def from_config(cls, config: object) -> Qwen3VLArchitecture:
         model_type = _read(config, "model_type")
         if model_type not in SUPPORTED_QWEN3_VL_MODEL_TYPES:
             raise ValueError(

@@ -17,11 +17,13 @@ import importlib.metadata
 import json
 import platform
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Callable
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -33,7 +35,6 @@ if str(REPO_ROOT) not in sys.path:
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
 from prism_infer.analysis.benchmark_schema import summarize_values
 from prism_infer.ops.paged_decode import HAS_TRITON, paged_decode_attention
-
 
 PAGED_DECODE_BENCHMARK_SCHEMA_VERSION = 1
 DEFAULT_BATCH_SIZES = (1, 2, 4, 8)
@@ -656,7 +657,8 @@ def main() -> None:
                         )
                         scale = args.head_dim**-0.5
                         kernel = _measure(
-                            lambda: paged_decode_attention(
+                            partial(
+                                paged_decode_attention,
                                 q,
                                 k_cache,
                                 v_cache,
@@ -669,7 +671,8 @@ def main() -> None:
                             device=device,
                         )
                         reference = _measure(
-                            lambda: _reference_decode(
+                            partial(
+                                _reference_decode,
                                 q,
                                 k_cache,
                                 v_cache,

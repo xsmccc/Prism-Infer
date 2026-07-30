@@ -18,7 +18,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from prism_infer.observability import profile_region
 from prism_infer.models.qwen3_vl_architecture import (
     CANONICAL_VISION_HIDDEN_SIZE,
     CANONICAL_VISION_IN_CHANNELS,
@@ -31,6 +30,7 @@ from prism_infer.models.qwen3_vl_architecture import (
     CANONICAL_VISION_TEMPORAL_PATCH_SIZE,
     Qwen3VLVisionArchitecture,
 )
+from prism_infer.observability import profile_region
 from prism_infer.vision.backends import (
     VisionAttentionBackendName,
     normalize_vision_attention_backend,
@@ -351,7 +351,7 @@ class ViTAttention(nn.Module):
         elif cu_seqlens is not None and cu_seqlens.numel() > SINGLE_SEQUENCE_CU_SEQLENS_COUNT:
             boundaries = cu_seqlens.tolist()
             outputs = []
-            for start, end in zip(boundaries[:-1], boundaries[1:]):
+            for start, end in zip(boundaries[:-1], boundaries[1:], strict=False):
                 q_i = q[:, :, start:end, :]
                 k_i = k[:, :, start:end, :]
                 v_i = v[:, :, start:end, :]
@@ -504,8 +504,7 @@ class VisionEncoder(nn.Module):
         self.attention_backend = normalize_vision_attention_backend(attention_backend)
         if not isinstance(enable_tensor_cudagraph, bool):
             raise TypeError(
-                "enable_tensor_cudagraph must be bool, got "
-                f"{enable_tensor_cudagraph!r}"
+                f"enable_tensor_cudagraph must be bool, got {enable_tensor_cudagraph!r}"
             )
         self.enable_tensor_cudagraph = enable_tensor_cudagraph
         self._tensor_cudagraph_pool = None
@@ -724,7 +723,7 @@ class VisionEncoder(nn.Module):
         for segment_length in segment_lengths_list:
             segment_end += segment_length
             segment_ends.append(segment_end)
-        segment_ranges = tuple(zip((0, *segment_ends[:-1]), segment_ends))
+        segment_ranges = tuple(zip((0, *segment_ends[:-1]), segment_ends, strict=False))
         cu_seqlens = segment_lengths.cumsum(dim=0, dtype=torch.int32)
         cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0).to(x.device)
         return x, cos, sin, cu_seqlens, max_seqlen, segment_ranges
@@ -772,8 +771,7 @@ class VisionEncoder(nn.Module):
 
         if self.enable_tensor_cudagraph:
             raise RuntimeError(
-                "cooperative vision execution cannot use a monolithic "
-                "Vision CUDA Graph"
+                "cooperative vision execution cannot use a monolithic Vision CUDA Graph"
             )
         (
             hidden_states,
@@ -818,9 +816,7 @@ class VisionEncoder(nn.Module):
                 segment_ranges=state.segment_ranges,
             )
             if block_index in self.deepstack_visual_indexes:
-                merger_index = self.deepstack_visual_indexes.index(
-                    block_index
-                )
+                merger_index = self.deepstack_visual_indexes.index(block_index)
                 with profile_region(
                     "vision.deepstack_merger",
                     metadata={
@@ -829,9 +825,7 @@ class VisionEncoder(nn.Module):
                     },
                 ):
                     state.deepstack_features.append(
-                        self.deepstack_merger_list[merger_index](
-                            state.hidden_states
-                        )
+                        self.deepstack_merger_list[merger_index](state.hidden_states)
                     )
         state.next_block = block_end
         if state.next_block != len(self.blocks):
@@ -924,9 +918,7 @@ class VisionEncoder(nn.Module):
         graph = torch.cuda.CUDAGraph()
         capture_started = perf_counter()
         with torch.cuda.graph(graph, pool=self._tensor_cudagraph_pool):
-            static_main, static_deepstack = self._forward_tensor_region_eager(
-                *static_inputs
-            )
+            static_main, static_deepstack = self._forward_tensor_region_eager(*static_inputs)
         torch.cuda.synchronize(x.device)
         capture_ms = (perf_counter() - capture_started) * 1000.0
 
@@ -990,10 +982,7 @@ class VisionEncoder(nn.Module):
         )
         entry = self._tensor_cudagraph_cache.get(key)
         if entry is None:
-            if (
-                len(self._tensor_cudagraph_cache)
-                >= MAX_VISION_TENSOR_CUDAGRAPH_SHAPES
-            ):
+            if len(self._tensor_cudagraph_cache) >= MAX_VISION_TENSOR_CUDAGRAPH_SHAPES:
                 self._tensor_cudagraph_capacity_fallbacks += 1
                 return self._forward_tensor_region_eager(
                     x,
@@ -1038,16 +1027,11 @@ class VisionEncoder(nn.Module):
                     "cu_seqlens_shape": list(entry.static_cu_seqlens.shape),
                     "max_seqlen": entry.max_seqlen,
                     "segment_ranges": [
-                        list(segment_range)
-                        for segment_range in entry.segment_ranges
+                        list(segment_range) for segment_range in entry.segment_ranges
                     ],
                     "capture_ms": entry.capture_ms,
-                    "capture_net_allocated_delta_bytes": (
-                        entry.capture_net_allocated_delta_bytes
-                    ),
-                    "capture_net_reserved_delta_bytes": (
-                        entry.capture_net_reserved_delta_bytes
-                    ),
+                    "capture_net_allocated_delta_bytes": (entry.capture_net_allocated_delta_bytes),
+                    "capture_net_reserved_delta_bytes": (entry.capture_net_reserved_delta_bytes),
                     "replay_count": entry.replay_count,
                 }
             )
@@ -1056,9 +1040,7 @@ class VisionEncoder(nn.Module):
             "capture_count": len(captures),
             "min_patches": MIN_VISION_TENSOR_CUDAGRAPH_PATCHES,
             "max_cached_shapes": MAX_VISION_TENSOR_CUDAGRAPH_SHAPES,
-            "small_shape_fallbacks": (
-                self._tensor_cudagraph_small_shape_fallbacks
-            ),
+            "small_shape_fallbacks": (self._tensor_cudagraph_small_shape_fallbacks),
             "capacity_fallbacks": self._tensor_cudagraph_capacity_fallbacks,
             "shared_pool": self._tensor_cudagraph_pool is not None,
             "output_policy": "clone_after_capture_or_replay",

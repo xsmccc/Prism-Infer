@@ -12,7 +12,6 @@ from types import ModuleType
 
 import torch
 
-
 MIN_CUTLASS_DUAL_SWIGLU_ROWS = 1024
 QWEN3_VL_HIDDEN_SIZE = 4096
 QWEN3_VL_PACKED_INTERMEDIATE_SIZE = 24576
@@ -27,9 +26,7 @@ def _cutlass_source_root() -> Path | None:
     source_root = Path(spec.origin).resolve().parent / "source"
     if not (source_root / "include" / "cutlass" / "cutlass.h").is_file():
         return None
-    if not (
-        source_root / "examples" / "45_dual_gemm" / "device" / "dual_gemm.h"
-    ).is_file():
+    if not (source_root / "examples" / "45_dual_gemm" / "device" / "dual_gemm.h").is_file():
         return None
     return source_root
 

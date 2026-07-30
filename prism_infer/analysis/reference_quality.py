@@ -13,7 +13,6 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-
 REFERENCE_QUALITY_SCHEMA_VERSION = 1
 _TOKEN_PATTERN = re.compile(r"[^\W_]+", flags=re.UNICODE)
 

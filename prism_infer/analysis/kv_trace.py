@@ -13,18 +13,18 @@
 
 from __future__ import annotations
 
+import json
+import math
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import time
-from typing import Any, Iterator
-import json
-import math
+from typing import Any
 
 import torch
 
 from prism_infer.observability.kv_trace import install_kv_trace_provider
-
 
 SCHEMA_VERSION = 1
 _ACTIVE_SESSION: TraceSession | None = None
@@ -1049,7 +1049,7 @@ def _mean(values: list[float]) -> float | None:
 def _cosine(a: list[float], b: list[float]) -> float | None:
     if not a or not b or len(a) != len(b):
         return None
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
     if norm_a == 0.0 or norm_b == 0.0:
@@ -1186,7 +1186,7 @@ def _adjacent_layer_redundancy(
     per_layer: dict[int, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     adjacent = []
-    for previous, following in zip(layers, layers[1:]):
+    for previous, following in zip(layers, layers[1:], strict=False):
         previous_vector = per_layer[previous].get("visual_k_norm_by_head_mean")
         following_vector = per_layer[following].get("visual_k_norm_by_head_mean")
         similarity = (
@@ -1217,7 +1217,8 @@ def format_summary_markdown(summary: dict[str, Any]) -> str:
         "",
         "## Per-layer Visual KV / Attention",
         "",
-        "| layer | visual attn mass | text attn mass | entropy | norm entropy | visual norm entropy | visual K norm | text K norm | K ratio | head mass std |",
+        "| layer | visual attn mass | text attn mass | entropy | norm entropy | "
+        "visual norm entropy | visual K norm | text K norm | K ratio | head mass std |",
         "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for layer in summary["layers"]:
@@ -1288,16 +1289,24 @@ def render_summary_svg(summary: dict[str, Any], *, width: int = 960, height: int
         return margin_top + chart_height * (1.0 - value / max_ratio)
 
     parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}">',
         '<rect width="100%" height="100%" fill="#ffffff"/>',
-        f'<text x="{margin_left}" y="22" font-family="monospace" font-size="16" fill="#111827">KV Trace Layer Summary</text>',
-        f'<line x1="{margin_left}" y1="{margin_top}" x2="{margin_left}" y2="{margin_top + chart_height}" stroke="#374151" stroke-width="1"/>',
-        f'<line x1="{margin_left}" y1="{margin_top + chart_height}" x2="{width - margin_right}" y2="{margin_top + chart_height}" stroke="#374151" stroke-width="1"/>',
-        f'<text x="{margin_left}" y="{height - 16}" font-family="monospace" font-size="12" fill="#374151">layer</text>',
-        f'<text x="{width - 250}" y="22" font-family="monospace" font-size="12" fill="#2563eb">bar: visual attention mass</text>',
-        f'<text x="{width - 250}" y="40" font-family="monospace" font-size="12" fill="#dc2626">line: visual/text K norm ratio</text>',
+        f'<text x="{margin_left}" y="22" font-family="monospace" font-size="16" '
+        'fill="#111827">KV Trace Layer Summary</text>',
+        f'<line x1="{margin_left}" y1="{margin_top}" x2="{margin_left}" '
+        f'y2="{margin_top + chart_height}" stroke="#374151" stroke-width="1"/>',
+        f'<line x1="{margin_left}" y1="{margin_top + chart_height}" '
+        f'x2="{width - margin_right}" y2="{margin_top + chart_height}" '
+        'stroke="#374151" stroke-width="1"/>',
+        f'<text x="{margin_left}" y="{height - 16}" font-family="monospace" '
+        'font-size="12" fill="#374151">layer</text>',
+        f'<text x="{width - 250}" y="22" font-family="monospace" font-size="12" '
+        'fill="#2563eb">bar: visual attention mass</text>',
+        f'<text x="{width - 250}" y="40" font-family="monospace" font-size="12" '
+        'fill="#dc2626">line: visual/text K norm ratio</text>',
     ]
-    for idx, (layer, value) in enumerate(zip(layers, values)):
+    for idx, (layer, value) in enumerate(zip(layers, values, strict=False)):
         x = x_pos(idx)
         y = y_mass(value)
         bar_h = margin_top + chart_height - y
@@ -1320,15 +1329,18 @@ def render_summary_svg(summary: dict[str, Any], *, width: int = 960, height: int
     for tick, label in [(0.0, "0"), (max_mass, f"{max_mass:.3f}")]:
         y = y_mass(tick)
         parts.append(
-            f'<text x="8" y="{y + 4:.2f}" font-family="monospace" font-size="10" fill="#2563eb">{label}</text>'
+            f'<text x="8" y="{y + 4:.2f}" font-family="monospace" font-size="10" '
+            f'fill="#2563eb">{label}</text>'
         )
         parts.append(
-            f'<line x1="{margin_left - 4}" y1="{y:.2f}" x2="{margin_left}" y2="{y:.2f}" stroke="#2563eb" stroke-width="1"/>'
+            f'<line x1="{margin_left - 4}" y1="{y:.2f}" x2="{margin_left}" '
+            f'y2="{y:.2f}" stroke="#2563eb" stroke-width="1"/>'
         )
     for tick, label in [(0.0, "0"), (max_ratio, f"{max_ratio:.3f}")]:
         y = y_ratio(tick)
         parts.append(
-            f'<text x="{width - margin_right + 4}" y="{y + 4:.2f}" font-family="monospace" font-size="10" fill="#dc2626">{label}</text>'
+            f'<text x="{width - margin_right + 4}" y="{y + 4:.2f}" '
+            f'font-family="monospace" font-size="10" fill="#dc2626">{label}</text>'
         )
     parts.append("</svg>")
     return "\n".join(parts) + "\n"

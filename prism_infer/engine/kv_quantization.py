@@ -6,7 +6,6 @@ from typing import NamedTuple
 
 import torch
 
-
 FP8_E4M3FN_MAX = 448.0
 FP8_E4M3FN_MIN = -FP8_E4M3FN_MAX
 PER_TOKEN_HEAD_SCALE_FLOOR = 1.0e-6

@@ -11,7 +11,6 @@ from prism_infer.runtime_capabilities import (
     validate_runtime_capabilities,
 )
 
-
 pytestmark = pytest.mark.unit
 
 

@@ -5,8 +5,8 @@ from types import MethodType, SimpleNamespace
 import pytest
 import torch
 
-from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.engine.contracts import DeviceModelInputs, PreparedModelInputs
+from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.engine.sequence import Sequence
 from prism_infer.utils.context import Context, get_context, reset_context
 

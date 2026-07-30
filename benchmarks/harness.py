@@ -11,14 +11,14 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import torch
 from PIL import Image
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

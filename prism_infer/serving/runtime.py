@@ -270,9 +270,7 @@ class ServingRuntime:
         handle = RequestHandle(request.request_id, event_loop)
         with self._state_lock:
             if request.request_id in self._known_request_ids:
-                raise DuplicateRequestError(
-                    f"duplicate active request_id: {request.request_id!r}"
-                )
+                raise DuplicateRequestError(f"duplicate active request_id: {request.request_id!r}")
             self._known_request_ids.add(request.request_id)
             try:
                 self._ingress.put_nowait(_Submission(request=request, handle=handle))

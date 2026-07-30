@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -18,7 +17,6 @@ from prism_infer.analysis.benchmark_schema import validate_benchmark_record
 from prism_infer.analysis.performance_profile import (
     validate_performance_profile_record,
 )
-
 
 REPLAY_RANGE = "prism::runner.cudagraph.replay"
 EXTERNAL_RANGES = (
@@ -224,9 +222,12 @@ def _summarize_validated(
             "rows": padding_rows,
         },
         "claim_boundaries": [
-            "Nsight node tracing adds instrumentation; gpu_span_minus_busy is not an occupancy metric.",
-            "Sampler CPU time exposes stream synchronization and must not be added as independent fixed work.",
-            "Padding cells are one process-level run each; the matrix proves coverage/correctness, not padding speedup or slowdown.",
+            "Nsight node tracing adds instrumentation; gpu_span_minus_busy is not an "
+            "occupancy metric.",
+            "Sampler CPU time exposes stream synchronization and must not be added as "
+            "independent fixed work.",
+            "Padding cells are one process-level run each; the matrix proves "
+            "coverage/correctness, not padding speedup or slowdown.",
             "The matrix is replicated single-image offline decode, not online serving goodput.",
         ],
     }

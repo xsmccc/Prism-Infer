@@ -14,10 +14,9 @@ P5.1 输出是 pruning 前的离线 ranking proxy，不是压缩策略本身。
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
+from dataclasses import dataclass, field
 from typing import Any
-
 
 VISUAL_MODALITIES = {"image", "video"}
 DEFAULT_KEEP_RATIOS = (0.25, 0.5, 0.75)
@@ -688,7 +687,8 @@ def format_importance_markdown(report: dict[str, Any], *, top_k: int = 20) -> st
         "",
         "## Top Visual Tokens",
         "",
-        "| rank | seq | modality | span | token | score sum | attn mass sum | observations | top-hit fraction |",
+        "| rank | seq | modality | span | token | score sum | attn mass sum | "
+        "observations | top-hit fraction |",
         "|---:|---:|---|---:|---:|---:|---:|---:|---:|",
     ]
     for rank, row in enumerate(report["top_tokens"][:top_k], start=1):

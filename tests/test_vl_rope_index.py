@@ -2,15 +2,14 @@
 
 import pytest
 import torch
+from conftest import get_model_path, hf_qwen3_vl_rope_index, require_transformers
 from PIL import Image
 
-from conftest import get_model_path, hf_qwen3_vl_rope_index, require_transformers
 from prism_infer.engine.vl_inputs import prepare_single_image_inputs
 from prism_infer.models.qwen3_vl_position import (
     get_qwen3_vl_rope_index,
     get_qwen3_vl_rope_index_from_config,
 )
-
 
 pytestmark = [pytest.mark.model, pytest.mark.integration]
 

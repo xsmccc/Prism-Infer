@@ -4,15 +4,15 @@ import gc
 
 import pytest
 import torch
-from prism_infer.models.qwen3_vl import (
-    Qwen3VLTextRMSNorm,
-    Qwen3VLTextMLP,
-    Qwen3VLTextDecoderLayer,
-    Qwen3VLTextModel,
-)
-from prism_infer.vision.mrope import MRope
 from conftest import get_model_path, require_transformers
 
+from prism_infer.models.qwen3_vl import (
+    Qwen3VLTextDecoderLayer,
+    Qwen3VLTextMLP,
+    Qwen3VLTextModel,
+    Qwen3VLTextRMSNorm,
+)
+from prism_infer.vision.mrope import MRope
 
 pytestmark = [pytest.mark.model, pytest.mark.integration, pytest.mark.slow]
 

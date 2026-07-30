@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 
-
 SAMPLING_NUMERICAL_EPSILON = 1.0e-10
 SAMPLING_MODES = frozenset({"greedy", "random", "mixed"})
 

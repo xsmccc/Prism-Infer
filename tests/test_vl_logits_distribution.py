@@ -4,15 +4,14 @@ import gc
 
 import pytest
 import torch
+from conftest import get_model_path, require_transformers, with_hf_mm_token_type_ids
 from PIL import Image
+from test_processor_pipeline_video import demo_video_frames
 from transformers import Qwen3VLForConditionalGeneration
 
-from conftest import get_model_path, require_transformers, with_hf_mm_token_type_ids
 from prism_infer.engine.vl_inputs import prepare_image_inputs, prepare_video_inputs
 from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
-from test_processor_pipeline_video import demo_video_frames
-
 
 pytestmark = [
     pytest.mark.model,

@@ -7,13 +7,11 @@ member。服务端若忽略 Range、返回错误区间或内容长度变化，�
 
 from __future__ import annotations
 
-from http import HTTPStatus
-
 import io
 import re
 from collections import OrderedDict
+from http import HTTPStatus
 from typing import Any
-
 
 DEFAULT_RANGE_CHUNK_BYTES = 8 * 1024 * 1024
 DEFAULT_CACHE_CHUNKS = 4

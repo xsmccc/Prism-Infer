@@ -3,7 +3,6 @@ from math import isfinite
 
 import torch
 
-from prism_infer.engine.vl_inputs import ImageInputs, SingleImageInputs, VideoInputs
 from prism_infer.engine.kv_layout import KVCacheLayoutDescriptor
 from prism_infer.engine.request import (
     RequestLifecycle,
@@ -11,6 +10,7 @@ from prism_infer.engine.request import (
     SequenceStatus,
     validate_request_id,
 )
+from prism_infer.engine.vl_inputs import ImageInputs, SingleImageInputs, VideoInputs
 from prism_infer.sampling_params import SamplingParams
 
 
@@ -476,13 +476,9 @@ class Sequence:
         )
         submitted_ns = state.get("submitted_ns")
         if submitted_ns is not None and (
-            isinstance(submitted_ns, bool)
-            or not isinstance(submitted_ns, int)
-            or submitted_ns < 0
+            isinstance(submitted_ns, bool) or not isinstance(submitted_ns, int) or submitted_ns < 0
         ):
-            raise ValueError(
-                "serialized submitted_ns must be a non-negative integer or None"
-            )
+            raise ValueError("serialized submitted_ns must be a non-negative integer or None")
         self.submitted_ns = submitted_ns
         ttft_slo_ms = state.get("ttft_slo_ms")
         if ttft_slo_ms is not None and (
@@ -491,12 +487,8 @@ class Sequence:
             or not isfinite(float(ttft_slo_ms))
             or ttft_slo_ms <= 0
         ):
-            raise ValueError(
-                "serialized ttft_slo_ms must be a finite positive number or None"
-            )
-        self.ttft_slo_ms = (
-            None if ttft_slo_ms is None else float(ttft_slo_ms)
-        )
+            raise ValueError("serialized ttft_slo_ms must be a finite positive number or None")
+        self.ttft_slo_ms = None if ttft_slo_ms is None else float(ttft_slo_ms)
         request_state = state.get("request_state", RequestState.WAITING)
         self.lifecycle = RequestLifecycle(self.seq_id, state=request_state)
         serialized_block_size = state["block_size"]

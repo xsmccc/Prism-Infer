@@ -11,7 +11,6 @@ from packaging.version import InvalidVersion, Version
 
 from prism_infer.engine.compression import compression_mode_uses_fp8_payload
 
-
 MIN_TORCH_VERSION = Version("2.5")
 MAX_TORCH_VERSION_EXCLUSIVE = Version("2.12")
 

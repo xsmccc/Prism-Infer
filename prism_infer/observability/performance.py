@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
-from typing import Any, Callable
-
+from typing import Any
 
 ProfileRegionProvider = Callable[..., AbstractContextManager[None]]
 ProfileSessionProvider = Callable[[], Any | None]

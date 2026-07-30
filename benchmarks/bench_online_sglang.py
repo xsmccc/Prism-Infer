@@ -40,7 +40,6 @@ from benchmarks.bench_external_sglang import (
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
 from prism_infer.analysis.online_serving import summarize_distribution
 
-
 H3_PROFILES = ("primary", "conditional_video")
 TERMINAL_FINISH_REASONS = {"eos", "length", "stop"}
 
@@ -251,25 +250,27 @@ def _h3_schedule(
         request_by_class[case_id] = requests[0]
     request_classes = [period[index % len(period)] for index in range(count)]
     requests = [request_by_class[case_id] for case_id in request_classes]
-    return requests, request_classes, {
-        "profile": profile,
-        "class_field": field,
-        "class_schedule": h3["class_schedule"],
-        "materialized_schedule_algorithm": (
-            "smooth_weighted_round_robin_integer_counts"
-        ),
-        "period": list(period),
-        "classes": classes,
-        "arrival_process": h3["arrival_process"],
-        "request_rates_per_second": h3["request_rates_per_second"],
-        "completed_requests_per_run": h3["completed_requests_per_run"],
-        "arrival_seeds": h3["arrival_seeds"],
-        "max_tokens": h3["max_tokens"],
-        "max_model_len": h3["max_model_len"],
-        "ttft_slo_formula": h3["ttft_slo_formula"],
-        "tpot_slo_formula": h3["tpot_slo_formula"],
-        "goodput_unit": h3["goodput_unit"],
-    }
+    return (
+        requests,
+        request_classes,
+        {
+            "profile": profile,
+            "class_field": field,
+            "class_schedule": h3["class_schedule"],
+            "materialized_schedule_algorithm": ("smooth_weighted_round_robin_integer_counts"),
+            "period": list(period),
+            "classes": classes,
+            "arrival_process": h3["arrival_process"],
+            "request_rates_per_second": h3["request_rates_per_second"],
+            "completed_requests_per_run": h3["completed_requests_per_run"],
+            "arrival_seeds": h3["arrival_seeds"],
+            "max_tokens": h3["max_tokens"],
+            "max_model_len": h3["max_model_len"],
+            "ttft_slo_formula": h3["ttft_slo_formula"],
+            "tpot_slo_formula": h3["tpot_slo_formula"],
+            "goodput_unit": h3["goodput_unit"],
+        },
+    )
 
 
 def _protocol_conformance(
@@ -328,9 +329,7 @@ async def _run_arrivals_async(
             await asyncio.sleep(wait_s)
         request_id = f"{key_prefix}-{index:05d}"
         prompt = (
-            request["prompt"]
-            if request["type"] == "text"
-            else _prompts(processor, [request])[0]
+            request["prompt"] if request["type"] == "text" else _prompts(processor, [request])[0]
         )
         image_data = request.get("images")
         if image_data:
@@ -359,12 +358,8 @@ async def _run_arrivals_async(
                 output = chunk
                 current_tokens = len(chunk["output_ids"])
                 if current_tokens < observed_tokens:
-                    raise RuntimeError(
-                        f"SGLang output token count regressed for {request_id}"
-                    )
-                token_arrivals.extend(
-                    [observed] * (current_tokens - observed_tokens)
-                )
+                    raise RuntimeError(f"SGLang output token count regressed for {request_id}")
+                token_arrivals.extend([observed] * (current_tokens - observed_tokens))
                 observed_tokens = current_tokens
         finally:
             active -= 1
@@ -374,36 +369,28 @@ async def _run_arrivals_async(
         generated = list(output["output_ids"])
         prompt_token_ids = list(output.get("prompt_token_ids") or [])
         if len(prompt_token_ids) != int(output["meta_info"]["prompt_tokens"]):
-            raise RuntimeError(
-                f"SGLang prompt token audit disagrees for {request_id}"
-            )
+            raise RuntimeError(f"SGLang prompt token audit disagrees for {request_id}")
         first = token_arrivals[0]
         queue_s = output["meta_info"].get("queue_time")
         record = {
-                "request_id": request_id,
-                "request_class": case_id,
-                "finish_reason": _finish_reason(output),
-                "prompt_tokens": len(prompt_token_ids),
-                "output_tokens": len(generated),
-                "token_ids": generated,
-                "arrival_offset_s": offset_s,
-                "controller_submit_delay_ms": (observed_submit - arrival) * 1000.0,
-                "queue_ms": (
-                    None if queue_s is None else max(0.0, float(queue_s) * 1000.0)
-                ),
-                "ttft_ms": (first - arrival) * 1000.0,
-                "tpot_ms": (
-                    0.0
-                    if len(generated) <= 1
-                    else (finished - first) * 1000.0 / (len(generated) - 1)
-                ),
-                "latency_ms": (finished - arrival) * 1000.0,
-            }
+            "request_id": request_id,
+            "request_class": case_id,
+            "finish_reason": _finish_reason(output),
+            "prompt_tokens": len(prompt_token_ids),
+            "output_tokens": len(generated),
+            "token_ids": generated,
+            "arrival_offset_s": offset_s,
+            "controller_submit_delay_ms": (observed_submit - arrival) * 1000.0,
+            "queue_ms": (None if queue_s is None else max(0.0, float(queue_s) * 1000.0)),
+            "ttft_ms": (first - arrival) * 1000.0,
+            "tpot_ms": (
+                0.0 if len(generated) <= 1 else (finished - first) * 1000.0 / (len(generated) - 1)
+            ),
+            "latency_ms": (finished - arrival) * 1000.0,
+        }
         return record, prompt_token_ids, generated
 
-    results = await asyncio.gather(
-        *(run_one(index) for index in range(len(requests)))
-    )
+    results = await asyncio.gather(*(run_one(index) for index in range(len(requests))))
     completed = time.perf_counter()
     records = [record for record, _, _ in results]
     prompt_ids = [prompt_ids for _, prompt_ids, _ in results]
@@ -458,9 +445,7 @@ def _summarize_by_class(
     rows = {}
     for case_id, records in sorted(grouped.items()):
         completed = [
-            record
-            for record in records
-            if record["finish_reason"] in TERMINAL_FINISH_REASONS
+            record for record in records if record["finish_reason"] in TERMINAL_FINISH_REASONS
         ]
         row = {
             "counts": {
@@ -469,19 +454,14 @@ def _summarize_by_class(
             },
             "latency_ms": {
                 name: summarize_distribution(
-                    [
-                        float(record[name])
-                        for record in completed
-                        if record[name] is not None
-                    ]
+                    [float(record[name]) for record in completed if record[name] is not None]
                 )
                 for name in ("queue_ms", "ttft_ms", "tpot_ms", "latency_ms")
             },
             "throughput": {
                 "requests_per_s": len(completed) / duration_s,
                 "output_tokens_per_s": (
-                    sum(int(record["output_tokens"]) for record in completed)
-                    / duration_s
+                    sum(int(record["output_tokens"]) for record in completed) / duration_s
                 ),
             },
         }
@@ -493,22 +473,16 @@ def _summarize_by_class(
                 if float(record["ttft_ms"]) <= thresholds["ttft_ms"]
                 and float(record["tpot_ms"]) <= thresholds["tpot_ms"]
             ]
-            meeting_tokens = sum(
-                int(record["output_tokens"]) for record in meeting
-            )
+            meeting_tokens = sum(int(record["output_tokens"]) for record in meeting)
             row["slo"] = {
                 "thresholds_ms": thresholds,
                 "requests_meeting_both": len(meeting),
                 "output_tokens_meeting_both": meeting_tokens,
-                "request_attainment": (
-                    len(meeting) / len(completed) if completed else 0.0
-                ),
+                "request_attainment": (len(meeting) / len(completed) if completed else 0.0),
                 "goodput_output_tokens_per_s": meeting_tokens / duration_s,
             }
         rows[case_id] = row
-    output_tokens = sum(
-        int(record["output_tokens"]) for record in run["requests"]
-    )
+    output_tokens = sum(int(record["output_tokens"]) for record in run["requests"])
     summary = {
         "by_class": rows,
         "throughput": {
@@ -517,12 +491,8 @@ def _summarize_by_class(
         },
     }
     if class_slos is not None:
-        meeting_requests = sum(
-            int(row["slo"]["requests_meeting_both"]) for row in rows.values()
-        )
-        meeting_tokens = sum(
-            int(row["slo"]["output_tokens_meeting_both"]) for row in rows.values()
-        )
+        meeting_requests = sum(int(row["slo"]["requests_meeting_both"]) for row in rows.values())
+        meeting_tokens = sum(int(row["slo"]["output_tokens_meeting_both"]) for row in rows.values())
         summary["slo_goodput"] = {
             "requests_meeting_both": meeting_requests,
             "output_tokens_meeting_both": meeting_tokens,
@@ -546,8 +516,7 @@ def _prompt_audit(
         "prompt_tokens_per_request": list(map(len, prompt_ids)),
         "prompt_token_ids_sha256": _canonical_sha256(prompt_ids),
         "prompt_token_ids_sha256_by_class": {
-            case_id: _canonical_sha256(rows)
-            for case_id, rows in sorted(by_class.items())
+            case_id: _canonical_sha256(rows) for case_id, rows in sorted(by_class.items())
         },
     }
 
@@ -567,9 +536,7 @@ def _load_class_slos(
         raise ValueError("P12 class SLO profile does not match the run")
     classes = payload.get("classes", {})
     if set(classes) != expected_classes:
-        raise ValueError(
-            f"P12 class SLO classes differ: {set(classes)} != {expected_classes}"
-        )
+        raise ValueError(f"P12 class SLO classes differ: {set(classes)} != {expected_classes}")
     normalized = {}
     for case_id, thresholds in classes.items():
         ttft_ms = float(thresholds["ttft_ms"])
@@ -617,9 +584,7 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     if args.requests <= 0 or args.warmup_requests < 0 or args.max_tokens < 2:
-        raise SystemExit(
-            "--requests must be positive, warmup non-negative and max-tokens >= 2"
-        )
+        raise SystemExit("--requests must be positive, warmup non-negative and max-tokens >= 2")
 
     manifest_path = Path(args.manifest)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -639,9 +604,7 @@ def main() -> None:
     conformance = _protocol_conformance(h3_contract, args)
     git = collect_git_metadata(REPO_ROOT, strict=True)
     if args.formal and (git.dirty or not conformance["full_frozen_h3"]):
-        raise SystemExit(
-            "--formal requires a clean harness and the complete frozen H3 contract"
-        )
+        raise SystemExit("--formal requires a clean harness and the complete frozen H3 contract")
     class_slos = None
     class_slo_audit = None
     if args.class_slo_file:
@@ -654,16 +617,10 @@ def main() -> None:
         raise SystemExit("formal SGLang H3 runs require --class-slo-file")
 
     processor = AutoProcessor.from_pretrained(args.model, local_files_only=True)
-    video_fps = {
-        float(request["fps"]) for request in requests if "video" in request
-    }
+    video_fps = {float(request["fps"]) for request in requests if "video" in request}
     if len(video_fps) > 1:
         raise ValueError(f"SGLang H3 requires one global video fps: {video_fps}")
-    mm_process_config = (
-        {"video": {"fps": next(iter(video_fps))}}
-        if video_fps
-        else {}
-    )
+    mm_process_config = {"video": {"fps": next(iter(video_fps))}} if video_fps else {}
     engine = Engine(
         model_path=args.model,
         dtype="bfloat16",
@@ -691,13 +648,9 @@ def main() -> None:
         "max_new_tokens": args.max_tokens,
         "ignore_eos": True,
     }
-    warmup_requests = [
-        requests[index % len(requests)]
-        for index in range(args.warmup_requests)
-    ]
+    warmup_requests = [requests[index % len(requests)] for index in range(args.warmup_requests)]
     warmup_classes = [
-        request_classes[index % len(request_classes)]
-        for index in range(args.warmup_requests)
+        request_classes[index % len(request_classes)] for index in range(args.warmup_requests)
     ]
     if args.warmup_requests:
         _run_arrivals(
@@ -723,10 +676,7 @@ def main() -> None:
     )
     torch.cuda.synchronize()
     process_device_memory = process_memory_sampler.stop()
-    if any(
-        record["finish_reason"] not in TERMINAL_FINISH_REASONS
-        for record in run["requests"]
-    ):
+    if any(record["finish_reason"] not in TERMINAL_FINISH_REASONS for record in run["requests"]):
         raise RuntimeError("SGLang online run contains a non-completed request")
 
     model_config_path = Path(args.model) / "config.json"
@@ -798,9 +748,7 @@ def main() -> None:
             "request_rate_per_s": args.request_rate,
             "seed": args.seed,
             "offsets_s": offsets_s,
-            "trace_sha256": _canonical_sha256(
-                {"classes": request_classes, "offsets_s": offsets_s}
-            ),
+            "trace_sha256": _canonical_sha256({"classes": request_classes, "offsets_s": offsets_s}),
         },
         "backend": {
             "execution": "eager" if args.enforce_eager else "cuda_graph",
@@ -813,9 +761,7 @@ def main() -> None:
             "cuda_graph_max_bs_decode": args.max_num_seqs,
             "kv_cache_capacity_tokens": args.max_total_tokens,
             "kv_cache_bytes_per_token_theoretical": kv_bytes_per_token,
-            "kv_cache_memory_bytes_theoretical": (
-                args.max_total_tokens * kv_bytes_per_token
-            ),
+            "kv_cache_memory_bytes_theoretical": (args.max_total_tokens * kv_bytes_per_token),
         },
         "memory": {
             "process_device": process_device_memory,
@@ -844,12 +790,8 @@ def main() -> None:
                 "git_dirty": git.dirty,
                 "h3_conformance": conformance,
                 "class_summary": class_summary,
-                "prompt_token_ids_sha256": prompt_audit[
-                    "prompt_token_ids_sha256"
-                ],
-                "output_token_ids_sha256": record["correctness"][
-                    "output_token_ids_sha256"
-                ],
+                "prompt_token_ids_sha256": prompt_audit["prompt_token_ids_sha256"],
+                "output_token_ids_sha256": record["correctness"]["output_token_ids_sha256"],
                 "controller": run["controller"],
             },
             indent=2,

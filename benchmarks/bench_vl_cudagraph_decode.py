@@ -10,8 +10,8 @@ from __future__ import annotations
 import argparse
 import gc
 import math
-import sys
 import statistics
+import sys
 from pathlib import Path
 from time import perf_counter
 

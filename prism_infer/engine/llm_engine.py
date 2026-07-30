@@ -5,19 +5,26 @@ from dataclasses import dataclass
 from math import isfinite
 from time import perf_counter, perf_counter_ns
 from typing import Any, cast
-from tqdm.auto import tqdm  # 进度条库, auto版本自动适配终端/Jupyter
-from transformers import AutoTokenizer  # HuggingFace分词器: 文本↔token_ids
+
 import torch
 import torch.multiprocessing as mp  # PyTorch多进程模块(比标准multiprocessing多CUDA tensor共享支持)
+from tqdm.auto import tqdm  # 进度条库, auto版本自动适配终端/Jupyter
+from transformers import AutoTokenizer  # HuggingFace分词器: 文本↔token_ids
 
-from prism_infer.observability import (
-    get_performance_profile_session,
-    profile_region,
-)
 from prism_infer.config import Config, PrismConfig
-from prism_infer.runtime_capabilities import validate_runtime_capabilities
-from prism_infer.sampling_params import SamplingParams
+from prism_infer.engine.contracts import BatchPlan, MetricsSink, StepResult
+from prism_infer.engine.executor import ModelExecutor
+from prism_infer.engine.metrics import EngineMetrics
+from prism_infer.engine.model_runner import ModelRunner
+from prism_infer.engine.request import (
+    MonotonicRequestIdAllocator,
+    RequestIdAllocator,
+    validate_request_id,
+)
+from prism_infer.engine.scheduler import Scheduler
+from prism_infer.engine.scheduler_policy import SLOAwareSchedulerPolicy
 from prism_infer.engine.sequence import Sequence
+from prism_infer.engine.tp_control import DEFAULT_TP_CONTROL_TIMEOUT_SECONDS
 from prism_infer.engine.vl_inputs import (
     ImageInputs,
     VideoInputs,
@@ -26,21 +33,14 @@ from prism_infer.engine.vl_inputs import (
     prepare_interleaved_image_inputs,
     prepare_video_inputs,
 )
-from prism_infer.engine.scheduler import Scheduler
-from prism_infer.engine.scheduler_policy import SLOAwareSchedulerPolicy
-from prism_infer.engine.model_runner import ModelRunner
-from prism_infer.engine.contracts import BatchPlan, MetricsSink, StepResult
-from prism_infer.engine.executor import ModelExecutor
-from prism_infer.engine.metrics import EngineMetrics
-from prism_infer.engine.tp_control import DEFAULT_TP_CONTROL_TIMEOUT_SECONDS
-from prism_infer.engine.request import (
-    MonotonicRequestIdAllocator,
-    RequestIdAllocator,
-    validate_request_id,
-)
-from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 from prism_infer.models.model_registry import validate_model_architecture
-
+from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
+from prism_infer.observability import (
+    get_performance_profile_session,
+    profile_region,
+)
+from prism_infer.runtime_capabilities import validate_runtime_capabilities
+from prism_infer.sampling_params import SamplingParams
 
 _COOPERATIVE_PREFILL_SPARSE_DECODE_QUANTUM_FLOOR = 4
 _COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES = 3
@@ -462,9 +462,7 @@ class LLMEngine:
         ):
             raise ValueError("ttft_slo_ms must be a finite positive number or None")
         seq.submitted_ns = arrival_ns
-        seq.ttft_slo_ms = (
-            None if ttft_slo_ms is None else float(ttft_slo_ms)
-        )
+        seq.ttft_slo_ms = None if ttft_slo_ms is None else float(ttft_slo_ms)
         if getattr(self.config, "enable_visual_embedding_cache", False):
             self.model_runner.hydrate_visual_embedding_cache(seq)
         self.metrics.on_request_submitted(seq, timestamp_ns=arrival_ns)
@@ -819,9 +817,8 @@ class LLMEngine:
         policy = self._slo_prefill_policy()
         if policy is None:
             return False
-        return (
-            any(seq.ttft_slo_ms is not None for seq in plan.sequences)
-            and all(policy.prefill_cost_tier(seq) < 2 for seq in plan.sequences)
+        return any(seq.ttft_slo_ms is not None for seq in plan.sequences) and all(
+            policy.prefill_cost_tier(seq) < 2 for seq in plan.sequences
         )
 
     def _is_slo_deadline_atomic_plan(self, plan: BatchPlan) -> bool:
@@ -831,8 +828,7 @@ class LLMEngine:
         clock_ns = getattr(self, "clock_ns", perf_counter_ns)
         now_ns = clock_ns()
         return any(
-            deadline_ns is not None
-            and now_ns + self._slo_prefill_reserve_ns(seq) >= deadline_ns
+            deadline_ns is not None and now_ns + self._slo_prefill_reserve_ns(seq) >= deadline_ns
             for seq in plan.sequences
             for deadline_ns in (policy.ttft_deadline_ns(seq),)
         )
@@ -863,10 +859,7 @@ class LLMEngine:
         policy = self._slo_prefill_policy()
         if policy is None or not self.scheduler.waiting:
             return None
-        pending_tier = min(
-            policy.prefill_cost_tier(seq)
-            for seq in pending.plan.sequences
-        )
+        pending_tier = min(policy.prefill_cost_tier(seq) for seq in pending.plan.sequences)
         if pending_tier <= 0:
             return None
         due_releases = []
@@ -874,14 +867,10 @@ class LLMEngine:
             if policy.prefill_cost_tier(seq) >= pending_tier:
                 continue
             deadline_ns = policy.ttft_deadline_ns(seq)
-            if (
-                deadline_ns is not None
-                and now_ns
-                >= deadline_ns - self._slo_prefill_reserve_ns(seq)
+            if deadline_ns is not None and now_ns >= deadline_ns - self._slo_prefill_reserve_ns(
+                seq
             ):
-                due_releases.append(
-                    deadline_ns - self._slo_prefill_reserve_ns(seq)
-                )
+                due_releases.append(deadline_ns - self._slo_prefill_reserve_ns(seq))
         if not due_releases:
             return None
         return pending_tier, min(due_releases)
@@ -910,13 +899,9 @@ class LLMEngine:
             self._cooperative_prefill_atomic_batches += 1
             return False
         is_heavy_visual = (
-            plan.num_scheduled_vision_patches
-            >= self.config.heavy_prefill_vision_patch_threshold
+            plan.num_scheduled_vision_patches >= self.config.heavy_prefill_vision_patch_threshold
         )
-        if (
-            not is_heavy_visual
-            and not self._cooperative_prefill_fine_grain_enabled()
-        ):
+        if not is_heavy_visual and not self._cooperative_prefill_fine_grain_enabled():
             return False
         self._cooperative_prefill_underfilled_batches += 1
         self.metrics.on_batch_planned(plan)
@@ -937,10 +922,7 @@ class LLMEngine:
             1,
             (self.config.max_num_seqs + 3) // 4,
         )
-        if (
-            self.scheduler.decode_work_count()
-            >= fine_grain_decode_batch_size
-        ):
+        if self.scheduler.decode_work_count() >= fine_grain_decode_batch_size:
             self._cooperative_prefill_fine_grain_active = True
         return getattr(
             self,
@@ -952,9 +934,7 @@ class LLMEngine:
         """Choose coarse startup or fine loaded prefill quanta."""
 
         layer_quantum = self.config.cooperative_prefill_layer_quantum
-        vision_block_quantum = (
-            self.config.cooperative_prefill_vision_block_quantum
-        )
+        vision_block_quantum = self.config.cooperative_prefill_vision_block_quantum
         if self._cooperative_prefill_fine_grain_enabled():
             return layer_quantum, vision_block_quantum
         return (
@@ -977,24 +957,14 @@ class LLMEngine:
         ):
             return False
         waiting = tuple(self.scheduler.waiting)
-        if (
-            not waiting
-            or len(waiting)
-            >= _COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES
-        ):
+        if not waiting or len(waiting) >= _COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES:
             return False
-        submitted_ns = [
-            seq.submitted_ns
-            for seq in waiting
-            if seq.submitted_ns is not None
-        ]
+        submitted_ns = [seq.submitted_ns for seq in waiting if seq.submitted_ns is not None]
         if not submitted_ns:
             return False
         clock_ns = getattr(self, "clock_ns", perf_counter_ns)
         now_ns = clock_ns()
-        fixed_release_ns = (
-            min(submitted_ns) + _COOPERATIVE_PREFILL_COALESCE_MAX_WAIT_NS
-        )
+        fixed_release_ns = min(submitted_ns) + _COOPERATIVE_PREFILL_COALESCE_MAX_WAIT_NS
         release_ns = fixed_release_ns
         policy = self._slo_prefill_policy()
         if policy is not None:
@@ -1007,11 +977,7 @@ class LLMEngine:
                     deadline_ns - self._slo_prefill_reserve_ns(seq),
                 )
         should_wait = now_ns < release_ns
-        if (
-            not should_wait
-            and release_ns < fixed_release_ns
-            and policy is not None
-        ):
+        if not should_wait and release_ns < fixed_release_ns and policy is not None:
             self._slo_prefill_deadline_releases += 1
         return should_wait
 
@@ -1019,39 +985,21 @@ class LLMEngine:
         """Return measured counters for the deadline-coalescing policy."""
 
         return {
-            "coalesce_min_sequences": (
-                _COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES
-            ),
-            "coalesce_max_wait_ms": (
-                _COOPERATIVE_PREFILL_COALESCE_MAX_WAIT_NS / 1e6
-            ),
-            "deferred_decode_steps": (
-                self._cooperative_prefill_deferred_decode_steps
-            ),
-            "atomic_coalesced_batches": (
-                self._cooperative_prefill_atomic_batches
-            ),
-            "cooperative_underfilled_batches": (
-                self._cooperative_prefill_underfilled_batches
-            ),
+            "coalesce_min_sequences": (_COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES),
+            "coalesce_max_wait_ms": (_COOPERATIVE_PREFILL_COALESCE_MAX_WAIT_NS / 1e6),
+            "deferred_decode_steps": (self._cooperative_prefill_deferred_decode_steps),
+            "atomic_coalesced_batches": (self._cooperative_prefill_atomic_batches),
+            "cooperative_underfilled_batches": (self._cooperative_prefill_underfilled_batches),
             "slo_prefill_reserve_ms_by_tier": (
                 None
                 if self._slo_prefill_policy() is None
-                else list(
-                    self._slo_prefill_policy().prefill_reserve_ms_by_tier
-                )
+                else list(self._slo_prefill_policy().prefill_reserve_ms_by_tier)
             ),
             "slo_deadline_releases": self._slo_prefill_deadline_releases,
-            "slo_light_atomic_batches": (
-                self._slo_prefill_light_atomic_batches
-            ),
-            "slo_deadline_atomic_batches": (
-                self._slo_prefill_deadline_atomic_batches
-            ),
+            "slo_light_atomic_batches": (self._slo_prefill_light_atomic_batches),
+            "slo_deadline_atomic_batches": (self._slo_prefill_deadline_atomic_batches),
             "slo_prefill_interruptions": self._slo_prefill_interruptions,
-            "slo_pending_deadline_finishes": (
-                self._slo_pending_deadline_finishes
-            ),
+            "slo_pending_deadline_finishes": (self._slo_pending_deadline_finishes),
         }
 
     def _next_step_result(self, profile_session) -> StepResult:
@@ -1071,9 +1019,7 @@ class LLMEngine:
                     )
             clock_ns = getattr(self, "clock_ns", perf_counter_ns)
             now_ns = clock_ns()
-            pending_release_ns = self._slo_pending_prefill_release_ns(
-                pending
-            )
+            pending_release_ns = self._slo_pending_prefill_release_ns(pending)
             interrupt = self._slo_prefill_interrupt(
                 pending,
                 now_ns=now_ns,
@@ -1091,17 +1037,12 @@ class LLMEngine:
                 )
                 self._decode_after_slo_prefill_interrupt = True
                 return result
-            if (
-                pending_release_ns is not None
-                and now_ns >= pending_release_ns
-            ):
+            if pending_release_ns is not None and now_ns >= pending_release_ns:
                 self._slo_pending_deadline_finishes += 1
                 return self._finish_pending_prefill(profile_session)
             if not self.scheduler.has_decode_work():
                 return self._finish_pending_prefill(profile_session)
-            layer_quantum, vision_block_quantum = (
-                self._cooperative_prefill_quanta()
-            )
+            layer_quantum, vision_block_quantum = self._cooperative_prefill_quanta()
             complete = self.executor.advance_prefill(
                 pending.runner_handle,
                 max_layers=layer_quantum,
@@ -1183,33 +1124,22 @@ class LLMEngine:
     def multimodal_prefix_cache_metadata(self) -> dict[str, object]:
         """Return compact-prefix residency, benefit and measured-run counters."""
 
-        metadata = dict(
-            self.scheduler.block_manager.multimodal_prefix_cache_metadata()
-        )
+        metadata = dict(self.scheduler.block_manager.multimodal_prefix_cache_metadata())
         kv_cache = self.model_runner.kv_cache
-        bytes_per_block_per_rank = (
-            int(kv_cache[:, :, 0].numel()) * kv_cache.element_size()
-        )
+        bytes_per_block_per_rank = int(kv_cache[:, :, 0].numel()) * kv_cache.element_size()
         scale_cache = getattr(self.model_runner, "kv_scale_cache", None)
         if scale_cache is not None:
             bytes_per_block_per_rank += (
-                int(scale_cache[:, :, 0].numel())
-                * scale_cache.element_size()
+                int(scale_cache[:, :, 0].numel()) * scale_cache.element_size()
             )
-        total_bytes_per_block = (
-            bytes_per_block_per_rank * self.config.tensor_parallel_size
-        )
+        total_bytes_per_block = bytes_per_block_per_rank * self.config.tensor_parallel_size
         metadata.update(
             {
                 "bytes_per_block_all_ranks": total_bytes_per_block,
                 "resident_bytes_all_ranks": (
-                    int(metadata["resident_blocks"])
-                    * total_bytes_per_block
+                    int(metadata["resident_blocks"]) * total_bytes_per_block
                 ),
-                "max_bytes_all_ranks": (
-                    int(metadata["max_blocks"])
-                    * total_bytes_per_block
-                ),
+                "max_bytes_all_ranks": (int(metadata["max_blocks"]) * total_bytes_per_block),
                 "cow_copied_bytes_all_ranks": (
                     int(metadata["cow_copied_rows"])
                     * total_bytes_per_block

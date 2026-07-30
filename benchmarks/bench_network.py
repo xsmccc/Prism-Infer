@@ -19,15 +19,14 @@ from typing import Any
 import aiohttp
 from PIL import Image
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from benchmarks.bench_online import (  # noqa: E402
-    _DeviceProcessMemorySampler,
     _arrival_offsets,
     _canonical_sha256,
+    _DeviceProcessMemorySampler,
     _h3_conformance,
     _h3_payload_schedule,
     _load_class_slos,
@@ -35,7 +34,6 @@ from benchmarks.bench_online import (  # noqa: E402
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata  # noqa: E402
 from prism_infer.analysis.benchmark_schema import load_workload_manifest  # noqa: E402
 from prism_infer.analysis.online_serving import summarize_distribution  # noqa: E402
-
 
 DEFAULT_MANIFEST = REPO_ROOT / "benchmarks" / "workloads" / "p9_headline.json"
 TERMINAL_EVENTS = frozenset({"done", "error"})
@@ -148,9 +146,7 @@ async def _run_one(
         "controller_submit_delay_ms": (observed_submit - intended_arrival) * 1000.0,
         "ttft_ms": (first_token - intended_arrival) * 1000.0,
         "tpot_ms": (
-            0.0
-            if len(token_ids) <= 1
-            else (finished - first_token) * 1000.0 / (len(token_ids) - 1)
+            0.0 if len(token_ids) <= 1 else (finished - first_token) * 1000.0 / (len(token_ids) - 1)
         ),
         "latency_ms": (finished - intended_arrival) * 1000.0,
         "output_tokens": len(token_ids),
@@ -207,11 +203,7 @@ def _summary(
 
     duration_s = float(run["duration_s"])
     requests = list(run["requests"])
-    completed = [
-        record
-        for record in requests
-        if record.get("finish_reason") in {"eos", "length"}
-    ]
+    completed = [record for record in requests if record.get("finish_reason") in {"eos", "length"}]
     grouped: dict[str, list[dict[str, object]]] = {}
     for record in completed:
         grouped.setdefault(str(record["request_class"]), []).append(record)
@@ -269,9 +261,7 @@ def _summary(
             "finish_reasons": dict(Counter(record["finish_reason"] for record in requests)),
         },
         "latency_ms": {
-            metric: summarize_distribution(
-                [float(record[f"{metric}_ms"]) for record in completed]
-            )
+            metric: summarize_distribution([float(record[f"{metric}_ms"]) for record in completed])
             for metric in ("controller_submit_delay", "ttft", "tpot", "latency")
         },
         "throughput": {

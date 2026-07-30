@@ -20,9 +20,11 @@ from prism_infer.engine.kv_quantization import (
     kv_block_storage_bytes,
 )
 from prism_infer.engine.model_runner import ModelRunner
-from prism_infer.layers.attention import Attention, HAS_TRITON, store_kvcache
+from prism_infer.layers.attention import HAS_TRITON, Attention, store_kvcache
 from prism_infer.ops.paged_decode import (
     HAS_TRITON as HAS_PAGED_DECODE_TRITON,
+)
+from prism_infer.ops.paged_decode import (
     paged_decode_attention,
 )
 from prism_infer.utils.context import reset_context, set_context

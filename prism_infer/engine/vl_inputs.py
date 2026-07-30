@@ -25,7 +25,6 @@ import torch
 
 from prism_infer.models.qwen3_vl_architecture import VISION_GRID_DIMENSIONS
 
-
 PROCESSOR_TOKEN_MATRIX_RANK = 2
 PROCESSOR_PATCH_MATRIX_RANK = 2
 VISION_GRID_MATRIX_RANK = 2
@@ -536,7 +535,8 @@ def validate_image_inputs(
         )
     if inputs.pixel_values.ndim != PROCESSOR_PATCH_MATRIX_RANK:
         raise ValueError(
-            f"pixel_values must have shape [num_patches, patch_dim], got {list(inputs.pixel_values.shape)}"
+            "pixel_values must have shape [num_patches, patch_dim], "
+            f"got {list(inputs.pixel_values.shape)}"
         )
     if (
         inputs.image_grid_thw.ndim != VISION_GRID_MATRIX_RANK

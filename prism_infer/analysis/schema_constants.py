@@ -8,9 +8,7 @@ UINT8_CHANNEL_MAX = 255
 COMPUTE_CAPABILITY_COMPONENT_COUNT = 2
 PERCENTAGE_POINTS_SCALE = 100.0
 DECODE_COMPILE_SUBGRAPH = "qkv_projection_qk_norm_mrope"
-DECODE_COMPILE_STATELESS_SUBGRAPH = (
-    "batch1_o_proj_fp8_candidate_lm_head_exact_rerank"
-)
+DECODE_COMPILE_STATELESS_SUBGRAPH = "batch1_o_proj_fp8_candidate_lm_head_exact_rerank"
 DECODE_COMPILE_KV_BOUNDARY = "validated_runtime_store_and_paged_decode"
 
 

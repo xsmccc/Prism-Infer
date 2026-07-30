@@ -11,11 +11,10 @@ import gc
 
 import pytest
 import torch
+from conftest import get_model_path, require_transformers
 from transformers import AutoTokenizer, Qwen3VLForConditionalGeneration
 
-from conftest import get_model_path, require_transformers
 from prism_infer.models.qwen3_vl import Qwen3VLForCausalLM
-
 
 pytestmark = [
     pytest.mark.model,

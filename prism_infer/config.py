@@ -9,10 +9,11 @@ KV capacity live in :class:`Config`, rather than mutating user input objects.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from math import isfinite
-from typing import Any, Mapping
+from typing import Any
 
 from transformers import AutoConfig
 
@@ -30,15 +31,14 @@ from prism_infer.engine.visual_pruning import (
     DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS,
     DEFAULT_VISUAL_PRUNING_KEEP_RATIO,
     DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS,
-    DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS,
     DEFAULT_VISUAL_PRUNING_STRATEGY,
+    DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS,
     VisualPruningConfig,
 )
 from prism_infer.vision.backends import (
     VisionAttentionBackendName,
     normalize_vision_attention_backend,
 )
-
 
 AUTO_KV_CACHE_BLOCKS = -1
 UNSET_EOS_TOKEN_ID = -1
@@ -75,8 +75,8 @@ class KVCacheFormat(str, Enum):
 class KVScaleMode(str, Enum):
     """Scale lifecycle for the KV format.
 
-    ``UNIT`` identifies the rejected P5 direct-cast baseline.  P9-C will add
-    the separately quality-gated scaled format rather than relabeling it.
+    ``UNIT`` identifies the legacy direct-cast baseline. ``PER_TOKEN_HEAD``
+    selects the scaled FP8 format used by the production cache path.
     """
 
     AUTO = "auto"
@@ -140,9 +140,7 @@ class CacheConfig:
     enable_visual_pruning_shadow: bool = False
     visual_pruning_keep_ratio: float = DEFAULT_VISUAL_PRUNING_KEEP_RATIO
     visual_pruning_min_keep_tokens: int = DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS
-    visual_pruning_video_min_keep_tokens: int | None = (
-        DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS
-    )
+    visual_pruning_video_min_keep_tokens: int | None = DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS
     visual_pruning_strategy: str = DEFAULT_VISUAL_PRUNING_STRATEGY
     visual_pruning_attention_last_n_layers: int = DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS
 
@@ -397,13 +395,9 @@ class ExecutionConfig:
                 name="cooperative_prefill_vision_block_quantum",
             )
         if self.fused_qk_mrope and not self.fused_qk_rmsnorm:
-            raise ValueError(
-                "enable_fused_qk_mrope requires enable_fused_qk_rmsnorm"
-            )
+            raise ValueError("enable_fused_qk_mrope requires enable_fused_qk_rmsnorm")
         if self.paged_decode_block_n not in SUPPORTED_PAGED_DECODE_BLOCK_N:
-            supported = ", ".join(
-                str(value) for value in sorted(SUPPORTED_PAGED_DECODE_BLOCK_N)
-            )
+            supported = ", ".join(str(value) for value in sorted(SUPPORTED_PAGED_DECODE_BLOCK_N))
             raise ValueError(
                 f"paged_decode_block_n must be one of {supported}; "
                 f"got {self.paged_decode_block_n!r}"
@@ -418,15 +412,11 @@ class ExecutionConfig:
             "reduce-overhead",
             "max-autotune-no-cudagraphs",
         ):
-            raise ValueError(
-                "unsupported decode_compile_mode "
-                f"got {self.compile_mode!r}"
-            )
+            raise ValueError(f"unsupported decode_compile_mode got {self.compile_mode!r}")
         if backend is ExecutionBackendName.COMPILE_GRAPH:
             if self.compile_region != "stateless":
                 raise ValueError(
-                    "execution backend 'compile_graph' requires "
-                    "decode_compile_region='stateless'"
+                    "execution backend 'compile_graph' requires decode_compile_region='stateless'"
                 )
         elif backend is ExecutionBackendName.COMPILE:
             if self.compile_region != "attention":
@@ -436,7 +426,7 @@ class ExecutionConfig:
                 )
             if not self.allow_unsafe_compile:
                 raise ValueError(
-                    "decode torch.compile is a rejected P6.3 preflight candidate; "
+                    "attention-only decode compilation is experimental; "
                     "set allow_unsafe_decode_compile=True only to reproduce "
                     "benchmark evidence"
                 )
@@ -449,9 +439,7 @@ class ExecutionConfig:
             ExecutionBackendName.CUDA_GRAPH,
             ExecutionBackendName.COMPILE_GRAPH,
         ):
-            raise ValueError(
-                "enable_cooperative_prefill requires a CUDA Graph execution backend"
-            )
+            raise ValueError("enable_cooperative_prefill requires a CUDA Graph execution backend")
 
 
 @dataclass(frozen=True, slots=True)
@@ -461,14 +449,14 @@ class QuantizationConfig:
     weight_format: str = "model"
     activation_format: str = "model"
 
-    def resolve(self, *, compression_mode: str) -> "QuantizationConfig":
+    def resolve(self, *, compression_mode: str) -> QuantizationConfig:
         try:
             requested_format = KVCacheFormat(self.kv_cache_format)
             requested_scale = KVScaleMode(self.kv_scale_mode)
         except (TypeError, ValueError) as exc:
             raise ValueError("unsupported KV quantization format or scale mode") from exc
         if self.weight_format != "model" or self.activation_format != "model":
-            raise ValueError("weight/activation quantization has no connected backend in P9-B")
+            raise ValueError("weight/activation quantization has no connected runtime backend")
         unit_scale_fp8_active = compression_mode in (
             COMPRESSION_FP8_KV,
             COMPRESSION_VISUAL_COMPACT_FP8,
@@ -509,7 +497,7 @@ class ServingConfig:
     def __post_init__(self) -> None:
         _boolean(self.enabled, name="serving.enabled")
         if self.enabled:
-            raise ValueError("network serving is not implemented in P9-B; use the engine API")
+            raise ValueError("ServingConfig is reserved; start network serving with prism-serve")
 
 
 @dataclass(frozen=True, slots=True)
@@ -544,11 +532,10 @@ class PrismConfig:
             compression_mode=self.cache.compression_mode
         )
         object.__setattr__(self, "quantization", resolved_quantization)
-        if (
-            self.execution.backend
-            in (ExecutionBackendName.CUDA_GRAPH, ExecutionBackendName.COMPILE_GRAPH)
-            and not compression_mode_supports_cuda_graph(self.cache.compression_mode)
-        ):
+        if self.execution.backend in (
+            ExecutionBackendName.CUDA_GRAPH,
+            ExecutionBackendName.COMPILE_GRAPH,
+        ) and not compression_mode_supports_cuda_graph(self.cache.compression_mode):
             raise ValueError(
                 f"compression_mode={self.cache.compression_mode!r} requires "
                 "execution backend 'eager' because its dynamic decode "
@@ -569,30 +556,20 @@ class PrismConfig:
             self.execution.backend is ExecutionBackendName.COMPILE
             and self.cache.compression_mode != COMPRESSION_OFF
         ):
-            raise ValueError(
-                "P6.3 attention compile preflight requires compression_mode='off'"
-            )
+            raise ValueError("attention-only compile requires compression_mode='off'")
         if self.execution.block4_gate_up:
             if self.model.mlp_projection_mode != "packed":
                 raise ValueError(
-                    "enable_decode_block4_gate_up requires "
-                    "mlp_projection_mode='packed'"
+                    "enable_decode_block4_gate_up requires mlp_projection_mode='packed'"
                 )
             if self.model.tensor_parallel_size != 1:
-                raise ValueError(
-                    "enable_decode_block4_gate_up currently supports TP1 only"
-                )
+                raise ValueError("enable_decode_block4_gate_up currently supports TP1 only")
             if self.execution.backend not in (
                 ExecutionBackendName.CUDA_GRAPH,
                 ExecutionBackendName.COMPILE_GRAPH,
             ):
-                raise ValueError(
-                    "enable_decode_block4_gate_up requires a CUDA Graph backend"
-                )
-        if (
-            self.execution.cooperative_prefill
-            and self.model.tensor_parallel_size != 1
-        ):
+                raise ValueError("enable_decode_block4_gate_up requires a CUDA Graph backend")
+        if self.execution.cooperative_prefill and self.model.tensor_parallel_size != 1:
             raise ValueError("enable_cooperative_prefill currently supports TP1 only")
 
     @classmethod
@@ -600,7 +577,7 @@ class PrismConfig:
         cls,
         model: str,
         options: Mapping[str, object],
-    ) -> "PrismConfig":
+    ) -> PrismConfig:
         """Strict one-cycle adapter for the historical flat public API."""
 
         model_fields = {
@@ -629,9 +606,7 @@ class PrismConfig:
             "enable_visual_pruning_shadow": "enable_visual_pruning_shadow",
             "visual_pruning_keep_ratio": "visual_pruning_keep_ratio",
             "visual_pruning_min_keep_tokens": "visual_pruning_min_keep_tokens",
-            "visual_pruning_video_min_keep_tokens": (
-                "visual_pruning_video_min_keep_tokens"
-            ),
+            "visual_pruning_video_min_keep_tokens": ("visual_pruning_video_min_keep_tokens"),
             "visual_pruning_strategy": "visual_pruning_strategy",
             "visual_pruning_attention_last_n_layers": ("visual_pruning_attention_last_n_layers"),
         }
@@ -643,15 +618,11 @@ class PrismConfig:
             "scheduler_policy": "scheduler_policy",
             "max_queue_size": "max_queue_size",
             "max_consecutive_prefill_batches": ("max_consecutive_prefill_batches"),
-            "heavy_prefill_vision_patch_threshold": (
-                "heavy_prefill_vision_patch_threshold"
-            ),
+            "heavy_prefill_vision_patch_threshold": ("heavy_prefill_vision_patch_threshold"),
             "min_decode_batches_between_heavy_prefills": (
                 "min_decode_batches_between_heavy_prefills"
             ),
-            "max_light_prefill_bypasses_per_heavy": (
-                "max_light_prefill_bypasses_per_heavy"
-            ),
+            "max_light_prefill_bypasses_per_heavy": ("max_light_prefill_bypasses_per_heavy"),
         }
         execution_fields = {
             "decode_compile_region": "compile_region",
@@ -666,9 +637,7 @@ class PrismConfig:
             "enable_packed_kv_projection": "packed_kv_projection",
             "enable_decode_block4_gate_up": "block4_gate_up",
             "enable_cooperative_prefill": "cooperative_prefill",
-            "cooperative_prefill_layer_quantum": (
-                "cooperative_prefill_layer_quantum"
-            ),
+            "cooperative_prefill_layer_quantum": ("cooperative_prefill_layer_quantum"),
             "cooperative_prefill_vision_block_quantum": (
                 "cooperative_prefill_vision_block_quantum"
             ),
@@ -826,7 +795,7 @@ class Config:
         eos: int,
         num_kvcache_blocks: int,
         num_cpu_blocks: int,
-    ) -> "Config":
+    ) -> Config:
         resolved = object.__new__(Config)
         resolved._install(
             prism_config=self.prism_config,
@@ -838,7 +807,7 @@ class Config:
         )
         return resolved
 
-    def with_eos(self, eos: int | None) -> "Config":
+    def with_eos(self, eos: int | None) -> Config:
         if eos is None:
             eos = UNSET_EOS_TOKEN_ID
         if isinstance(eos, bool) or not isinstance(eos, int):
@@ -859,7 +828,7 @@ class Config:
         *,
         num_kvcache_blocks: int,
         num_cpu_blocks: int,
-    ) -> "Config":
+    ) -> Config:
         _positive_int(num_kvcache_blocks, name="num_kvcache_blocks")
         if (
             isinstance(num_cpu_blocks, bool)
@@ -1092,9 +1061,7 @@ class Config:
 
     @property
     def cooperative_prefill_vision_block_quantum(self) -> int:
-        configured = (
-            self.execution_config.cooperative_prefill_vision_block_quantum
-        )
+        configured = self.execution_config.cooperative_prefill_vision_block_quantum
         if configured is None:
             return self.cooperative_prefill_layer_quantum
         return configured

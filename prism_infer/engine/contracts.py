@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence as TypingSequence
 from dataclasses import dataclass, field
 from enum import Enum
 from time import perf_counter_ns
-from typing import TYPE_CHECKING, Protocol, Sequence as TypingSequence, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import torch
 
@@ -51,10 +52,7 @@ def _validate_block_prefix_copies(copies: object) -> None:
         if (
             not isinstance(copy, tuple)
             or len(copy) != BLOCK_PREFIX_COPY_ARITY
-            or any(
-                isinstance(value, bool) or not isinstance(value, int)
-                for value in copy
-            )
+            or any(isinstance(value, bool) or not isinstance(value, int) for value in copy)
             or copy[0] < 0
             or copy[1] < 0
             or copy[2] <= 0
@@ -116,12 +114,7 @@ class KVTransferPlan:
 
     @property
     def is_empty(self) -> bool:
-        return not (
-            self.copy_on_write
-            or self.copy_prefix
-            or self.swap_in
-            or self.swap_out
-        )
+        return not (self.copy_on_write or self.copy_prefix or self.swap_in or self.swap_out)
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +127,7 @@ class BatchPlan:
     """
 
     phase: BatchPhase
-    sequences: tuple["Sequence", ...]
+    sequences: tuple[Sequence, ...]
     scheduled_token_counts: tuple[int, ...]
     prefill_slices: tuple[PrefillSlice, ...] = ()
     kv_transfers: KVTransferPlan = field(default_factory=KVTransferPlan)
@@ -189,7 +182,7 @@ class BatchPlan:
     def _validate_prefill_slices(self) -> None:
         slices = self.prefill_slices or tuple(
             self._default_prefill_slice(seq, count)
-            for seq, count in zip(self.sequences, self.scheduled_token_counts)
+            for seq, count in zip(self.sequences, self.scheduled_token_counts, strict=False)
         )
         if not self.prefill_slices:
             object.__setattr__(self, "prefill_slices", slices)
@@ -201,11 +194,12 @@ class BatchPlan:
             self.sequences,
             self.scheduled_token_counts,
             slices,
+            strict=False,
         ):
             self._validate_prefill_slice(seq, count, prefill_slice)
 
     @staticmethod
-    def _default_prefill_slice(seq: "Sequence", count: int) -> PrefillSlice:
+    def _default_prefill_slice(seq: Sequence, count: int) -> PrefillSlice:
         token_start = int(
             getattr(
                 seq,
@@ -224,7 +218,7 @@ class BatchPlan:
 
     @staticmethod
     def _validate_prefill_slice(
-        seq: "Sequence",
+        seq: Sequence,
         count: int,
         prefill_slice: PrefillSlice,
     ) -> None:
@@ -284,19 +278,19 @@ class BatchPlan:
                 prefill_slice.token_start,
                 prefill_slice.token_end,
             )
-            for seq, prefill_slice in zip(self.sequences, self.prefill_slices)
+            for seq, prefill_slice in zip(self.sequences, self.prefill_slices, strict=False)
         )
 
     def as_legacy_tuple(
         self,
     ) -> tuple[
-        list["Sequence"],
+        list[Sequence],
         bool,
         list[BlockPair],
         list[BlockPair],
         list[BlockPair],
     ]:
-        """Compatibility adapter for P1-P6 benchmark/test call sites."""
+        """Return the legacy tuple representation used by older callers."""
 
         return (
             list(self.sequences),
@@ -347,20 +341,11 @@ class DeviceModelInputs:
             if value is not None and not isinstance(value, torch.Tensor):
                 raise TypeError(f"DeviceModelInputs.{name} must be a tensor or None")
         if not isinstance(self.deepstack_visual_embeds, tuple):
-            raise TypeError(
-                "DeviceModelInputs.deepstack_visual_embeds must be an immutable tuple"
-            )
-        if any(
-            not isinstance(value, torch.Tensor)
-            for value in self.deepstack_visual_embeds
-        ):
-            raise TypeError(
-                "DeviceModelInputs.deepstack_visual_embeds must contain tensors"
-            )
+            raise TypeError("DeviceModelInputs.deepstack_visual_embeds must be an immutable tuple")
+        if any(not isinstance(value, torch.Tensor) for value in self.deepstack_visual_embeds):
+            raise TypeError("DeviceModelInputs.deepstack_visual_embeds must contain tensors")
         if self.visual_embeds is None and self.deepstack_visual_embeds:
-            raise ValueError(
-                "DeepStack visual embeddings require main visual embeddings"
-            )
+            raise ValueError("DeepStack visual embeddings require main visual embeddings")
 
 
 @dataclass(frozen=True, slots=True)
@@ -527,42 +512,42 @@ class StepResult:
 class KVCacheManager(Protocol):
     """Scheduler-visible physical KV ownership contract."""
 
-    def can_allocate(self, seq: "Sequence") -> bool: ...
+    def can_allocate(self, seq: Sequence) -> bool: ...
 
-    def allocate(self, seq: "Sequence") -> tuple[BlockPrefixCopy, ...]: ...
+    def allocate(self, seq: Sequence) -> tuple[BlockPrefixCopy, ...]: ...
 
-    def deallocate(self, seq: "Sequence") -> None: ...
+    def deallocate(self, seq: Sequence) -> None: ...
 
-    def cached_prefix_tokens(self, seq: "Sequence") -> int: ...
+    def cached_prefix_tokens(self, seq: Sequence) -> int: ...
 
-    def can_append(self, seq: "Sequence") -> bool: ...
+    def can_append(self, seq: Sequence) -> bool: ...
 
-    def may_append(self, seq: "Sequence") -> None: ...
+    def may_append(self, seq: Sequence) -> None: ...
 
-    def copy_on_write(self, seq: "Sequence") -> BlockPair | None: ...
+    def copy_on_write(self, seq: Sequence) -> BlockPair | None: ...
 
-    def can_swap_out(self, seq: "Sequence") -> bool: ...
+    def can_swap_out(self, seq: Sequence) -> bool: ...
 
-    def swap_out(self, seq: "Sequence") -> list[BlockPair]: ...
+    def swap_out(self, seq: Sequence) -> list[BlockPair]: ...
 
-    def can_swap_in(self, seq: "Sequence") -> bool: ...
+    def can_swap_in(self, seq: Sequence) -> bool: ...
 
-    def swap_in(self, seq: "Sequence") -> list[BlockPair]: ...
+    def swap_in(self, seq: Sequence) -> list[BlockPair]: ...
 
     def build_compaction_plan(
         self,
-        seq: "Sequence",
+        seq: Sequence,
         *,
         kv_dtype: str,
-    ) -> "KVCompactionPlan | None": ...
+    ) -> KVCompactionPlan | None: ...
 
     def commit_compaction(
         self,
-        seq: "Sequence",
-        plan: "KVCompactionPlan",
+        seq: Sequence,
+        plan: KVCompactionPlan,
     ) -> None: ...
 
-    def store_multimodal_prefix(self, seq: "Sequence") -> bool: ...
+    def store_multimodal_prefix(self, seq: Sequence) -> bool: ...
 
 
 class EngineExecutor(Protocol):
@@ -572,7 +557,7 @@ class EngineExecutor(Protocol):
 class MetricsSink(Protocol):
     """Observer contract; implementations must not drive scheduling."""
 
-    def on_request_submitted(self, seq: "Sequence", *, timestamp_ns: int) -> None: ...
+    def on_request_submitted(self, seq: Sequence, *, timestamp_ns: int) -> None: ...
 
     def on_batch_planned(self, plan: BatchPlan) -> None: ...
 

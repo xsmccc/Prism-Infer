@@ -95,11 +95,7 @@ class ServingEvent:
             "error": self.error,
         }
         payload.update(
-            {
-                name: value
-                for name, value in optional_values.items()
-                if value is not None
-            }
+            {name: value for name, value in optional_values.items() if value is not None}
         )
         if self.kind is EventKind.DONE:
             payload["token_ids"] = list(self.token_ids)

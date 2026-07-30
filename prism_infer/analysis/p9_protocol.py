@@ -9,14 +9,12 @@ from __future__ import annotations
 
 import json
 import math
-
-from prism_infer.analysis.schema_constants import PERCENTAGE_POINTS_SCALE
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from prism_infer.analysis.benchmark_schema import validate_workload_manifest
-
+from prism_infer.analysis.schema_constants import PERCENTAGE_POINTS_SCALE
 
 P9_PROTOCOL_SCHEMA_VERSION = 1
 GIT_REVISION_HEX_LENGTH = 40

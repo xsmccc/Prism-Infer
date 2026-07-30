@@ -8,9 +8,8 @@ prefix-hash indexing, and CPU swap-page ownership.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable
-
 
 NO_BLOCK_HASH = -1
 
@@ -134,7 +133,7 @@ class GpuBlockPool:
         if len(set(owned)) != len(owned):
             raise RuntimeError("GPU block table contains duplicate block ids")
         invalid = []
-        for block_id, block in zip(owned, blocks):
+        for block_id, block in zip(owned, blocks, strict=False):
             if block_id not in self.used_block_ids or block.ref_count <= 0:
                 invalid.append(block_id)
         if invalid:

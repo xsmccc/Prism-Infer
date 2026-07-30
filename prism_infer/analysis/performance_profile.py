@@ -8,19 +8,18 @@ GPU 时间；默认关闭路径不创建 CUDA Event，也不执行同步。
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Iterator
+from typing import Any
 
 import torch
 from torch.autograd.profiler import record_function
 
 from prism_infer.analysis.benchmark_schema import summarize_values
 from prism_infer.observability.performance import install_performance_provider
-
 
 PERFORMANCE_PROFILE_SCHEMA_VERSION = 1
 ENGINE_STEP_NVTX_RANGE = "prism::engine.step"

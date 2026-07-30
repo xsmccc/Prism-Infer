@@ -907,7 +907,7 @@ def paired_bootstrap_non_inferiority(
         _number(value, f"candidate_scores[{index}]", maximum=1.0)
         for index, value in enumerate(candidate_scores)
     ]
-    differences = [right - left for left, right in zip(baseline, candidate)]
+    differences = [right - left for left, right in zip(baseline, candidate, strict=False)]
     rng = random.Random(seed)
     sample_count = len(differences)
     bootstrap_means = [
@@ -964,7 +964,7 @@ def _validate_paired_samples(
 ) -> None:
     if len(baseline_samples) != len(candidate_samples):
         raise ValueError("quality pair sample counts differ")
-    for index, (left, right) in enumerate(zip(baseline_samples, candidate_samples)):
+    for index, (left, right) in enumerate(zip(baseline_samples, candidate_samples, strict=False)):
         if left["sample_id"] != right["sample_id"]:
             raise ValueError(f"quality pair sample order differs at index {index}")
         if left["input"] != right["input"]:

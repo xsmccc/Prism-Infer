@@ -1,8 +1,8 @@
 """P7.2 engine boundary and lifecycle contract tests."""
 
-from dataclasses import FrozenInstanceError
-from contextlib import contextmanager
 from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import FrozenInstanceError
 from itertools import count
 from types import SimpleNamespace
 
@@ -28,7 +28,6 @@ from prism_infer.engine.scheduler_policy import (
 )
 from prism_infer.engine.sequence import Sequence
 from prism_infer.sampling_params import SamplingParams
-
 
 _REQUEST_IDS = count()
 
@@ -282,10 +281,7 @@ def test_scheduler_caps_gpu_resident_sequences_at_max_num_seqs() -> None:
         )
     )
     sampling = SamplingParams(temperature=0.0, max_tokens=3, ignore_eos=True)
-    sequences = [
-        _sequence([index] * 4, sampling)
-        for index in range(1, 5)
-    ]
+    sequences = [_sequence([index] * 4, sampling) for index in range(1, 5)]
     for seq in sequences:
         scheduler.add(seq)
 

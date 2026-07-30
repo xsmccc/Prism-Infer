@@ -24,7 +24,6 @@ from torch.utils._pytree import tree_flatten
 
 from prism_infer.analysis.benchmark_schema import summarize_values
 
-
 MAX_RECORDED_INPUT_SHAPES = 32
 COMPILE_PREFLIGHT_SCHEMA_VERSION = 1
 COMPILE_PREFLIGHT_REGIONS = (
@@ -167,7 +166,9 @@ def compare_tensor_outputs(reference: Any, candidate: Any) -> dict[str, Any]:
 
     tensor_records = []
     max_abs_diff = 0.0
-    for index, (expected, actual) in enumerate(zip(reference_values, candidate_values)):
+    for index, (expected, actual) in enumerate(
+        zip(reference_values, candidate_values, strict=False)
+    ):
         if not isinstance(expected, torch.Tensor) or not isinstance(actual, torch.Tensor):
             if expected != actual:
                 raise ValueError(

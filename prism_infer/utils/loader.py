@@ -11,9 +11,10 @@
 
 import os
 from glob import glob  # 文件名模式匹配: glob("*.safetensors") → 列出所有 .safetensors 文件
+
 import torch
-from torch import nn
 from safetensors import safe_open  # safetensors 库: 安全(不执行代码)的权重加载
+from torch import nn
 
 
 def default_weight_loader(param: nn.Parameter, loaded_weight: torch.Tensor):
@@ -67,7 +68,7 @@ def load_model(model: nn.Module, path: str):
                         param = model.get_parameter(param_name)
                         # 从模型中找到这个参数 (nn.Parameter 对象)
 
-                        weight_loader = getattr(param, "weight_loader")
+                        weight_loader = param.weight_loader
                         # 合并层的参数有自定义的 weight_loader 方法
                         # 它知道怎么把 q_proj 的权重拼到 qkv_proj 的第 0 片
 

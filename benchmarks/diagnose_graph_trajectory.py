@@ -22,7 +22,6 @@ from typing import Any
 
 import torch
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -38,7 +37,6 @@ from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import load_workload_manifest
 from prism_infer.engine.contracts import BatchPhase, DeviceBatch
 from prism_infer.layers.sampler import SAMPLING_NUMERICAL_EPSILON
-
 
 GRAPH_TRAJECTORY_SCHEMA_VERSION = 1
 TOP_K_DIAGNOSTIC_TOKENS = 2

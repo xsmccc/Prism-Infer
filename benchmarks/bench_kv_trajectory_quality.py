@@ -24,7 +24,6 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -32,7 +31,6 @@ if str(REPO_ROOT) not in sys.path:
 from benchmarks.harness import collect_git_metadata
 from prism_infer import LLM, SamplingParams
 from prism_infer.engine.kv_quantization import kv_cache_storage_bytes
-
 
 TRAJECTORY_SCHEMA_VERSION = 1
 TEXT_PROMPT_IDS = [151644, 872, 198, 77091, 198]
@@ -104,7 +102,7 @@ class RecordingTrajectorySampler:
 
 def _stable_prefix(left: list[int], right: list[int]) -> int:
     count = 0
-    for left_token, right_token in zip(left, right):
+    for left_token, right_token in zip(left, right, strict=False):
         if left_token != right_token:
             break
         count += 1
@@ -146,6 +144,7 @@ def compare_trajectories(
         for baseline_token, candidate_token in zip(
             baseline.natural_argmax_ids,
             candidate.natural_argmax_ids,
+            strict=False,
         )
     )
     return {

@@ -11,10 +11,11 @@ import hashlib
 import json
 import math
 import os
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from PIL import Image
 
@@ -23,7 +24,6 @@ from prism_infer.analysis.schema_constants import (
     LOWERCASE_HEX_DIGITS,
     SHA256_HEX_LENGTH,
 )
-
 
 MATERIALIZATION_SCHEMA_VERSION = 1
 MV_SAMPLE_ID_SEPARATOR = "|"
@@ -80,7 +80,7 @@ def selection_sha256(
         raise ValueError("selection identity fields must be non-empty")
     if isinstance(seed, bool) or not isinstance(seed, int) or seed <= 0:
         raise ValueError("selection seed must be a positive integer")
-    preimage = f"{dataset_id}{revision}{sample_id}{seed}".encode("utf-8")
+    preimage = f"{dataset_id}{revision}{sample_id}{seed}".encode()
     return hashlib.sha256(preimage).hexdigest()
 
 
@@ -569,7 +569,7 @@ def evaluation_subset_record(
         if excluded:
             unresolved = [
                 status
-                for item, status in zip(media, statuses)
+                for item, status in zip(media, statuses, strict=False)
                 if item.get("sha256") is None
                 and not (isinstance(status, str) and status.startswith("excluded_"))
             ]
