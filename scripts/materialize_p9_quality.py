@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""从冻结 revision 的本地原始文件物化 P9 标准质量子集。
+"""从指定 revision 的本地原始文件物化 P9 标准质量子集。
 
 DocVQA 与 MuirBench 的图片嵌在 parquet 中，本脚本只提取 SHA256 选中的 final
-子集。MVBench 先冻结 4,000 条 metadata 上的选样和 archive member 路径；在视频内容
+子集。MVBench 先固定 4,000 条 metadata 上的选样和 archive member 路径；在视频内容
 逐项取回并哈希前，它会明确保持 ``pending``，不能进入 Gate A。
 """
 

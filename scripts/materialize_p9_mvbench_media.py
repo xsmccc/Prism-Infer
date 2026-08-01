@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""用严格 HTTP Range 从冻结 MVBench ZIP 中只物化 selected media。
+"""用严格 HTTP Range 从指定 MVBench ZIP 中只物化 selected media。
 
 脚本不会下载完整 archive，也不会使用近似文件名。每个远端请求必须返回可验证的
 HTTP 206；每个 ZIP member 由标准库校验 CRC，再按内容 SHA256 落盘。官方 archive

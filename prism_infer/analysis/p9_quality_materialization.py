@@ -1,7 +1,7 @@
 """P9 标准质量集的确定性选样、媒体身份与物化契约。
 
 该模块不下载数据，也不运行模型。数据集适配器只向这里传入公开数据行；本模块负责
-把冻结协议中的 SHA256 选样规则变成可测试的纯函数，并确保每个已物化媒体都有内容
+把固定的 SHA256 选样规则变成可测试的纯函数，并确保每个已物化媒体都有内容
 哈希。这样 evaluator 不需要信任文件名或下载缓存即可复核输入身份。
 """
 
@@ -74,7 +74,7 @@ def selection_sha256(
     sample_id: str,
     seed: int,
 ) -> str:
-    """实现冻结协议的字面拼接 SHA256 排序键。"""
+    """实现固定样本使用的字面拼接 SHA256 排序键。"""
 
     if not dataset_id or not revision or not sample_id:
         raise ValueError("selection identity fields must be non-empty")
@@ -128,7 +128,7 @@ def select_sample_ids(
     development_samples: int,
     final_samples: int,
 ) -> SampleSelection:
-    """按冻结 SHA256 算法选样，并令 development 严格嵌套于 final。"""
+    """按固定 SHA256 算法选样，并令 development 严格嵌套于 final。"""
 
     normalized = [canonical_sample_id(sample_id) for sample_id in sample_ids]
     if len(normalized) != len(set(normalized)):

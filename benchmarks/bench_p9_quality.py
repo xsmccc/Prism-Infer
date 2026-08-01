@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""运行冻结 P9 quality 子集并增量保存 raw prediction 与逐样本分数。"""
+"""运行固定 P9 quality 子集并增量保存 raw prediction 与逐样本分数。"""
 
 from __future__ import annotations
 

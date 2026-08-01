@@ -1,4 +1,4 @@
-"""MVBench 冻结的 16-segment center 视频/帧目录采样。"""
+"""MVBench 固定 16-segment center 视频/帧目录采样。"""
 
 from __future__ import annotations
 
@@ -193,7 +193,7 @@ def sample_video_file(
     temporal_bound: Mapping[str, Any] | None,
     decoder_contract: Mapping[str, Any] | None = None,
 ) -> tuple[list[Image.Image], dict[str, Any]]:
-    """用冻结 OpenCV/FFmpeg 解码器采样 segment-center RGB 帧。"""
+    """用指定 OpenCV/FFmpeg 解码器采样 segment-center RGB 帧。"""
 
     try:
         import cv2
