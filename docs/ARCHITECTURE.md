@@ -1,226 +1,171 @@
-# Architecture
+# 架构设计
 
-## 1. Scope
+Prism-Infer 是一个面向 Qwen3-VL 的单机推理引擎。Tokenizer 和 Processor 来自
+Hugging Face，模型 Forward、KV Cache、调度、Tensor Parallel 和 Serving Runtime
+由项目自己实现。
 
-Prism-Infer is a single-node research inference engine for Qwen3-VL. The
-runtime owns model execution, multimodal positions, paged KV storage,
-scheduling, decode acceleration, and a native HTTP/SSE boundary. Hugging Face
-is used for tokenizer, processor, configuration, and numerical references; it
-is not used as the model forward or engine wrapper.
-
-The design is organized around two paths:
-
-- a latency profile using BF16 KV with compiler/Graph decode; and
-- a memory profile using scaled-FP8 KV, optional visual KV compaction, and
-  content-addressed multimodal prefix reuse.
-
-## 2. Request lifecycle
+## 1. 请求流程
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Online as Online input layer
-    participant Cache as Multimodal cache
+    participant Processor
+    participant Cache as Multimodal Cache
     participant Scheduler
-    participant Runner as Model runner
-    participant KV as Paged KV manager
+    participant Runner as Model Runner
+    participant KV as Paged KV
 
-    Client->>Online: text + media + sampling parameters
-    Online->>Online: processor, token IDs, M-RoPE positions
-    Online->>Cache: content identity + prompt boundary
-    alt compacted-prefix hit
-        Cache->>KV: acquire shared pages / tail lease
-        Cache-->>Scheduler: cached logical and physical layout
-    else miss
-        Online-->>Scheduler: cold multimodal request
-        Scheduler->>Runner: vision + prefix prefill
-        Runner->>KV: scaled store and physical compaction
-        KV->>Cache: admit immutable compacted prefix
+    Client->>Processor: text + image/video
+    Processor->>Processor: token IDs + M-RoPE positions
+    Processor->>Cache: media hash + visual prompt
+    alt cache hit
+        Cache->>KV: acquire shared prefix pages
+    else cache miss
+        Processor->>Runner: vision inputs
+        Runner->>Runner: Vision Encoder + DeepStack
+        Runner->>KV: prefill and KV compaction
+        KV->>Cache: store reusable prefix
     end
-    Scheduler->>Runner: dense question suffix
+    Scheduler->>Runner: BatchPlan
     loop decode
-        Scheduler->>Runner: fixed-bucket batch plan
-        Runner->>Runner: compiled + CUDA Graph replay
-        Runner->>KV: append next-token KV
+        Runner->>Runner: compiled subgraph + CUDA Graph replay
+        Runner->>KV: append K/V
     end
-    Scheduler-->>Client: tokens and timing metrics
+    Runner-->>Client: token stream
 ```
 
-Requests move through explicit waiting, running, swapped, completed, cancelled,
-or failed states. The scheduler produces a `BatchPlan`; the executor applies
-page copies, swaps, prefill, decode, and resource release in that order.
+Scheduler 每一步生成一个 `BatchPlan`，其中包含请求阶段、token 数、页表和调度操作。
+Executor 按顺序完成页复制、Swap、Prefill、Decode 和资源回收。请求可以处于 waiting、
+running、swapped、completed、cancelled 或 failed 状态。
 
-## 3. Qwen3-VL model path
+## 2. Qwen3-VL 模型
 
-The model implementation covers:
+模型路径包括：
 
-- text embeddings and decoder layers;
-- Q/K RMSNorm, grouped-query attention, MLP, and LM head;
-- Vision Transformer patch embedding, attention, merger, and DeepStack
-  features;
-- single image, multiple image, video, and mixed batches;
-- Qwen3-VL 3D position IDs and M-RoPE deltas; and
-- greedy and temperature sampling.
+- Text Embedding、Decoder、LM Head；
+- Q/K RMSNorm、Grouped-Query Attention 和 MLP；
+- Vision Transformer、Patch Merger 和 DeepStack；
+- 单图、多图、视频以及混合 batch；
+- Qwen3-VL 3D Position IDs 和 M-RoPE delta；
+- Greedy 和 Temperature Sampling。
 
-The position model is important for compression. A sequence keeps logical
-token positions independently from the compacted physical KV row indices.
-Dropping a visual KV row therefore changes storage and attention lookup, not
-the semantic M-RoPE position of the retained token.
+视觉 KV 压实时，序列同时保存逻辑 token 位置和物理 KV 位置。删除一部分视觉 KV
+只会改变页表与 Attention 读取位置，不会改变保留 token 的 M-RoPE 坐标。
 
-## 4. Compiler and CUDA Graph boundary
+## 3. torch.compile 与 CUDA Graph
 
-`torch.compile` is useful only where shapes and ownership can be made stable.
-Prism-Infer divides decode accordingly:
+Decode 中并不是所有内容都适合交给 compiler。Prism 将稳定计算和动态状态分开：
 
-- stateless decoder work, output projection, and selected token computation
-  can be compiled;
-- fixed batch buckets are captured by CUDA Graph;
-- page tables, physical context lengths, slot mappings, K/V payloads, and
-  FP32 scale caches are persistent replay tensors updated by the runtime; and
-- dynamic request admission, prefill, cache eviction, and page ownership stay
-  outside the compiled region.
+- `torch.compile` 处理 QKV Projection、QK-Norm 和 M-RoPE；
+- CUDA Graph 捕获固定 batch bucket 的完整 GPU Decode；
+- Paged KV 页表、context length、slot mapping 和 FP8 scale 使用固定地址 Tensor；
+- Prefill、请求加入、缓存淘汰和页分配仍在普通运行时中执行。
 
-This avoids asking the compiler to own a mutable serving state machine. Graph
-replay covers the GPU decode path rather than merely wrapping a Python
-function whose kernels still launch individually.
-
-The greedy fast path may generate a reduced candidate set in lower precision,
-but the final winner is decided by precise reranking. Ambiguous low-margin
-cases use the exact fallback. This is a guarded fast path: approximate
-computation narrows work but does not define the final token.
-
-## 5. Tensor-parallel boundary
-
-TP2 keeps media preprocessing and the Qwen3-VL vision encoder replicated while
-sharding the language path:
-
-- Q/K/V projections, KV heads, packed MLP gate/up, vocabulary embedding, and
-  LM-head rows are split across ranks;
-- attention output and MLP down projections consume sharded activations and
-  all-reduce their partial outputs;
-- each rank stores only its local KV heads; and
-- vocabulary embedding masks non-local token IDs before an all-reduce.
-
-For greedy decode, every rank computes its local BF16 LM-head projection and
-local top-1. A single all-gather exchanges one value and one global token ID
-per sequence; all ranks deterministically choose the same global maximum. The
-generic non-greedy path retains a full vocabulary gather because sampling
-requires the complete distribution.
-
-CUDA Graph captures the NCCL collectives inside fixed decode batch buckets.
-All ranks resolve the same sampling mode before capture/replay, while rank 0
-alone returns user-visible tokens. The control plane sends typed rank-0
-commands and waits for worker acknowledgements for lifecycle operations.
-
-TP2 `compile_graph` compiles only the rank-local QKV projection, QK-Norm, and
-M-RoPE region. KV writes, Paged Attention, row-parallel reductions, distributed
-greedy selection, and all NCCL collectives remain explicit and are captured by
-the outer CUDA Graph. The older stateless O-projection/LM-head compile region
-remains TP1-only because it would bypass distributed ownership.
-
-The latency-critical batch-one greedy path also avoids serializing a complete
-mutable `BatchPlan` on every step. Rank 0 sends an immutable compact state with
-only the token, M-RoPE position, KV slot/context lengths, and block table; each
-rank fills its own persistent pinned Graph buffers before replay. Other batch
-sizes and sampling modes retain the generic typed control path.
-
-## 6. Paged KV and scaled-FP8
-
-The paged cache separates logical sequences from physical pages. A block table
-maps each active sequence to GPU pages; copy-on-write protects shared prefixes,
-and swap metadata preserves recoverable page state.
-
-The validated FP8 format stores:
-
-- K and V payload in E4M3FN;
-- independent FP32 K/V scales for every token and KV head; and
-- the same scale lifecycle as the payload through store, attention, CoW,
-  swap, compaction, and Graph replay.
-
-Direct unit-scale casting is retained only as a rejected baseline. It reduced
-storage but did not satisfy the long-output quality protocol.
-
-## 7. Visual KV physical compaction
-
-For a cold multimodal prefill, selected decoder attention statistics score
-visual tokens. The retained policy is modality-aware:
-
-- image and mixed requests keep a larger minimum floor;
-- video-only requests use a smaller floor; and
-- the keep ratio is bounded by those floors.
-
-The compaction coordinator builds a new layout, moves retained KV rows,
-rewrites the page table, releases pages that become empty, and records the
-original logical positions. Decode then appends dense text KV after the
-compacted visual prefix.
-
-This differs from logical pruning. A mask can reduce attended tokens but leaves
-the allocated pages occupied. Physical compaction returns pages to the block
-pool so later requests can use them.
-
-## 8. Content-addressed multimodal prefix cache
-
-The cache identity is layered:
+TP1 的 Graph 可以覆盖模型 Forward、LM Head 和 greedy token selection。TP2 中，
+每个 rank 运行自己的 compiled QKV 子图，外层 Graph 再捕获 Paged Attention、NCCL
+AllReduce、LM Head 和分布式 top-1。
 
 ```text
-model + processor namespace
-  + exact media content and layout
-    -> processor / Vision / DeepStack identity
-  + exact prompt tokens through the final visual placeholder
-    -> compacted prefix-KV identity
+host state update
+  -> rank-local compiled QKV/QK-Norm/M-RoPE
+  -> KV store
+  -> Paged Attention
+  -> NCCL AllReduce
+  -> LM Head
+  -> distributed greedy top-1
 ```
 
-Supported media types are hashed with length-delimited SHA256 over bytes,
-decoded pixels, dtype, shape, and recursively ordered containers. File inputs
-use file contents rather than path strings. Unsupported opaque values fail
-closed instead of falling back to `repr()` or object identity.
+低精度候选选择不会直接决定输出。最终 token 由 FP32 重排得到，候选间距过小时回到
+完整精度路径。
 
-Two cache levels separate media-invariant work from prompt-specific work:
+## 4. Tensor Parallel
 
-1. processed media and Vision/DeepStack tensors can be reused when the
-   question changes after the last visual placeholder;
-2. compacted prefix KV can be reused only when the exact visual prompt prefix
-   also matches.
+TP2 切分语言模型，Vision Encoder 暂时复制执行。
 
-The question suffix and generated tokens are never included in the reusable
-visual prefix.
+Column-parallel：
 
-### Page ownership
+- Q/K/V Projection；
+- MLP Gate/Up；
+- Vocabulary Embedding；
+- LM Head；
+- 每张卡对应的 KV heads。
 
-An admitted prefix holds reference-counted, read-only full pages. If its final
-page is partial, a concurrent request receives a private tail page containing
-only valid prefix rows. Tail clones return to a bounded pool and can be leased
-again, avoiding repeated copy traffic.
+Row-parallel：
 
-Eviction is bounded by retained pages and observed benefit. Cache cleanup
-releases owned prefix and tail pages during engine shutdown.
+- Attention Output Projection；
+- MLP Down Projection；
+- 使用 NCCL AllReduce 合并部分结果。
 
-## 9. Scheduling and serving metrics
+Greedy Decode 时，每个 rank 先计算本地最大 logit 和全局 token ID，然后通过一次小型
+AllGather 决定最终 token，不需要汇总完整词表。非 greedy sampling 仍会收集完整
+logits。
 
-The serving path tracks:
+batch1 快路径只发送当前 token、M-RoPE position、KV slot、context length 和 block
+table。每个 rank 将这些数据写入自己的 pinned host buffer，然后 replay CUDA Graph。
+其他 batch size 继续使用通用 `BatchPlan` 路径。
 
-- queue delay and TTFT;
-- per-request TPOT and end-to-end latency;
-- raw output throughput;
-- class-conditioned SLO attainment and Goodput;
-- KV pages, logical/physical prompt tokens, cache hits, copies, and evictions;
-- cancellations, failures, and memory release.
+## 5. Paged KV 与 Scaled-FP8
 
-The retained scheduler can estimate latest-start slack and request cost.
-Optimizing one latency number is not sufficient: experiments showed that
-eagerly admitting heavy prefills can improve their TTFT while fragmenting
-decode cadence and reducing Goodput.
+每条序列通过 block table 映射到物理 KV pages。Prefix Sharing 使用只读共享页；写入
+共享尾页时执行 Copy-on-Write。Swap 会同时移动 payload、scale 和页元数据。
 
-## 10. Safety and known boundaries
+Scaled-FP8 格式：
 
-- Dynamic Vision Tensor Graph is disabled for mixed-shape loaded serving
-  because a frozen workload exposed incorrect first tokens.
-- TP2 is validated on one host with two RTX 5090 GPUs for exact greedy output,
-  rank-local compile plus distributed CUDA Graph decode, mixed multimodal
-  continuous batching, and native serving. Vision compute is replicated;
-  pipeline parallelism, multi-node TP, and non-greedy TP2 performance are not
-  validated.
-- Prefix persistence is within one engine process, not a distributed or
-  cross-tenant cache.
-- Native HTTP/SSE serving is a research interface, not an OpenAI-compatible
-  production service.
+```text
+K/V payload: E4M3FN
+K scale:     FP32[token, kv_head]
+V scale:     FP32[token, kv_head]
+```
+
+scale 与 K/V 一起经历 Store、Paged Attention、CoW、Swap、Compaction 和 Graph
+Replay。直接将 BF16 KV 转成 unit-scale FP8 的质量较差，因此最终实现使用动态
+per-token、per-head scale。
+
+## 6. 视觉 KV 压实
+
+Prefill 后，从选定 Decoder Layer 收集视觉 token 的 Attention 分数。图片和视频使用
+不同的保留比例与最小 token 数。Coordinator 随后：
+
+1. 计算要保留的视觉 token；
+2. 将对应 K/V 和 scale 移动到连续位置；
+3. 更新 block table 和 physical context length；
+4. 释放已经空出的 pages；
+5. 保留原始 M-RoPE logical positions。
+
+与 Attention Mask 不同，物理压实会真正释放 KV pages，让后续请求可以使用这些空间。
+
+## 7. 多模态前缀缓存
+
+缓存分为两层：
+
+```text
+model / processor version + media bytes + dtype + shape
+    -> Processor、Vision、DeepStack cache
+
+上面的 key + visual prompt tokens
+    -> compacted prefix KV cache
+```
+
+同一媒体更换问题时，可以复用 Processor 和 Vision 结果；只有视觉 prompt 也相同时，
+才会继续复用 Prefix KV。文件输入根据文件内容计算 key，而不是使用文件路径。无法稳定
+序列化的输入不进入缓存。
+
+Prefix Cache 持有只读完整页。最后一页未填满时，请求获得自己的 tail page；tail page
+结束使用后回到复用池，避免每次重新申请和复制。
+
+## 8. 调度与 Serving
+
+运行时记录 TTFT、TPOT、E2E、吞吐、Goodput、KV pages 和 Cache 命中。Scheduler
+支持 FCFS、Chunked Prefill 和基于剩余时间的 SLO 调度。
+
+实验中，连续加入较重的 Vision Prefill 会打断已有 Decode，因此调度器会控制 Prefill
+粒度并考虑 Decode 请求的剩余时间。HTTP Runtime 支持普通 JSON 响应、SSE Token
+Stream、取消请求和退出时释放显存。
+
+## 9. 当前实现情况
+
+- TP1 和 TP2 已在 RTX 5090 上完成图像、视频、混合 batch 和 HTTP/SSE 测试；
+- TP2 的 Vision Encoder 仍然复制执行，尚未实现 Vision Parallel；
+- Dynamic Vision Tensor Graph 在混合 shape 下会改变首 token，因此默认关闭；
+- Prefix Cache 位于单个 Engine Process 内，尚未做跨进程或跨机器共享；
+- 当前 Serving API 为项目自有格式，不兼容 OpenAI API。
