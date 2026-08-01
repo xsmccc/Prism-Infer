@@ -17,6 +17,9 @@ continuous batching、原生 HTTP/SSE 服务与面向 SLO 的调度路径。
 - **Compiler + Graph decode**：将无状态 decode 子图交给 `torch.compile`，
   再由固定 batch bucket 的 CUDA Graph 捕获完整 decode replay；KV 页表、slot
   mapping 与 scale cache 仍由运行时显式管理。
+- **真实 Qwen3-VL TP2**：语言模型 QKV、MLP、词表与每卡 KV Cache 按 rank 分片，
+  row-parallel 路径执行 NCCL 归约；CUDA Graph 捕获分布式 decode，并用每卡局部
+  top-1 加一次标量 all-gather 完成精确 greedy 选词。
 - **Scaled-FP8 KV Cache**：K/V 使用 E4M3FN payload，并为每个 token、每个 KV
   head 保存独立 FP32 scale；覆盖写入、paged attention、CoW、swap、物理压实和
   Graph replay 的完整生命周期。
@@ -31,8 +34,9 @@ continuous batching、原生 HTTP/SSE 服务与面向 SLO 的调度路径。
 
 ## 核心结果
 
-所有数字均来自 RTX 5090、Qwen3-VL-8B-Instruct、TP1 的冻结实验协议。
-完整环境、输入和边界见 [结果](docs/RESULTS.md)。
+所有数字均来自 RTX 5090 与 Qwen3-VL-8B-Instruct。外部引擎对比和 KV/serving
+主结果采用 TP1；TP2 结果单独比较 Prism TP1 与 TP2。完整环境、输入和边界见
+[结果](docs/RESULTS.md)。
 
 ### 1. Offline decode latency
 
@@ -79,6 +83,21 @@ Prism 的冷多模态 prefill 仍是下一阶段的主要瓶颈。
 600 请求、100% 重复的长程闭环达到 **241.428 tok/s、600/600 SLO**，
 TTFT/TPOT p50 为 **146.418/13.041 ms**；同时保持 48.44% KV 存储压缩、
 视觉物理页回收和退出显存释放。
+
+### 4. Dual-GPU TP2 decode
+
+TP2 不是只把进程启动在两张卡上：Qwen3-VL 语言模型权重、KV heads 与词表都按
+rank 分片，CUDA Graph replay 中包含 NCCL collective。相同 token 输出下：
+
+| Workload | TP1 decode step | TP2 decode step | TP1 / TP2 throughput | TP1 / TP2 TTFT |
+|---|---:|---:|---:|---:|
+| 单图，batch1，output 32 | 11.8715 ms | **8.4720 ms (-28.64%)** | 84.120 / **117.203 tok/s** | **52.182** / 94.824 ms |
+| text+image+video，batch3，output 8 | 13.3225 ms | **11.0999 ms (-16.68%)** | 224.701 / **268.998 tok/s** | **86.963** / 161.742 ms |
+
+单图场景 Torch peak allocated 从 TP1 的 17,082.5 MiB 降至 TP2 的每卡
+9,126.5 MiB（每卡 -46.57%），但两卡合计增加 6.85%。由于视觉编码仍复制执行，
+且测试机器没有 GPU direct P2P/NVLink，TP2 的 TTFT 明显变差；它的收益是降低
+单卡模型/KV 压力并加速 decode-heavy 输出，不是让所有请求阶段都更快。
 
 ## 系统设计
 
@@ -138,6 +157,16 @@ python -m pip install -e ".[serving]"
 prism-serve --model "$PRISM_MODEL_PATH" --host 127.0.0.1 --port 8000
 ```
 
+双卡 TP2 使用仓库内冻结配置：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 prism-serve \
+  --model "$PRISM_MODEL_PATH" \
+  --engine-config configs/tp2_graph.json \
+  --host 127.0.0.1 \
+  --port 8000
+```
+
 该接口是研究型原生服务边界，不是 OpenAI-compatible 或多机生产 serving。
 
 ## 代码结构
@@ -152,6 +181,7 @@ prism_infer/
   serving/      原生 HTTP/SSE runtime
   analysis/     benchmark 与质量分析工具
 benchmarks/     offline、online、外部框架与重复媒体 workload
+configs/        可复用的运行配置，包括双卡 TP2 Graph profile
 tests/          保留的模型、KV、Graph、调度和 serving 合同
 docs/           架构、结果、复现和结论边界
 ```
@@ -166,8 +196,9 @@ docs/           架构、结果、复现和结论边界
 
 ## 项目边界
 
-- 当前重点是 Qwen3-VL-8B、单机单卡、TP1；TP2 没有动态 correctness/performance
-  证据。
+- TP2 已在单机双 RTX 5090 上验证真实权重/KV 分片、相同 greedy token、
+  CUDA Graph distributed decode、多模态连续批处理和 HTTP/SSE serving；视觉编码
+  仍复制执行，尚不支持 PP、多机 TP 或 TP2 `compile_graph`。
 - 视觉 Tensor CUDA Graph 在 mixed-shape loaded serving 中曾产生错误 token，
   因此默认关闭；保留稳定的 decode Graph。
 - unit-scale FP8 KV 未通过长输出质量要求；正式 profile 只使用 scaled-FP8。

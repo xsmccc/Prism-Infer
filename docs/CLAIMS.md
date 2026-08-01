@@ -15,6 +15,7 @@ This ledger separates implemented mechanisms from measured advantages.
 | Content-addressed reuse works across freshly decoded but byte-identical media objects | One engine process; supported media types; exact model/processor/media/prompt identity |
 | Same media with a different question reuses only media-invariant work and the exact visual prefix | Question changes after the last visual placeholder; exact template rebind or fail closed |
 | Prism reaches vLLM parity at high media repeat and beats the available SGLang reference | Frozen n60 H3, 75%–100% repeat; vLLM difference 0.28%–0.37%; scoped SGLang reference |
+| Qwen3-VL TP2 shards language weights, KV heads, and vocabulary and accelerates the measured decode cells | One host, 2x RTX 5090, BF16, exact greedy output; Prism TP1 versus TP2 only; single-image -28.64% and mixed-batch -16.68% decode step |
 
 ## Statements that require an explicit limitation
 
@@ -31,6 +32,12 @@ This ledger separates implemented mechanisms from measured advantages.
   improvement and the frozen external cells; it is not a cross-model result.
 - **“Native network serving”** means the local Prism JSON/SSE interface with a
   single engine owner, not OpenAI compatibility or multi-node production.
+- **“TP2 cuts memory by about 46%”** means Torch peak allocated per rank. The
+  single-image two-rank sum is 6.85% above TP1; aggregate GPU memory is not
+  reduced.
+- **“TP2 accelerates decode”** applies to the frozen single-image and mixed
+  cells. TTFT is 81.72%/85.99% worse because vision remains replicated and the
+  measured host has no direct CUDA P2P/NVLink path.
 
 ## Unsupported statements
 
@@ -42,7 +49,8 @@ Do not claim:
 - KV quantization halves total GPU memory;
 - scaled-FP8 is faster than Prism BF16;
 - capacity improvement is equivalent to measured concurrency or Goodput;
-- TP2 correctness, scalability, or performance has been validated;
+- TP2 universally improves TTFT/E2E, reduces aggregate memory, scales across
+  nodes, supports pipeline parallelism, or beats external TP2 engines;
 - Dynamic Vision Tensor Graph is safe for mixed-shape loaded serving;
 - prefix cache state is shared across processes, nodes, or tenants;
 - speculative decoding, prefill/decode disaggregation, or a megakernel is

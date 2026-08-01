@@ -14,14 +14,14 @@ The headline results use the following frozen environment:
 | Transformers | 5.14.1 |
 | Model | Qwen3-VL-8B-Instruct |
 | Model revision | `0c351dd01ed87e9c1b53cbc748cba10e6187ff3b` |
-| Model dtype / tensor parallel | BF16 / TP1 |
+| Model dtype / primary external comparison | BF16 / TP1 |
 | External engines | vLLM 0.25.1, SGLang 0.5.15.post1 |
 
-Offline latency/memory closure and loaded-serving closure used two RTX 5090
-instances with the same driver/software stack. Their UUIDs are
-`GPU-7f63f8b0-1027-d3bf-18b7-5102cbc9f2eb` and
-`GPU-a0340044-fe48-ceca-08e0-a50d9bcdd79a`; results are grouped by protocol
-rather than mixed as repeat samples.
+The TP2 extension uses two RTX 5090 GPUs in one host with the same software
+stack. The GPUs have no direct CUDA P2P/NVLink path; NCCL traverses the host
+`NODE` path. Results are grouped by complete protocol rather than by physical
+GPU identity. All external vLLM/SGLang comparisons in this document remain
+TP1; the TP2 section compares Prism TP1 with Prism TP2 only.
 
 ## 2. Offline compiler/Graph latency
 
@@ -157,7 +157,72 @@ An isolated H1 cold/copy/reuse sequence produced the same 64-token SHA256
 `3b81c4a3e5ec1c9b9d1a67d06a6ad56ffae3320ccdbb89e0dbfc25ad14082b0d`
 for all three requests.
 
-## 6. Interpretation
+## 6. Dual-GPU TP2
+
+The TP2 path shards the Qwen3-VL language model rather than merely launching
+two replicas:
+
+- attention Q/K/V heads, MLP gate/up, vocabulary embedding, LM head, and
+  per-rank KV heads are column sharded;
+- attention output and MLP down projections are row sharded and reduced with
+  NCCL;
+- fixed-bucket CUDA Graph replay includes the distributed collectives; and
+- exact greedy selection computes local BF16 logits/top-1 and all-gathers two
+  FP32 scalars per row: the winning value and global token ID.
+
+The single-image cell uses batch 1, output 32, warmup 1 / repeat 3, and a
+210-token prompt. The mixed cell batches text, image, and video requests,
+generates eight tokens per request, and uses warmup 1 / repeat 2.
+
+| Workload | Metric | TP1 | TP2 | Change |
+|---|---|---:|---:|---:|
+| Single image | Decode-step median | 11.8715 ms | **8.4720 ms** | **-28.64%** |
+| Single image | Decode throughput | 84.120 tok/s | **117.203 tok/s** | **+39.33%** |
+| Single image | TTFT median | **52.182 ms** | 94.824 ms | +81.72% |
+| Single image | Torch peak allocated | 17,082.5 MiB | **9,126.5 MiB/rank** | **-46.57%/rank** |
+| Mixed batch 3 | Decode-step median | 13.3225 ms | **11.0999 ms** | **-16.68%** |
+| Mixed batch 3 | Decode throughput | 224.701 tok/s | **268.998 tok/s** | **+19.71%** |
+| Mixed batch 3 | TTFT median | **86.963 ms** | 161.742 ms | +85.99% |
+| Mixed batch 3 | Torch peak allocated | 17,429.6 MiB | **9,318.1 MiB/rank** | **-46.54%/rank** |
+
+The per-rank memory reduction must not be presented as a reduction in total
+GPU memory: the single-image TP2 sum is 6.85% above TP1. TP2 improves the
+decode-heavy region and removes the single-card weight/KV ceiling, but TTFT is
+worse because the vision path is still replicated and this host lacks a
+direct peer link.
+
+Correctness and execution evidence:
+
+- TP1 and TP2 produced the same tokens in both cells and across repeats;
+- single-image output SHA256:
+  `7ba5f8b0fafb6ee12454eed1de92a884c8854c3b2aa499396f7554719c9b9a8f`;
+- mixed-batch output SHA256:
+  `43a12cc7a7d21009b3c23cf14c1a179b586fd1c02849c8cbe4b9aafa7323b3d8`;
+- Graph capture scope: `decode_model_forward_logits_greedy`; the single-image
+  TP2 record observed 93 batch-1 replays; and
+- replacing a full-vocabulary gather with distributed local top-1 reduced the
+  TP2 batch-1 decode step from 8.9240 to 8.5249 ms in the attribution cell
+  (-4.47%).
+
+The formal online TP2 run admitted and completed 6/6 burst requests covering
+text, image, and video with zero rejection, cancellation, or terminal failure.
+Continuous batching reached four active sequences; CUDA Graph recorded seven
+batch-2 and seven batch-4 replays. Native HTTP serving separately returned
+successful non-streaming text/image responses and a complete SSE token stream.
+These checks establish an end-to-end TP2 serving path; the small online run is
+not used as a throughput headline.
+
+Evidence artifact SHA256:
+
+| Artifact | SHA256 |
+|---|---|
+| TP1 single image | `dd3f125869b49b99e00257f59eeda77ced7158436af1c6140bf4c8ce048aca81` |
+| TP2 single image | `3c129afaf0c6825a9b91f4b3b4a59796a10da27f63012e9535b252b56d3f7a87` |
+| TP1 mixed batch 3 | `68814a0ced2d792e50059a29290f57a3e9a6f9abf5f5a5875f341af7d15bc7fc` |
+| TP2 mixed batch 3 | `708c6a262e023261270f192b78dea3f6dafba165e849cbbe250c9d5b105f48c6` |
+| TP2 online mixed n6 | `ea923c736d104c3f2efcc27fc144bb203525bec39eeb3ed5d8352655c403cc63` |
+
+## 7. Interpretation
 
 The defensible project result is:
 
@@ -170,3 +235,6 @@ The defensible project result is:
    reference only under high media locality.
 5. vLLM remains stronger on unique and low-reuse media; universal superiority
    is not supported.
+6. TP2 demonstrates real Qwen3-VL language/KV sharding and faster decode on
+   two RTX 5090 GPUs, but not lower TTFT, lower aggregate memory, multi-node
+   scalability, or superiority over external TP2 engines.

@@ -8,10 +8,18 @@ import math
 from dataclasses import dataclass
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
 from prism_infer.layers.attention import Attention
+from prism_infer.layers.embed_head import ParallelLMHead, VocabParallelEmbedding
+from prism_infer.layers.linear import (
+    MergedColumnParallelLinear,
+    QKVParallelLinear,
+    RowParallelLinear,
+    divide,
+)
 from prism_infer.models.qwen3_vl_architecture import (
     CANONICAL_MROPE_SECTION,
     CANONICAL_TEXT_HEAD_DIM,
@@ -62,6 +70,12 @@ FP8_SELECTIVE_FP32_LOGITS_TOP_K = 64
 BATCHED_TOKEN_FEATURES_RANK = 3
 MROPE_POSITION_MATRIX_RANK = 2
 POSITION_EMBEDDING_TENSOR_COUNT = 2
+
+
+def _tensor_parallel_world_size() -> int:
+    """Return the active process-group size without breaking direct model use."""
+
+    return dist.get_world_size() if dist.is_initialized() else 1
 
 
 @dataclass(slots=True)
@@ -280,25 +294,54 @@ class Qwen3VLTextAttention(nn.Module):
         rms_norm_eps: float = CANONICAL_TEXT_RMS_NORM_EPS,
     ):
         super().__init__()
-        self.num_heads = num_heads
-        self.num_kv_heads = num_kv_heads
+        tensor_parallel_size = _tensor_parallel_world_size()
+        self.num_heads = divide(num_heads, tensor_parallel_size)
+        self.num_kv_heads = divide(num_kv_heads, tensor_parallel_size)
         self.head_dim = head_dim
         self.scale = head_dim**-0.5
-        self.num_key_value_groups = num_heads // num_kv_heads  # 4
+        self.num_key_value_groups = self.num_heads // self.num_kv_heads
 
-        q_size = num_heads * head_dim
-        kv_size = num_kv_heads * head_dim
+        q_size = self.num_heads * head_dim
+        kv_size = self.num_kv_heads * head_dim
         self.q_size = q_size
         self.kv_size = kv_size
-        self.qkv_proj = _PackedLinear(hidden_size, q_size + 2 * kv_size, dtype=dtype)
+        if tensor_parallel_size > 1:
+            self.qkv_proj = QKVParallelLinear(
+                hidden_size,
+                head_dim,
+                num_heads,
+                num_kv_heads,
+                bias=False,
+            )
+            self.o_proj = RowParallelLinear(
+                num_heads * head_dim,
+                hidden_size,
+                bias=False,
+            )
+        else:
+            self.qkv_proj = _PackedLinear(
+                hidden_size,
+                q_size + 2 * kv_size,
+                dtype=dtype,
+            )
+            self.o_proj = nn.Linear(
+                num_heads * head_dim,
+                hidden_size,
+                bias=False,
+                dtype=dtype,
+            )
         self.q_proj = _LinearWeightView(self.qkv_proj.weight, 0, q_size)
         self.k_proj = _LinearWeightView(self.qkv_proj.weight, q_size, kv_size)
         self.v_proj = _LinearWeightView(self.qkv_proj.weight, q_size + kv_size, kv_size)
-        self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=False, dtype=dtype)
 
         self.q_norm = Qwen3VLTextRMSNorm(head_dim, eps=rms_norm_eps, dtype=dtype)
         self.k_norm = Qwen3VLTextRMSNorm(head_dim, eps=rms_norm_eps, dtype=dtype)
-        self.engine_attn = Attention(num_heads, head_dim, self.scale, num_kv_heads)
+        self.engine_attn = Attention(
+            self.num_heads,
+            head_dim,
+            self.scale,
+            self.num_kv_heads,
+        )
         self._compiled_decode_qkv_forward = None
         self._compiled_decode_o_proj = None
         self.fused_qk_rmsnorm_enabled = False
@@ -644,22 +687,41 @@ class Qwen3VLTextMLP(nn.Module):
                 f"projection_mode must be 'legacy' or 'packed', got {projection_mode!r}"
             )
         self.projection_mode = projection_mode
-        self.gate_up_proj = _PackedLinear(
-            hidden_size,
-            2 * intermediate_size,
-            dtype=dtype,
-        )
+        tensor_parallel_size = _tensor_parallel_world_size()
+        local_intermediate_size = divide(intermediate_size, tensor_parallel_size)
+        if tensor_parallel_size > 1:
+            self.gate_up_proj = MergedColumnParallelLinear(
+                hidden_size,
+                [intermediate_size, intermediate_size],
+                bias=False,
+            )
+            self.down_proj = RowParallelLinear(
+                intermediate_size,
+                hidden_size,
+                bias=False,
+            )
+        else:
+            self.gate_up_proj = _PackedLinear(
+                hidden_size,
+                2 * intermediate_size,
+                dtype=dtype,
+            )
+            self.down_proj = nn.Linear(
+                intermediate_size,
+                hidden_size,
+                bias=False,
+                dtype=dtype,
+            )
         self.gate_proj = _LinearWeightView(
             self.gate_up_proj.weight,
             0,
-            intermediate_size,
+            local_intermediate_size,
         )
         self.up_proj = _LinearWeightView(
             self.gate_up_proj.weight,
-            intermediate_size,
-            intermediate_size,
+            local_intermediate_size,
+            local_intermediate_size,
         )
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False, dtype=dtype)
         self.register_buffer(
             "_decode_gate_up_weight_fp8",
             None,
@@ -854,7 +916,11 @@ class Qwen3VLTextModel(nn.Module):
     ):
         super().__init__()
         dtype = _normalize_dtype(dtype)
-        self.embed_tokens = nn.Embedding(vocab_size, hidden_size, dtype=dtype)
+        self.embed_tokens = (
+            VocabParallelEmbedding(vocab_size, hidden_size)
+            if _tensor_parallel_world_size() > 1
+            else nn.Embedding(vocab_size, hidden_size, dtype=dtype)
+        )
         self.layers = nn.ModuleList(
             [
                 Qwen3VLTextDecoderLayer(
@@ -1572,7 +1638,27 @@ class Qwen3VLForCausalLM(nn.Module):
         architecture = self.model.architecture
         hidden_size = architecture.text.hidden_size
         vocab_size = architecture.text.vocab_size
-        self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False, dtype=dtype)
+        if _tensor_parallel_world_size() > 1:
+            self.packed_modules_mapping = {
+                "self_attn.q_proj": ("self_attn.qkv_proj", "q"),
+                "self_attn.k_proj": ("self_attn.qkv_proj", "k"),
+                "self_attn.v_proj": ("self_attn.qkv_proj", "v"),
+                "mlp.gate_proj": ("mlp.gate_up_proj", 0),
+                "mlp.up_proj": ("mlp.gate_up_proj", 1),
+            }
+            self.lm_head = ParallelLMHead(
+                vocab_size,
+                hidden_size,
+                bias=False,
+                select_prefill_tokens=False,
+            )
+        else:
+            self.lm_head = nn.Linear(
+                hidden_size,
+                vocab_size,
+                bias=False,
+                dtype=dtype,
+            )
         # HF uses the loaded model dtype for lm_head.  Keep fp32 as an explicit
         # historical-reproduction mode; converting the full weight every decode
         # step is both slower and less numerically faithful to HF BF16 logits.
@@ -1647,6 +1733,8 @@ class Qwen3VLForCausalLM(nn.Module):
             context = get_context()
             if context.is_prefill and context.cu_seqlens_q is not None:
                 hidden_states = hidden_states[context.cu_seqlens_q[1:] - 1].contiguous()
+        if isinstance(self.lm_head, ParallelLMHead) and self.logits_precision == "model":
+            return self.lm_head.compute_greedy_tokens(hidden_states)
         if (
             self.logits_precision == "selective_fp32"
             and hidden_states.is_cuda
@@ -1692,7 +1780,14 @@ class Qwen3VLForCausalLM(nn.Module):
             ).squeeze(-1)
             winner = ranked_logits.argmax(dim=-1, keepdim=True)
             return top_ids.gather(-1, winner).squeeze(-1)
-        return self.compute_logits(hidden_states).argmax(dim=-1)
+        logits = self.compute_logits(hidden_states)
+        if logits is None:
+            return torch.zeros(
+                hidden_states.shape[0],
+                dtype=torch.long,
+                device=hidden_states.device,
+            )
+        return logits.argmax(dim=-1)
 
     @torch.no_grad()
     def prepare_decode_fp8_greedy_lm_head(self) -> tuple[torch.Tensor, torch.Tensor]:

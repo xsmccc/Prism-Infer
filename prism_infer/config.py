@@ -557,6 +557,11 @@ class PrismConfig:
             and self.cache.compression_mode != COMPRESSION_OFF
         ):
             raise ValueError("attention-only compile requires compression_mode='off'")
+        if self.model.tensor_parallel_size > 1:
+            if self.model.logits_precision != "model":
+                raise ValueError("tensor parallel execution requires logits_precision='model'")
+            if self.execution.backend is ExecutionBackendName.COMPILE_GRAPH:
+                raise ValueError("compile_graph currently supports TP1 only")
         if self.execution.block4_gate_up:
             if self.model.mlp_projection_mode != "packed":
                 raise ValueError(

@@ -596,7 +596,7 @@ def _build_llm(
         decode_compile_force_same_precision=True,
         allow_unsafe_decode_compile=(mode.decode_compile_region != "none"),
         compression_mode=mode.compression,
-        tensor_parallel_size=1,
+        tensor_parallel_size=args.tensor_parallel_size,
         max_model_len=args.max_model_len,
         max_num_batched_tokens=args.max_num_batched_tokens,
         max_num_seqs=max_num_seqs,
@@ -1144,6 +1144,12 @@ def main() -> None:
     )
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeat", type=int, default=3)
+    parser.add_argument(
+        "--tensor-parallel-size",
+        type=int,
+        default=1,
+        help="number of GPUs used to shard the model",
+    )
     parser.add_argument("--max-model-len", type=int, default=1280)
     parser.add_argument("--max-num-batched-tokens", type=int, default=2048)
     parser.add_argument(
@@ -1229,6 +1235,8 @@ def main() -> None:
         raise SystemExit("CUDA is required for the P6 system benchmark")
     if args.warmup < 0 or args.repeat < 1:
         raise SystemExit("--warmup must be >= 0 and --repeat must be >= 1")
+    if args.tensor_parallel_size <= 0:
+        raise SystemExit("--tensor-parallel-size must be positive")
     if args.profile_repeat < 1:
         raise SystemExit("--profile-repeat must be >= 1")
     if args.cuda_profiler_range and args.profile_output is None:
@@ -1277,7 +1285,7 @@ def main() -> None:
                     print(
                         f"running case={args.case} batch={batch_size} "
                         f"max_tokens={output_length} keep_ratio={keep_ratio} "
-                        f"mode={mode.name} "
+                        f"mode={mode.name} tp={args.tensor_parallel_size} "
                         f"warmup={args.warmup} repeat={args.repeat}",
                         file=sys.stderr,
                     )

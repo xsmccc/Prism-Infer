@@ -89,7 +89,36 @@ but the final winner is decided by precise reranking. Ambiguous low-margin
 cases use the exact fallback. This is a guarded fast path: approximate
 computation narrows work but does not define the final token.
 
-## 5. Paged KV and scaled-FP8
+## 5. Tensor-parallel boundary
+
+TP2 keeps media preprocessing and the Qwen3-VL vision encoder replicated while
+sharding the language path:
+
+- Q/K/V projections, KV heads, packed MLP gate/up, vocabulary embedding, and
+  LM-head rows are split across ranks;
+- attention output and MLP down projections consume sharded activations and
+  all-reduce their partial outputs;
+- each rank stores only its local KV heads; and
+- vocabulary embedding masks non-local token IDs before an all-reduce.
+
+For greedy decode, every rank computes its local BF16 LM-head projection and
+local top-1. A single all-gather exchanges one value and one global token ID
+per sequence; all ranks deterministically choose the same global maximum. The
+generic non-greedy path retains a full vocabulary gather because sampling
+requires the complete distribution.
+
+CUDA Graph captures the NCCL collectives inside fixed decode batch buckets.
+All ranks resolve the same sampling mode before capture/replay, while rank 0
+alone returns user-visible tokens. The control plane sends typed rank-0
+commands and waits for worker acknowledgements for lifecycle operations.
+
+`compile_graph` remains TP1-only: its stateless compiled region predates the
+row-parallel reductions and would otherwise bypass distributed ownership.
+TP2 therefore uses the validated `cuda_graph` backend and fails closed for
+unsupported compiler/precision combinations rather than silently falling back
+to a different algorithm.
+
+## 6. Paged KV and scaled-FP8
 
 The paged cache separates logical sequences from physical pages. A block table
 maps each active sequence to GPU pages; copy-on-write protects shared prefixes,
@@ -105,7 +134,7 @@ The validated FP8 format stores:
 Direct unit-scale casting is retained only as a rejected baseline. It reduced
 storage but did not satisfy the long-output quality protocol.
 
-## 6. Visual KV physical compaction
+## 7. Visual KV physical compaction
 
 For a cold multimodal prefill, selected decoder attention statistics score
 visual tokens. The retained policy is modality-aware:
@@ -123,7 +152,7 @@ This differs from logical pruning. A mask can reduce attended tokens but leaves
 the allocated pages occupied. Physical compaction returns pages to the block
 pool so later requests can use them.
 
-## 7. Content-addressed multimodal prefix cache
+## 8. Content-addressed multimodal prefix cache
 
 The cache identity is layered:
 
@@ -160,7 +189,7 @@ again, avoiding repeated copy traffic.
 Eviction is bounded by retained pages and observed benefit. Cache cleanup
 releases owned prefix and tail pages during engine shutdown.
 
-## 8. Scheduling and serving metrics
+## 9. Scheduling and serving metrics
 
 The serving path tracks:
 
@@ -176,12 +205,14 @@ Optimizing one latency number is not sufficient: experiments showed that
 eagerly admitting heavy prefills can improve their TTFT while fragmenting
 decode cadence and reducing Goodput.
 
-## 9. Safety and known boundaries
+## 10. Safety and known boundaries
 
 - Dynamic Vision Tensor Graph is disabled for mixed-shape loaded serving
   because a frozen workload exposed incorrect first tokens.
-- TP2 has static configuration and IPC scaffolding but no two-GPU dynamic
-  correctness or performance evidence.
+- TP2 is validated on one host with two RTX 5090 GPUs for exact greedy output,
+  CUDA Graph decode, mixed multimodal continuous batching, and native serving.
+  Vision compute is replicated; `compile_graph`, pipeline parallelism,
+  multi-node TP, and non-greedy TP2 performance are not validated.
 - Prefix persistence is within one engine process, not a distributed or
   cross-tenant cache.
 - Native HTTP/SSE serving is a research interface, not an OpenAI-compatible

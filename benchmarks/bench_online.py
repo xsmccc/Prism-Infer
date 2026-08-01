@@ -583,7 +583,7 @@ def _build_engine(args: argparse.Namespace):
         decode_compile_force_same_precision=True,
         allow_unsafe_decode_compile=(mode.decode_compile_region != "none"),
         compression_mode=mode.compression,
-        tensor_parallel_size=1,
+        tensor_parallel_size=args.tensor_parallel_size,
         max_model_len=args.max_model_len,
         max_num_batched_tokens=args.max_num_batched_tokens,
         max_num_seqs=args.max_num_seqs,
@@ -636,6 +636,12 @@ def main() -> None:
         help="run the frozen P9 H3 weighted class schedule instead of one case",
     )
     parser.add_argument("--requests", type=int, default=16)
+    parser.add_argument(
+        "--tensor-parallel-size",
+        type=int,
+        default=1,
+        help="number of GPUs used to shard the model",
+    )
     parser.add_argument(
         "--arrival-process",
         choices=("constant", "poisson", "burst"),
@@ -775,6 +781,8 @@ def main() -> None:
         raise SystemExit("CUDA is required for the online benchmark")
     if args.requests <= 0 or args.warmup_requests < 0:
         raise SystemExit("--requests must be positive and warmup must be >= 0")
+    if args.tensor_parallel_size <= 0:
+        raise SystemExit("--tensor-parallel-size must be positive")
     if args.max_tokens < 2:
         raise SystemExit("--max-tokens must be >= 2 for TPOT/goodput")
     if args.online_cpu_intraop_threads <= 0:
@@ -949,6 +957,7 @@ def main() -> None:
                 "execution_backend": mode.execution,
                 "decode_compile_region": mode.decode_compile_region,
                 "compression_mode": mode.compression,
+                "tensor_parallel_size": args.tensor_parallel_size,
                 "max_model_len": args.max_model_len,
                 "max_num_batched_tokens": args.max_num_batched_tokens,
                 "max_num_seqs": args.max_num_seqs,

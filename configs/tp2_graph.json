@@ -1,0 +1,12 @@
+{
+  "execution_backend": "cuda_graph",
+  "tensor_parallel_size": 2,
+  "max_model_len": 1280,
+  "max_num_batched_tokens": 2048,
+  "max_num_seqs": 8,
+  "gpu_memory_utilization": 0.9,
+  "num_kvcache_blocks": 64,
+  "enable_prefix_caching": true,
+  "logits_precision": "model",
+  "mlp_projection_mode": "packed"
+}

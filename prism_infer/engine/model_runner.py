@@ -1370,7 +1370,12 @@ class ModelRunner:
             graph.replay()
         if return_greedy_tokens:
             return self.graph_greedy_tokens[captured_batch_size][:batch_size]
-        return self.graph_logits[captured_batch_size][:batch_size]
+        captured_logits = self.graph_logits[captured_batch_size]
+        if captured_logits is None:
+            if self.rank == 0:
+                raise RuntimeError("rank 0 CUDA Graph replay did not produce logits")
+            return None
+        return captured_logits[:batch_size]
 
     @torch.inference_mode()
     def run_model(self, model_inputs: DeviceModelInputs, is_prefill: bool):

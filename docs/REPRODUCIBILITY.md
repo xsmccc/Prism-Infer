@@ -137,11 +137,93 @@ SGLang 0.5.15.post1 did not expose an equivalent single-node multimodal global
 cache path in this environment. Its reported reference uses Radix caching and
 repeated media objects; it is a useful but not feature-identical comparison.
 
-## 6. Correctness protocol
+## 6. Dual-GPU TP2
+
+Use one host with two visible RTX 5090 GPUs. Record the interconnect separately
+because direct P2P/NVLink availability can materially change collective cost:
+
+```bash
+nvidia-smi topo -m
+```
+
+Run TP1 and TP2 as separate fresh processes with otherwise identical flags.
+For the single-image output-32 cell:
+
+```bash
+python benchmarks/bench_system.py \
+  --model "$PRISM_MODEL_PATH" \
+  --case single_image_448 \
+  --modes off_graph \
+  --tensor-parallel-size 2 \
+  --max-tokens 32 \
+  --warmup 1 \
+  --repeat 3 \
+  --max-model-len 512 \
+  --max-num-batched-tokens 512 \
+  --max-num-seqs 1 \
+  --num-kvcache-blocks 8 \
+  --output data/repro/tp2_single_image_32.jsonl
+```
+
+For one text, one image, and one video request in the same batch:
+
+```bash
+python benchmarks/bench_system.py \
+  --model "$PRISM_MODEL_PATH" \
+  --case mixed_text_image_video \
+  --modes off_graph \
+  --tensor-parallel-size 2 \
+  --max-tokens 8 \
+  --warmup 1 \
+  --repeat 2 \
+  --max-model-len 768 \
+  --max-num-batched-tokens 2304 \
+  --max-num-seqs 3 \
+  --num-kvcache-blocks 16 \
+  --output data/repro/tp2_mixed_b3.jsonl
+```
+
+Replace `--tensor-parallel-size 2` with `1` for the paired TP1 records. Check
+both exact `token_ids` equality and `outputs_identical_across_repeats` before
+comparing latency or memory. The TP2 Graph record must report capture scope
+`decode_model_forward_logits_greedy` and non-zero replay counts.
+
+The formal online mixed path is:
+
+```bash
+python benchmarks/bench_online.py \
+  --model "$PRISM_MODEL_PATH" \
+  --case mixed_text_image_video \
+  --mode off_graph \
+  --tensor-parallel-size 2 \
+  --requests 6 \
+  --arrival-process burst \
+  --warmup-requests 1 \
+  --max-tokens 8 \
+  --max-model-len 768 \
+  --max-num-batched-tokens 2304 \
+  --max-num-seqs 4 \
+  --max-chunk-size 512 \
+  --num-kvcache-blocks 16 \
+  --output data/repro/tp2_online_mixed_n6.json
+```
+
+For native HTTP/SSE serving:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 prism-serve \
+  --model "$PRISM_MODEL_PATH" \
+  --engine-config configs/tp2_graph.json \
+  --host 127.0.0.1 \
+  --port 8000
+```
+
+## 7. Correctness protocol
 
 Before interpreting a performance cell, verify:
 
-1. model revision, model dtype, GPU UUID, driver, CUDA, and package versions;
+1. model revision, model dtype, GPU model/count/topology, driver, CUDA, and
+   package versions;
 2. clean source commit and complete command line;
 3. exact input and prompt-token SHA256;
 4. identical request order, arrivals, output length, warmup, and repeats;
@@ -154,9 +236,10 @@ Before interpreting a performance cell, verify:
 The tests under `tests/` protect implementation contracts. They do not replace
 the GPU benchmark protocol and are not used as a performance claim.
 
-## 7. Evidence retention
+## 8. Evidence retention
 
 Raw JSON, logs, Nsight traces, model weights, and dataset media are intentionally
 not committed to Git because of size and licensing. Every published summary
-must retain the model revision, source commit, GPU UUID, input hashes, and raw
-artifact SHA256 alongside the external evidence archive.
+must retain the model revision, source commit, GPU model/count and interconnect,
+input hashes, and raw artifact SHA256 alongside the external evidence archive.
+Physical GPU UUID is not a public comparison dimension.

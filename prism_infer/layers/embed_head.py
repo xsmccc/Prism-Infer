@@ -95,10 +95,23 @@ class ParallelLMHead(VocabParallelEmbedding):
         num_embeddings: int,  # vocab_size
         embedding_dim: int,  # hidden_size
         bias: bool = False,
+        select_prefill_tokens: bool = True,
     ):
         if bias:
             raise ValueError("ParallelLMHead does not support bias")
+        if not isinstance(select_prefill_tokens, bool):
+            raise TypeError("select_prefill_tokens must be a boolean")
         super().__init__(num_embeddings, embedding_dim)
+        self.select_prefill_tokens = select_prefill_tokens
+
+    def _select_hidden_states(self, x: torch.Tensor) -> torch.Tensor:
+        """Select one prefill state per sequence when the caller has not."""
+
+        context = get_context()
+        if context.is_prefill and self.select_prefill_tokens:
+            last_indices = context.cu_seqlens_q[1:] - 1
+            return x[last_indices].contiguous()
+        return x
 
     def forward(self, x: torch.Tensor):
         """
@@ -111,7 +124,7 @@ class ParallelLMHead(VocabParallelEmbedding):
         3. Gather 到 rank 0 拼接出完整 logits
         """
         context = get_context()
-        if context.is_prefill:
+        if context.is_prefill and self.select_prefill_tokens:
             # Prefill 阶段: 只需要每个序列最后一个 token 的 logits
             # cu_seqlens_q[1:] 是每个序列的结束位置, 减1得到最后一个token的索引
             # 例如 cu_seqlens_q = [0, 5, 12] → last_indices = [4, 11]
@@ -133,3 +146,27 @@ class ParallelLMHead(VocabParallelEmbedding):
             # rank 0 沿最后一维拼接 → [num_seqs, vocab_size] 完整 logits
             logits = torch.cat(all_logits, -1) if self.tp_rank == 0 else None
         return logits
+
+    def compute_greedy_tokens(self, x: torch.Tensor) -> torch.Tensor:
+        """Select global greedy tokens while communicating two scalars per row."""
+
+        x = self._select_hidden_states(x)
+        local_logits = F.linear(x, self.weight)
+        local_values, local_offsets = local_logits.max(dim=-1)
+        local_ids = local_offsets + self.vocab_start_idx
+        local_candidates = torch.stack(
+            (local_values.float(), local_ids.float()),
+            dim=0,
+        )
+        gathered_candidates = [torch.empty_like(local_candidates) for _ in range(self.tp_size)]
+        dist.all_gather(gathered_candidates, local_candidates)
+        candidate_values = torch.stack(
+            [candidate[0] for candidate in gathered_candidates],
+            dim=0,
+        )
+        candidate_ids = torch.stack(
+            [candidate[1] for candidate in gathered_candidates],
+            dim=0,
+        )
+        winning_ranks = candidate_values.argmax(dim=0, keepdim=True)
+        return candidate_ids.gather(0, winning_ranks).squeeze(0).long()

@@ -97,7 +97,41 @@ cold and hit requests attend the same physical context. Full pages are shared;
 partial tails use CoW and a reusable tail pool. This removed the fairness flaw
 and sustained high-repeat performance with newly decoded media objects.
 
-## 8. Final assessment
+## 8. Turn TP scaffolding into real Qwen3-VL TP2
+
+The repository already had process groups and generic parallel layers, but the
+Qwen3-VL language model still instantiated full local projections. The first
+real two-GPU run exposed this immediately: attention produced eight KV heads
+while each rank's cache owned four. The fix was architectural rather than a
+configuration change:
+
+- shard Q/K/V heads, packed MLP gate/up, vocabulary embedding, LM head, and
+  per-rank KV storage;
+- use row-parallel output/down projections with NCCL reductions;
+- scope packed checkpoint mappings to text attention/MLP names so vision
+  weights remain untouched; and
+- keep TP1 construction bit-for-bit on its existing path.
+
+Two further correctness failures appeared only after Graph capture. The
+parallel LM head selected prefill tokens twice, and worker ranks did not resolve
+the same greedy sampling mode as rank 0. Removing the duplicate selection and
+making every rank replay the same distributed greedy graph produced exact TP1
+and TP2 tokens across repeats.
+
+The initial correct version gathered the full sharded vocabulary every decode
+step. Profiling showed that greedy decode needs only each rank's local winner.
+Replacing the vocabulary gather with one value/token-ID all-gather improved the
+TP2 batch-1 decode attribution cell by 4.47% while preserving exact selection.
+
+With CUDA Graph capturing NCCL, TP2 reduced decode-step latency by 28.64% on
+the single-image output-32 cell and 16.68% on the mixed text/image/video batch.
+Per-rank Torch peak allocation fell by about 46.5%. Eager TP2 was slower, TP2
+TTFT remained much worse, and aggregate allocation did not fall: this host has
+no direct GPU P2P path and the vision encoder remains replicated. The retained
+claim is therefore a real sharded, decode-oriented TP2 implementation, not
+universal dual-card acceleration.
+
+## 9. Final assessment
 
 The project is complete as a focused inference-systems portfolio:
 
@@ -105,9 +139,12 @@ The project is complete as a focused inference-systems portfolio:
 - it connects profiler evidence to compiler, kernel, memory, and scheduling
   decisions;
 - it includes both retained and rejected candidates;
+- it now demonstrates single-node TP2 language/KV sharding, distributed
+  greedy selection, Graph-captured collectives, and multimodal serving;
 - it has scoped wins against mature systems; and
 - it states where vLLM remains stronger.
 
 Further work should be a new research phase centered on cold multimodal
-prefill. Adding more generic CI gates, smoke tests, or feature breadth would
-not strengthen the current technical story.
+prefill, vision distribution, or faster interconnect-aware TP. Adding more
+generic CI gates, smoke tests, or feature breadth would not strengthen the
+current technical story.

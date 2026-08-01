@@ -80,7 +80,7 @@ class ModelExecutionBackend(ABC):
                 f"got {type(prepared).__name__}"
             )
         with profile_region("runner.prepare_sample_inputs"):
-            sampling_mode = runner.resolve_sampling_mode(seqs) if runner.rank == 0 else None
+            sampling_mode = runner.resolve_sampling_mode(seqs)
             temperatures = (
                 runner.prepare_sample(seqs)
                 if runner.rank == 0 and sampling_mode != "greedy"
