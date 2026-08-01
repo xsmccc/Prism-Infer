@@ -18,8 +18,8 @@ continuous batching、原生 HTTP/SSE 服务与面向 SLO 的调度路径。
   再由固定 batch bucket 的 CUDA Graph 捕获完整 decode replay；KV 页表、slot
   mapping 与 scale cache 仍由运行时显式管理。
 - **真实 Qwen3-VL TP2**：语言模型 QKV、MLP、词表与每卡 KV Cache 按 rank 分片，
-  row-parallel 路径执行 NCCL 归约；CUDA Graph 捕获分布式 decode，并用每卡局部
-  top-1 加一次标量 all-gather 完成精确 greedy 选词。
+  row-parallel 路径执行 NCCL 归约；rank-local QKV 子图交给 `torch.compile`，外层
+  CUDA Graph 捕获 NCCL 与精确分布式 top-1，并以紧凑状态载荷驱动每步 replay。
 - **Scaled-FP8 KV Cache**：K/V 使用 E4M3FN payload，并为每个 token、每个 KV
   head 保存独立 FP32 scale；覆盖写入、paged attention、CoW、swap、物理压实和
   Graph replay 的完整生命周期。
@@ -34,8 +34,8 @@ continuous batching、原生 HTTP/SSE 服务与面向 SLO 的调度路径。
 
 ## 核心结果
 
-所有数字均来自 RTX 5090 与 Qwen3-VL-8B-Instruct。外部引擎对比和 KV/serving
-主结果采用 TP1；TP2 结果单独比较 Prism TP1 与 TP2。完整环境、输入和边界见
+所有数字均来自 RTX 5090 与 Qwen3-VL-8B-Instruct。KV/serving 主结果采用 TP1；
+Decode 同时保留 TP1 H1/H2 与双卡 TP2 外部引擎对比。完整环境、输入和边界见
 [结果](docs/RESULTS.md)。
 
 ### 1. Offline decode latency
@@ -86,18 +86,27 @@ TTFT/TPOT p50 为 **146.418/13.041 ms**；同时保持 48.44% KV 存储压缩、
 
 ### 4. Dual-GPU TP2 decode
 
-TP2 不是只把进程启动在两张卡上：Qwen3-VL 语言模型权重、KV heads 与词表都按
-rank 分片，CUDA Graph replay 中包含 NCCL collective。相同 token 输出下：
+TP2 不是只把进程启动在两张卡上：Qwen3-VL 语言权重、KV heads 与词表按 rank
+分片，rank-local `torch.compile` 不跨越通信或 KV 状态边界，外层 CUDA Graph
+捕获 NCCL、Paged Attention 与精确分布式 greedy 选词。
 
-| Workload | TP1 decode step | TP2 decode step | TP1 / TP2 throughput | TP1 / TP2 TTFT |
-|---|---:|---:|---:|---:|
-| 单图，batch1，output 32 | 11.8715 ms | **8.4720 ms (-28.64%)** | 84.120 / **117.203 tok/s** | **52.182** / 94.824 ms |
-| text+image+video，batch3，output 8 | 13.3225 ms | **11.0999 ms (-16.68%)** | 224.701 / **268.998 tok/s** | **86.963** / 161.742 ms |
+单图 batch1、greedy、output 32、warmup 1 / repeat 3 的同协议结果：
 
-单图场景 Torch peak allocated 从 TP1 的 17,082.5 MiB 降至 TP2 的每卡
-9,126.5 MiB（每卡 -46.57%），但两卡合计增加 6.85%。由于视觉编码仍复制执行，
-且测试机器没有 GPU direct P2P/NVLink，TP2 的 TTFT 明显变差；它的收益是降低
-单卡模型/KV 压力并加速 decode-heavy 输出，不是让所有请求阶段都更快。
+| Engine | TP2 TPOT | TTFT | E2E | Output correctness |
+|---|---:|---:|---:|---|
+| **Prism-Infer** | **5.9701 ms** | 86.057 ms | 281.098 ms | 与 vLLM 逐 token 一致 |
+| vLLM 0.25.1 | 6.1612 ms | 61.251 ms | 252.744 ms | reference |
+| SGLang 0.5.15.post1 | 5.9701 ms | 45.452 ms | 230.601 ms | 第 21 个 token 起分歧，仅作性能参考 |
+
+Prism 的 TPOT 比 vLLM 低 **3.10%**；与 SGLang 数值持平，但不能宣称 exact-output
+对等胜出。相对正确但未调优的 Prism TP2 Graph，单图 TPOT 从 8.4720 降至
+5.9701 ms（-29.53%），混合 text+image+video batch3 从 11.0999 降至
+8.3603 ms（-24.68%），两者 token hash 均不变。
+
+基础 TP2 分片将单图 Torch peak allocated 从 TP1 的 17,082.5 MiB 降至每卡
+9,126.5 MiB（每卡 -46.57%），但两卡合计增加 6.85%。视觉编码仍复制执行，
+且测试机器没有 GPU direct P2P/NVLink，因此 Prism 的 TTFT/E2E 仍落后于外部引擎；
+TP2 的优势严格限定为 decode-heavy 输出和单卡模型/KV 压力。
 
 ## 系统设计
 
@@ -197,8 +206,8 @@ docs/           架构、结果、复现和结论边界
 ## 项目边界
 
 - TP2 已在单机双 RTX 5090 上验证真实权重/KV 分片、相同 greedy token、
-  CUDA Graph distributed decode、多模态连续批处理和 HTTP/SSE serving；视觉编码
-  仍复制执行，尚不支持 PP、多机 TP 或 TP2 `compile_graph`。
+  rank-local `torch.compile`、CUDA Graph distributed decode、多模态连续批处理和
+  HTTP/SSE serving；视觉编码仍复制执行，尚不支持 PP 或多机 TP。
 - 视觉 Tensor CUDA Graph 在 mixed-shape loaded serving 中曾产生错误 token，
   因此默认关闭；保留稳定的 decode Graph。
 - unit-scale FP8 KV 未通过长输出质量要求；正式 profile 只使用 scaled-FP8。

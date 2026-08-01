@@ -222,6 +222,12 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=32)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeat", type=int, default=3)
+    parser.add_argument(
+        "--tensor-parallel-size",
+        type=int,
+        default=1,
+        help="number of GPUs used to shard the model",
+    )
     parser.add_argument("--max-model-len", type=int, default=1280)
     parser.add_argument("--max-total-tokens", type=int, default=4096)
     parser.add_argument("--mem-fraction-static", type=float, default=0.60)
@@ -232,6 +238,9 @@ def main() -> None:
     parser.add_argument("--framework-version", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
+
+    if args.tensor_parallel_size <= 0:
+        raise SystemExit("--tensor-parallel-size must be positive")
 
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     case = next((item for item in manifest["cases"] if item["id"] == args.case), None)
@@ -262,7 +271,7 @@ def main() -> None:
     engine = Engine(
         model_path=args.model,
         dtype="bfloat16",
-        tp_size=1,
+        tp_size=args.tensor_parallel_size,
         context_length=args.max_model_len,
         max_total_tokens=args.max_total_tokens,
         mem_fraction_static=args.mem_fraction_static,
@@ -375,7 +384,7 @@ def main() -> None:
             "model": {
                 "path": args.model,
                 "dtype": "torch.bfloat16",
-                "tensor_parallel_size": 1,
+                "tensor_parallel_size": args.tensor_parallel_size,
                 "max_model_len": args.max_model_len,
                 "max_num_seqs": len(requests),
                 "kv_cache_capacity_tokens": args.max_total_tokens,

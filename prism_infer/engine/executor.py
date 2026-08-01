@@ -104,7 +104,23 @@ class ModelExecutor:
             )
             if fast_execute is not None:
                 with profile_region("engine.model_runner"):
-                    fast_result = fast_execute(plan)
+                    if self.config.tensor_parallel_size > 1:
+                        state_builder = getattr(
+                            self.runner,
+                            "single_greedy_decode_state",
+                            None,
+                        )
+                        state = None if state_builder is None else state_builder(plan)
+                        fast_result = (
+                            None
+                            if state is None
+                            else self.runner.call(
+                                "execute_single_greedy_decode_cudagraph_state",
+                                state,
+                            )
+                        )
+                    else:
+                        fast_result = fast_execute(plan)
                 if fast_result is not None:
                     return fast_result
         if transfers.copy_prefix:

@@ -414,9 +414,10 @@ class ExecutionConfig:
         ):
             raise ValueError(f"unsupported decode_compile_mode got {self.compile_mode!r}")
         if backend is ExecutionBackendName.COMPILE_GRAPH:
-            if self.compile_region != "stateless":
+            if self.compile_region not in ("attention", "stateless"):
                 raise ValueError(
-                    "execution backend 'compile_graph' requires decode_compile_region='stateless'"
+                    "execution backend 'compile_graph' requires "
+                    "decode_compile_region='attention' or 'stateless'"
                 )
         elif backend is ExecutionBackendName.COMPILE:
             if self.compile_region != "attention":
@@ -553,15 +554,20 @@ class PrismConfig:
                 f"{self.scheduler.max_num_seqs}"
             )
         if (
-            self.execution.backend is ExecutionBackendName.COMPILE
+            self.execution.compile_region == "attention"
             and self.cache.compression_mode != COMPRESSION_OFF
         ):
             raise ValueError("attention-only compile requires compression_mode='off'")
         if self.model.tensor_parallel_size > 1:
             if self.model.logits_precision != "model":
                 raise ValueError("tensor parallel execution requires logits_precision='model'")
-            if self.execution.backend is ExecutionBackendName.COMPILE_GRAPH:
-                raise ValueError("compile_graph currently supports TP1 only")
+            if (
+                self.execution.backend is ExecutionBackendName.COMPILE_GRAPH
+                and self.execution.compile_region != "attention"
+            ):
+                raise ValueError(
+                    "tensor parallel compile_graph requires the rank-local attention compile region"
+                )
         if self.execution.block4_gate_up:
             if self.model.mlp_projection_mode != "packed":
                 raise ValueError(

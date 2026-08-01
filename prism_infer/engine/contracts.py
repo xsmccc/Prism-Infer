@@ -307,6 +307,38 @@ class BatchPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class SingleGreedyDecodeState:
+    """Compact TP control payload for one batch-one Graph decode step."""
+
+    sequence_id: int
+    last_token: int
+    logical_position: int
+    kv_slot: int
+    physical_context_len: int
+    logical_context_len: int
+    block_table: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        validate_request_id(self.sequence_id, name="decode sequence id")
+        for name, value in (
+            ("last_token", self.last_token),
+            ("logical_position", self.logical_position),
+            ("kv_slot", self.kv_slot),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer, got {value!r}")
+        _positive_int(self.physical_context_len, name="physical context length")
+        _positive_int(self.logical_context_len, name="logical context length")
+        if not isinstance(self.block_table, tuple) or not self.block_table:
+            raise ValueError("block_table must be a non-empty immutable tuple")
+        if any(
+            isinstance(block_id, bool) or not isinstance(block_id, int) or block_id < 0
+            for block_id in self.block_table
+        ):
+            raise ValueError("block_table must contain non-negative integer block ids")
+
+
+@dataclass(frozen=True, slots=True)
 class DeviceModelInputs:
     """Tensor-only model arguments at the execution boundary."""
 

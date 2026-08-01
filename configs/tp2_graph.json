@@ -1,5 +1,7 @@
 {
-  "execution_backend": "cuda_graph",
+  "execution_backend": "compile_graph",
+  "decode_compile_region": "attention",
+  "decode_compile_mode": "default",
   "tensor_parallel_size": 2,
   "max_model_len": 1280,
   "max_num_batched_tokens": 2048,
@@ -8,5 +10,10 @@
   "num_kvcache_blocks": 64,
   "enable_prefix_caching": true,
   "logits_precision": "model",
-  "mlp_projection_mode": "packed"
+  "mlp_projection_mode": "packed",
+  "paged_decode_block_n": 256,
+  "enable_fused_qk_rmsnorm": true,
+  "enable_fused_qk_mrope": true,
+  "enable_fused_add_rmsnorm": true,
+  "enable_packed_kv_projection": true
 }

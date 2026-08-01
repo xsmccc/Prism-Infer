@@ -112,11 +112,17 @@ All ranks resolve the same sampling mode before capture/replay, while rank 0
 alone returns user-visible tokens. The control plane sends typed rank-0
 commands and waits for worker acknowledgements for lifecycle operations.
 
-`compile_graph` remains TP1-only: its stateless compiled region predates the
-row-parallel reductions and would otherwise bypass distributed ownership.
-TP2 therefore uses the validated `cuda_graph` backend and fails closed for
-unsupported compiler/precision combinations rather than silently falling back
-to a different algorithm.
+TP2 `compile_graph` compiles only the rank-local QKV projection, QK-Norm, and
+M-RoPE region. KV writes, Paged Attention, row-parallel reductions, distributed
+greedy selection, and all NCCL collectives remain explicit and are captured by
+the outer CUDA Graph. The older stateless O-projection/LM-head compile region
+remains TP1-only because it would bypass distributed ownership.
+
+The latency-critical batch-one greedy path also avoids serializing a complete
+mutable `BatchPlan` on every step. Rank 0 sends an immutable compact state with
+only the token, M-RoPE position, KV slot/context lengths, and block table; each
+rank fills its own persistent pinned Graph buffers before replay. Other batch
+sizes and sampling modes retain the generic typed control path.
 
 ## 6. Paged KV and scaled-FP8
 
@@ -210,9 +216,10 @@ decode cadence and reducing Goodput.
 - Dynamic Vision Tensor Graph is disabled for mixed-shape loaded serving
   because a frozen workload exposed incorrect first tokens.
 - TP2 is validated on one host with two RTX 5090 GPUs for exact greedy output,
-  CUDA Graph decode, mixed multimodal continuous batching, and native serving.
-  Vision compute is replicated; `compile_graph`, pipeline parallelism,
-  multi-node TP, and non-greedy TP2 performance are not validated.
+  rank-local compile plus distributed CUDA Graph decode, mixed multimodal
+  continuous batching, and native serving. Vision compute is replicated;
+  pipeline parallelism, multi-node TP, and non-greedy TP2 performance are not
+  validated.
 - Prefix persistence is within one engine process, not a distributed or
   cross-tenant cache.
 - Native HTTP/SSE serving is a research interface, not an OpenAI-compatible

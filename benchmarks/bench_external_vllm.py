@@ -208,6 +208,12 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=32)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeat", type=int, default=3)
+    parser.add_argument(
+        "--tensor-parallel-size",
+        type=int,
+        default=1,
+        help="number of GPUs used to shard the model",
+    )
     parser.add_argument("--max-model-len", type=int, default=1280)
     parser.add_argument("--max-num-batched-tokens", type=int, default=2048)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
@@ -238,6 +244,8 @@ def main() -> None:
 
     if args.warmup < 0 or args.repeat < 1 or args.max_tokens < 2:
         raise SystemExit("warmup >= 0, repeat >= 1 and max-tokens >= 2 are required")
+    if args.tensor_parallel_size <= 0:
+        raise SystemExit("--tensor-parallel-size must be positive")
     comparison_profile = args.comparison_profile or (
         "diagnostic_matched" if args.enforce_eager else "best_stable"
     )
@@ -262,7 +270,7 @@ def main() -> None:
     llm = LLM(
         model=args.model,
         dtype="bfloat16",
-        tensor_parallel_size=1,
+        tensor_parallel_size=args.tensor_parallel_size,
         max_model_len=args.max_model_len,
         max_num_seqs=len(requests),
         max_num_batched_tokens=args.max_num_batched_tokens,
@@ -395,7 +403,7 @@ def main() -> None:
                 else "unknown"
             ),
             "dtype": "torch.bfloat16",
-            "tensor_parallel_size": 1,
+            "tensor_parallel_size": args.tensor_parallel_size,
             "max_model_len": args.max_model_len,
             "max_num_batched_tokens": args.max_num_batched_tokens,
             "max_num_seqs": len(requests),

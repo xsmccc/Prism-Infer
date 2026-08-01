@@ -207,6 +207,7 @@ def test_engine_attention_decode_reads_paged_kv_cache():
     num_kv_heads = 2
     head_dim = 16
     context_len = 6
+    block_size = 16
 
     attn = (
         Qwen3VLTextAttention(
@@ -226,7 +227,7 @@ def test_engine_attention_decode_reads_paged_kv_cache():
         k_all = attn.k_norm(attn.k_proj(hidden).view(context_len, num_kv_heads, head_dim))
         v_all = attn.v_proj(hidden).view(context_len, num_kv_heads, head_dim)
 
-        k_cache = torch.empty(1, context_len, num_kv_heads, head_dim, device=device, dtype=dtype)
+        k_cache = torch.empty(1, block_size, num_kv_heads, head_dim, device=device, dtype=dtype)
         v_cache = torch.empty_like(k_cache)
         k_cache[0, :context_len] = k_all
         v_cache[0, :context_len] = v_all

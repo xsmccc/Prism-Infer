@@ -92,7 +92,7 @@ def test_fp8_runtime_never_silently_falls_back_without_dtype_or_triton() -> None
     )
 
 
-def test_compile_graph_requires_fp8_scaled_mm_and_compile() -> None:
+def test_stateless_compile_graph_requires_fp8_scaled_mm_and_compile() -> None:
     capabilities = replace(
         _complete_capabilities(),
         compile_available=False,
@@ -104,13 +104,32 @@ def test_compile_graph_requires_fp8_scaled_mm_and_compile() -> None:
         capabilities,
         execution_backend="compile_graph",
         compression_mode="off",
+        decode_compile_region="stateless",
     )
 
     assert errors == (
         "torch.compile is unavailable",
-        "compile_graph requires torch.float8_e4m3fn",
-        "compile_graph requires torch._scaled_mm",
+        "stateless compile_graph requires torch.float8_e4m3fn",
+        "stateless compile_graph requires torch._scaled_mm",
     )
+
+
+def test_attention_compile_graph_does_not_require_fp8_scaled_mm() -> None:
+    capabilities = replace(
+        _complete_capabilities(),
+        compile_available=False,
+        fp8_e4m3fn_available=False,
+        scaled_mm_available=False,
+    )
+
+    errors = runtime_capability_errors(
+        capabilities,
+        execution_backend="compile_graph",
+        compression_mode="off",
+        decode_compile_region="attention",
+    )
+
+    assert errors == ("torch.compile is unavailable",)
 
 
 def test_core_capability_errors_include_version_and_required_apis() -> None:

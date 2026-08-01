@@ -131,7 +131,34 @@ no direct GPU P2P path and the vision encoder remains replicated. The retained
 claim is therefore a real sharded, decode-oriented TP2 implementation, not
 universal dual-card acceleration.
 
-## 9. Final assessment
+## 9. Close the TP2 gap with rank-local compile and compact control
+
+The first same-protocol external TP2 cell changed the optimization target.
+Prism's correct distributed Graph ran at 8.4720 ms TPOT, while vLLM and SGLang
+ran at 6.1612 and 5.9701 ms. vLLM produced the same tokens; SGLang diverged at
+token 21 and was retained only as a performance reference.
+
+Rank-level Nsight profiling showed balanced ranks and a decode Graph dominated
+by local BF16 GEMV, not communication: about 84% cuBLAS GEMV, 8% NCCL, and 2.6%
+Paged Attention. This rejected three tempting directions: replacing NCCL,
+rewriting Paged Attention, or compiling across row-parallel collectives. The
+first retained change simply enabled existing fused norms/M-RoPE, packed QKV,
+and the tuned attention tile for TP2, reducing TPOT to 6.5958 ms.
+
+The compiler boundary was then narrowed to each rank's pure QKV projection,
+QK-Norm, and M-RoPE. KV writes, Paged Attention, NCCL, and greedy selection
+stayed explicit inside the outer distributed CUDA Graph. The paired result was
+small but stable (-0.56%), so it was retained rather than exaggerated.
+
+The remaining gap was host control. Reusing per-rank persistent batch-one Graph
+buffers reduced TPOT to 6.3212 ms. Replacing the per-step serialized mutable
+`BatchPlan` with token/position/KV-slot/block-table state reduced the paired
+seven-repeat result to 5.9928 ms. The final frozen repeat-3 cell reached
+5.970135 ms, 3.10% below vLLM and numerically tied with the non-exact SGLang
+reference. The mixed batch-3 cell also improved from 11.0999 to 8.3603 ms with
+the same token hash, so the general Graph bucket remained intact.
+
+## 10. Final assessment
 
 The project is complete as a focused inference-systems portfolio:
 

@@ -233,14 +233,16 @@ class CudaGraphExecutionBackend(ModelExecutionBackend):
 
 
 class CompileGraphExecutionBackend(CudaGraphExecutionBackend):
-    """Capture full decode around stateless compiled projection regions."""
+    """Capture full decode around a validated stateless compiled region."""
 
     name = ExecutionBackendName.COMPILE_GRAPH
 
     def __init__(self, runner: ModelRunner) -> None:
         super().__init__(runner)
-        if runner.config.decode_compile_region != "stateless":
-            raise ValueError("compile_graph backend requires decode_compile_region='stateless'")
+        if runner.config.decode_compile_region not in ("attention", "stateless"):
+            raise ValueError(
+                "compile_graph backend requires decode_compile_region='attention' or 'stateless'"
+            )
 
 
 def create_execution_backend(runner: ModelRunner) -> ModelExecutionBackend:

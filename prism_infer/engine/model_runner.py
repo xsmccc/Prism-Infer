@@ -36,6 +36,8 @@ from prism_infer.config import (
     Config,
 )
 from prism_infer.engine.compression import (
+    COMPRESSION_OFF,
+    CompressionMetadata,
     build_compression_metadata,
     build_visual_pruning_config,
     compression_mode_supports_cuda_graph,
@@ -51,6 +53,7 @@ from prism_infer.engine.contracts import (
     ExecutionResult,
     PrefillSlice,
     PreparedModelInputs,
+    SingleGreedyDecodeState,
 )
 from prism_infer.engine.execution_backend import create_execution_backend
 from prism_infer.engine.input_preparation import ModelInputPreparer
@@ -1721,8 +1724,8 @@ class ModelRunner:
         """Fill persistent Graph host buffers for the latency-critical B1 path.
 
         General decode preparation intentionally materializes immutable staging
-        tensors.  For TP=1, CUDA-Graph-safe KV state, greedy batch-one replay,
-        the Graph already owns stable pinned buffers and
+        tensors.  For CUDA-Graph-safe KV state and greedy batch-one replay, each
+        TP rank already owns equivalent stable pinned Graph buffers and
         ``sampled_tokens.tolist()`` makes each step sequential.  Reusing those
         buffers avoids two small tensor allocations, a second host copy, and
         repeated Context/DeviceBatch setup.
@@ -1731,7 +1734,6 @@ class ModelRunner:
         if (
             plan.phase is not BatchPhase.DECODE
             or plan.batch_size != 1
-            or self.world_size != 1
             or not compression_mode_supports_cuda_graph(self.config.compression_mode)
             or getattr(self.config, "enable_visual_pruning_shadow", False)
             or is_trace_enabled()
@@ -1744,30 +1746,90 @@ class ModelRunner:
         if not seq.block_table or seq.physical_last_block_num_tokens <= 0:
             raise RuntimeError(f"batch-one Graph decode has no writable KV slot: {seq.seq_id}")
 
-        graph_vars = self.graph_vars[1]
-        host_model_values = graph_vars["host_packed_model_inputs_numpy"]
-        host_metadata_values = graph_vars["host_packed_decode_metadata_numpy"]
         logical_position = len(seq) - 1
         if seq.rope_delta is not None:
             logical_position += int(seq.rope_delta.item())
-        host_model_values[0] = seq.last_token
-        host_model_values[1 : 1 + MROPE_AXIS_COUNT] = logical_position
-
         physical_context_len = seq.physical_kv_len
-        host_metadata_values[0] = (
-            seq.block_table[-1] * self.block_size + seq.physical_last_block_num_tokens - 1
+        state = SingleGreedyDecodeState(
+            sequence_id=seq.seq_id,
+            last_token=seq.last_token,
+            logical_position=logical_position,
+            kv_slot=(
+                seq.block_table[-1] * self.block_size + seq.physical_last_block_num_tokens - 1
+            ),
+            physical_context_len=physical_context_len,
+            logical_context_len=len(seq),
+            block_table=tuple(seq.block_table),
         )
-        host_metadata_values[1] = physical_context_len
-        host_metadata_values[2] = len(seq)
-        host_metadata_values[3] = physical_context_len
         cache = getattr(self, "_single_greedy_decode_batch_cache", None)
         if cache is None or cache[0] != seq.seq_id:
-            host_metadata_values[4:] = -1
             compression_metadata = build_compression_metadata(
                 self.config,
                 [seq],
                 is_prefill=False,
             )
+        else:
+            compression_metadata = None
+        return self._prepare_single_greedy_decode_cudagraph_state(
+            state,
+            compression_metadata=compression_metadata,
+        )
+
+    def single_greedy_decode_state(
+        self,
+        plan: BatchPlan,
+    ) -> SingleGreedyDecodeState | None:
+        """Build the minimal compression-off payload needed by TP workers."""
+
+        if (
+            plan.phase is not BatchPhase.DECODE
+            or plan.batch_size != 1
+            or self.config.compression_mode != COMPRESSION_OFF
+            or getattr(self.config, "enable_visual_pruning_shadow", False)
+            or is_trace_enabled()
+            or 1 not in getattr(self, "graph_vars", {})
+        ):
+            return None
+        seq = plan.sequences[0]
+        if seq.temperature > SAMPLING_NUMERICAL_EPSILON:
+            return None
+        if not seq.block_table or seq.physical_last_block_num_tokens <= 0:
+            raise RuntimeError(f"batch-one Graph decode has no writable KV slot: {seq.seq_id}")
+        logical_position = len(seq) - 1
+        if seq.rope_delta is not None:
+            logical_position += int(seq.rope_delta.item())
+        return SingleGreedyDecodeState(
+            sequence_id=seq.seq_id,
+            last_token=seq.last_token,
+            logical_position=logical_position,
+            kv_slot=(
+                seq.block_table[-1] * self.block_size + seq.physical_last_block_num_tokens - 1
+            ),
+            physical_context_len=seq.physical_kv_len,
+            logical_context_len=len(seq),
+            block_table=tuple(seq.block_table),
+        )
+
+    def _prepare_single_greedy_decode_cudagraph_state(
+        self,
+        state: SingleGreedyDecodeState,
+        *,
+        compression_metadata: CompressionMetadata | None,
+    ) -> DeviceBatch:
+        """Fill persistent Graph host buffers from one compact decode state."""
+
+        graph_vars = self.graph_vars[1]
+        host_model_values = graph_vars["host_packed_model_inputs_numpy"]
+        host_metadata_values = graph_vars["host_packed_decode_metadata_numpy"]
+        host_model_values[0] = state.last_token
+        host_model_values[1 : 1 + MROPE_AXIS_COUNT] = state.logical_position
+        host_metadata_values[0] = state.kv_slot
+        host_metadata_values[1] = state.physical_context_len
+        host_metadata_values[2] = state.logical_context_len
+        host_metadata_values[3] = state.physical_context_len
+        cache = getattr(self, "_single_greedy_decode_batch_cache", None)
+        if cache is None or cache[0] != state.sequence_id:
+            host_metadata_values[4:] = -1
             host_packed_model_inputs = graph_vars["host_packed_model_inputs"]
             host_packed_decode_metadata = graph_vars["host_packed_decode_metadata"]
             scale_cache = self._bound_gpu_scale_cache()
@@ -1784,8 +1846,8 @@ class ModelRunner:
             )
             device_batch = DeviceBatch(
                 phase=BatchPhase.DECODE,
-                sequence_ids=plan.sequence_ids,
-                scheduled_token_counts=plan.scheduled_token_counts,
+                sequence_ids=(state.sequence_id,),
+                scheduled_token_counts=(1,),
                 model_inputs=DeviceModelInputs(
                     input_ids=graph_vars["host_input_ids"],
                     position_ids=graph_vars["host_positions"],
@@ -1797,9 +1859,9 @@ class ModelRunner:
                 sampling_mode="greedy",
                 kv_scale_views=(() if scale_cache is None else (scale_cache[0], scale_cache[1])),
             )
-            cache = (seq.seq_id, device_batch)
+            cache = (state.sequence_id, device_batch)
             self._single_greedy_decode_batch_cache = cache
-        host_metadata_values[4 : 4 + len(seq.block_table)] = seq.block_table
+        host_metadata_values[4 : 4 + len(state.block_table)] = state.block_table
         return cache[1]
 
     def execute_single_greedy_decode_cudagraph(
@@ -1811,6 +1873,28 @@ class ModelRunner:
         device_batch = self.prepare_single_greedy_decode_cudagraph(plan)
         if device_batch is None:
             return None
+        with use_context(device_batch.attention_context):
+            with profile_region("runner.run_model"):
+                sampled_tokens = self.run_model_cudagraph(
+                    device_batch.model_inputs,
+                    return_greedy_tokens=True,
+                )
+            with profile_region("runner.sampler"):
+                token_ids = tuple(sampled_tokens.tolist())
+        return ExecutionResult(token_ids=token_ids)
+
+    def execute_single_greedy_decode_cudagraph_state(
+        self,
+        state: SingleGreedyDecodeState,
+    ) -> ExecutionResult:
+        """Execute the compact TP2 batch-one Graph control payload."""
+
+        if self.config.compression_mode != COMPRESSION_OFF:
+            raise RuntimeError("compact TP2 Graph decode requires compression_mode='off'")
+        device_batch = self._prepare_single_greedy_decode_cudagraph_state(
+            state,
+            compression_metadata=None,
+        )
         with use_context(device_batch.attention_context):
             with profile_region("runner.run_model"):
                 sampled_tokens = self.run_model_cudagraph(
@@ -2021,9 +2105,16 @@ class ModelRunner:
                     host_packed_decode_metadata,
                     non_blocking=True,
                 )
-                outputs[:bs] = self._forward_model(
-                    DeviceModelInputs(input_ids[:bs], positions[:, :bs])
-                )
+                capture_inputs = DeviceModelInputs(input_ids[:bs], positions[:, :bs])
+                if self.decode_compile_first_call_pending:
+                    torch.cuda.synchronize()
+                    compile_start = perf_counter()
+                    outputs[:bs] = self._forward_model(capture_inputs)
+                    torch.cuda.synchronize()
+                    self.decode_compile_first_call_ms = (perf_counter() - compile_start) * 1000.0
+                    self.decode_compile_first_call_pending = False
+                else:
+                    outputs[:bs] = self._forward_model(capture_inputs)
                 if compute_greedy_tokens is None:
                     self.model.compute_logits(outputs[:bs]).argmax(dim=-1)
                 else:

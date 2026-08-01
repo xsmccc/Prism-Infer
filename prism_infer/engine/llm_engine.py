@@ -159,6 +159,7 @@ class LLMEngine:
         validate_runtime_capabilities(
             execution_backend=config.execution_backend,
             compression_mode=config.compression_mode,
+            decode_compile_region=config.decode_compile_region,
         )
         validate_model_architecture(config.hf_config)
         validate_tensor_parallel_environment(config, torch.cuda.device_count())

@@ -215,6 +215,33 @@ MODE_SPECS = {
         fused_add_rmsnorm=True,
         packed_kv_projection=True,
     ),
+    "tp2_tuned_graph": ModeSpec(
+        name="tp2_tuned_graph",
+        execution="cuda_graph",
+        attention="prefill_sdpa_decode_fused_norms_mrope_packed_kv_bf16_paged_bn256",
+        compression="off",
+        enforce_eager=False,
+        logits_precision="model",
+        paged_decode_block_n=256,
+        fused_qk_rmsnorm=True,
+        fused_qk_mrope=True,
+        fused_add_rmsnorm=True,
+        packed_kv_projection=True,
+    ),
+    "tp2_compile_graph": ModeSpec(
+        name="tp2_compile_graph",
+        execution="compile_graph",
+        attention="prefill_sdpa_decode_compiled_local_qkv_paged_bn256",
+        compression="off",
+        enforce_eager=False,
+        decode_compile_region="attention",
+        logits_precision="model",
+        paged_decode_block_n=256,
+        fused_qk_rmsnorm=True,
+        fused_qk_mrope=True,
+        fused_add_rmsnorm=True,
+        packed_kv_projection=True,
+    ),
     "visual_compact_fp8": ModeSpec(
         name="visual_compact_fp8",
         execution="eager",
@@ -590,6 +617,9 @@ def _build_llm(
     return LLM(
         args.model,
         enforce_eager=mode.enforce_eager,
+        execution_backend=(
+            "compile" if mode.execution == "torch_compile_attention" else mode.execution
+        ),
         decode_compile_region=mode.decode_compile_region,
         decode_compile_mode=args.decode_compile_mode,
         decode_compile_emulate_precision_casts=True,

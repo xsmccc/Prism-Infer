@@ -146,14 +146,13 @@ because direct P2P/NVLink availability can materially change collective cost:
 nvidia-smi topo -m
 ```
 
-Run TP1 and TP2 as separate fresh processes with otherwise identical flags.
-For the single-image output-32 cell:
+Run each engine in a fresh process. For the Prism single-image output-32 cell:
 
 ```bash
 python benchmarks/bench_system.py \
   --model "$PRISM_MODEL_PATH" \
   --case single_image_448 \
-  --modes off_graph \
+  --modes tp2_compile_graph \
   --tensor-parallel-size 2 \
   --max-tokens 32 \
   --warmup 1 \
@@ -171,7 +170,7 @@ For one text, one image, and one video request in the same batch:
 python benchmarks/bench_system.py \
   --model "$PRISM_MODEL_PATH" \
   --case mixed_text_image_video \
-  --modes off_graph \
+  --modes tp2_compile_graph \
   --tensor-parallel-size 2 \
   --max-tokens 8 \
   --warmup 1 \
@@ -183,10 +182,18 @@ python benchmarks/bench_system.py \
   --output data/repro/tp2_mixed_b3.jsonl
 ```
 
-Replace `--tensor-parallel-size 2` with `1` for the paired TP1 records. Check
-both exact `token_ids` equality and `outputs_identical_across_repeats` before
-comparing latency or memory. The TP2 Graph record must report capture scope
-`decode_model_forward_logits_greedy` and non-zero replay counts.
+Run `bench_external_vllm.py` and `bench_external_sglang.py` with
+`--tensor-parallel-size 2` and the same case, output length, warmup/repeat,
+model-length, dtype, and greedy settings. vLLM required its PyTorch-native
+sampler in this Blackwell environment; record that backend rather than hiding
+the startup incompatibility.
+
+Check exact prompt-token hashes first. Prism must match vLLM token IDs and
+`outputs_identical_across_repeats` before comparing TPOT. The measured SGLang
+output diverges and is therefore performance-only. The Prism record must report
+compile subgraph `qkv_projection_qk_norm_mrope`, KV boundary
+`validated_runtime_store_and_paged_decode`, Graph capture scope
+`decode_model_forward_logits_greedy`, and non-zero replay counts.
 
 The formal online mixed path is:
 

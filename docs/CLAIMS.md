@@ -15,7 +15,8 @@ This ledger separates implemented mechanisms from measured advantages.
 | Content-addressed reuse works across freshly decoded but byte-identical media objects | One engine process; supported media types; exact model/processor/media/prompt identity |
 | Same media with a different question reuses only media-invariant work and the exact visual prefix | Question changes after the last visual placeholder; exact template rebind or fail closed |
 | Prism reaches vLLM parity at high media repeat and beats the available SGLang reference | Frozen n60 H3, 75%–100% repeat; vLLM difference 0.28%–0.37%; scoped SGLang reference |
-| Qwen3-VL TP2 shards language weights, KV heads, and vocabulary and accelerates the measured decode cells | One host, 2x RTX 5090, BF16, exact greedy output; Prism TP1 versus TP2 only; single-image -28.64% and mixed-batch -16.68% decode step |
+| Qwen3-VL TP2 shards language weights, KV heads, and vocabulary and accelerates the measured decode cells | One host, 2x RTX 5090, BF16, exact greedy output; final versus original correct TP2 Graph: single-image -29.53%, mixed-batch -24.68% TPOT |
+| Prism TP2 has lower TPOT than the tested vLLM TP2 baseline | Single 210-token image prompt, batch1, greedy output32, warmup1/repeat3, 2x RTX 5090; 5.970135 versus 6.161151 ms (-3.10%); exact token IDs |
 
 ## Statements that require an explicit limitation
 
@@ -36,8 +37,11 @@ This ledger separates implemented mechanisms from measured advantages.
   single-image two-rank sum is 6.85% above TP1; aggregate GPU memory is not
   reduced.
 - **“TP2 accelerates decode”** applies to the frozen single-image and mixed
-  cells. TTFT is 81.72%/85.99% worse because vision remains replicated and the
-  measured host has no direct CUDA P2P/NVLink path.
+  cells. In the external TP2 cell Prism still has worse TTFT/E2E than vLLM
+  because vision remains replicated and the measured host has no direct CUDA
+  P2P/NVLink path.
+- **“Prism matches SGLang TP2”** means TPOT is numerically tied in one cell.
+  SGLang diverges at output token 21, so this is not an exact-output win.
 
 ## Unsupported statements
 
@@ -50,7 +54,8 @@ Do not claim:
 - scaled-FP8 is faster than Prism BF16;
 - capacity improvement is equivalent to measured concurrency or Goodput;
 - TP2 universally improves TTFT/E2E, reduces aggregate memory, scales across
-  nodes, supports pipeline parallelism, or beats external TP2 engines;
+  nodes, supports pipeline parallelism, or beats external TP2 engines outside
+  the frozen single-image TPOT cell;
 - Dynamic Vision Tensor Graph is safe for mixed-shape loaded serving;
 - prefix cache state is shared across processes, nodes, or tenants;
 - speculative decoding, prefill/decode disaggregation, or a megakernel is

@@ -18,6 +18,7 @@ from typing import Any
 from prism_infer.analysis.reference_quality import normalize_reference_text
 from prism_infer.analysis.schema_constants import (
     DECODE_COMPILE_KV_BOUNDARY,
+    DECODE_COMPILE_STATELESS_SUBGRAPH,
     DECODE_COMPILE_SUBGRAPH,
     LOWERCASE_HEX_DIGITS,
     RGB_CHANNEL_COUNT,
@@ -835,8 +836,10 @@ def _validate_enabled_cuda_graph(
     graph_batch_sizes: list[Any],
     selected_batch_size: int,
 ) -> None:
-    if decode_backend != "cuda_graph":
-        raise ValueError("CUDA Graph execution requires decode_backend='cuda_graph'")
+    if decode_backend not in ("cuda_graph", "compile_graph"):
+        raise ValueError(
+            "CUDA Graph execution requires decode_backend='cuda_graph' or 'compile_graph'"
+        )
     allowed_capture_scopes = {
         "decode_model_forward",
         "decode_model_forward_logits_greedy",
@@ -1006,21 +1009,32 @@ def _validate_enabled_compile_state(
     compile_mode: str,
     first_call_ms: float,
 ) -> None:
-    if graph_enabled or decode_backend != "torch_compile_attention":
-        raise ValueError(
-            "torch.compile execution must be graph-disabled and use "
-            "decode_backend='torch_compile_attention'"
-        )
+    if graph_enabled:
+        if decode_backend != "compile_graph":
+            raise ValueError(
+                "graph-captured torch.compile execution requires decode_backend='compile_graph'"
+            )
+        allowed_regions = ("decode_attention", "decode_stateless")
+    else:
+        if decode_backend != "torch_compile_attention":
+            raise ValueError(
+                "standalone torch.compile execution requires "
+                "decode_backend='torch_compile_attention'"
+            )
+        allowed_regions = ("decode_attention",)
     if (
-        compile_region != "decode_attention"
+        compile_region not in allowed_regions
         or compile_backend != "inductor"
         or compile_mode not in ("default", "reduce-overhead")
         or first_call_ms <= 0.0
     ):
         raise ValueError("torch.compile execution metadata is invalid")
+    expected_subgraph = {
+        "decode_attention": DECODE_COMPILE_SUBGRAPH,
+        "decode_stateless": DECODE_COMPILE_STATELESS_SUBGRAPH,
+    }[compile_region]
     if compile_subgraph is not None and (
-        compile_subgraph != DECODE_COMPILE_SUBGRAPH
-        or compile_kv_boundary != DECODE_COMPILE_KV_BOUNDARY
+        compile_subgraph != expected_subgraph or compile_kv_boundary != DECODE_COMPILE_KV_BOUNDARY
     ):
         raise ValueError("torch.compile subgraph boundary metadata is invalid")
 

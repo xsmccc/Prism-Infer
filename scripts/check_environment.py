@@ -179,6 +179,7 @@ def build_report(args: argparse.Namespace) -> tuple[dict[str, Any], list[str], l
     runtime_capabilities: dict[str, Any] = {
         "status": "NOT_CHECKED",
         "execution_backend": args.execution_backend,
+        "decode_compile_region": args.decode_compile_region,
         "compression_mode": args.compression_mode,
     }
     if prism_module["importable"] and torch_module is not None:
@@ -193,6 +194,7 @@ def build_report(args: argparse.Namespace) -> tuple[dict[str, Any], list[str], l
                 observed,
                 execution_backend=args.execution_backend,
                 compression_mode=args.compression_mode,
+                decode_compile_region=args.decode_compile_region,
                 require_cuda=(
                     args.require_cuda
                     or args.execution_backend != "eager"
@@ -327,9 +329,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--execution-backend",
-        choices=("eager", "cuda_graph", "compile"),
+        choices=("eager", "cuda_graph", "compile", "compile_graph"),
         default="eager",
         help="validate capabilities for this startup-selected backend",
+    )
+    parser.add_argument(
+        "--decode-compile-region",
+        choices=("none", "attention", "stateless"),
+        default="none",
+        help="compiled decode subgraph selected by the execution backend",
     )
     parser.add_argument(
         "--compression-mode",

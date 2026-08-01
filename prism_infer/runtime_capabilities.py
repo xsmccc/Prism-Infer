@@ -82,12 +82,19 @@ def runtime_capability_errors(
     *,
     execution_backend: str,
     compression_mode: str,
+    decode_compile_region: str = "stateless",
     require_cuda: bool = True,
 ) -> tuple[str, ...]:
     """Return every missing requirement for one startup-selected path."""
 
     errors = _core_capability_errors(capabilities, require_cuda=require_cuda)
-    errors.extend(_backend_capability_errors(capabilities, execution_backend))
+    errors.extend(
+        _backend_capability_errors(
+            capabilities,
+            execution_backend,
+            decode_compile_region=decode_compile_region,
+        )
+    )
     errors.extend(_compression_capability_errors(capabilities, compression_mode))
     return tuple(errors)
 
@@ -120,6 +127,8 @@ def _core_capability_errors(
 def _backend_capability_errors(
     capabilities: RuntimeCapabilities,
     execution_backend: str,
+    *,
+    decode_compile_region: str,
 ) -> list[str]:
     """Validate requirements owned by one explicitly selected backend."""
 
@@ -132,10 +141,11 @@ def _backend_capability_errors(
         if execution_backend == "compile_graph":
             if not capabilities.compile_available:
                 errors.append("torch.compile is unavailable")
-            if not capabilities.fp8_e4m3fn_available:
-                errors.append("compile_graph requires torch.float8_e4m3fn")
-            if not capabilities.scaled_mm_available:
-                errors.append("compile_graph requires torch._scaled_mm")
+            if decode_compile_region == "stateless":
+                if not capabilities.fp8_e4m3fn_available:
+                    errors.append("stateless compile_graph requires torch.float8_e4m3fn")
+                if not capabilities.scaled_mm_available:
+                    errors.append("stateless compile_graph requires torch._scaled_mm")
     elif execution_backend == "compile":
         if not capabilities.compile_available:
             errors.append("torch.compile is unavailable")
@@ -165,6 +175,7 @@ def validate_runtime_capabilities(
     *,
     execution_backend: str,
     compression_mode: str,
+    decode_compile_region: str = "stateless",
     require_cuda: bool = True,
     capabilities: RuntimeCapabilities | None = None,
 ) -> RuntimeCapabilities:
@@ -175,6 +186,7 @@ def validate_runtime_capabilities(
         observed,
         execution_backend=execution_backend,
         compression_mode=compression_mode,
+        decode_compile_region=decode_compile_region,
         require_cuda=require_cuda,
     )
     if errors:

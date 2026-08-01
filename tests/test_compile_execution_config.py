@@ -72,7 +72,9 @@ def test_attention_compile_config_requires_eager_off_baseline(
         )
 
 
-def test_compile_graph_config_uses_supported_stateless_region(
+@pytest.mark.parametrize("compile_region", ("attention", "stateless"))
+def test_compile_graph_config_uses_supported_region(
+    compile_region: str,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -83,21 +85,53 @@ def test_compile_graph_config_uses_supported_stateless_region(
         max_num_batched_tokens=1024,
         execution_backend="compile_graph",
         compression_mode="off",
-        decode_compile_region="stateless",
+        decode_compile_region=compile_region,
     )
 
     assert config.enforce_eager is False
-    assert config.decode_compile_region == "stateless"
+    assert config.decode_compile_region == compile_region
     assert config.allow_unsafe_decode_compile is False
 
-    with pytest.raises(ValueError, match="compile_graph.*requires.*stateless"):
+    with pytest.raises(ValueError, match="compile_graph.*requires"):
         Config(
             str(tmp_path),
             max_model_len=1024,
             max_num_batched_tokens=1024,
             execution_backend="compile_graph",
             compression_mode="off",
-            decode_compile_region="attention",
+            decode_compile_region="none",
+        )
+
+
+def test_tp2_compile_graph_requires_rank_local_attention_region(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_auto_config(monkeypatch)
+    config = Config(
+        str(tmp_path),
+        tensor_parallel_size=2,
+        logits_precision="model",
+        max_model_len=1024,
+        max_num_batched_tokens=1024,
+        execution_backend="compile_graph",
+        compression_mode="off",
+        decode_compile_region="attention",
+    )
+
+    assert config.tensor_parallel_size == 2
+    assert config.decode_compile_region == "attention"
+
+    with pytest.raises(ValueError, match="rank-local attention"):
+        Config(
+            str(tmp_path),
+            tensor_parallel_size=2,
+            logits_precision="model",
+            max_model_len=1024,
+            max_num_batched_tokens=1024,
+            execution_backend="compile_graph",
+            compression_mode="off",
+            decode_compile_region="stateless",
         )
 
 
