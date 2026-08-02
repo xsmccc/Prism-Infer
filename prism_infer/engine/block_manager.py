@@ -665,6 +665,27 @@ class BlockManager:
             ),
         }
 
+    def multimodal_prefix_entry_metadata(
+        self,
+        seq: Sequence,
+    ) -> dict[str, object] | None:
+        """Return exact O(1) residency evidence for one sequence prefix."""
+
+        self._assert_sequence_block_size(seq)
+        match = self._matching_multimodal_prefix(seq)
+        if match is None:
+            return None
+        cache_id, entry = match
+        return {
+            "cache_id_sha256": hashlib.sha256(cache_id.encode("utf-8")).hexdigest(),
+            "logical_prefix_tokens": entry.logical_prefix_len,
+            "physical_prefix_tokens": entry.physical_prefix_len,
+            "canonical_blocks": len(entry.block_ids),
+            "tail_clone_blocks": len(entry.tail_clone_block_ids),
+            "resident_blocks": entry.resident_blocks,
+            "lifetime_hits": entry.lifetime_hits,
+        }
+
     def reset_multimodal_prefix_cache_metrics(self) -> None:
         """Reset counters while retaining warm compacted prefix pages."""
 

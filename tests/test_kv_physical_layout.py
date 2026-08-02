@@ -483,6 +483,13 @@ def test_multimodal_prefix_cache_reuses_compacted_pages_with_tail_cow() -> None:
         cold.num_computed_tokens = cold.num_prompt_tokens
         manager.commit_compaction(cold, plan)
         assert manager.store_multimodal_prefix(cold)
+        entry = manager.multimodal_prefix_entry_metadata(cold)
+        assert entry is not None
+        assert entry["logical_prefix_tokens"] == 8
+        assert entry["physical_prefix_tokens"] == 3
+        assert entry["canonical_blocks"] == 1
+        assert entry["tail_clone_blocks"] == 0
+        assert entry["resident_blocks"] == 1
         cached_block_id = cold.block_table[0]
         manager.deallocate(cold)
 

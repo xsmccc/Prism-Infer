@@ -408,16 +408,31 @@ def _population_prefix_evidence(
     seq = llm.scheduler.requests[result.request_id]
     prompt_ids = list(seq.token_ids[: seq.num_prompt_tokens])
     decision = dict(seq.visual_pruning_decision_record or {})
+    entry = llm.scheduler.block_manager.multimodal_prefix_entry_metadata(seq)
     compacted_tokens = decision.get("compacted_prefix_kv_tokens")
     compacted_pages = (
         None
         if compacted_tokens is None
         else (int(compacted_tokens) + page_size_tokens - 1) // page_size_tokens
     )
-    if variant != "vision_only" and compacted_pages is None:
-        raise RuntimeError(
-            f"prefix population produced no compact-page evidence for group {group_id!r}"
-        )
+    if variant == "vision_only":
+        if entry is not None:
+            raise RuntimeError("vision-only population unexpectedly retained prefix KV")
+    elif entry is None:
+        raise RuntimeError(f"prefix population retained no cache entry for group {group_id!r}")
+    else:
+        entry_pages = int(entry["canonical_blocks"])
+        entry_tokens = int(entry["physical_prefix_tokens"])
+        if compacted_pages is None:
+            compacted_pages = entry_pages
+            compacted_tokens = entry_tokens
+        elif compacted_pages != entry_pages or int(compacted_tokens) != entry_tokens:
+            raise RuntimeError(
+                "physical compaction decision differs from retained prefix entry: "
+                f"group={group_id}, decision_pages={compacted_pages}, "
+                f"entry_pages={entry_pages}, decision_tokens={compacted_tokens}, "
+                f"entry_tokens={entry_tokens}"
+            )
     if variant == "dense_prefix" and compacted_pages != expected_dense_pages:
         raise RuntimeError(
             "dense-prefix population differs from the measured working-set plan: "
@@ -432,6 +447,10 @@ def _population_prefix_evidence(
         "expected_dense_prefix_pages": expected_dense_pages,
         "compact_prefix_tokens": (None if compacted_tokens is None else int(compacted_tokens)),
         "compact_prefix_pages": compacted_pages,
+        "compact_prefix_page_source": (
+            None if variant == "vision_only" else "retained_prefix_entry_physical_tokens"
+        ),
+        "retained_prefix_entry": entry,
         "dropped_visual_tokens": int(decision.get("dropped_visual_tokens", 0)),
         "physical_compaction": bool(decision.get("physical_compaction", False)),
         "prefix_cache_hit": bool(seq.multimodal_prefix_cache_hit),
