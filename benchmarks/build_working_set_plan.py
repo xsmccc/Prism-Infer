@@ -33,9 +33,9 @@ from benchmarks.working_set_workload import (
 from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.p9_quality_runtime import safe_materialized_path
 from prism_infer.analysis.working_set_plan import (
+    DEFAULT_IMAGE_MARKER,
     DEFAULT_IMAGE_MAX_PIXELS,
     DEFAULT_IMAGE_MIN_PIXELS,
-    DEFAULT_IMAGE_MARKER,
     DEFAULT_KV_BUDGET_BYTES,
     DEFAULT_KV_BUDGET_PAGES,
     DEFAULT_MAX_CHUNK_SIZE,
