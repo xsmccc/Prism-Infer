@@ -332,7 +332,10 @@ def _run_sample(
             replay_record=replay_record,
         )
         decision = audit["compression_decision"]
-        if not isinstance(decision, dict) or not bool(decision.get("physical_compaction")):
+        used_physical_prefix_kv = isinstance(decision, dict) and bool(
+            decision.get("physical_compaction")
+        )
+        if spec.requires_physical_prefix_kv and not used_physical_prefix_kv:
             raise RuntimeError(
                 "quality output was not generated from the prefix-boundary compacted KV path"
             )
@@ -358,6 +361,13 @@ def _run_sample(
                 f"pre_admission_hit={audit['pre_admission_hit']}, "
                 f"prefix_hit_on_submit={audit['prefix_hit_on_submit']}"
             )
+        attention_selection_source_sample_id = None
+        if selection_record is not None:
+            attention_selection_source_sample_id = selection_record["sample_id"]
+        elif isinstance(decision, dict):
+            attention_selection_source_sample_id = decision.get(
+                "selection_source_sample_id"
+            )
         record = grouped_sample.record
         sample = {
             "sample_id": record["sample_id"],
@@ -379,16 +389,12 @@ def _run_sample(
             "pre_admission_hit": audit["pre_admission_hit"],
             "prefix_cache_candidate_tokens": audit["prefix_cache_candidate_tokens"],
             "compression_decision": decision,
-            "quality_used_physical_prefix_kv": True,
+            "quality_used_physical_prefix_kv": used_physical_prefix_kv,
             "prefix_retention_reused": reused_first_selection,
             "first_question_selection_reused": bool(
                 reused_first_selection and spec.attention_selection_scope == "first_question"
             ),
-            "attention_selection_source_sample_id": (
-                decision.get("selection_source_sample_id")
-                if selection_record is None
-                else selection_record["sample_id"]
-            ),
+            "attention_selection_source_sample_id": attention_selection_source_sample_id,
         }
         if spec.dataset_id == "mvbench_test":
             sample["task"] = record["task"]

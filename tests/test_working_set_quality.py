@@ -121,13 +121,18 @@ def test_first_question_attention_stage_uses_real_prefix_cache_reuse():
     assert spec.reuse_scope == "media_group"
 
 
-def test_dense_stages_use_keep_all_compaction_on_prefix_boundary_path():
+def test_dense_stages_keep_all_tokens_and_only_media_first_requires_prefix_boundary():
     dense_stages = [spec for stage, spec in QUALITY_STAGE_SPECS.items() if "dense" in stage]
+    official = QUALITY_STAGE_SPECS["muir_dense_official"]
 
     assert dense_stages
     assert all(spec.uses_compaction for spec in dense_stages)
     assert all(spec.enable_prefix_caching for spec in dense_stages)
     assert all(spec.effective_keep_ratio(0.6) == 1.0 for spec in dense_stages)
+    assert not official.requires_physical_prefix_kv
+    assert all(
+        spec.requires_physical_prefix_kv for spec in dense_stages if spec is not official
+    )
 
 
 def test_mvbench_group_identity_includes_temporal_bound_and_sampling_contract():

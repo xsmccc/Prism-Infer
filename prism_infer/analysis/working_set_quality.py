@@ -43,6 +43,12 @@ class QualityStageSpec:
     def requires_attention_selection(self) -> bool:
         return self.attention_selection_scope is not None
 
+    @property
+    def requires_physical_prefix_kv(self) -> bool:
+        """Whether the prompt layout exposes the stable media-first prefix boundary."""
+
+        return self.prompt_layout == "media_first"
+
 
 QUALITY_STAGE_SPECS: dict[str, QualityStageSpec] = {
     "muir_dense_official": QualityStageSpec(
