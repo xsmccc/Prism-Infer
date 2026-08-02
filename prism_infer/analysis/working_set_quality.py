@@ -44,10 +44,16 @@ class QualityStageSpec:
         return self.attention_selection_scope is not None
 
     @property
-    def requires_physical_prefix_kv(self) -> bool:
+    def requires_prefix_boundary(self) -> bool:
         """Whether the prompt layout exposes the stable media-first prefix boundary."""
 
         return self.prompt_layout == "media_first"
+
+    @property
+    def requires_physical_prefix_kv(self) -> bool:
+        """Whether this stage is expected to delete and physically compact visual KV."""
+
+        return self.requires_prefix_boundary and self.keep_ratio_override != 1.0
 
 
 QUALITY_STAGE_SPECS: dict[str, QualityStageSpec] = {

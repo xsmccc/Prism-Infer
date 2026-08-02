@@ -124,15 +124,21 @@ def test_first_question_attention_stage_uses_real_prefix_cache_reuse():
 def test_dense_stages_keep_all_tokens_and_only_media_first_requires_prefix_boundary():
     dense_stages = [spec for stage, spec in QUALITY_STAGE_SPECS.items() if "dense" in stage]
     official = QUALITY_STAGE_SPECS["muir_dense_official"]
+    media_first = QUALITY_STAGE_SPECS["muir_dense_media_first"]
+    uniform = QUALITY_STAGE_SPECS["muir_uniform_reuse"]
 
     assert dense_stages
     assert all(spec.uses_compaction for spec in dense_stages)
     assert all(spec.enable_prefix_caching for spec in dense_stages)
     assert all(spec.effective_keep_ratio(0.6) == 1.0 for spec in dense_stages)
-    assert not official.requires_physical_prefix_kv
+    assert not official.requires_prefix_boundary
     assert all(
-        spec.requires_physical_prefix_kv for spec in dense_stages if spec is not official
+        spec.requires_prefix_boundary for spec in dense_stages if spec is not official
     )
+    assert media_first.requires_prefix_boundary
+    assert not media_first.requires_physical_prefix_kv
+    assert uniform.requires_prefix_boundary
+    assert uniform.requires_physical_prefix_kv
 
 
 def test_mvbench_group_identity_includes_temporal_bound_and_sampling_contract():

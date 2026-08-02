@@ -332,6 +332,13 @@ def _run_sample(
             replay_record=replay_record,
         )
         decision = audit["compression_decision"]
+        used_prefix_boundary = bool(audit["pre_admission_hit"]) or (
+            int(audit["prefix_cache_candidate_tokens"]) > 0
+        )
+        if spec.requires_prefix_boundary and not used_prefix_boundary:
+            raise RuntimeError(
+                "quality output did not expose the required media-first prefix boundary"
+            )
         used_physical_prefix_kv = isinstance(decision, dict) and bool(
             decision.get("physical_compaction")
         )
@@ -346,7 +353,7 @@ def _run_sample(
         if selection_record is not None and audit["pre_admission_hit"]:
             raise RuntimeError("locked attention replay unexpectedly restored a cached prefix")
         reused_first_selection = False
-        if grouped_sample.question_index > 0 and first_decision is not None:
+        if grouped_sample.question_index > 0:
             reused_first_selection = bool(audit["pre_admission_hit"]) and (
                 _retention_signature(decision) == _retention_signature(first_decision)
             )
@@ -389,6 +396,7 @@ def _run_sample(
             "pre_admission_hit": audit["pre_admission_hit"],
             "prefix_cache_candidate_tokens": audit["prefix_cache_candidate_tokens"],
             "compression_decision": decision,
+            "quality_used_prefix_boundary": used_prefix_boundary,
             "quality_used_physical_prefix_kv": used_physical_prefix_kv,
             "prefix_retention_reused": reused_first_selection,
             "first_question_selection_reused": bool(
@@ -541,7 +549,7 @@ def _restore_first_question_prefix(
     runtime: dict[str, Any],
     sampling: SamplingParams,
     selection_record: dict[str, Any] | None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     first = grouped_by_id[grouped_sample.media_group_id][0]
     images: list[Image.Image] = []
     try:
@@ -579,7 +587,15 @@ def _restore_first_question_prefix(
     if output["token_ids"] != recorded["output_token_ids"]:
         raise RuntimeError("resume prefix restoration changed first-question output tokens")
     decision = audit["compression_decision"]
-    if not isinstance(decision, dict) or not bool(decision.get("physical_compaction")):
+    used_prefix_boundary = bool(audit["pre_admission_hit"]) or (
+        int(audit["prefix_cache_candidate_tokens"]) > 0
+    )
+    if spec.requires_prefix_boundary and not used_prefix_boundary:
+        raise RuntimeError("resume prefix restoration did not expose a prefix boundary")
+    used_physical_prefix_kv = isinstance(decision, dict) and bool(
+        decision.get("physical_compaction")
+    )
+    if spec.requires_physical_prefix_kv and not used_physical_prefix_kv:
         raise RuntimeError("resume prefix restoration did not use compacted prefix KV")
     if audit["pre_admission_hit"]:
         raise RuntimeError("resume prefix restoration was not a cold first-question replay")
