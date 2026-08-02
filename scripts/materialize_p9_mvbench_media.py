@@ -453,6 +453,15 @@ def main() -> None:
                             output_root=output_root,
                             extracted_cache=extracted_cache,
                         )
+                        # Persist every verified media record so a CDN interruption
+                        # resumes at the next member instead of repeating the archive.
+                        _refresh_artifacts(
+                            manifest=manifest,
+                            records=records,
+                            records_path=records_path,
+                            manifest_path=manifest_path,
+                            selection_output=args.selection_output,
+                        )
                 archive_inventory.update(
                     {
                         "range_requests_total": reader.range_requests,

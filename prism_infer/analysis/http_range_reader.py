@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import re
+import time
 from collections import OrderedDict
 from http import HTTPStatus
 from typing import Any
@@ -60,25 +61,17 @@ class HTTPRangeReader(io.RawIOBase):
         try:
             import requests
             from requests.adapters import HTTPAdapter
-            from urllib3.util.retry import Retry
         except ImportError as exc:
             raise RuntimeError(
                 "HTTP range materialization requires optional dependency requests"
             ) from exc
 
-        retry = Retry(
-            total=retries,
-            connect=retries,
-            read=retries,
-            status=retries,
-            backoff_factor=0.5,
-            status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=frozenset(("GET",)),
-        )
-        adapter = HTTPAdapter(max_retries=retry)
+        adapter = HTTPAdapter(max_retries=0)
         self._session: Any = requests.Session()
         self._session.mount("http://", adapter)
         self._session.mount("https://", adapter)
+        self._request_exception = requests.RequestException
+        self._request_retries = retries
         self._source_url = url
         self._resolved_url = url
         self._expected_size = expected_size
@@ -101,15 +94,32 @@ class HTTPRangeReader(io.RawIOBase):
         return self._resolved_url
 
     def _range_get(self, url: str, start: int, end: int) -> Any:
-        response = self._session.get(
-            url,
-            headers={
-                "Accept-Encoding": "identity",
-                "Range": f"bytes={start}-{end}",
-            },
-            timeout=self._timeout,
-            allow_redirects=True,
-        )
+        response = None
+        for attempt in range(self._request_retries + 1):
+            try:
+                response = self._session.get(
+                    url,
+                    headers={
+                        "Accept-Encoding": "identity",
+                        "Range": f"bytes={start}-{end}",
+                    },
+                    timeout=self._timeout,
+                    allow_redirects=True,
+                )
+            except self._request_exception:
+                if attempt == self._request_retries:
+                    raise
+                time.sleep(min(0.5 * (2**attempt), 8.0))
+                continue
+            if response.status_code not in (429, 500, 502, 503, 504):
+                break
+            if attempt == self._request_retries:
+                break
+            response.close()
+            response = None
+            time.sleep(min(0.5 * (2**attempt), 8.0))
+        if response is None:
+            raise RuntimeError("HTTP range request completed without a response")
         if response.status_code != HTTPStatus.PARTIAL_CONTENT:
             response.close()
             raise OSError(
