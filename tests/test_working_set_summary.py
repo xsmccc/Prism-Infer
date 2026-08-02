@@ -61,10 +61,12 @@ def _population_request(index: int) -> dict[str, object]:
 
 def _population(engine: str) -> dict[str, object]:
     runs = []
+    prism_requests = []
     for index in range(2):
         request = _population_request(index)
+        prism_requests.append(request)
         runs.append(
-            {"engine_metrics": {"requests": [request]}}
+            {"engine_metrics": {"requests": copy.deepcopy(prism_requests)}}
             if engine == "prism"
             else {"requests": [request]}
         )
@@ -243,7 +245,7 @@ class WorkingSetSummaryTest(unittest.TestCase):
         self.assertTrue(complete["matrix"]["complete"])
 
         incomplete_population = _prism_record()
-        incomplete_population["population"]["run"]["runs"][1]["engine_metrics"]["requests"][0][
+        incomplete_population["population"]["run"]["runs"][1]["engine_metrics"]["requests"][1][
             "finish_reason"
         ] = None
         with self.assertRaisesRegex(ValueError, "population request.*did not complete"):

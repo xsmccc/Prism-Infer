@@ -151,18 +151,44 @@ def _population_summary(
         )
 
     completed_requests = 0
+    previous_prism_request_ids: list[object] = []
     for run_index, raw_run in enumerate(raw_runs):
         run = _mapping(raw_run, f"{engine} population run[{run_index}]")
         raw_requests = (
             _path(run, "engine_metrics", "requests") if engine == "prism" else run.get("requests")
         )
-        if not isinstance(raw_requests, list) or len(raw_requests) != 1:
+        if not isinstance(raw_requests, list):
+            raise ValueError(f"{engine} population run[{run_index}] has no request list")
+        if engine == "prism":
+            expected_snapshot_requests = run_index + 1
+            if len(raw_requests) != expected_snapshot_requests:
+                raise ValueError(
+                    f"prism population run[{run_index}] must contain "
+                    f"{expected_snapshot_requests} cumulative requests; found {len(raw_requests)}"
+                )
+            request_ids = [
+                _mapping(item, f"prism population request[{run_index}][{index}]").get("request_id")
+                for index, item in enumerate(raw_requests)
+            ]
+            if request_ids[:-1] != previous_prism_request_ids:
+                raise ValueError(
+                    f"prism population run[{run_index}] changed prior cumulative requests"
+                )
+            if request_ids[-1] is None or request_ids[-1] in previous_prism_request_ids:
+                raise ValueError(
+                    f"prism population run[{run_index}] did not add one unique request"
+                )
+            previous_prism_request_ids = request_ids
+            raw_request = raw_requests[-1]
+        elif len(raw_requests) == 1:
+            raw_request = raw_requests[0]
+        else:
             count = len(raw_requests) if isinstance(raw_requests, list) else 0
             raise ValueError(
                 f"{engine} population run[{run_index}] must contain exactly one request; "
                 f"found {count}"
             )
-        request = _mapping(raw_requests[0], f"{engine} population request[{run_index}]")
+        request = _mapping(raw_request, f"{engine} population request[{run_index}]")
         if request.get("finish_reason") not in _COMPLETED_REASONS:
             raise ValueError(
                 f"{engine} population request[{run_index}] did not complete: "
@@ -176,6 +202,11 @@ def _population_summary(
         "runs": len(raw_runs),
         "completed_requests": completed_requests,
         "complete": completed_requests == expected_requests,
+        "request_record_scope": (
+            "cumulative_snapshots_one_new_request_per_run"
+            if engine == "prism"
+            else "one_request_per_run"
+        ),
     }
 
 
