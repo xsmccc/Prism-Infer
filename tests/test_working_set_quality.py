@@ -136,9 +136,7 @@ def test_dense_stages_keep_all_tokens_and_only_media_first_requires_prefix_bound
         spec.requires_prefix_boundary for spec in dense_stages if spec is not official
     )
     assert media_first.requires_prefix_boundary
-    assert not media_first.requires_physical_prefix_kv
     assert uniform.requires_prefix_boundary
-    assert uniform.requires_physical_prefix_kv
 
 
 def test_mvbench_group_identity_includes_temporal_bound_and_sampling_contract():

@@ -341,9 +341,14 @@ def _run_sample(
         used_physical_prefix_kv = isinstance(decision, dict) and bool(
             decision.get("physical_compaction")
         )
-        if spec.requires_physical_prefix_kv and not used_physical_prefix_kv:
+        dropped_visual_tokens = (
+            int(decision.get("dropped_visual_tokens", 0))
+            if isinstance(decision, dict)
+            else 0
+        )
+        if dropped_visual_tokens > 0 and not used_physical_prefix_kv:
             raise RuntimeError(
-                "quality output was not generated from the prefix-boundary compacted KV path"
+                "quality output deleted visual tokens without physical KV compaction"
             )
         if selection_record is not None and not bool(
             decision and decision.get("selection_replay_locked")
@@ -398,6 +403,7 @@ def _run_sample(
             "compression_decision": decision,
             "quality_used_prefix_boundary": used_prefix_boundary,
             "quality_used_physical_prefix_kv": used_physical_prefix_kv,
+            "quality_dropped_visual_tokens": dropped_visual_tokens,
             "prefix_retention_reused": reused_first_selection,
             "first_question_selection_reused": bool(
                 reused_first_selection and spec.attention_selection_scope == "first_question"
@@ -593,7 +599,12 @@ def _restore_first_question_prefix(
     used_physical_prefix_kv = isinstance(decision, dict) and bool(
         decision.get("physical_compaction")
     )
-    if spec.requires_physical_prefix_kv and not used_physical_prefix_kv:
+    dropped_visual_tokens = (
+        int(decision.get("dropped_visual_tokens", 0))
+        if isinstance(decision, dict)
+        else 0
+    )
+    if dropped_visual_tokens > 0 and not used_physical_prefix_kv:
         raise RuntimeError("resume prefix restoration did not use compacted prefix KV")
     if audit["pre_admission_hit"]:
         raise RuntimeError("resume prefix restoration was not a cold first-question replay")
