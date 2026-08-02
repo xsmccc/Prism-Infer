@@ -268,15 +268,28 @@ def _generate_with_audit(
     sequence.visual_embedding_cache_key = visual_fingerprint
     sequence.multimodal_prefix_cache_key = visual_fingerprint
     sequence_id = llm._submit_sequence(sequence)
+    runtime_sequence = llm.scheduler.requests[sequence_id]
     submission_audit = {
-        "prefix_hit_on_submit": bool(sequence.multimodal_prefix_cache_hit),
-        "pre_admission_hit": bool(getattr(sequence, "multimodal_prefix_pre_admission_hit", False)),
-        "prefix_cache_candidate_tokens": int(sequence.prefix_cache_candidate_tokens),
-        "multimodal_prefix_boundary": sequence.multimodal_prefix_boundary,
+        "prefix_hit_on_submit": bool(runtime_sequence.multimodal_prefix_cache_hit),
+        "pre_admission_hit": bool(
+            getattr(runtime_sequence, "multimodal_prefix_pre_admission_hit", False)
+        ),
+        "prefix_cache_candidate_tokens": int(
+            runtime_sequence.prefix_cache_candidate_tokens
+        ),
+        "multimodal_prefix_boundary": runtime_sequence.multimodal_prefix_boundary,
     }
     output = llm._finish_single_generation(sequence_id, None)
-    submission_audit["compression_decision"] = copy.deepcopy(
-        sequence.visual_pruning_decision_record
+    completed_sequence = llm.scheduler.requests[sequence_id]
+    retained_prefix_decision = (
+        llm.scheduler.block_manager.multimodal_prefix_compression_record(
+            completed_sequence
+        )
+    )
+    submission_audit["compression_decision"] = (
+        retained_prefix_decision
+        if retained_prefix_decision is not None
+        else copy.deepcopy(completed_sequence.visual_pruning_decision_record)
     )
     return output, submission_audit
 

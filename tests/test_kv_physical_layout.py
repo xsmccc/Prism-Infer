@@ -490,6 +490,14 @@ def test_multimodal_prefix_cache_reuses_compacted_pages_with_tail_cow() -> None:
         assert entry["canonical_blocks"] == 1
         assert entry["tail_clone_blocks"] == 0
         assert entry["resident_blocks"] == 1
+        retained_decision = manager.multimodal_prefix_compression_record(cold)
+        assert retained_decision is not None
+        assert retained_decision["physical_compaction"] is True
+        assert retained_decision["dropped_visual_tokens"] == 5
+        retained_decision["dropped_token_indices"].clear()
+        assert manager.multimodal_prefix_compression_record(cold)[
+            "dropped_token_indices"
+        ] == [3, 4, 5, 6, 7]
         cached_block_id = cold.block_table[0]
         manager.deallocate(cold)
 

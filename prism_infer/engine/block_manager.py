@@ -11,6 +11,7 @@
 #           block_table ≈ 页表, hash_to_block_id ≈ TLB/缓存索引
 # ═══════════════════════════════════════════════════════════════
 
+import copy
 import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -685,6 +686,18 @@ class BlockManager:
             "resident_blocks": entry.resident_blocks,
             "lifetime_hits": entry.lifetime_hits,
         }
+
+    def multimodal_prefix_compression_record(
+        self,
+        seq: Sequence,
+    ) -> dict[str, object] | None:
+        """Return the immutable compression decision retained by an exact prefix entry."""
+
+        self._assert_sequence_block_size(seq)
+        match = self._matching_multimodal_prefix(seq)
+        if match is None:
+            return None
+        return copy.deepcopy(match[1].compression_record)
 
     def reset_multimodal_prefix_cache_metrics(self) -> None:
         """Reset counters while retaining warm compacted prefix pages."""
