@@ -21,6 +21,7 @@ from prism_infer.engine.visual_pruning import (
     compute_pruning_decision,
 )
 from scripts.build_mvbench_repeated_subset import select_repeated_mvbench_records
+from scripts.materialize_p9_mvbench_media import _archive_url
 
 
 def _record(sample_id: str, media_digest: str) -> dict[str, object]:
@@ -186,6 +187,19 @@ def test_mvbench_repeated_selection_uses_exact_source_and_temporal_contract():
     assert [record["sample_id"] for record in selected] == ["a", "b"]
     assert len(groups) == 1
     assert groups[0]["sample_ids"] == ["a", "b"]
+
+
+def test_mvbench_archive_url_accepts_verified_mirror_endpoint():
+    url = _archive_url(
+        {"repository": "OpenGVLab/MVBench", "revision": "revision"},
+        {"repository_path": "video/archive.zip"},
+        hf_endpoint="https://hf-mirror.com/",
+    )
+
+    assert url == (
+        "https://hf-mirror.com/datasets/OpenGVLab/MVBench/resolve/"
+        "revision/video/archive.zip?download=true"
+    )
 
 
 def _attention_replay_fixture():

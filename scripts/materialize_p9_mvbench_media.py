@@ -36,6 +36,7 @@ from prism_infer.analysis.p9_quality_materialization import (
 
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data/p9_quality/materialized"
 DEFAULT_SELECTION_OUTPUT = REPO_ROOT / "benchmarks/workloads/p9_quality_selection.json"
+DEFAULT_HF_ENDPOINT = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
 COPY_BUFFER_BYTES = 1024 * 1024
 VIDEO_SUFFIXES = {".avi", ".gif", ".mkv", ".mov", ".mp4", ".webm"}
 FRAME_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
@@ -79,12 +80,17 @@ def _archive_groups(
 def _archive_url(
     artifact: Mapping[str, Any],
     archive: Mapping[str, Any],
+    *,
+    hf_endpoint: str,
 ) -> str:
+    endpoint = hf_endpoint.rstrip("/")
+    if not endpoint.startswith(("https://", "http://")):
+        raise ValueError("Hugging Face endpoint must use HTTP or HTTPS")
     repository = artifact["repository"]
     revision = artifact["revision"]
     repository_path = archive["repository_path"]
     return (
-        f"https://huggingface.co/datasets/{repository}/resolve/"
+        f"{endpoint}/datasets/{repository}/resolve/"
         f"{revision}/{repository_path}?download=true"
     )
 
@@ -352,6 +358,11 @@ def main() -> None:
         help="archive allowlist; repeat flag or omit to process every selected archive",
     )
     parser.add_argument("--range-chunk-mib", type=int, default=8)
+    parser.add_argument(
+        "--hf-endpoint",
+        default=DEFAULT_HF_ENDPOINT,
+        help="Hugging Face-compatible endpoint; defaults to HF_ENDPOINT or huggingface.co",
+    )
     parser.add_argument("--inventory-only", action="store_true")
     parser.add_argument(
         "--finalize-only",
@@ -409,7 +420,11 @@ def main() -> None:
     for archive_name in selected_archives:
         selected_media = groups[archive_name]
         archive_spec = selected_media[0]["archive"]
-        url = _archive_url(artifact, archive_spec)
+        url = _archive_url(
+            artifact,
+            archive_spec,
+            hf_endpoint=args.hf_endpoint,
+        )
         with HTTPRangeReader(
             url,
             expected_size=archive_spec["bytes"],
