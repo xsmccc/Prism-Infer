@@ -10,7 +10,7 @@ from typing import Any
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
 from prism_infer.analysis.p9_quality_metrics import aggregate_quality_predictions
 from prism_infer.analysis.working_set_plan import (
-    build_muirbench_media_first_source_prompt,
+    build_muirbench_labeled_media_first_prompt,
 )
 
 
@@ -265,7 +265,7 @@ def build_muirbench_media_first_prompt(
         expected_media_count = question.count(image_marker) + sum(
             option.count(image_marker) for option in options
         )
-    return build_muirbench_media_first_source_prompt(
+    return build_muirbench_labeled_media_first_prompt(
         question,
         options,
         expected_media_count=expected_media_count,

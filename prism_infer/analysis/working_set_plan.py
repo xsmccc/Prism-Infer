@@ -21,7 +21,7 @@ from typing import Any
 
 from prism_infer.analysis.p9_quality_metrics import build_muirbench_prompt
 
-WORKING_SET_PLAN_SCHEMA_VERSION = 1
+WORKING_SET_PLAN_SCHEMA_VERSION = 2
 WORKING_SET_PLAN_RECORD_TYPE = "multimodal_working_set_plan"
 DENSE_PREFIX_PAGES_RECORD_TYPE = "muirbench_dense_prefix_pages"
 MUIRBENCH_DATASET_ID = "muirbench_test"
@@ -318,8 +318,8 @@ def build_working_set_plan(
         "prompt_layout": {
             "name": "media_first",
             "image_marker": image_marker,
-            "source_prompt_transform": "replace_image_markers_with_ordered_references",
-            "chat_content_order": "all_images_then_question",
+            "source_prompt_transform": "labeled_ordered_media_prefix_v1",
+            "chat_content_order": "image_label_then_image_repeated_before_question",
         },
         "traffic": {
             "seed": seed,
@@ -399,10 +399,13 @@ def validate_working_set_plan(plan: Mapping[str, Any]) -> None:
     )
     if (
         prompt_layout.get("source_prompt_transform")
-        != "replace_image_markers_with_ordered_references"
+        != "labeled_ordered_media_prefix_v1"
     ):
         raise ValueError("working-set plan has unsupported source prompt transform")
-    if prompt_layout.get("chat_content_order") != "all_images_then_question":
+    if (
+        prompt_layout.get("chat_content_order")
+        != "image_label_then_image_repeated_before_question"
+    ):
         raise ValueError("working-set plan has unsupported chat content order")
 
     traffic = _mapping(plan.get("traffic"), "plan.traffic")
@@ -667,8 +670,14 @@ def _validate_group(
         if sample.get("sample_offset") != sample_index:
             raise ValueError("group sample offsets must be contiguous")
         prompt = _nonempty_string(sample.get("source_prompt"), "sample.source_prompt")
-        if image_marker in prompt:
-            raise ValueError("media-first source prompt still contains an image marker")
+        expected_prefix = "\n".join(
+            f"Image {media_index}: {image_marker}"
+            for media_index in range(1, len(media) + 1)
+        )
+        if not prompt.startswith(f"{expected_prefix}\n"):
+            raise ValueError("media-first source prompt has no labeled media prefix")
+        if prompt.count(image_marker) != len(media):
+            raise ValueError("media-first source prompt marker count differs from media")
         digest = _sha256(sample.get("source_prompt_sha256"), "sample.source_prompt_sha256")
         if digest != hashlib.sha256(prompt.encode("utf-8")).hexdigest():
             raise ValueError("sample source prompt SHA256 mismatch")
@@ -691,7 +700,7 @@ def _media_first_source_prompt(
     media = record.get("media")
     if not isinstance(media, list) or not media:
         raise ValueError("record.media must be a non-empty list")
-    return build_muirbench_media_first_source_prompt(
+    return build_muirbench_labeled_media_first_prompt(
         question,
         options,
         expected_media_count=len(media),
@@ -750,6 +759,27 @@ def build_muirbench_media_first_source_prompt(
         f"{reference_note}\n{rewritten_question}",
         rewritten_options,
     )
+
+
+def build_muirbench_labeled_media_first_prompt(
+    question: str,
+    options: Sequence[str],
+    *,
+    expected_media_count: int,
+    image_marker: str = DEFAULT_IMAGE_MARKER,
+) -> str:
+    """Place explicitly numbered image blocks before the rewritten question."""
+
+    source_prompt = build_muirbench_media_first_source_prompt(
+        question,
+        options,
+        expected_media_count=expected_media_count,
+        image_marker=image_marker,
+    )
+    media_prefix = "\n".join(
+        f"Image {index}: {image_marker}" for index in range(1, expected_media_count + 1)
+    )
+    return f"{media_prefix}\n{source_prompt}"
 
 
 def _rng_stream_contract(seed: int) -> dict[str, int | str]:

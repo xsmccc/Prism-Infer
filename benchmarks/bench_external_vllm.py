@@ -31,6 +31,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
+from benchmarks.working_set_workload import build_interleaved_image_content
 from prism_infer.analysis.p9_external_quality import (
     VLLM_PROMPT_ADAPTERS,
     adapt_vllm_prompt_text,
@@ -159,7 +160,11 @@ def _build_vllm_prompts(
             continue
         content: list[dict[str, Any]] = []
         multi_modal_data: dict[str, Any] = {}
-        if "images" in request:
+        if request.get("type") == "interleaved_images":
+            images = request["images"]
+            content = build_interleaved_image_content(request)
+            multi_modal_data["image"] = images[0] if len(images) == 1 else images
+        elif "images" in request:
             images = request["images"]
             content.extend({"type": "image", "image": image} for image in images)
             multi_modal_data["image"] = images[0] if len(images) == 1 else images
@@ -179,7 +184,8 @@ def _build_vllm_prompts(
                     "frames_indices": list(range(frame_count)),
                 },
             )
-        content.append({"type": "text", "text": request["prompt"]})
+        if request.get("type") != "interleaved_images":
+            content.append({"type": "text", "text": request["prompt"]})
         prompt_text = processor.apply_chat_template(
             [{"role": "user", "content": content}],
             tokenize=False,

@@ -22,6 +22,9 @@ import torch.distributed as dist
 
 DEFAULT_VISUAL_PRUNING_KEEP_RATIO = 0.6
 DEFAULT_VISUAL_PRUNING_MIN_KEEP_TOKENS = 32
+# Video deletion is opt-in.  The repeated-video quality study showed a large
+# regression for the generic Uniform policy, so ``None`` retains every video
+# token while an explicit integer enables a separate video retention floor.
 DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS: int | None = None
 DEFAULT_VISUAL_PRUNING_STRATEGY = "uniform"
 DEFAULT_VISUAL_PRUNING_ATTENTION_LAST_N_LAYERS = 1
@@ -382,11 +385,9 @@ def _effective_min_keep_tokens(
     spans: tuple[VisualTokenSpan, ...],
     config: VisualPruningConfig,
 ) -> int:
-    if (
-        spans
-        and all(span.modality == VIDEO_MODALITY for span in spans)
-        and config.video_min_keep_tokens is not None
-    ):
+    if spans and all(span.modality == VIDEO_MODALITY for span in spans):
+        if config.video_min_keep_tokens is None:
+            return sum(span.token_count for span in spans)
         return config.video_min_keep_tokens
     return config.min_keep_tokens
 

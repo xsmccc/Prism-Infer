@@ -28,6 +28,7 @@ NANOSECONDS_PER_SECOND = 1_000_000_000
 _ONLINE_MEDIA_FIELD_BY_TYPE = {
     "image": "image",
     "images": "images",
+    "interleaved_images": "images",
     "video": "video",
 }
 _SUPPORTED_ONLINE_REQUEST_TYPES = frozenset({"text", *_ONLINE_MEDIA_FIELD_BY_TYPE})
@@ -175,7 +176,7 @@ def _visual_embedding_fingerprint(
 ) -> str:
     """Hash the exact processor output consumed by the Vision Encoder."""
 
-    if request_type in ("image", "images"):
+    if request_type in ("image", "images", "interleaved_images"):
         payload = inputs.pixel_values
         grid = inputs.image_grid_thw
         token_id = inputs.image_token_id
@@ -519,6 +520,14 @@ class OnlineServingSession:
                 request.sampling_params,
                 **common,
             )
+        if request_type == "interleaved_images":
+            return self.engine.add_interleaved_images_request(
+                payload["prompt"],
+                payload["images"],
+                request.sampling_params,
+                image_marker=payload.get("image_marker", "<image>"),
+                **common,
+            )
         return self.engine.add_video_request(
             payload["prompt"],
             payload["video"],
@@ -702,6 +711,12 @@ class OnlineServingSession:
                         payload["prompt"],
                         media,
                     )
+                elif request_type == "interleaved_images":
+                    inputs = self.engine._process_interleaved_image_inputs(
+                        payload["prompt"],
+                        media,
+                        image_marker=payload.get("image_marker", "<image>"),
+                    )
                 elif request_type == "video":
                     inputs = self.engine._process_video_inputs(
                         payload["prompt"],
@@ -731,7 +746,7 @@ class OnlineServingSession:
                 while len(self._media_layout_cache) > _ONLINE_MEDIA_CACHE_MAX_ENTRIES:
                     self._media_layout_cache.popitem(last=False)
 
-        if request_type in ("image", "images"):
+        if request_type in ("image", "images", "interleaved_images"):
             sequence = self.engine._prepare_image_sequence(
                 inputs,
                 request.sampling_params,

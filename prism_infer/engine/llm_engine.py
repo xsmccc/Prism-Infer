@@ -579,6 +579,25 @@ class LLMEngine:
         with profile_region("preprocess.image_processor", cuda=False):
             return prepare_image_inputs(self.vl_processor, prompt, image)
 
+    def _process_interleaved_image_inputs(
+        self,
+        prompt: str,
+        images: Any,
+        *,
+        image_marker: str = "<image>",
+    ) -> ImageInputs:
+        """Run processor-only preparation for a marker-interleaved image prompt."""
+
+        if self.vl_processor is None:
+            raise ValueError("image generation requires a Qwen3-VL model config")
+        with profile_region("preprocess.image_processor", cuda=False):
+            return prepare_interleaved_image_inputs(
+                self.vl_processor,
+                prompt,
+                images,
+                image_marker=image_marker,
+            )
+
     def add_vl_request(
         self,
         prompt: str,

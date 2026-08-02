@@ -35,6 +35,7 @@ from prism_infer.analysis.p9_quality_runtime import safe_materialized_path
 from prism_infer.analysis.working_set_plan import (
     DEFAULT_IMAGE_MAX_PIXELS,
     DEFAULT_IMAGE_MIN_PIXELS,
+    DEFAULT_IMAGE_MARKER,
     DEFAULT_KV_BUDGET_BYTES,
     DEFAULT_KV_BUDGET_PAGES,
     DEFAULT_MAX_CHUNK_SIZE,
@@ -318,9 +319,10 @@ def _measure_group(
     try:
         sample = group["samples"][0]
         payload = {
-            "type": "images",
+            "type": "interleaved_images",
             "prompt": sample["source_prompt"],
             "images": images,
+            "image_marker": DEFAULT_IMAGE_MARKER,
         }
         sampling = SamplingParams(
             temperature=0.0,

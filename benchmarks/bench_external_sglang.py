@@ -31,6 +31,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
+from benchmarks.working_set_workload import build_interleaved_image_content
 
 EXTERNAL_SCHEMA_VERSION = 2
 DEFAULT_VIDEO_FPS = 24.0
@@ -167,11 +168,14 @@ def _materialize(
 def _prompts(processor: Any, requests: list[dict[str, Any]]) -> list[str]:
     result: list[str] = []
     for request in requests:
-        if "video" in request:
+        if request.get("type") == "interleaved_images":
+            content = build_interleaved_image_content(request)
+        elif "video" in request:
             content = [{"type": "video", "video": request["video"]}]
         else:
             content = [{"type": "image", "image": image} for image in request["images"]]
-        content.append({"type": "text", "text": request["prompt"]})
+        if request.get("type") != "interleaved_images":
+            content.append({"type": "text", "text": request["prompt"]})
         result.append(
             processor.apply_chat_template(
                 [{"role": "user", "content": content}],

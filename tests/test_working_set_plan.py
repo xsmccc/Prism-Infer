@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from PIL import Image
 
 from benchmarks.working_set_workload import (
+    build_interleaved_image_content,
     materialize_working_set,
     source_prompt_schedule_sha256,
     verify_working_set_model,
@@ -88,8 +89,8 @@ class WorkingSetPlanTest(unittest.TestCase):
                 _digest(json.dumps(group["ordered_media_sha256"], separators=(",", ":"))),
             )
             self.assertEqual(group["ordered_media_sha256"][0], group["media"][0]["sha256"])
-            self.assertNotIn("<image>", group["samples"][0]["source_prompt"])
-            self.assertIn("Image 1", group["samples"][0]["source_prompt"])
+            self.assertEqual(group["samples"][0]["source_prompt"].count("<image>"), 1)
+            self.assertTrue(group["samples"][0]["source_prompt"].startswith("Image 1: <image>"))
             self.assertEqual(group["samples"][0]["sample_offset"], 0)
             self.assertEqual(group["samples"][1]["sample_offset"], 1)
 
@@ -289,9 +290,14 @@ class WorkingSetPlanTest(unittest.TestCase):
             try:
                 payloads = materialized.population_payloads + materialized.measured_payloads
                 self.assertTrue(payloads)
-                self.assertTrue(all(payload["type"] == "images" for payload in payloads))
+                self.assertTrue(
+                    all(payload["type"] == "interleaved_images" for payload in payloads)
+                )
                 self.assertTrue(all(len(payload["images"]) == 1 for payload in payloads))
                 self.assertTrue(all("image" not in payload for payload in payloads))
+                content = build_interleaved_image_content(payloads[0])
+                self.assertEqual([item["type"] for item in content], ["text", "image", "text"])
+                self.assertEqual(content[0]["text"], "Image 1: ")
                 self.assertEqual(
                     materialized.population_group_ids,
                     [

@@ -104,6 +104,31 @@ def test_video_min_keep_tokens_only_applies_to_video_only_sequences():
     print("visual pruning modality-aware retention floors: PASS")
 
 
+def test_video_pruning_is_disabled_without_an_explicit_floor():
+    """The default policy must preserve video tokens after the quality regression."""
+
+    video_seq = Sequence(
+        [1, *([98] * 10), 2],
+        block_size=256,
+        request_id=3,
+        video_token_id=98,
+        video_token_count=10,
+    )
+    decision = compute_pruning_decision(
+        video_seq,
+        VisualPruningConfig(
+            keep_ratio=0.5,
+            min_keep_tokens=2,
+            video_min_keep_tokens=None,
+        ),
+    )
+
+    assert decision is not None
+    assert decision.effective_min_keep_tokens == 10
+    assert decision.kept_visual_tokens == 10
+    assert decision.dropped_visual_tokens == 0
+
+
 def test_score_pruning_requires_scores_for_all_visual_tokens():
     """Score strategy must fail loudly instead of falling back to uniform."""
 

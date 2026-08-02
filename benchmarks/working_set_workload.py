@@ -17,6 +17,34 @@ from prism_infer.analysis.working_set_plan import (
 )
 
 
+def build_interleaved_image_content(request: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Convert a neutral marker-interleaved payload to HF chat content blocks."""
+
+    if request.get("type") != "interleaved_images":
+        raise ValueError("interleaved image content requires an interleaved_images payload")
+    prompt = request.get("prompt")
+    images = request.get("images")
+    marker = request.get("image_marker", "<image>")
+    if not isinstance(prompt, str) or not prompt:
+        raise ValueError("interleaved image payload requires a non-empty prompt")
+    if not isinstance(images, Sequence) or isinstance(images, (str, bytes)) or not images:
+        raise ValueError("interleaved image payload requires a non-empty image sequence")
+    if not isinstance(marker, str) or not marker:
+        raise ValueError("interleaved image payload requires a non-empty marker")
+    parts = prompt.split(marker)
+    if len(parts) - 1 != len(images):
+        raise ValueError("interleaved image marker count must equal image count")
+
+    content: list[dict[str, Any]] = []
+    for prefix, image in zip(parts[:-1], images, strict=True):
+        if prefix:
+            content.append({"type": "text", "text": prefix})
+        content.append({"type": "image", "image": image})
+    if parts[-1]:
+        content.append({"type": "text", "text": parts[-1]})
+    return content
+
+
 @dataclass(slots=True)
 class MaterializedWorkingSet:
     """Owned image objects plus the exact population and measured schedules."""
@@ -83,6 +111,7 @@ def _request_payload(
     *,
     groups: Mapping[str, Mapping[str, Any]],
     images_by_group: Mapping[str, Sequence[Image.Image]],
+    image_marker: str,
 ) -> tuple[dict[str, Any], str, float]:
     group_id = str(request["group_id"])
     sample_id = str(request["sample_id"])
@@ -93,9 +122,10 @@ def _request_payload(
         raise ValueError(f"working-set request references unknown sample {sample_id!r}")
     images = images_by_group[group_id]
     payload = {
-        "type": "images",
+        "type": "interleaved_images",
         "prompt": sample["source_prompt"],
         "images": list(images),
+        "image_marker": image_marker,
     }
     return payload, sample_id, float(request["arrival_offset_s"])
 
@@ -115,6 +145,7 @@ def materialize_working_set(
     if workset is None:
         raise ValueError(f"working-set plan has no workset {workset_id!r}")
     groups = {str(group["group_id"]): group for group in plan["groups"]}
+    image_marker = str(plan["prompt_layout"]["image_marker"])
     group_ids = [str(group_id) for group_id in workset["group_ids"]]
     unknown_groups = [group_id for group_id in group_ids if group_id not in groups]
     if unknown_groups:
@@ -142,6 +173,7 @@ def materialize_working_set(
                     request,
                     groups=groups,
                     images_by_group=images_by_group,
+                    image_marker=image_marker,
                 )
                 payloads.append(payload)
                 request_ids.append(str(request["request_id"]))

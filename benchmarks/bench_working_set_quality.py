@@ -200,7 +200,12 @@ def _prepare_inputs(
                     expected_media_count=len(record["media"]),
                     image_marker=evaluator_dataset["image_marker"],
                 )
-                inputs = prepare_image_inputs(llm.vl_processor, prompt, images)
+                inputs = prepare_interleaved_image_inputs(
+                    llm.vl_processor,
+                    prompt,
+                    images,
+                    image_marker=evaluator_dataset["image_marker"],
+                )
         elif spec.dataset_id == "mvbench_test":
             prompt = build_mvbench_prompt(record["question"], record["candidates"])
             media = record["media"][0]

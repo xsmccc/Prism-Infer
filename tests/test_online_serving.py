@@ -221,6 +221,59 @@ def test_online_media_processor_cache_reuses_equal_content_across_objects() -> N
     assert session._media_preprocess_cache_misses == 3
 
 
+def test_online_interleaved_images_use_marker_aware_processor() -> None:
+    images = [bytearray(b"first image"), bytearray(b"second image")]
+    processor_calls: list[tuple[str, object, str]] = []
+
+    def process_interleaved(
+        prompt: str,
+        media: object,
+        *,
+        image_marker: str,
+    ) -> object:
+        processor_calls.append((prompt, media, image_marker))
+        return SimpleNamespace(
+            pixel_values=torch.arange(16, dtype=torch.float32).reshape(4, 4),
+            image_grid_thw=torch.tensor([[1, 2, 2], [1, 2, 2]]),
+            image_token_id=42,
+            image_token_count=4,
+        )
+
+    engine = SimpleNamespace(
+        config=SimpleNamespace(
+            enable_visual_embedding_cache=True,
+            image_max_pixels=None,
+            model="",
+            video_max_pixels=None,
+        ),
+        vl_processor=None,
+        _process_interleaved_image_inputs=process_interleaved,
+        _prepare_image_sequence=lambda inputs, _sampling, request_id: SimpleNamespace(
+            inputs=inputs,
+            request_id=request_id,
+            visual_embedding_cache_key=None,
+        ),
+    )
+    request = OnlineRequest(
+        request_key="labeled-images",
+        arrival_offset_s=0.0,
+        payload={
+            "type": "interleaved_images",
+            "prompt": "Image 1: <image>\nImage 2: <image>\nCompare them.",
+            "images": images,
+            "image_marker": "<image>",
+        },
+        sampling_params=SamplingParams(max_tokens=1),
+    )
+
+    sequence = OnlineServingSession(engine)._prepare_media_sequence(request, 7)
+
+    assert processor_calls == [(request.payload["prompt"], images, "<image>")]
+    assert sequence.request_id == 7
+    assert sequence.visual_embedding_cache_key
+    assert sequence.multimodal_prefix_cache_key == sequence.visual_embedding_cache_key
+
+
 def test_online_session_preserves_arrival_and_continuous_batching() -> None:
     clock = _FakeClock()
     engine = _engine(clock)
