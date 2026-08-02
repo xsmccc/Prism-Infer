@@ -360,6 +360,18 @@ def _compaction_metrics(record: Mapping[str, Any], engine: str) -> dict[str, Any
     }
 
 
+def _process_memory_metrics(record: Mapping[str, Any]) -> dict[str, Any]:
+    raw = _path(record, "memory", "process_device")
+    process = raw if isinstance(raw, Mapping) else {}
+    measurement = process.get("measurement")
+    return {
+        "peak_serving_mib": _optional_metric(process, "peak_serving_mib"),
+        "after_llm_init_mib": _optional_metric(process, "after_llm_init_mib"),
+        "after_benchmark_mib": _optional_metric(process, "after_benchmark_mib"),
+        "measurement": measurement if isinstance(measurement, str) else UNAVAILABLE,
+    }
+
+
 def _summarize_record(
     record: Mapping[str, Any],
     *,
@@ -441,6 +453,7 @@ def _summarize_record(
             "requests_per_s": len(completed) / duration_s,
             "output_tokens_per_s": output_tokens / duration_s,
         },
+        "process_memory": _process_memory_metrics(record),
         "compaction": _compaction_metrics(record, engine),
         **cache,
     }
@@ -519,7 +532,7 @@ def summarize_records(
         )
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "record_type": "multimodal_working_set_summary",
         "matrix": {
             "required_cells": len(_REQUIRED_CELLS),
@@ -555,6 +568,7 @@ _TABLE_COLUMNS = (
     ("E2E p50 ms", "e2e_p50_ms"),
     ("E2E p99 ms", "e2e_p99_ms"),
     ("Output tok/s", "output_tokens_per_s"),
+    ("Process peak MiB", "process_peak_mib"),
     ("Pre-admission hits", "prefix_pre_admission_hits"),
     ("Visual hydration skips", "visual_hydration_skips"),
     ("Stale-probe fallbacks", "stale_probe_fallbacks"),
@@ -600,6 +614,7 @@ def _table_row(
         "e2e_p50_ms": cell["latency_ms"]["e2e"]["p50"],
         "e2e_p99_ms": cell["latency_ms"]["e2e"]["p99"],
         "output_tokens_per_s": cell["throughput"]["output_tokens_per_s"],
+        "process_peak_mib": cell["process_memory"]["peak_serving_mib"],
         "prefix_pre_admission_hits": cell["prefix_cache"]["pre_admission_hits"],
         "visual_hydration_skips": cell["prefix_cache"]["visual_hydration_skips"],
         "stale_probe_fallbacks": cell["prefix_cache"]["stale_probe_fallbacks"],
@@ -745,7 +760,8 @@ def _draw_panel(
         fill="#3c4043",
         font=axis_font,
     )
-    draw.text((left - 70, top - 3), y_label, fill="#3c4043", font=axis_font)
+    if y_label:
+        draw.text((left - 70, top - 3), y_label, fill="#3c4043", font=axis_font)
 
     for label, points in series.items():
         ordered = sorted(points)
@@ -811,27 +827,22 @@ def _render_plot(path: Path, summary: Mapping[str, Any]) -> None:
         resident = _numeric(cell["resident_media_entries"])
         if resident is not None:
             resident_series.setdefault(label, []).append((x_value, resident))
-        for percentile in ("p50", "p99"):
-            metric_label = f"{label} {percentile}"
-            ttft_series.setdefault(metric_label, []).append(
-                (x_value, float(cell["latency_ms"]["ttft"][percentile]))
-            )
-            colors[metric_label] = color
-            if percentile == "p99":
-                dashed.add(metric_label)
+        ttft_series.setdefault(label, []).append(
+            (x_value, float(cell["latency_ms"]["ttft"]["p50"]))
+        )
     _draw_panel(
         draw,
         (105, 160, 750, 690),
-        title="Explicit resident media entries",
-        y_label="Entries",
+        title="Explicit resident media entries (count)",
+        y_label="",
         series=resident_series,
         colors=colors,
     )
     _draw_panel(
         draw,
         (900, 160, 1535, 690),
-        title="Measured TTFT (solid p50, dashed p99)",
-        y_label="ms",
+        title="Measured TTFT p50 (ms)",
+        y_label="",
         series=ttft_series,
         colors=colors,
         dashed=frozenset(dashed),

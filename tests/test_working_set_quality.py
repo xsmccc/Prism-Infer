@@ -80,7 +80,13 @@ def test_media_first_muirbench_prompt_preserves_ordered_image_references():
         ["same", "<image>"],
     )
 
-    assert "<image>" not in prompt
+    assert prompt.splitlines()[:3] == [
+        "Image 1: <image>",
+        "Image 2: <image>",
+        "Image 3: <image>",
+    ]
+    assert prompt.count("<image>") == 3
+    assert "<image>" not in prompt.split("Question:", maxsplit=1)[1]
     assert "Image 1 through Image 3" in prompt
     assert "Compare Image 1 with Image 2 and choose." in prompt
     assert "(A) same" in prompt
@@ -134,9 +140,7 @@ def test_dense_stages_keep_all_tokens_and_only_media_first_requires_prefix_bound
     assert all(spec.enable_prefix_caching for spec in dense_stages)
     assert all(spec.effective_keep_ratio(0.6) == 1.0 for spec in dense_stages)
     assert not official.requires_prefix_boundary
-    assert all(
-        spec.requires_prefix_boundary for spec in dense_stages if spec is not official
-    )
+    assert all(spec.requires_prefix_boundary for spec in dense_stages if spec is not official)
     assert media_first.requires_prefix_boundary
     assert uniform.requires_prefix_boundary
 

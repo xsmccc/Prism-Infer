@@ -1,0 +1,4465 @@
+{
+  "datasets": [
+    {
+      "category": "video_temporal_reasoning",
+      "config": "all_official_tasks",
+      "evaluation_subset": {
+        "eligible_sample_ids": [
+          "counterfactual_inference|video_10553.mp4|172",
+          "moving_count|video_10553.mp4|186",
+          "moving_count|video_11081.mp4|59",
+          "object_existence|video_11081.mp4|15",
+          "counterfactual_inference|video_12477.mp4|95",
+          "moving_attribute|video_12477.mp4|146",
+          "action_prediction|BI31D.mp4|120",
+          "action_prediction|BI31D.mp4|144",
+          "counterfactual_inference|video_11842.mp4|180",
+          "moving_attribute|video_11842.mp4|65",
+          "unexpected_action|test_creative/C_KT_8_0418_0453.mp4|97",
+          "unexpected_action|test_creative/C_KT_8_0418_0453.mp4|105",
+          "moving_attribute|video_12637.mp4|64",
+          "moving_direction|video_12637.mp4|139",
+          "action_prediction|3ND23.mp4|74",
+          "action_prediction|3ND23.mp4|181",
+          "moving_attribute|video_10995.mp4|97",
+          "moving_direction|video_10995.mp4|58",
+          "counterfactual_inference|video_10921.mp4|5",
+          "counterfactual_inference|video_10921.mp4|197",
+          "character_order|video_10782.mp4|32",
+          "state_change|video_10782.mp4|146",
+          "counterfactual_inference|video_10030.mp4|68",
+          "moving_count|video_10030.mp4|28",
+          "unexpected_action|test_magic/M_Z_320_3788_4140.mp4|146",
+          "unexpected_action|test_magic/M_Z_320_3788_4140.mp4|179",
+          "counterfactual_inference|video_11939.mp4|57",
+          "counterfactual_inference|video_11939.mp4|185",
+          "moving_count|video_13396.mp4|36",
+          "object_existence|video_13396.mp4|195",
+          "moving_count|video_14515.mp4|77",
+          "moving_direction|video_14515.mp4|5",
+          "counterfactual_inference|video_10242.mp4|107",
+          "moving_attribute|video_10242.mp4|180",
+          "object_existence|video_10242.mp4|16",
+          "unexpected_action|test_creative/C_KT_21_8758_8835.mp4|71",
+          "unexpected_action|test_creative/C_KT_21_8758_8835.mp4|128",
+          "unexpected_action|test_humor/H_H_95_0700_0801.mp4|14",
+          "unexpected_action|test_humor/H_H_95_0700_0801.mp4|66",
+          "moving_attribute|video_12175.mp4|189",
+          "moving_direction|video_12175.mp4|73",
+          "counterfactual_inference|video_12989.mp4|6",
+          "moving_count|video_12989.mp4|69",
+          "action_prediction|Z6HEA.mp4|35",
+          "action_prediction|Z6HEA.mp4|162",
+          "unexpected_action|test_magic/M_Z_321_10180_10589.mp4|138",
+          "unexpected_action|test_magic/M_Z_321_10180_10589.mp4|191",
+          "unexpected_action|test_creative/C_KT_17_3643_3725.mp4|70",
+          "unexpected_action|test_creative/C_KT_17_3643_3725.mp4|117",
+          "unexpected_action|test_creative/C_KT_28_5325_5442.mp4|92",
+          "unexpected_action|test_creative/C_KT_28_5325_5442.mp4|114",
+          "counterfactual_inference|video_10929.mp4|182",
+          "moving_attribute|video_10929.mp4|163",
+          "object_existence|video_12615.mp4|107",
+          "object_existence|video_12615.mp4|148",
+          "counterfactual_inference|video_10661.mp4|96",
+          "moving_count|video_10661.mp4|80",
+          "moving_attribute|video_14836.mp4|166",
+          "moving_direction|video_14836.mp4|133",
+          "object_existence|video_14506.mp4|75",
+          "object_existence|video_14506.mp4|143",
+          "moving_attribute|video_13809.mp4|116",
+          "moving_direction|video_13809.mp4|199",
+          "object_existence|video_14101.mp4|19",
+          "object_existence|video_14101.mp4|100",
+          "action_sequence|AK9IB.mp4|84",
+          "action_sequence|AK9IB.mp4|98",
+          "moving_attribute|video_13463.mp4|83",
+          "object_existence|video_13463.mp4|56",
+          "object_existence|video_13463.mp4|119",
+          "unexpected_action|test_humor/H_H_258_4389_4472.mp4|11",
+          "unexpected_action|test_humor/H_H_258_4389_4472.mp4|60",
+          "counterfactual_inference|video_11834.mp4|13",
+          "moving_count|video_11834.mp4|173",
+          "counterfactual_inference|video_13235.mp4|22",
+          "moving_direction|video_13235.mp4|185",
+          "counterfactual_inference|video_13566.mp4|11",
+          "moving_attribute|video_13566.mp4|40",
+          "counterfactual_inference|video_10955.mp4|53",
+          "moving_count|video_10955.mp4|181",
+          "object_existence|video_13922.mp4|44",
+          "object_existence|video_13922.mp4|177",
+          "unexpected_action|test_magic/M_Z_270_0000_0170.mp4|154",
+          "unexpected_action|test_magic/M_Z_270_0000_0170.mp4|170",
+          "moving_count|video_14346.mp4|44",
+          "moving_direction|video_14346.mp4|175",
+          "moving_direction|video_14966.mp4|65",
+          "object_existence|video_14966.mp4|131",
+          "unexpected_action|test_creative/C_KT_14_6653_6758.mp4|98",
+          "unexpected_action|test_creative/C_KT_14_6653_6758.mp4|106",
+          "unexpected_action|test_creative/C_KT_21_8053_8120.mp4|88",
+          "unexpected_action|test_creative/C_KT_21_8053_8120.mp4|103",
+          "moving_count|video_12573.mp4|119",
+          "moving_direction|video_12573.mp4|14",
+          "counterfactual_inference|video_14244.mp4|44",
+          "object_existence|video_14244.mp4|57",
+          "action_sequence|9BCZU.mp4|64",
+          "action_sequence|9BCZU.mp4|195",
+          "unexpected_action|test_humor/H_H_132_1393_1497.mp4|10",
+          "unexpected_action|test_humor/H_H_132_1393_1497.mp4|36",
+          "character_order|video_1021.mp4|192",
+          "state_change|video_1021.mp4|35",
+          "counterfactual_inference|video_10094.mp4|196",
+          "moving_direction|video_10094.mp4|40",
+          "unexpected_action|test_humor/H_A_135_3404_3567.mp4|26",
+          "unexpected_action|test_humor/H_A_135_3404_3567.mp4|34",
+          "moving_count|video_12177.mp4|88",
+          "moving_direction|video_12177.mp4|182",
+          "moving_attribute|video_12262.mp4|4",
+          "object_existence|video_12262.mp4|196",
+          "counterfactual_inference|video_13829.mp4|116",
+          "object_existence|video_13829.mp4|1",
+          "counterfactual_inference|video_12359.mp4|150",
+          "object_existence|video_12359.mp4|37",
+          "action_prediction|N2GFQ.mp4|6",
+          "action_prediction|N2GFQ.mp4|29",
+          "character_order|video_5724.mp4|76",
+          "state_change|video_5724.mp4|93",
+          "moving_attribute|video_10528.mp4|69",
+          "moving_direction|video_10528.mp4|95",
+          "moving_attribute|video_12806.mp4|84",
+          "moving_direction|video_12806.mp4|145",
+          "moving_direction|video_13978.mp4|164",
+          "object_existence|video_13978.mp4|50",
+          "object_existence|video_10197.mp4|140",
+          "object_existence|video_10197.mp4|163",
+          "moving_attribute|video_14259.mp4|87",
+          "moving_direction|video_14259.mp4|62",
+          "counterfactual_inference|video_12670.mp4|160",
+          "moving_attribute|video_12670.mp4|36",
+          "moving_count|video_12413.mp4|131",
+          "moving_direction|video_12413.mp4|174",
+          "moving_attribute|video_12516.mp4|135",
+          "moving_direction|video_12516.mp4|17",
+          "counterfactual_inference|video_11896.mp4|188",
+          "moving_direction|video_11896.mp4|79",
+          "action_prediction|9OMY1.mp4|31",
+          "action_prediction|9OMY1.mp4|80",
+          "moving_direction|video_14704.mp4|38",
+          "object_existence|video_14704.mp4|89",
+          "counterfactual_inference|video_12821.mp4|77",
+          "moving_count|video_12821.mp4|117",
+          "moving_direction|video_12821.mp4|100",
+          "character_order|video_9985.mp4|67",
+          "state_change|video_9985.mp4|4",
+          "action_sequence|86GSE.mp4|135",
+          "action_sequence|86GSE.mp4|186",
+          "moving_attribute|video_14328.mp4|169",
+          "object_existence|video_14328.mp4|110",
+          "moving_attribute|video_10708.mp4|175",
+          "moving_direction|video_10708.mp4|150",
+          "moving_count|video_14502.mp4|15",
+          "moving_direction|video_14502.mp4|119",
+          "moving_attribute|video_12027.mp4|71",
+          "moving_count|video_12027.mp4|97",
+          "moving_attribute|video_13493.mp4|35",
+          "moving_count|video_13493.mp4|138",
+          "moving_direction|video_13493.mp4|125",
+          "moving_direction|video_11093.mp4|69",
+          "object_existence|video_11093.mp4|130",
+          "action_sequence|1L5D3.mp4|144",
+          "action_sequence|1L5D3.mp4|192",
+          "moving_attribute|video_14652.mp4|150",
+          "moving_count|video_14652.mp4|124",
+          "moving_attribute|video_14667.mp4|63",
+          "object_existence|video_14667.mp4|34",
+          "moving_attribute|video_12844.mp4|82",
+          "moving_direction|video_12844.mp4|32",
+          "action_sequence|EUJK0.mp4|159",
+          "action_sequence|EUJK0.mp4|161",
+          "moving_attribute|video_10729.mp4|196",
+          "object_existence|video_10729.mp4|160",
+          "counterfactual_inference|video_11232.mp4|112",
+          "moving_direction|video_11232.mp4|15",
+          "counterfactual_inference|video_12197.mp4|33",
+          "moving_direction|video_12197.mp4|75",
+          "counterfactual_inference|video_12268.mp4|129",
+          "moving_attribute|video_12268.mp4|91",
+          "counterfactual_inference|video_12283.mp4|49",
+          "moving_attribute|video_12283.mp4|18",
+          "character_order|video_11119.mp4|173",
+          "state_change|video_11119.mp4|152",
+          "character_order|video_9001.mp4|133",
+          "state_change|video_9001.mp4|34",
+          "action_sequence|FL6DF.mp4|105",
+          "action_sequence|FL6DF.mp4|171",
+          "moving_direction|video_14700.mp4|121",
+          "object_existence|video_14700.mp4|162",
+          "unexpected_action|test_humor/H_T_848_0000_0538.mp4|28",
+          "unexpected_action|test_humor/H_T_848_0000_0538.mp4|38",
+          "action_sequence|JOLLV.mp4|100",
+          "action_sequence|JOLLV.mp4|138",
+          "moving_direction|video_11916.mp4|143",
+          "object_existence|video_11916.mp4|179",
+          "moving_attribute|video_13405.mp4|161",
+          "moving_direction|video_13405.mp4|126",
+          "moving_attribute|video_14655.mp4|115",
+          "moving_direction|video_14655.mp4|149",
+          "object_existence|video_14655.mp4|45",
+          "unexpected_action|test_creative/C_KT_13_0752_0824.mp4|95",
+          "unexpected_action|test_creative/C_KT_13_0752_0824.mp4|110",
+          "counterfactual_inference|video_14293.mp4|29",
+          "moving_count|video_14293.mp4|136",
+          "unexpected_action|test_creative/C_KT_17_8120_8159.mp4|84",
+          "unexpected_action|test_creative/C_KT_17_8120_8159.mp4|122",
+          "counterfactual_inference|video_10644.mp4|164",
+          "moving_count|video_10644.mp4|171",
+          "unexpected_action|test_creative/C_KT_14_3500_3554.mp4|68",
+          "unexpected_action|test_creative/C_KT_14_3500_3554.mp4|120",
+          "character_order|video_4370.mp4|139",
+          "state_change|video_4370.mp4|160",
+          "action_prediction|NVBBD.mp4|75",
+          "action_prediction|NVBBD.mp4|152",
+          "unexpected_action|test_magic/M_Z_206_4085_4350.mp4|165",
+          "unexpected_action|test_magic/M_Z_206_4085_4350.mp4|181",
+          "counterfactual_inference|video_14132.mp4|14",
+          "moving_attribute|video_14132.mp4|104",
+          "counterfactual_inference|video_12872.mp4|192",
+          "moving_direction|video_12872.mp4|193",
+          "unexpected_action|test_creative/C_KT_97_6143_6339.mp4|86",
+          "unexpected_action|test_creative/C_KT_97_6143_6339.mp4|118",
+          "moving_direction|video_14727.mp4|0",
+          "object_existence|video_14727.mp4|123",
+          "counterfactual_inference|video_10312.mp4|65",
+          "moving_attribute|video_10312.mp4|77",
+          "moving_count|video_10312.mp4|102",
+          "action_prediction|XLR4B.mp4|77",
+          "action_prediction|XLR4B.mp4|136",
+          "character_order|video_1715.mp4|97",
+          "state_change|video_1715.mp4|58",
+          "counterfactual_inference|video_10951.mp4|155",
+          "moving_direction|video_10951.mp4|66",
+          "unexpected_action|test_magic/M_Z_280_6258_6451.mp4|150",
+          "unexpected_action|test_magic/M_Z_280_6258_6451.mp4|199",
+          "counterfactual_inference|video_10262.mp4|128",
+          "object_existence|video_10262.mp4|167",
+          "counterfactual_inference|video_13615.mp4|168",
+          "moving_attribute|video_13615.mp4|25",
+          "counterfactual_inference|video_10998.mp4|114",
+          "moving_attribute|video_10998.mp4|160",
+          "unexpected_action|test_creative/C_KT_20_0247_0322.mp4|99",
+          "unexpected_action|test_creative/C_KT_20_0247_0322.mp4|101",
+          "counterfactual_inference|video_11548.mp4|138",
+          "moving_attribute|video_11548.mp4|141",
+          "moving_direction|video_12645.mp4|8",
+          "object_existence|video_12645.mp4|128",
+          "counterfactual_inference|video_14400.mp4|113",
+          "moving_attribute|video_14400.mp4|34",
+          "action_prediction|84893.mp4|88",
+          "action_prediction|84893.mp4|125",
+          "object_existence|video_11683.mp4|29",
+          "object_existence|video_11683.mp4|152"
+        ],
+        "eligible_sample_ids_sha256": "b9ec4d3655c41b5f920749017906a2a5d2bbaac6896bb9ee3499b75c1b9d31dc",
+        "eligible_samples": 252,
+        "excluded_samples": [],
+        "pending_sample_ids": [],
+        "selected_samples": 252,
+        "status": "ready"
+      },
+      "id": "mvbench_test",
+      "materialization_status": "complete",
+      "media_identity": {
+        "eligible_per_sample_media_identity_sha256": "7422de971cd314784427db3b43018ce4d3be376d42054b759a1649363589f748",
+        "per_sample": [
+          {
+            "media_sha256": [
+              "6c4df6d8439e6f23be3172b92e304d2847f164ddc07454ebaff4e2d0a4fb5dec"
+            ],
+            "sample_id": "counterfactual_inference|video_10553.mp4|172"
+          },
+          {
+            "media_sha256": [
+              "6c4df6d8439e6f23be3172b92e304d2847f164ddc07454ebaff4e2d0a4fb5dec"
+            ],
+            "sample_id": "moving_count|video_10553.mp4|186"
+          },
+          {
+            "media_sha256": [
+              "a6442435e8588f266b58bd81c75858d0839c9163749e8a449ae33bca4017abb5"
+            ],
+            "sample_id": "moving_count|video_11081.mp4|59"
+          },
+          {
+            "media_sha256": [
+              "a6442435e8588f266b58bd81c75858d0839c9163749e8a449ae33bca4017abb5"
+            ],
+            "sample_id": "object_existence|video_11081.mp4|15"
+          },
+          {
+            "media_sha256": [
+              "5b9e02a354a2c46daaa5c8bbf3e63ea14dc064390ed39e8e30a9b045e6f7a3cd"
+            ],
+            "sample_id": "counterfactual_inference|video_12477.mp4|95"
+          },
+          {
+            "media_sha256": [
+              "5b9e02a354a2c46daaa5c8bbf3e63ea14dc064390ed39e8e30a9b045e6f7a3cd"
+            ],
+            "sample_id": "moving_attribute|video_12477.mp4|146"
+          },
+          {
+            "media_sha256": [
+              "7344dd26eee21f39ed82ca2ee712ef182c3121490feaf90c26b4f50a4ede309a"
+            ],
+            "sample_id": "action_prediction|BI31D.mp4|120"
+          },
+          {
+            "media_sha256": [
+              "7344dd26eee21f39ed82ca2ee712ef182c3121490feaf90c26b4f50a4ede309a"
+            ],
+            "sample_id": "action_prediction|BI31D.mp4|144"
+          },
+          {
+            "media_sha256": [
+              "cea363723a87cb4ac46b8ab5dc94de69766596cbabc17bb1ddf00f10d7880e35"
+            ],
+            "sample_id": "counterfactual_inference|video_11842.mp4|180"
+          },
+          {
+            "media_sha256": [
+              "cea363723a87cb4ac46b8ab5dc94de69766596cbabc17bb1ddf00f10d7880e35"
+            ],
+            "sample_id": "moving_attribute|video_11842.mp4|65"
+          },
+          {
+            "media_sha256": [
+              "47875f61d3d34621e69e427c25d4fa20ccde5173478d3546cf111c4bd44d0699"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_8_0418_0453.mp4|97"
+          },
+          {
+            "media_sha256": [
+              "47875f61d3d34621e69e427c25d4fa20ccde5173478d3546cf111c4bd44d0699"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_8_0418_0453.mp4|105"
+          },
+          {
+            "media_sha256": [
+              "a868fc7f87fb1e3c729f8eb1f5f1196cd0e507cc07ba8079bca027213738ecb5"
+            ],
+            "sample_id": "moving_attribute|video_12637.mp4|64"
+          },
+          {
+            "media_sha256": [
+              "a868fc7f87fb1e3c729f8eb1f5f1196cd0e507cc07ba8079bca027213738ecb5"
+            ],
+            "sample_id": "moving_direction|video_12637.mp4|139"
+          },
+          {
+            "media_sha256": [
+              "975b81bf0492997b4d8a12f41174f5b7cb85922971707941927dcb37e7b2859a"
+            ],
+            "sample_id": "action_prediction|3ND23.mp4|74"
+          },
+          {
+            "media_sha256": [
+              "975b81bf0492997b4d8a12f41174f5b7cb85922971707941927dcb37e7b2859a"
+            ],
+            "sample_id": "action_prediction|3ND23.mp4|181"
+          },
+          {
+            "media_sha256": [
+              "8c8fe49ffbd0f840eb6338ee13ed3595ed957101c2480dec4b9cf3ecd9c1700f"
+            ],
+            "sample_id": "moving_attribute|video_10995.mp4|97"
+          },
+          {
+            "media_sha256": [
+              "8c8fe49ffbd0f840eb6338ee13ed3595ed957101c2480dec4b9cf3ecd9c1700f"
+            ],
+            "sample_id": "moving_direction|video_10995.mp4|58"
+          },
+          {
+            "media_sha256": [
+              "0cfb327708837320cb82b9e748a588e9f92d16eb4d3ed14d2698833149468a09"
+            ],
+            "sample_id": "counterfactual_inference|video_10921.mp4|5"
+          },
+          {
+            "media_sha256": [
+              "0cfb327708837320cb82b9e748a588e9f92d16eb4d3ed14d2698833149468a09"
+            ],
+            "sample_id": "counterfactual_inference|video_10921.mp4|197"
+          },
+          {
+            "media_sha256": [
+              "2879d924445cb0f0c2979b3541d176b98302aaf57bb3073c4d7dfe77894d228f"
+            ],
+            "sample_id": "character_order|video_10782.mp4|32"
+          },
+          {
+            "media_sha256": [
+              "2879d924445cb0f0c2979b3541d176b98302aaf57bb3073c4d7dfe77894d228f"
+            ],
+            "sample_id": "state_change|video_10782.mp4|146"
+          },
+          {
+            "media_sha256": [
+              "9680968e32ad05874257d484af8a93fe0980dfbc796dc874b78cab310fee6f73"
+            ],
+            "sample_id": "counterfactual_inference|video_10030.mp4|68"
+          },
+          {
+            "media_sha256": [
+              "9680968e32ad05874257d484af8a93fe0980dfbc796dc874b78cab310fee6f73"
+            ],
+            "sample_id": "moving_count|video_10030.mp4|28"
+          },
+          {
+            "media_sha256": [
+              "fa3ae31b57ef0f023ec2128472ba1164d1e547df20b4f43fea975ee28bf12d3c"
+            ],
+            "sample_id": "unexpected_action|test_magic/M_Z_320_3788_4140.mp4|146"
+          },
+          {
+            "media_sha256": [
+              "fa3ae31b57ef0f023ec2128472ba1164d1e547df20b4f43fea975ee28bf12d3c"
+            ],
+            "sample_id": "unexpected_action|test_magic/M_Z_320_3788_4140.mp4|179"
+          },
+          {
+            "media_sha256": [
+              "24e2aca6ad52244342c58d2c82d5ae958bb3c7d324e8655e94a6c4e77ec97982"
+            ],
+            "sample_id": "counterfactual_inference|video_11939.mp4|57"
+          },
+          {
+            "media_sha256": [
+              "24e2aca6ad52244342c58d2c82d5ae958bb3c7d324e8655e94a6c4e77ec97982"
+            ],
+            "sample_id": "counterfactual_inference|video_11939.mp4|185"
+          },
+          {
+            "media_sha256": [
+              "466e7318a8b0966f6b83e1eccb3a97eacde79e89d11117fd77666381dfeea510"
+            ],
+            "sample_id": "moving_count|video_13396.mp4|36"
+          },
+          {
+            "media_sha256": [
+              "466e7318a8b0966f6b83e1eccb3a97eacde79e89d11117fd77666381dfeea510"
+            ],
+            "sample_id": "object_existence|video_13396.mp4|195"
+          },
+          {
+            "media_sha256": [
+              "c6a0187366a91a8a781494fab8cab94d303cb29581d677a9617f0094d0a49904"
+            ],
+            "sample_id": "moving_count|video_14515.mp4|77"
+          },
+          {
+            "media_sha256": [
+              "c6a0187366a91a8a781494fab8cab94d303cb29581d677a9617f0094d0a49904"
+            ],
+            "sample_id": "moving_direction|video_14515.mp4|5"
+          },
+          {
+            "media_sha256": [
+              "a9ecab2d9a2709044de21a8e9517b8f6bfd19f140798e0bea5cff7e797ba5d89"
+            ],
+            "sample_id": "counterfactual_inference|video_10242.mp4|107"
+          },
+          {
+            "media_sha256": [
+              "a9ecab2d9a2709044de21a8e9517b8f6bfd19f140798e0bea5cff7e797ba5d89"
+            ],
+            "sample_id": "moving_attribute|video_10242.mp4|180"
+          },
+          {
+            "media_sha256": [
+              "a9ecab2d9a2709044de21a8e9517b8f6bfd19f140798e0bea5cff7e797ba5d89"
+            ],
+            "sample_id": "object_existence|video_10242.mp4|16"
+          },
+          {
+            "media_sha256": [
+              "b78cc1cc457ae45a9f80992c7026d6d561b22e035e84bff46ceef4f1d503543e"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_21_8758_8835.mp4|71"
+          },
+          {
+            "media_sha256": [
+              "b78cc1cc457ae45a9f80992c7026d6d561b22e035e84bff46ceef4f1d503543e"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_21_8758_8835.mp4|128"
+          },
+          {
+            "media_sha256": [
+              "a99a845ef2d5d7f783218909fe06451cb17a93c09345735eee6e08644c7a4a65"
+            ],
+            "sample_id": "unexpected_action|test_humor/H_H_95_0700_0801.mp4|14"
+          },
+          {
+            "media_sha256": [
+              "a99a845ef2d5d7f783218909fe06451cb17a93c09345735eee6e08644c7a4a65"
+            ],
+            "sample_id": "unexpected_action|test_humor/H_H_95_0700_0801.mp4|66"
+          },
+          {
+            "media_sha256": [
+              "c727df67fd698e617103b0d68bb52c0793f272f8e57c1c4aa86fe24088421fe1"
+            ],
+            "sample_id": "moving_attribute|video_12175.mp4|189"
+          },
+          {
+            "media_sha256": [
+              "c727df67fd698e617103b0d68bb52c0793f272f8e57c1c4aa86fe24088421fe1"
+            ],
+            "sample_id": "moving_direction|video_12175.mp4|73"
+          },
+          {
+            "media_sha256": [
+              "b713944ac8e42ef7719322c1c7761bc1e7d982cc3b5e18a4fcd5094a55cb7d78"
+            ],
+            "sample_id": "counterfactual_inference|video_12989.mp4|6"
+          },
+          {
+            "media_sha256": [
+              "b713944ac8e42ef7719322c1c7761bc1e7d982cc3b5e18a4fcd5094a55cb7d78"
+            ],
+            "sample_id": "moving_count|video_12989.mp4|69"
+          },
+          {
+            "media_sha256": [
+              "03087496830fe100601b0f0823627a27ece1c8866de0c5e3a1222f719b753a49"
+            ],
+            "sample_id": "action_prediction|Z6HEA.mp4|35"
+          },
+          {
+            "media_sha256": [
+              "03087496830fe100601b0f0823627a27ece1c8866de0c5e3a1222f719b753a49"
+            ],
+            "sample_id": "action_prediction|Z6HEA.mp4|162"
+          },
+          {
+            "media_sha256": [
+              "02cea2d8281bbdaf444d38d3fc4b113d499aba69540138cd4993409b0d1cd02c"
+            ],
+            "sample_id": "unexpected_action|test_magic/M_Z_321_10180_10589.mp4|138"
+          },
+          {
+            "media_sha256": [
+              "02cea2d8281bbdaf444d38d3fc4b113d499aba69540138cd4993409b0d1cd02c"
+            ],
+            "sample_id": "unexpected_action|test_magic/M_Z_321_10180_10589.mp4|191"
+          },
+          {
+            "media_sha256": [
+              "dc1d867f234f72a6556f5c375f9a49d496ad630cd70463921e4a533ad8355c7a"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_17_3643_3725.mp4|70"
+          },
+          {
+            "media_sha256": [
+              "dc1d867f234f72a6556f5c375f9a49d496ad630cd70463921e4a533ad8355c7a"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_17_3643_3725.mp4|117"
+          },
+          {
+            "media_sha256": [
+              "94a4a72c8fb0e73cfbeb57813d7859a2c737e9ed52c54e9fbe98b7c8fef0f977"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_28_5325_5442.mp4|92"
+          },
+          {
+            "media_sha256": [
+              "94a4a72c8fb0e73cfbeb57813d7859a2c737e9ed52c54e9fbe98b7c8fef0f977"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_28_5325_5442.mp4|114"
+          },
+          {
+            "media_sha256": [
+              "2f42e5cc1f249d98744cd79cb332e3a87de6819e4a7c7bfe2e64e3d7a387b3f2"
+            ],
+            "sample_id": "counterfactual_inference|video_10929.mp4|182"
+          },
+          {
+            "media_sha256": [
+              "2f42e5cc1f249d98744cd79cb332e3a87de6819e4a7c7bfe2e64e3d7a387b3f2"
+            ],
+            "sample_id": "moving_attribute|video_10929.mp4|163"
+          },
+          {
+            "media_sha256": [
+              "2e426302aca916d6d4e64dce3c06a2f04a9f653a4ac0809f49c5144ee851dff9"
+            ],
+            "sample_id": "object_existence|video_12615.mp4|107"
+          },
+          {
+            "media_sha256": [
+              "2e426302aca916d6d4e64dce3c06a2f04a9f653a4ac0809f49c5144ee851dff9"
+            ],
+            "sample_id": "object_existence|video_12615.mp4|148"
+          },
+          {
+            "media_sha256": [
+              "e6480e0843540d0b9d64d7a6100d1a645ea6e0d82671e3e78c7fda3e1438c02f"
+            ],
+            "sample_id": "counterfactual_inference|video_10661.mp4|96"
+          },
+          {
+            "media_sha256": [
+              "e6480e0843540d0b9d64d7a6100d1a645ea6e0d82671e3e78c7fda3e1438c02f"
+            ],
+            "sample_id": "moving_count|video_10661.mp4|80"
+          },
+          {
+            "media_sha256": [
+              "8211a5c8f5bc94b13426e4592c6564592695a2261a515f339e141a4129d68053"
+            ],
+            "sample_id": "moving_attribute|video_14836.mp4|166"
+          },
+          {
+            "media_sha256": [
+              "8211a5c8f5bc94b13426e4592c6564592695a2261a515f339e141a4129d68053"
+            ],
+            "sample_id": "moving_direction|video_14836.mp4|133"
+          },
+          {
+            "media_sha256": [
+              "b387b1ba8d999fa773561a131ec3afecf2eb59ca5e5bb779054aead31407a663"
+            ],
+            "sample_id": "object_existence|video_14506.mp4|75"
+          },
+          {
+            "media_sha256": [
+              "b387b1ba8d999fa773561a131ec3afecf2eb59ca5e5bb779054aead31407a663"
+            ],
+            "sample_id": "object_existence|video_14506.mp4|143"
+          },
+          {
+            "media_sha256": [
+              "31d84454e00a6dc9c844954ef594bb3a4a9dc7d5e96df3879e7a609da01539ae"
+            ],
+            "sample_id": "moving_attribute|video_13809.mp4|116"
+          },
+          {
+            "media_sha256": [
+              "31d84454e00a6dc9c844954ef594bb3a4a9dc7d5e96df3879e7a609da01539ae"
+            ],
+            "sample_id": "moving_direction|video_13809.mp4|199"
+          },
+          {
+            "media_sha256": [
+              "13f7ed46af12dac851ef0a705e8e469d64a37e0ad4bb7174d634b52e38151d11"
+            ],
+            "sample_id": "object_existence|video_14101.mp4|19"
+          },
+          {
+            "media_sha256": [
+              "13f7ed46af12dac851ef0a705e8e469d64a37e0ad4bb7174d634b52e38151d11"
+            ],
+            "sample_id": "object_existence|video_14101.mp4|100"
+          },
+          {
+            "media_sha256": [
+              "0a4c99ed6f4691fdf1154f8d43ee44740504943caea40099233a8670b349cc00"
+            ],
+            "sample_id": "action_sequence|AK9IB.mp4|84"
+          },
+          {
+            "media_sha256": [
+              "0a4c99ed6f4691fdf1154f8d43ee44740504943caea40099233a8670b349cc00"
+            ],
+            "sample_id": "action_sequence|AK9IB.mp4|98"
+          },
+          {
+            "media_sha256": [
+              "731cb36a727f5f3d92b5a801cd7c8cb05d176dc60195fa6dfea266044d014b2a"
+            ],
+            "sample_id": "moving_attribute|video_13463.mp4|83"
+          },
+          {
+            "media_sha256": [
+              "731cb36a727f5f3d92b5a801cd7c8cb05d176dc60195fa6dfea266044d014b2a"
+            ],
+            "sample_id": "object_existence|video_13463.mp4|56"
+          },
+          {
+            "media_sha256": [
+              "731cb36a727f5f3d92b5a801cd7c8cb05d176dc60195fa6dfea266044d014b2a"
+            ],
+            "sample_id": "object_existence|video_13463.mp4|119"
+          },
+          {
+            "media_sha256": [
+              "8f8e156f0ac33ffea389e8ec9d976364a7a75ab070bddd0223035ed339054194"
+            ],
+            "sample_id": "unexpected_action|test_humor/H_H_258_4389_4472.mp4|11"
+          },
+          {
+            "media_sha256": [
+              "8f8e156f0ac33ffea389e8ec9d976364a7a75ab070bddd0223035ed339054194"
+            ],
+            "sample_id": "unexpected_action|test_humor/H_H_258_4389_4472.mp4|60"
+          },
+          {
+            "media_sha256": [
+              "7ed75358171525fe526c22e34166de1eb49aa2d798058d157b650f9254d6fac7"
+            ],
+            "sample_id": "counterfactual_inference|video_11834.mp4|13"
+          },
+          {
+            "media_sha256": [
+              "7ed75358171525fe526c22e34166de1eb49aa2d798058d157b650f9254d6fac7"
+            ],
+            "sample_id": "moving_count|video_11834.mp4|173"
+          },
+          {
+            "media_sha256": [
+              "27344a9f1ff57b04e73cfd9ddd1d80814751130d10f53d5871644682a03008bf"
+            ],
+            "sample_id": "counterfactual_inference|video_13235.mp4|22"
+          },
+          {
+            "media_sha256": [
+              "27344a9f1ff57b04e73cfd9ddd1d80814751130d10f53d5871644682a03008bf"
+            ],
+            "sample_id": "moving_direction|video_13235.mp4|185"
+          },
+          {
+            "media_sha256": [
+              "88c37a404e6f8bc4829760ec85026d59a66abc23e08668f5a10be3d82af97b82"
+            ],
+            "sample_id": "counterfactual_inference|video_13566.mp4|11"
+          },
+          {
+            "media_sha256": [
+              "88c37a404e6f8bc4829760ec85026d59a66abc23e08668f5a10be3d82af97b82"
+            ],
+            "sample_id": "moving_attribute|video_13566.mp4|40"
+          },
+          {
+            "media_sha256": [
+              "699e9c99a3272f36c9e238164fb356e9f445ef3a8bfe11cf2988b4b3211a6240"
+            ],
+            "sample_id": "counterfactual_inference|video_10955.mp4|53"
+          },
+          {
+            "media_sha256": [
+              "699e9c99a3272f36c9e238164fb356e9f445ef3a8bfe11cf2988b4b3211a6240"
+            ],
+            "sample_id": "moving_count|video_10955.mp4|181"
+          },
+          {
+            "media_sha256": [
+              "75bdbecd45d502e76f0e830cd7cd121e1b539553374f34480f5786a82f789b73"
+            ],
+            "sample_id": "object_existence|video_13922.mp4|44"
+          },
+          {
+            "media_sha256": [
+              "75bdbecd45d502e76f0e830cd7cd121e1b539553374f34480f5786a82f789b73"
+            ],
+            "sample_id": "object_existence|video_13922.mp4|177"
+          },
+          {
+            "media_sha256": [
+              "7fc9f30dbcf7be19ee1ee15e141c4fad0a193c8eec5a2c25603f3456e07818c7"
+            ],
+            "sample_id": "unexpected_action|test_magic/M_Z_270_0000_0170.mp4|154"
+          },
+          {
+            "media_sha256": [
+              "7fc9f30dbcf7be19ee1ee15e141c4fad0a193c8eec5a2c25603f3456e07818c7"
+            ],
+            "sample_id": "unexpected_action|test_magic/M_Z_270_0000_0170.mp4|170"
+          },
+          {
+            "media_sha256": [
+              "35fae94e5bf93c71bc19bfd8993674397c1f64eea4dfc339a3cd0b4189331107"
+            ],
+            "sample_id": "moving_count|video_14346.mp4|44"
+          },
+          {
+            "media_sha256": [
+              "35fae94e5bf93c71bc19bfd8993674397c1f64eea4dfc339a3cd0b4189331107"
+            ],
+            "sample_id": "moving_direction|video_14346.mp4|175"
+          },
+          {
+            "media_sha256": [
+              "4178e504d2b051d2cbc0e59bed6c66ea326bf4c620d9022eca063b041091369e"
+            ],
+            "sample_id": "moving_direction|video_14966.mp4|65"
+          },
+          {
+            "media_sha256": [
+              "4178e504d2b051d2cbc0e59bed6c66ea326bf4c620d9022eca063b041091369e"
+            ],
+            "sample_id": "object_existence|video_14966.mp4|131"
+          },
+          {
+            "media_sha256": [
+              "0a284d6b6651c456bba5b475fc0900f8900e814614a07d7219194c0077b1cac0"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_14_6653_6758.mp4|98"
+          },
+          {
+            "media_sha256": [
+              "0a284d6b6651c456bba5b475fc0900f8900e814614a07d7219194c0077b1cac0"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_14_6653_6758.mp4|106"
+          },
+          {
+            "media_sha256": [
+              "9735f203baf22a0c5aad3d5e61d88dde3cc111ba7739061fc6c4b4568fc35215"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_21_8053_8120.mp4|88"
+          },
+          {
+            "media_sha256": [
+              "9735f203baf22a0c5aad3d5e61d88dde3cc111ba7739061fc6c4b4568fc35215"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_21_8053_8120.mp4|103"
+          },
+          {
+            "media_sha256": [
+              "768c9d7081478f1a0b464c228d084fb6740471e3691e058b3803fbe99110ce82"
+            ],
+            "sample_id": "moving_count|video_12573.mp4|119"
+          },
+          {
+            "media_sha256": [
+              "768c9d7081478f1a0b464c228d084fb6740471e3691e058b3803fbe99110ce82"
+            ],
+            "sample_id": "moving_direction|video_12573.mp4|14"
+          },
+          {
+            "media_sha256": [
+              "90899f12728bf07bb9555c9a7fc65be64b90490525032979acd9fd2005d2bfc3"
+            ],
+            "sample_id": "counterfactual_inference|video_14244.mp4|44"
+          },
+          {
+            "media_sha256": [
+              "90899f12728bf07bb9555c9a7fc65be64b90490525032979acd9fd2005d2bfc3"
+            ],
+            "sample_id": "object_existence|video_14244.mp4|57"
+          },
+          {
+            "media_sha256": [
+              "35a25120059fdb6b5392b8b47af23c27b6e35ea5c7a1c6b28d72946b7e631222"
+            ],
+            "sample_id": "action_sequence|9BCZU.mp4|64"
+          },
+          {
+            "media_sha256": [
+              "35a25120059fdb6b5392b8b47af23c27b6e35ea5c7a1c6b28d72946b7e631222"
+            ],
+            "sample_id": "action_sequence|9BCZU.mp4|195"
+          },
+          {
+            "media_sha256": [
+              "16740f86482409d02237def578315937f28f4aa6c9d5d243a856f056e378e016"
+            ],
+            "sample_id": "unexpected_action|test_humor/H_H_132_1393_1497.mp4|10"
+          },
+          {
+            "media_sha256": [
+              "16740f86482409d02237def578315937f28f4aa6c9d5d243a856f056e378e016"
+            ],
+            "sample_id": "unexpected_action|test_humor/H_H_132_1393_1497.mp4|36"
+          },
+          {
+            "media_sha256": [
+              "f678656a35909faac9922c7d5489c45ec93f688a7fc02003f46e77394660ce81"
+            ],
+            "sample_id": "character_order|video_1021.mp4|192"
+          },
+          {
+            "media_sha256": [
+              "f678656a35909faac9922c7d5489c45ec93f688a7fc02003f46e77394660ce81"
+            ],
+            "sample_id": "state_change|video_1021.mp4|35"
+          },
+          {
+            "media_sha256": [
+              "c5f278e96c3416cada1695529e96ec557b7d3265709aab1a277d18130591d2c0"
+            ],
+            "sample_id": "counterfactual_inference|video_10094.mp4|196"
+          },
+          {
+            "media_sha256": [
+              "c5f278e96c3416cada1695529e96ec557b7d3265709aab1a277d18130591d2c0"
+            ],
+            "sample_id": "moving_direction|video_10094.mp4|40"
+          },
+          {
+            "media_sha256": [
+              "ecf20acdef9676adc516220f08faa7fed4782bad4d7762853de6ce46c6d48f25"
+            ],
+            "sample_id": "unexpected_action|test_humor/H_A_135_3404_3567.mp4|26"
+          },
+          {
+            "media_sha256": [
+              "ecf20acdef9676adc516220f08faa7fed4782bad4d7762853de6ce46c6d48f25"
+            ],
+            "sample_id": "unexpected_action|test_humor/H_A_135_3404_3567.mp4|34"
+          },
+          {
+            "media_sha256": [
+              "c8f747163c65a1dc20808deff5127e07addc145717b361c623a5a1fe1a19f473"
+            ],
+            "sample_id": "moving_count|video_12177.mp4|88"
+          },
+          {
+            "media_sha256": [
+              "c8f747163c65a1dc20808deff5127e07addc145717b361c623a5a1fe1a19f473"
+            ],
+            "sample_id": "moving_direction|video_12177.mp4|182"
+          },
+          {
+            "media_sha256": [
+              "512dad989f01feaa6d1dfd4c93a1a8074d70f756da61df894a897ac29332e9fc"
+            ],
+            "sample_id": "moving_attribute|video_12262.mp4|4"
+          },
+          {
+            "media_sha256": [
+              "512dad989f01feaa6d1dfd4c93a1a8074d70f756da61df894a897ac29332e9fc"
+            ],
+            "sample_id": "object_existence|video_12262.mp4|196"
+          },
+          {
+            "media_sha256": [
+              "4c71697dfb72b42bf123b3a87db26bd7b9423940c460ae59c27dc268d26477b3"
+            ],
+            "sample_id": "counterfactual_inference|video_13829.mp4|116"
+          },
+          {
+            "media_sha256": [
+              "4c71697dfb72b42bf123b3a87db26bd7b9423940c460ae59c27dc268d26477b3"
+            ],
+            "sample_id": "object_existence|video_13829.mp4|1"
+          },
+          {
+            "media_sha256": [
+              "d8019f49ae1af8c34a7070a4941ad7972c87673e7f2d8f5c186094ecb3715e72"
+            ],
+            "sample_id": "counterfactual_inference|video_12359.mp4|150"
+          },
+          {
+            "media_sha256": [
+              "d8019f49ae1af8c34a7070a4941ad7972c87673e7f2d8f5c186094ecb3715e72"
+            ],
+            "sample_id": "object_existence|video_12359.mp4|37"
+          },
+          {
+            "media_sha256": [
+              "81d90d588a1fa48fa863d500dff7b4449378cbf8cf30967ee0384d69264d74e0"
+            ],
+            "sample_id": "action_prediction|N2GFQ.mp4|6"
+          },
+          {
+            "media_sha256": [
+              "81d90d588a1fa48fa863d500dff7b4449378cbf8cf30967ee0384d69264d74e0"
+            ],
+            "sample_id": "action_prediction|N2GFQ.mp4|29"
+          },
+          {
+            "media_sha256": [
+              "b5a560acaeee4a6dc5a3fb40cef6295825c0442de5ae38b94daf70961a05fea8"
+            ],
+            "sample_id": "character_order|video_5724.mp4|76"
+          },
+          {
+            "media_sha256": [
+              "b5a560acaeee4a6dc5a3fb40cef6295825c0442de5ae38b94daf70961a05fea8"
+            ],
+            "sample_id": "state_change|video_5724.mp4|93"
+          },
+          {
+            "media_sha256": [
+              "92fa305018d9704de58fb478307e9d986ec05208007cd71db60ffe5050f8c0f2"
+            ],
+            "sample_id": "moving_attribute|video_10528.mp4|69"
+          },
+          {
+            "media_sha256": [
+              "92fa305018d9704de58fb478307e9d986ec05208007cd71db60ffe5050f8c0f2"
+            ],
+            "sample_id": "moving_direction|video_10528.mp4|95"
+          },
+          {
+            "media_sha256": [
+              "1dde46128e44e190d5d8446ac088dbdcf9ebe60ea5aacff527dc585dce998049"
+            ],
+            "sample_id": "moving_attribute|video_12806.mp4|84"
+          },
+          {
+            "media_sha256": [
+              "1dde46128e44e190d5d8446ac088dbdcf9ebe60ea5aacff527dc585dce998049"
+            ],
+            "sample_id": "moving_direction|video_12806.mp4|145"
+          },
+          {
+            "media_sha256": [
+              "7b0278604d3418115fb4335cf32aed509d9abc5f2dfc5d00150588116dc5fcc0"
+            ],
+            "sample_id": "moving_direction|video_13978.mp4|164"
+          },
+          {
+            "media_sha256": [
+              "7b0278604d3418115fb4335cf32aed509d9abc5f2dfc5d00150588116dc5fcc0"
+            ],
+            "sample_id": "object_existence|video_13978.mp4|50"
+          },
+          {
+            "media_sha256": [
+              "962f1cf17b39b4ff3e2c167dfd9caabb78e790b8ffe4b3904c89070d290b734c"
+            ],
+            "sample_id": "object_existence|video_10197.mp4|140"
+          },
+          {
+            "media_sha256": [
+              "962f1cf17b39b4ff3e2c167dfd9caabb78e790b8ffe4b3904c89070d290b734c"
+            ],
+            "sample_id": "object_existence|video_10197.mp4|163"
+          },
+          {
+            "media_sha256": [
+              "df859a645495547c596e29737106b88d1c6d80f62419ec1a80a5fba1a0925a1d"
+            ],
+            "sample_id": "moving_attribute|video_14259.mp4|87"
+          },
+          {
+            "media_sha256": [
+              "df859a645495547c596e29737106b88d1c6d80f62419ec1a80a5fba1a0925a1d"
+            ],
+            "sample_id": "moving_direction|video_14259.mp4|62"
+          },
+          {
+            "media_sha256": [
+              "e1879f098eb957dd22a2dd1c873bf744c158192acc72c00c1a32367e4360c5e7"
+            ],
+            "sample_id": "counterfactual_inference|video_12670.mp4|160"
+          },
+          {
+            "media_sha256": [
+              "e1879f098eb957dd22a2dd1c873bf744c158192acc72c00c1a32367e4360c5e7"
+            ],
+            "sample_id": "moving_attribute|video_12670.mp4|36"
+          },
+          {
+            "media_sha256": [
+              "6e2e95c8eeb768a54550c1d41e6ccaa62cb8c018562e79bdd6cf798372702e66"
+            ],
+            "sample_id": "moving_count|video_12413.mp4|131"
+          },
+          {
+            "media_sha256": [
+              "6e2e95c8eeb768a54550c1d41e6ccaa62cb8c018562e79bdd6cf798372702e66"
+            ],
+            "sample_id": "moving_direction|video_12413.mp4|174"
+          },
+          {
+            "media_sha256": [
+              "1921920b109075dd9b845bbf1204fce194515742cf2cf6c72bcda629292dd367"
+            ],
+            "sample_id": "moving_attribute|video_12516.mp4|135"
+          },
+          {
+            "media_sha256": [
+              "1921920b109075dd9b845bbf1204fce194515742cf2cf6c72bcda629292dd367"
+            ],
+            "sample_id": "moving_direction|video_12516.mp4|17"
+          },
+          {
+            "media_sha256": [
+              "28ecea31323c8de53e1a7aef24eb2f7ea9c7aec5eb84733ee19e859dae11df34"
+            ],
+            "sample_id": "counterfactual_inference|video_11896.mp4|188"
+          },
+          {
+            "media_sha256": [
+              "28ecea31323c8de53e1a7aef24eb2f7ea9c7aec5eb84733ee19e859dae11df34"
+            ],
+            "sample_id": "moving_direction|video_11896.mp4|79"
+          },
+          {
+            "media_sha256": [
+              "6223e26f835cedee89b73f6e854459bc89275c6232f13d7dbbd77a7e509b7020"
+            ],
+            "sample_id": "action_prediction|9OMY1.mp4|31"
+          },
+          {
+            "media_sha256": [
+              "6223e26f835cedee89b73f6e854459bc89275c6232f13d7dbbd77a7e509b7020"
+            ],
+            "sample_id": "action_prediction|9OMY1.mp4|80"
+          },
+          {
+            "media_sha256": [
+              "1722b27bd7581c6b366b3149c7eeaaff5805a149e798fa31bdffd319974c236b"
+            ],
+            "sample_id": "moving_direction|video_14704.mp4|38"
+          },
+          {
+            "media_sha256": [
+              "1722b27bd7581c6b366b3149c7eeaaff5805a149e798fa31bdffd319974c236b"
+            ],
+            "sample_id": "object_existence|video_14704.mp4|89"
+          },
+          {
+            "media_sha256": [
+              "9502e4ce2d77b7e291e939eb79b3c0836160a1e00d3e2adc39276a4911be62e0"
+            ],
+            "sample_id": "counterfactual_inference|video_12821.mp4|77"
+          },
+          {
+            "media_sha256": [
+              "9502e4ce2d77b7e291e939eb79b3c0836160a1e00d3e2adc39276a4911be62e0"
+            ],
+            "sample_id": "moving_count|video_12821.mp4|117"
+          },
+          {
+            "media_sha256": [
+              "9502e4ce2d77b7e291e939eb79b3c0836160a1e00d3e2adc39276a4911be62e0"
+            ],
+            "sample_id": "moving_direction|video_12821.mp4|100"
+          },
+          {
+            "media_sha256": [
+              "3971f6f20f3504b0a18c077e49682a0fda8421c4d56046a21062ec76c4b4559a"
+            ],
+            "sample_id": "character_order|video_9985.mp4|67"
+          },
+          {
+            "media_sha256": [
+              "3971f6f20f3504b0a18c077e49682a0fda8421c4d56046a21062ec76c4b4559a"
+            ],
+            "sample_id": "state_change|video_9985.mp4|4"
+          },
+          {
+            "media_sha256": [
+              "b5924606d0e868b2e50cce7d28c8492613cfc24749df811f666dfe0678abe5eb"
+            ],
+            "sample_id": "action_sequence|86GSE.mp4|135"
+          },
+          {
+            "media_sha256": [
+              "b5924606d0e868b2e50cce7d28c8492613cfc24749df811f666dfe0678abe5eb"
+            ],
+            "sample_id": "action_sequence|86GSE.mp4|186"
+          },
+          {
+            "media_sha256": [
+              "c0f115d7ba28887b72c979c352c58f6e7e283bc2225e92c23c1d508e559072ae"
+            ],
+            "sample_id": "moving_attribute|video_14328.mp4|169"
+          },
+          {
+            "media_sha256": [
+              "c0f115d7ba28887b72c979c352c58f6e7e283bc2225e92c23c1d508e559072ae"
+            ],
+            "sample_id": "object_existence|video_14328.mp4|110"
+          },
+          {
+            "media_sha256": [
+              "4585a8ef8446b1a0962f6f750ec7771e0edd05c7ec6244ae5ce0ee9b150a461b"
+            ],
+            "sample_id": "moving_attribute|video_10708.mp4|175"
+          },
+          {
+            "media_sha256": [
+              "4585a8ef8446b1a0962f6f750ec7771e0edd05c7ec6244ae5ce0ee9b150a461b"
+            ],
+            "sample_id": "moving_direction|video_10708.mp4|150"
+          },
+          {
+            "media_sha256": [
+              "181846f42935924684d7cafe8859447917041430a609cb84b9e01c8b3f253fd8"
+            ],
+            "sample_id": "moving_count|video_14502.mp4|15"
+          },
+          {
+            "media_sha256": [
+              "181846f42935924684d7cafe8859447917041430a609cb84b9e01c8b3f253fd8"
+            ],
+            "sample_id": "moving_direction|video_14502.mp4|119"
+          },
+          {
+            "media_sha256": [
+              "f0f92049ee39b8d3bc0a977960fd95ab2c7d728302e4b6fe4e379a83119a149e"
+            ],
+            "sample_id": "moving_attribute|video_12027.mp4|71"
+          },
+          {
+            "media_sha256": [
+              "f0f92049ee39b8d3bc0a977960fd95ab2c7d728302e4b6fe4e379a83119a149e"
+            ],
+            "sample_id": "moving_count|video_12027.mp4|97"
+          },
+          {
+            "media_sha256": [
+              "eb77a5d2ee600a77187a9fea9af21e93cdcfa2f7f2327cab776ba4b19df81621"
+            ],
+            "sample_id": "moving_attribute|video_13493.mp4|35"
+          },
+          {
+            "media_sha256": [
+              "eb77a5d2ee600a77187a9fea9af21e93cdcfa2f7f2327cab776ba4b19df81621"
+            ],
+            "sample_id": "moving_count|video_13493.mp4|138"
+          },
+          {
+            "media_sha256": [
+              "eb77a5d2ee600a77187a9fea9af21e93cdcfa2f7f2327cab776ba4b19df81621"
+            ],
+            "sample_id": "moving_direction|video_13493.mp4|125"
+          },
+          {
+            "media_sha256": [
+              "4c3871635ed949a4c68a707d4dd8acd66486553d39f3bd15ad8d70904bda8d64"
+            ],
+            "sample_id": "moving_direction|video_11093.mp4|69"
+          },
+          {
+            "media_sha256": [
+              "4c3871635ed949a4c68a707d4dd8acd66486553d39f3bd15ad8d70904bda8d64"
+            ],
+            "sample_id": "object_existence|video_11093.mp4|130"
+          },
+          {
+            "media_sha256": [
+              "8a6f190554e7dbf64c933e7c44f71a87b91ef7b0987c9dcc114bba8f497f666d"
+            ],
+            "sample_id": "action_sequence|1L5D3.mp4|144"
+          },
+          {
+            "media_sha256": [
+              "8a6f190554e7dbf64c933e7c44f71a87b91ef7b0987c9dcc114bba8f497f666d"
+            ],
+            "sample_id": "action_sequence|1L5D3.mp4|192"
+          },
+          {
+            "media_sha256": [
+              "88ccab72ae5e68e10258625b8177d115a604fdcefb53a3b3cae131025c81199b"
+            ],
+            "sample_id": "moving_attribute|video_14652.mp4|150"
+          },
+          {
+            "media_sha256": [
+              "88ccab72ae5e68e10258625b8177d115a604fdcefb53a3b3cae131025c81199b"
+            ],
+            "sample_id": "moving_count|video_14652.mp4|124"
+          },
+          {
+            "media_sha256": [
+              "47675a72a42f0e033dfd6de0b07ad531b32571672ef54e15cb8e9992100e944a"
+            ],
+            "sample_id": "moving_attribute|video_14667.mp4|63"
+          },
+          {
+            "media_sha256": [
+              "47675a72a42f0e033dfd6de0b07ad531b32571672ef54e15cb8e9992100e944a"
+            ],
+            "sample_id": "object_existence|video_14667.mp4|34"
+          },
+          {
+            "media_sha256": [
+              "4132a8d3c30a554decda3c10ff74717362341552e07a8076b35e66441a031265"
+            ],
+            "sample_id": "moving_attribute|video_12844.mp4|82"
+          },
+          {
+            "media_sha256": [
+              "4132a8d3c30a554decda3c10ff74717362341552e07a8076b35e66441a031265"
+            ],
+            "sample_id": "moving_direction|video_12844.mp4|32"
+          },
+          {
+            "media_sha256": [
+              "6958027ae5192909ad9e395be393ca5dbaa869cddc591f088bbb511be0d472dd"
+            ],
+            "sample_id": "action_sequence|EUJK0.mp4|159"
+          },
+          {
+            "media_sha256": [
+              "6958027ae5192909ad9e395be393ca5dbaa869cddc591f088bbb511be0d472dd"
+            ],
+            "sample_id": "action_sequence|EUJK0.mp4|161"
+          },
+          {
+            "media_sha256": [
+              "2fc447caa0abbde395c42b815f72d4c248594b7a6edcb5ff6e8603b3a0a841e8"
+            ],
+            "sample_id": "moving_attribute|video_10729.mp4|196"
+          },
+          {
+            "media_sha256": [
+              "2fc447caa0abbde395c42b815f72d4c248594b7a6edcb5ff6e8603b3a0a841e8"
+            ],
+            "sample_id": "object_existence|video_10729.mp4|160"
+          },
+          {
+            "media_sha256": [
+              "36c211e0fc646ef52dd74c3271cd023f0a60ae9fedee6e7e24193041be1fa917"
+            ],
+            "sample_id": "counterfactual_inference|video_11232.mp4|112"
+          },
+          {
+            "media_sha256": [
+              "36c211e0fc646ef52dd74c3271cd023f0a60ae9fedee6e7e24193041be1fa917"
+            ],
+            "sample_id": "moving_direction|video_11232.mp4|15"
+          },
+          {
+            "media_sha256": [
+              "d4555ddd0911cf522ad51b0e1004ce998c32b718de5d35c2f5455b70f51c11d8"
+            ],
+            "sample_id": "counterfactual_inference|video_12197.mp4|33"
+          },
+          {
+            "media_sha256": [
+              "d4555ddd0911cf522ad51b0e1004ce998c32b718de5d35c2f5455b70f51c11d8"
+            ],
+            "sample_id": "moving_direction|video_12197.mp4|75"
+          },
+          {
+            "media_sha256": [
+              "ee65bd63da9f13837bd42cd766441a4b7b52d4697d64363c2b58919c14a1a3fa"
+            ],
+            "sample_id": "counterfactual_inference|video_12268.mp4|129"
+          },
+          {
+            "media_sha256": [
+              "ee65bd63da9f13837bd42cd766441a4b7b52d4697d64363c2b58919c14a1a3fa"
+            ],
+            "sample_id": "moving_attribute|video_12268.mp4|91"
+          },
+          {
+            "media_sha256": [
+              "62e5ddecd120d08b9ffe3e279f8ff644660ae91b63775248fc6e77aa1f6e3548"
+            ],
+            "sample_id": "counterfactual_inference|video_12283.mp4|49"
+          },
+          {
+            "media_sha256": [
+              "62e5ddecd120d08b9ffe3e279f8ff644660ae91b63775248fc6e77aa1f6e3548"
+            ],
+            "sample_id": "moving_attribute|video_12283.mp4|18"
+          },
+          {
+            "media_sha256": [
+              "d5d26334e1c20ae1865310e0c2ca29c3f4769163091b680fea01127423047808"
+            ],
+            "sample_id": "character_order|video_11119.mp4|173"
+          },
+          {
+            "media_sha256": [
+              "d5d26334e1c20ae1865310e0c2ca29c3f4769163091b680fea01127423047808"
+            ],
+            "sample_id": "state_change|video_11119.mp4|152"
+          },
+          {
+            "media_sha256": [
+              "84df8e071beabea30f1910f5dc19da1f2fb6e485cede8405e912901f41cdfaed"
+            ],
+            "sample_id": "character_order|video_9001.mp4|133"
+          },
+          {
+            "media_sha256": [
+              "84df8e071beabea30f1910f5dc19da1f2fb6e485cede8405e912901f41cdfaed"
+            ],
+            "sample_id": "state_change|video_9001.mp4|34"
+          },
+          {
+            "media_sha256": [
+              "4d7cd6bb84c357ece22ee14160ec0028a0503827d415013cec6e3cb6dd3e733c"
+            ],
+            "sample_id": "action_sequence|FL6DF.mp4|105"
+          },
+          {
+            "media_sha256": [
+              "4d7cd6bb84c357ece22ee14160ec0028a0503827d415013cec6e3cb6dd3e733c"
+            ],
+            "sample_id": "action_sequence|FL6DF.mp4|171"
+          },
+          {
+            "media_sha256": [
+              "5c63481d99f4da44c14cb216cc37ceeeae9d4e96ca08f9cec295a86c682b7089"
+            ],
+            "sample_id": "moving_direction|video_14700.mp4|121"
+          },
+          {
+            "media_sha256": [
+              "5c63481d99f4da44c14cb216cc37ceeeae9d4e96ca08f9cec295a86c682b7089"
+            ],
+            "sample_id": "object_existence|video_14700.mp4|162"
+          },
+          {
+            "media_sha256": [
+              "105b2c87d2a08181b2768f7eb29deb8d6cb6b0a8c930d99774168bd827d48733"
+            ],
+            "sample_id": "unexpected_action|test_humor/H_T_848_0000_0538.mp4|28"
+          },
+          {
+            "media_sha256": [
+              "105b2c87d2a08181b2768f7eb29deb8d6cb6b0a8c930d99774168bd827d48733"
+            ],
+            "sample_id": "unexpected_action|test_humor/H_T_848_0000_0538.mp4|38"
+          },
+          {
+            "media_sha256": [
+              "a31044da023a352ef5bc112f3bea0ea7c9a21c79e2cde8d9c8ee247a0bc6d520"
+            ],
+            "sample_id": "action_sequence|JOLLV.mp4|100"
+          },
+          {
+            "media_sha256": [
+              "a31044da023a352ef5bc112f3bea0ea7c9a21c79e2cde8d9c8ee247a0bc6d520"
+            ],
+            "sample_id": "action_sequence|JOLLV.mp4|138"
+          },
+          {
+            "media_sha256": [
+              "21df44263573d6cf67f13fb56d390e5cd85ef123e6be6a2755f6e9c4c0728ece"
+            ],
+            "sample_id": "moving_direction|video_11916.mp4|143"
+          },
+          {
+            "media_sha256": [
+              "21df44263573d6cf67f13fb56d390e5cd85ef123e6be6a2755f6e9c4c0728ece"
+            ],
+            "sample_id": "object_existence|video_11916.mp4|179"
+          },
+          {
+            "media_sha256": [
+              "050d65bf4e8779952c49b63ef2ef06f1dd0c16175cd9d24bcb45a1d870924f34"
+            ],
+            "sample_id": "moving_attribute|video_13405.mp4|161"
+          },
+          {
+            "media_sha256": [
+              "050d65bf4e8779952c49b63ef2ef06f1dd0c16175cd9d24bcb45a1d870924f34"
+            ],
+            "sample_id": "moving_direction|video_13405.mp4|126"
+          },
+          {
+            "media_sha256": [
+              "dad9e84a3f03538d83eec0925a2e3cc1aec2889b8e60d45fdafeda794594f2c7"
+            ],
+            "sample_id": "moving_attribute|video_14655.mp4|115"
+          },
+          {
+            "media_sha256": [
+              "dad9e84a3f03538d83eec0925a2e3cc1aec2889b8e60d45fdafeda794594f2c7"
+            ],
+            "sample_id": "moving_direction|video_14655.mp4|149"
+          },
+          {
+            "media_sha256": [
+              "dad9e84a3f03538d83eec0925a2e3cc1aec2889b8e60d45fdafeda794594f2c7"
+            ],
+            "sample_id": "object_existence|video_14655.mp4|45"
+          },
+          {
+            "media_sha256": [
+              "6e7d6a8059af30d9696e52afe4f5212afb267513ad395b4b28f13fbe5432dab8"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_13_0752_0824.mp4|95"
+          },
+          {
+            "media_sha256": [
+              "6e7d6a8059af30d9696e52afe4f5212afb267513ad395b4b28f13fbe5432dab8"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_13_0752_0824.mp4|110"
+          },
+          {
+            "media_sha256": [
+              "f5ade7d7a7e46c4372297caee305c3902d6a1019487bb12266e0f45be31feb3f"
+            ],
+            "sample_id": "counterfactual_inference|video_14293.mp4|29"
+          },
+          {
+            "media_sha256": [
+              "f5ade7d7a7e46c4372297caee305c3902d6a1019487bb12266e0f45be31feb3f"
+            ],
+            "sample_id": "moving_count|video_14293.mp4|136"
+          },
+          {
+            "media_sha256": [
+              "1d8b70d3268abafbc87632e5687588b9a90eb71a9bb5b597ec2a92f9080f9b4e"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_17_8120_8159.mp4|84"
+          },
+          {
+            "media_sha256": [
+              "1d8b70d3268abafbc87632e5687588b9a90eb71a9bb5b597ec2a92f9080f9b4e"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_17_8120_8159.mp4|122"
+          },
+          {
+            "media_sha256": [
+              "b1dc19a243275e58221254559696ac4e0b9aa98497c830a4b2d06b302f00acee"
+            ],
+            "sample_id": "counterfactual_inference|video_10644.mp4|164"
+          },
+          {
+            "media_sha256": [
+              "b1dc19a243275e58221254559696ac4e0b9aa98497c830a4b2d06b302f00acee"
+            ],
+            "sample_id": "moving_count|video_10644.mp4|171"
+          },
+          {
+            "media_sha256": [
+              "f0ab23034b713784231b26e8440b6f860d5e287e1269963af1b5d272a6be5ce6"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_14_3500_3554.mp4|68"
+          },
+          {
+            "media_sha256": [
+              "f0ab23034b713784231b26e8440b6f860d5e287e1269963af1b5d272a6be5ce6"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_14_3500_3554.mp4|120"
+          },
+          {
+            "media_sha256": [
+              "bd4e7b3eb38292cf5e958175ca0ff6c34cb63d2ba8d9a019e9c7df7b405bceed"
+            ],
+            "sample_id": "character_order|video_4370.mp4|139"
+          },
+          {
+            "media_sha256": [
+              "bd4e7b3eb38292cf5e958175ca0ff6c34cb63d2ba8d9a019e9c7df7b405bceed"
+            ],
+            "sample_id": "state_change|video_4370.mp4|160"
+          },
+          {
+            "media_sha256": [
+              "069db3cea93ac2c2dd8a52bbe27bf699bc76afb4d953489183c105398a5bdcd6"
+            ],
+            "sample_id": "action_prediction|NVBBD.mp4|75"
+          },
+          {
+            "media_sha256": [
+              "069db3cea93ac2c2dd8a52bbe27bf699bc76afb4d953489183c105398a5bdcd6"
+            ],
+            "sample_id": "action_prediction|NVBBD.mp4|152"
+          },
+          {
+            "media_sha256": [
+              "cd5bfa1c19838825c9f399830c010c743dbad1cd8c6f6a2838c9aae97a5773dc"
+            ],
+            "sample_id": "unexpected_action|test_magic/M_Z_206_4085_4350.mp4|165"
+          },
+          {
+            "media_sha256": [
+              "cd5bfa1c19838825c9f399830c010c743dbad1cd8c6f6a2838c9aae97a5773dc"
+            ],
+            "sample_id": "unexpected_action|test_magic/M_Z_206_4085_4350.mp4|181"
+          },
+          {
+            "media_sha256": [
+              "5a9f10e9f114b5fbf7e8ee51c17779cb0697afa108f4210f9efc12bfec99979f"
+            ],
+            "sample_id": "counterfactual_inference|video_14132.mp4|14"
+          },
+          {
+            "media_sha256": [
+              "5a9f10e9f114b5fbf7e8ee51c17779cb0697afa108f4210f9efc12bfec99979f"
+            ],
+            "sample_id": "moving_attribute|video_14132.mp4|104"
+          },
+          {
+            "media_sha256": [
+              "9c3f049523fee2d4ce83bc54bbfcb94165c9da0e2ce9d42c9ec59233e2c2d253"
+            ],
+            "sample_id": "counterfactual_inference|video_12872.mp4|192"
+          },
+          {
+            "media_sha256": [
+              "9c3f049523fee2d4ce83bc54bbfcb94165c9da0e2ce9d42c9ec59233e2c2d253"
+            ],
+            "sample_id": "moving_direction|video_12872.mp4|193"
+          },
+          {
+            "media_sha256": [
+              "00bf5ca31b39878ad3cf91b9e02b1fab9b79816a663d2d48a3f55881bf139eb6"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_97_6143_6339.mp4|86"
+          },
+          {
+            "media_sha256": [
+              "00bf5ca31b39878ad3cf91b9e02b1fab9b79816a663d2d48a3f55881bf139eb6"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_97_6143_6339.mp4|118"
+          },
+          {
+            "media_sha256": [
+              "fd59d43c05e30f01aee66f24d03f239d788224270de2d45531e22bcf70d1e170"
+            ],
+            "sample_id": "moving_direction|video_14727.mp4|0"
+          },
+          {
+            "media_sha256": [
+              "fd59d43c05e30f01aee66f24d03f239d788224270de2d45531e22bcf70d1e170"
+            ],
+            "sample_id": "object_existence|video_14727.mp4|123"
+          },
+          {
+            "media_sha256": [
+              "f079119325d79acb1059a3b351f329dd8d1125c92e1fa164ee889e6ee3e91ab4"
+            ],
+            "sample_id": "counterfactual_inference|video_10312.mp4|65"
+          },
+          {
+            "media_sha256": [
+              "f079119325d79acb1059a3b351f329dd8d1125c92e1fa164ee889e6ee3e91ab4"
+            ],
+            "sample_id": "moving_attribute|video_10312.mp4|77"
+          },
+          {
+            "media_sha256": [
+              "f079119325d79acb1059a3b351f329dd8d1125c92e1fa164ee889e6ee3e91ab4"
+            ],
+            "sample_id": "moving_count|video_10312.mp4|102"
+          },
+          {
+            "media_sha256": [
+              "f9c61048310b5524275dfcd96ac4ccae087ac2afa27d9515e93db581abe58783"
+            ],
+            "sample_id": "action_prediction|XLR4B.mp4|77"
+          },
+          {
+            "media_sha256": [
+              "f9c61048310b5524275dfcd96ac4ccae087ac2afa27d9515e93db581abe58783"
+            ],
+            "sample_id": "action_prediction|XLR4B.mp4|136"
+          },
+          {
+            "media_sha256": [
+              "a2ab8e8dbb303a4b41176af7555791c2c73e5029519e216a45fd28a441a0a5ed"
+            ],
+            "sample_id": "character_order|video_1715.mp4|97"
+          },
+          {
+            "media_sha256": [
+              "a2ab8e8dbb303a4b41176af7555791c2c73e5029519e216a45fd28a441a0a5ed"
+            ],
+            "sample_id": "state_change|video_1715.mp4|58"
+          },
+          {
+            "media_sha256": [
+              "3a2721ff21d1d48a24b27698a21a1a8d12b8618ec991610e8525fea72d6bc6d8"
+            ],
+            "sample_id": "counterfactual_inference|video_10951.mp4|155"
+          },
+          {
+            "media_sha256": [
+              "3a2721ff21d1d48a24b27698a21a1a8d12b8618ec991610e8525fea72d6bc6d8"
+            ],
+            "sample_id": "moving_direction|video_10951.mp4|66"
+          },
+          {
+            "media_sha256": [
+              "a3a385c3d2c2c6a95034bb151f9b0f5a89fdf65b4c728e58234c60c6deab606d"
+            ],
+            "sample_id": "unexpected_action|test_magic/M_Z_280_6258_6451.mp4|150"
+          },
+          {
+            "media_sha256": [
+              "a3a385c3d2c2c6a95034bb151f9b0f5a89fdf65b4c728e58234c60c6deab606d"
+            ],
+            "sample_id": "unexpected_action|test_magic/M_Z_280_6258_6451.mp4|199"
+          },
+          {
+            "media_sha256": [
+              "12aaf0f1eb42c2778ba11916f7687a1bbf2811aaf6f708d59f77142554685cfa"
+            ],
+            "sample_id": "counterfactual_inference|video_10262.mp4|128"
+          },
+          {
+            "media_sha256": [
+              "12aaf0f1eb42c2778ba11916f7687a1bbf2811aaf6f708d59f77142554685cfa"
+            ],
+            "sample_id": "object_existence|video_10262.mp4|167"
+          },
+          {
+            "media_sha256": [
+              "9b2ac6bb5eb3f4acfe33619728415c34093afbecd8bdfaf1039d80fd90b63da0"
+            ],
+            "sample_id": "counterfactual_inference|video_13615.mp4|168"
+          },
+          {
+            "media_sha256": [
+              "9b2ac6bb5eb3f4acfe33619728415c34093afbecd8bdfaf1039d80fd90b63da0"
+            ],
+            "sample_id": "moving_attribute|video_13615.mp4|25"
+          },
+          {
+            "media_sha256": [
+              "77463be7260b22bd3cf4867d37f5f078a91078ba7f9bb29d44e2eb23938f5876"
+            ],
+            "sample_id": "counterfactual_inference|video_10998.mp4|114"
+          },
+          {
+            "media_sha256": [
+              "77463be7260b22bd3cf4867d37f5f078a91078ba7f9bb29d44e2eb23938f5876"
+            ],
+            "sample_id": "moving_attribute|video_10998.mp4|160"
+          },
+          {
+            "media_sha256": [
+              "cde9fcd6346994cde4ac57c0d709e222b519b19ebadfd8fbfcfe639b9e7bcb2a"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_20_0247_0322.mp4|99"
+          },
+          {
+            "media_sha256": [
+              "cde9fcd6346994cde4ac57c0d709e222b519b19ebadfd8fbfcfe639b9e7bcb2a"
+            ],
+            "sample_id": "unexpected_action|test_creative/C_KT_20_0247_0322.mp4|101"
+          },
+          {
+            "media_sha256": [
+              "4ef5673a01bcd85479e05cb6bba4131f005abfae0672ac8a8d33533fecee16be"
+            ],
+            "sample_id": "counterfactual_inference|video_11548.mp4|138"
+          },
+          {
+            "media_sha256": [
+              "4ef5673a01bcd85479e05cb6bba4131f005abfae0672ac8a8d33533fecee16be"
+            ],
+            "sample_id": "moving_attribute|video_11548.mp4|141"
+          },
+          {
+            "media_sha256": [
+              "9f59e11a353ca8789dfed0fb805c4670e422b00d25c35e101ebbef449a063d83"
+            ],
+            "sample_id": "moving_direction|video_12645.mp4|8"
+          },
+          {
+            "media_sha256": [
+              "9f59e11a353ca8789dfed0fb805c4670e422b00d25c35e101ebbef449a063d83"
+            ],
+            "sample_id": "object_existence|video_12645.mp4|128"
+          },
+          {
+            "media_sha256": [
+              "f91a745757259b7a6af1f2b76bfce3c09089cf969df3e0ac4c628db6328baaaa"
+            ],
+            "sample_id": "counterfactual_inference|video_14400.mp4|113"
+          },
+          {
+            "media_sha256": [
+              "f91a745757259b7a6af1f2b76bfce3c09089cf969df3e0ac4c628db6328baaaa"
+            ],
+            "sample_id": "moving_attribute|video_14400.mp4|34"
+          },
+          {
+            "media_sha256": [
+              "dc132c02aea364267c7a5ef3344504a18292805f6a9c8c1654d938b99b6e04eb"
+            ],
+            "sample_id": "action_prediction|84893.mp4|88"
+          },
+          {
+            "media_sha256": [
+              "dc132c02aea364267c7a5ef3344504a18292805f6a9c8c1654d938b99b6e04eb"
+            ],
+            "sample_id": "action_prediction|84893.mp4|125"
+          },
+          {
+            "media_sha256": [
+              "810f1d12b7443aee8146668722a7ffde3a771227e0bbf7e90e6e1dc410e82b0c"
+            ],
+            "sample_id": "object_existence|video_11683.mp4|29"
+          },
+          {
+            "media_sha256": [
+              "810f1d12b7443aee8146668722a7ffde3a771227e0bbf7e90e6e1dc410e82b0c"
+            ],
+            "sample_id": "object_existence|video_11683.mp4|152"
+          }
+        ],
+        "per_sample_media_identity_sha256": "7422de971cd314784427db3b43018ce4d3be376d42054b759a1649363589f748",
+        "sample_media_references": 252,
+        "status": "complete",
+        "unique_materialized_media": 123
+      },
+      "media_map_sha256": "5bf98a2dc091a99bd12282cb31dfaef657e67f07b32eb6ef5f301e72d9670dd8",
+      "pending_media_plan": {
+        "full_archive_download_bytes": 0,
+        "manual_source_samples": 0,
+        "selected_samples_by_archive": {}
+      },
+      "repeated_media_selection": {
+        "algorithm": "all_exact_mvbench_source_contract_groups",
+        "group_ids_sha256": "a020d68ce44c32719aa1216c0cc7c9e9e7530c884062df45312388c633736c88",
+        "group_records": [
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10553.mp4|172",
+              "moving_count|video_10553.mp4|186"
+            ],
+            "sample_ids_sha256": "b7ed3f17198b45498afa473d7e691adef9ba21198e831323c724d4caf9aef221",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10553.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "0039cdd5cd0b683ff09efd7a7658d97e0f5098b211a0027f0b8584d18f0df839"
+          },
+          {
+            "sample_ids": [
+              "moving_count|video_11081.mp4|59",
+              "object_existence|video_11081.mp4|15"
+            ],
+            "sample_ids_sha256": "3b50ca6fd4f810c61f82d32e19380434ef88d8b44808a0fa4d46b82d1aac0386",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_11081.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "01021d95e9a7c980faf12ab1193f02694f0c3d4eef696103af5e34100693247a"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_12477.mp4|95",
+              "moving_attribute|video_12477.mp4|146"
+            ],
+            "sample_ids_sha256": "a5ae4a282e5dd1da74468e78c0fd7d78816eebd315de9ac4f7ac7cc7afc4b546",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12477.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "01a55477f5aa3aa4d12c6d0fd84a36cc69f45f121732a8014b4e3844d6cad7a2"
+          },
+          {
+            "sample_ids": [
+              "action_prediction|BI31D.mp4|120",
+              "action_prediction|BI31D.mp4|144"
+            ],
+            "sample_ids_sha256": "00c134d3f1e68a6c687ce191fe7a0c2d0e950a914dbf8008951f560d1c165ce7",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/BI31D.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 10.725000000000001,
+                "start": 1.2
+              }
+            },
+            "source_contract_sha256": "035f231614d3fc9911d73a5cf84d2c8d4ba450bfc369d9586e92e99fcebf3205"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_11842.mp4|180",
+              "moving_attribute|video_11842.mp4|65"
+            ],
+            "sample_ids_sha256": "f38311cc14d52172de5bfc9238b4f2c34e3a36744b5868c22ded4bae563212ce",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_11842.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "03bb821588272d547ab8924a367699243ee06a8c97d2a6fc01132a0e806cce21"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_creative/C_KT_8_0418_0453.mp4|97",
+              "unexpected_action|test_creative/C_KT_8_0418_0453.mp4|105"
+            ],
+            "sample_ids_sha256": "38d3bd19d5384a58aaf02a87f859326b62de61ca7c4d06f3c7fe0749f05b70b0",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_creative/C_KT_8_0418_0453.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "08e94e3ef1b3f741b6186ed65a61a7ca57757f8fd85deb5b45a58e847098f535"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_12637.mp4|64",
+              "moving_direction|video_12637.mp4|139"
+            ],
+            "sample_ids_sha256": "17c14f896d0f3fea7011ce999ffbf2de9004129a414bf0535675b6cb0854f84d",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12637.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "0b3c7fa66f77ee15a4f0e1ab2447edbf152284c4abae8c6a245f21506292d3cd"
+          },
+          {
+            "sample_ids": [
+              "action_prediction|3ND23.mp4|74",
+              "action_prediction|3ND23.mp4|181"
+            ],
+            "sample_ids_sha256": "4627280f67a7c846745d87844a0051e765166fe8af35c9bb72525be773334bc7",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/3ND23.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 12.4,
+                "start": 1.4
+              }
+            },
+            "source_contract_sha256": "0c104b178ecdf2c755ab8a71105ef96baaaeac6b6f23bbc579dccf9672fc06d4"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_10995.mp4|97",
+              "moving_direction|video_10995.mp4|58"
+            ],
+            "sample_ids_sha256": "21cee258d08b4d115b6075183c8c7a7a1ba65426bc2699b49d6c010633968a81",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10995.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "0c343c3e52b9d8c05b311f2dce5a128c7b4b84ebb2bd7b4db2a14aa6376ab24d"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10921.mp4|5",
+              "counterfactual_inference|video_10921.mp4|197"
+            ],
+            "sample_ids_sha256": "562243e00c6c8e2096525b614aa4c765c1d19c2437c15566fd1934e6348a29a1",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10921.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "0d5a5986aaabb82ff44d0bf21bfbf5dbbffb1c059c69db0ca3bef26cf6451294"
+          },
+          {
+            "sample_ids": [
+              "character_order|video_10782.mp4|32",
+              "state_change|video_10782.mp4|146"
+            ],
+            "sample_ids_sha256": "d53228404d19c17e7f4737d1b18d59d83a4e1c260542ca7b19f0b7eb55932f7b",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "perception/videos/video_10782.mp4",
+              "archive_name": "perception.zip",
+              "archive_repository_path": "video/perception.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "10a053c681146b39d23c6fbf839feca33cbe221b76eb1c5f57756217305de15a"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10030.mp4|68",
+              "moving_count|video_10030.mp4|28"
+            ],
+            "sample_ids_sha256": "1d2a62dc9159a539bbbe413f7c401b6f7753e48ce527aa78f9fd7368218ebeae",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10030.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "111e0ca7beae4ae28f88877194c359b900d4179a2f6ef8efdb12ba29c1894c65"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_magic/M_Z_320_3788_4140.mp4|146",
+              "unexpected_action|test_magic/M_Z_320_3788_4140.mp4|179"
+            ],
+            "sample_ids_sha256": "8ad612cabb21eab20a507a6326d21ec4256699766ec4cc1b3bafba84a6549cd8",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_magic/M_Z_320_3788_4140.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "15a41320cab7b362462e30d8ce12b1862044c5703a868c01c5fe3c5f519cdaef"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_11939.mp4|57",
+              "counterfactual_inference|video_11939.mp4|185"
+            ],
+            "sample_ids_sha256": "705ee115ed0a490d9b76bfb8f05965d3d68a3bac14a418009b2411f18168f156",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_11939.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "184bf2085ba93556b21794dc89ef94732f7cbba914ace33fc97035c61cb33653"
+          },
+          {
+            "sample_ids": [
+              "moving_count|video_13396.mp4|36",
+              "object_existence|video_13396.mp4|195"
+            ],
+            "sample_ids_sha256": "fb7e8975b360e013e77b1e5eda06b3255cb5dd82a1a943e16cd881f59360db6d",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_13396.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "189eb4ba394c9e63253ee64b076c3583fd1d394b45b9e062ade0e09e6aac9132"
+          },
+          {
+            "sample_ids": [
+              "moving_count|video_14515.mp4|77",
+              "moving_direction|video_14515.mp4|5"
+            ],
+            "sample_ids_sha256": "816ab8a596bfb032634163f4c03a516d9176014761342ab67fd1b2f2b34f11fd",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14515.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "1ef7326a7cf3990e0329b4d60102494a2d69cfae60b891895e482436eec5ee56"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10242.mp4|107",
+              "moving_attribute|video_10242.mp4|180",
+              "object_existence|video_10242.mp4|16"
+            ],
+            "sample_ids_sha256": "53a44db7af159ca7213ceafe52559b6c06f4145449937aac284ee712800fc17b",
+            "samples": 3,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10242.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "20772cab888d9e42f0953b73081893f35dddb2ff751864995d2500764dcf8d0c"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_creative/C_KT_21_8758_8835.mp4|71",
+              "unexpected_action|test_creative/C_KT_21_8758_8835.mp4|128"
+            ],
+            "sample_ids_sha256": "39ffde813fb2ed2d847efb799e9341b9eb11e509d49b19e777fadccd1ac933ae",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_creative/C_KT_21_8758_8835.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "213c2dab275b8dbeb35712c2df66790b88ad3b4f923889ff4a2bb876ac8dc26f"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_humor/H_H_95_0700_0801.mp4|14",
+              "unexpected_action|test_humor/H_H_95_0700_0801.mp4|66"
+            ],
+            "sample_ids_sha256": "a14da05768a9804031c500f9cf7c030955e65d9beb5ffb27b3f41b2382cedbb1",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_humor/H_H_95_0700_0801.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "2210a427967866d66e4bf8094d39c2d9d8bb552d0c3a352a14b22c7fa07bf574"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_12175.mp4|189",
+              "moving_direction|video_12175.mp4|73"
+            ],
+            "sample_ids_sha256": "212fd359b05291caee844d821f7e8e296a38c5bf1269873713cffba7bd2766be",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12175.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "22625beb73e4326e6310e2e38170c39145502a70d4973619e2a01943fbf86c62"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_12989.mp4|6",
+              "moving_count|video_12989.mp4|69"
+            ],
+            "sample_ids_sha256": "a5bd7b9ad57b10b365a13ff7cdc969e60ade1be8e7ba8129e6fbee88940e7718",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12989.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "243e8412881bff853582959ad0db3b1c77d428d9c2297bc58f5e5766b69bdd75"
+          },
+          {
+            "sample_ids": [
+              "action_prediction|Z6HEA.mp4|35",
+              "action_prediction|Z6HEA.mp4|162"
+            ],
+            "sample_ids_sha256": "3d345080b9e38d12df85e92a9faf07ba25e39c8bc91988c8bd1a303498dbf7ba",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/Z6HEA.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 10.875,
+                "start": 0.0
+              }
+            },
+            "source_contract_sha256": "266e4b1de098a6909e33099fe57a95bf798f0b2735e5fdc2f1134ada789cd1fc"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_magic/M_Z_321_10180_10589.mp4|138",
+              "unexpected_action|test_magic/M_Z_321_10180_10589.mp4|191"
+            ],
+            "sample_ids_sha256": "83e90a567253d3d1c8e2ede4add8a02ae7b71fee802edc3468ed7abc0fe46266",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_magic/M_Z_321_10180_10589.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "28784699230aacfeef7ab28c0220b9b57198f9efbf60c29d1eeab1f6e01949b9"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_creative/C_KT_17_3643_3725.mp4|70",
+              "unexpected_action|test_creative/C_KT_17_3643_3725.mp4|117"
+            ],
+            "sample_ids_sha256": "4a6d293142ce798fc07f978d1dfc7d6b5141767230c949da9095103336bde8a0",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_creative/C_KT_17_3643_3725.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "29ad2d0fb928d726efc8dd781413491fa56a319a35b722408588d696d315642e"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_creative/C_KT_28_5325_5442.mp4|92",
+              "unexpected_action|test_creative/C_KT_28_5325_5442.mp4|114"
+            ],
+            "sample_ids_sha256": "9439a1c6315dbf2d11e5f0e86247207825fbf689ea5518e9bd9ba1e2311d57f6",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_creative/C_KT_28_5325_5442.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "2a4be256997c2be3fafdb821a460c814d04caacc321235a435d76c209d5bfe65"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10929.mp4|182",
+              "moving_attribute|video_10929.mp4|163"
+            ],
+            "sample_ids_sha256": "5103e41855db64d1443bdb2f683c0689d14df7582ebfb7053b4bea1b8a6a49d7",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10929.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "2ade0922a9dedbae556ddc5a164ebe99a549fb67cb992b33cefd56ccccec75bb"
+          },
+          {
+            "sample_ids": [
+              "object_existence|video_12615.mp4|107",
+              "object_existence|video_12615.mp4|148"
+            ],
+            "sample_ids_sha256": "9e49e0fd573c6e4b61a36dfecf7ea91052e5419c82488410fbe24b10cf373e52",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12615.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "2b012e1b4ee10877a29b43c486582397d52233ee0b6968cb1807233f0cf729ad"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10661.mp4|96",
+              "moving_count|video_10661.mp4|80"
+            ],
+            "sample_ids_sha256": "7a98b58e3771f59c5cf93af8d1bfc9dc8a2020a7a5b496e9f9346c2a7b6c0155",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10661.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "3131bcb110d64422c2f3932aac89f0104d6181cb3ee421eb3dfc9fe444bd949c"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_14836.mp4|166",
+              "moving_direction|video_14836.mp4|133"
+            ],
+            "sample_ids_sha256": "b973d1e5856027faedf5e31604053ac4fb0c645f5baf9a281cae19aedf35bc9c",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14836.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "3abbce5d0ebfdb4e8f95eaf760e7d3fa15c7a573d5e769afeae4cd293496d69f"
+          },
+          {
+            "sample_ids": [
+              "object_existence|video_14506.mp4|75",
+              "object_existence|video_14506.mp4|143"
+            ],
+            "sample_ids_sha256": "c551f262de006c0fd834fe51988d78569feefe2a7866d23b8f92a815fed913bb",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14506.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "3f9791e7de816a305853efa24ccf8e579651cba44ad2f76d799c4cdc6b4e91bb"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_13809.mp4|116",
+              "moving_direction|video_13809.mp4|199"
+            ],
+            "sample_ids_sha256": "84a3a2a04c597e9ee689a663dbd2b9538c821ef10ac57b5bf708f8b49a813f22",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_13809.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "406954bc535c079533c168e2c76f9efae552c773278ebb4e7d96ff4da752f848"
+          },
+          {
+            "sample_ids": [
+              "object_existence|video_14101.mp4|19",
+              "object_existence|video_14101.mp4|100"
+            ],
+            "sample_ids_sha256": "dcf52e6f9387fb8ab87a70e8c528abf4016a74ce8440d771ead85827648e4e89",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14101.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "431114b1a4a286883dae4c9bf89d3957cdbf5a973d960e05b18ea97d5ac39cf3"
+          },
+          {
+            "sample_ids": [
+              "action_sequence|AK9IB.mp4|84",
+              "action_sequence|AK9IB.mp4|98"
+            ],
+            "sample_ids_sha256": "9c9ae45ac3e700bbeb4e12264ee16f69aa571ab40720166fe906b33e90441119",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/AK9IB.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 31.4,
+                "start": 24.3
+              }
+            },
+            "source_contract_sha256": "4313757a1bfd45a94913729b11245da32896a2b996ea4749df9772358b294031"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_13463.mp4|83",
+              "object_existence|video_13463.mp4|56",
+              "object_existence|video_13463.mp4|119"
+            ],
+            "sample_ids_sha256": "c1663fb6143111bd1df0bf0c08728ebe74c482228fdc2604bc6d6d6e3c2a608f",
+            "samples": 3,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_13463.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "46f4651e4145659451b671935af4a565b535c066da35b47def29da6883d866c0"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_humor/H_H_258_4389_4472.mp4|11",
+              "unexpected_action|test_humor/H_H_258_4389_4472.mp4|60"
+            ],
+            "sample_ids_sha256": "da03d9b5af760bbfaf8c4681cc84a53435d42a1999efd8ea4478fc584c3bb5a7",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_humor/H_H_258_4389_4472.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "470f51359bad645fb7f9285b7d63d82a5125c4dd885c17873cdc9ecf2872838f"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_11834.mp4|13",
+              "moving_count|video_11834.mp4|173"
+            ],
+            "sample_ids_sha256": "3cb78af3a963740cef7e0d2fa154285dff8c2b651af7b291bf83c12738c8af87",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_11834.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "491b5877662c861de94479d861332da793b1531fddae664af074ba36de07cce1"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_13235.mp4|22",
+              "moving_direction|video_13235.mp4|185"
+            ],
+            "sample_ids_sha256": "8b9b239cc49587c2abfaaa821073b4622b7ddc9995974128a389fc0e0bfb660d",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_13235.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "4ea9416018e39e3f905e4bf01c9798b9d2a536a4ff3f602abf414a9bc641960a"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_13566.mp4|11",
+              "moving_attribute|video_13566.mp4|40"
+            ],
+            "sample_ids_sha256": "ceb301ada7c9c3624cda0a150aae6c4242b822ea80ad76341812861070a55fbd",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_13566.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "5254ccde829d96fc67d58a2c655505c651f3aa33438f0dd3ac826d450bbe97f0"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10955.mp4|53",
+              "moving_count|video_10955.mp4|181"
+            ],
+            "sample_ids_sha256": "2e73edb825f3fa16d2efc69eb0f8b3d387b9d37520feebb6d656ca41bab0471d",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10955.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "544e7a23ae8578d1d08a41c02cddb46f115acb24cf1675eabd3c165e0ebbf5d4"
+          },
+          {
+            "sample_ids": [
+              "object_existence|video_13922.mp4|44",
+              "object_existence|video_13922.mp4|177"
+            ],
+            "sample_ids_sha256": "a3ad2fed67361a8c22c8c4ddb02a98a5b85684d928a08e4d54fa1b410ad0fdf7",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_13922.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "56aadf894628de5d6092e34594d08087a271b7cd65c166b99ab8831f2e3685a8"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_magic/M_Z_270_0000_0170.mp4|154",
+              "unexpected_action|test_magic/M_Z_270_0000_0170.mp4|170"
+            ],
+            "sample_ids_sha256": "a7c42eda7460a2103c6eed89b92623a058557b56fa5e895d87132026d5d10221",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_magic/M_Z_270_0000_0170.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "5732db0389976f13ea9fbe5b3ad95c64430792649f452527138062a31c594af9"
+          },
+          {
+            "sample_ids": [
+              "moving_count|video_14346.mp4|44",
+              "moving_direction|video_14346.mp4|175"
+            ],
+            "sample_ids_sha256": "409dc7419a415c4772d365cb1cf462a526f22d8484b663bcc3b133d82e1599b5",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14346.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "583a4beca91d459c5d045165b5b54b373b9626d47a7db972223279ba0956edba"
+          },
+          {
+            "sample_ids": [
+              "moving_direction|video_14966.mp4|65",
+              "object_existence|video_14966.mp4|131"
+            ],
+            "sample_ids_sha256": "be48fa857471767199765d26c38c1f4b511550727ab5c3ac592ebfb6b8ffc704",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14966.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "59d8110d8050d5e9a6c3f6e8794a5a3546e81f0ab918d49a086dafb4f47dadd6"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_creative/C_KT_14_6653_6758.mp4|98",
+              "unexpected_action|test_creative/C_KT_14_6653_6758.mp4|106"
+            ],
+            "sample_ids_sha256": "82c2742eb670a75acc38cd581402bf95d73840b450a9c80c4265336bc759fec9",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_creative/C_KT_14_6653_6758.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "5aac61917e3bcc4a3342d3a448b32f0efd23524af0f5ceab7ccd5b1703057d6c"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_creative/C_KT_21_8053_8120.mp4|88",
+              "unexpected_action|test_creative/C_KT_21_8053_8120.mp4|103"
+            ],
+            "sample_ids_sha256": "da29ef692cda6e2d02264990cfa52caed6ddc29a98073378a57def9fe8cf61b3",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_creative/C_KT_21_8053_8120.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "5cd87f2cc28612c9b2314817e48de456045e84995bacea33fb1c679dcb610fa8"
+          },
+          {
+            "sample_ids": [
+              "moving_count|video_12573.mp4|119",
+              "moving_direction|video_12573.mp4|14"
+            ],
+            "sample_ids_sha256": "7aa7b42527debc262c43ec5ed10aa78ab3433b149ee077dc054bced3285859c1",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12573.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "5e15179895219e1d2447ac93a90180479b9ec6ac5393fdffa8f5f6ac1a69132e"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_14244.mp4|44",
+              "object_existence|video_14244.mp4|57"
+            ],
+            "sample_ids_sha256": "1e4ca7cd21f791e1429c45dd4f422d573d061c0d2ce7f1cb865ceff66b982ee9",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14244.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "5eb2af2de926e3b2b2594d2f6d9a543fdcf8e972bbcee719755d8cfe2fc4817d"
+          },
+          {
+            "sample_ids": [
+              "action_sequence|9BCZU.mp4|64",
+              "action_sequence|9BCZU.mp4|195"
+            ],
+            "sample_ids_sha256": "85bfaa9880f50e085ea8f4b3908ae9b2553baf000f961b0230e00b806a70bc30",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/9BCZU.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 34.0,
+                "start": 25.0
+              }
+            },
+            "source_contract_sha256": "63381d8e0238a8d40a4fa3d1266ac83923b74b1137a11b8793ceefdfaee0733b"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_humor/H_H_132_1393_1497.mp4|10",
+              "unexpected_action|test_humor/H_H_132_1393_1497.mp4|36"
+            ],
+            "sample_ids_sha256": "f18ef858e0258ec89e2a2ea7f442b9def0d4beadfc42ed9b8372ca337ce4b797",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_humor/H_H_132_1393_1497.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "672fab898ffefd9fa2944e44da3a3fcaf55642baa10119afd6f88163a9cd78aa"
+          },
+          {
+            "sample_ids": [
+              "character_order|video_1021.mp4|192",
+              "state_change|video_1021.mp4|35"
+            ],
+            "sample_ids_sha256": "c022f7cec3839b069b39cfc39885f4c9db812f1a9375b89cac42a618d9210510",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "perception/videos/video_1021.mp4",
+              "archive_name": "perception.zip",
+              "archive_repository_path": "video/perception.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "67829fd686443c8c7e16bb6b34b498525d675d71de3d39170d832c67b3081396"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10094.mp4|196",
+              "moving_direction|video_10094.mp4|40"
+            ],
+            "sample_ids_sha256": "b9b2b822d24efce0bb6074f551e6c3d63cf82b8cfd97a7d01652a51ef1a0439a",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10094.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "6849ce8348edec93f4e1360c7b9058010973ce260e1bb6b783dc84e1974eedbf"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_humor/H_A_135_3404_3567.mp4|26",
+              "unexpected_action|test_humor/H_A_135_3404_3567.mp4|34"
+            ],
+            "sample_ids_sha256": "3a691162ecf933ceea7771c18ab545a12dd392d8e90edf39491b0e43230cc08a",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_humor/H_A_135_3404_3567.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "68bb63ca6261789ca051ac52fe96ac586d451c17500b2b5d3d8c8e1f0704d0a1"
+          },
+          {
+            "sample_ids": [
+              "moving_count|video_12177.mp4|88",
+              "moving_direction|video_12177.mp4|182"
+            ],
+            "sample_ids_sha256": "aff385e1f423004fece0f519b095aa64e8177258f39f216cfbc68785c6229c38",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12177.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "6a19d23559fcef1d8190df6eba14c036b196ce5fb69e40bf82f9c05c08c05a68"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_12262.mp4|4",
+              "object_existence|video_12262.mp4|196"
+            ],
+            "sample_ids_sha256": "e315763f01c1ed259fbb758f9ca2940486992ccf378a7c0d545816933bebbb37",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12262.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "6b3b4e82cb81403bae46069857d2f266a8c3aa119e1ae8f114b051274969b9f6"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_13829.mp4|116",
+              "object_existence|video_13829.mp4|1"
+            ],
+            "sample_ids_sha256": "f9060c2f1d108d31a854bdba3585a8622a8d282ee719c662491e187dca24154e",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_13829.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "6b6779ca2a828571e7ac9fb8235d90d69870ad3b916a1d18ae43b1c057e7897a"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_12359.mp4|150",
+              "object_existence|video_12359.mp4|37"
+            ],
+            "sample_ids_sha256": "ce38c8e4ee93b8e3aa11abfbdcf1034abb69a4fd56bab8001aff9c13f1e3a024",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12359.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "6e690fc836340c5c841bbbccc49a0fc3250c946918d719c1f5be8bd8b1f3dfe0"
+          },
+          {
+            "sample_ids": [
+              "action_prediction|N2GFQ.mp4|6",
+              "action_prediction|N2GFQ.mp4|29"
+            ],
+            "sample_ids_sha256": "037315c940d70f1728c432a62033d5ac342e08fe9554d0c7ef74acfca94a534f",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/N2GFQ.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 34.8,
+                "start": 14.0
+              }
+            },
+            "source_contract_sha256": "6fad86fea32a55ad035716b205f3d76dbd669b6b8b5047e7163719ae15ed5cc1"
+          },
+          {
+            "sample_ids": [
+              "character_order|video_5724.mp4|76",
+              "state_change|video_5724.mp4|93"
+            ],
+            "sample_ids_sha256": "c1d1273c78c3b495a5137ffbb0f6a17f07b83201e3888fb57bea2446a4a94d91",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "perception/videos/video_5724.mp4",
+              "archive_name": "perception.zip",
+              "archive_repository_path": "video/perception.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "71d7628ca944f7a458e664c7333e413e1a20474627c7f4cdd798d4c371038e43"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_10528.mp4|69",
+              "moving_direction|video_10528.mp4|95"
+            ],
+            "sample_ids_sha256": "b4bdcf497e2a53f137e33854719c22fbbac1e7462ef6fc8b84eb50679928a2c7",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10528.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "73a149058e9c0372840c3c0ae28d0607b1f9528599920b6857684e6b1854afd2"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_12806.mp4|84",
+              "moving_direction|video_12806.mp4|145"
+            ],
+            "sample_ids_sha256": "0cb6cc51468f751b704adf4cb44cbf867be8d3603eb9e746c96fedeed6e2ed99",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12806.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "745b78a8a78f5b1b88ed77990e4c9a6366f31aaaefacb0695938bb9d5d6afe68"
+          },
+          {
+            "sample_ids": [
+              "moving_direction|video_13978.mp4|164",
+              "object_existence|video_13978.mp4|50"
+            ],
+            "sample_ids_sha256": "86168fc2ab9108ca228743fb077c14c03e9b002d99d5373b29a80a9880fdd9da",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_13978.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "74e5a4a9d3e1141988bb13d2a5b9fafa1eff574e8f392b5557039a55b9e77dd0"
+          },
+          {
+            "sample_ids": [
+              "object_existence|video_10197.mp4|140",
+              "object_existence|video_10197.mp4|163"
+            ],
+            "sample_ids_sha256": "1659b78aaec2373822b0880f34b933b375332c48bcda5ad870f00438f9ff87d2",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10197.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "768465f4e783128b92092a557781c4a65bdf78a5b6fceced312d73a0da6ab85f"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_14259.mp4|87",
+              "moving_direction|video_14259.mp4|62"
+            ],
+            "sample_ids_sha256": "d23e11308b4494271cb98dc159b2aff5de143841132e4d8067353939693afd70",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14259.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "7805dee65b537f3d507d5c8134293dc07a8283b0a1a6512fc833f315550f939d"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_12670.mp4|160",
+              "moving_attribute|video_12670.mp4|36"
+            ],
+            "sample_ids_sha256": "bc7d8e49971488d8ccd17b0b4b2df532f74546b372c6206293aef530cc17e59a",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12670.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "78184b4b3aa804a4158c8450695f1e692f23fa4635f6a00567b0fd0fd0c9b4dd"
+          },
+          {
+            "sample_ids": [
+              "moving_count|video_12413.mp4|131",
+              "moving_direction|video_12413.mp4|174"
+            ],
+            "sample_ids_sha256": "1d6fedf9213d09a6d65c464a107bbf3c21d864252c6a5f023ef96a0b3284b547",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12413.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "794d4f4651353662dd5a03658e472f445b639df03f8ed3c63d2c4c21bea42127"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_12516.mp4|135",
+              "moving_direction|video_12516.mp4|17"
+            ],
+            "sample_ids_sha256": "fadcea480dc7fb6dc6f97ccf5d5b8d5f8ad17203bb4fa1ab902b628d8078b814",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12516.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "7a10ba7325e6aaf364aa3ae5de0db290db5d59c4ec39215a7da6badf8d8e7ade"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_11896.mp4|188",
+              "moving_direction|video_11896.mp4|79"
+            ],
+            "sample_ids_sha256": "8b08c6c198786521efd3437ebacef84d331abf7f1bb600c37021448870d3f6d4",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_11896.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "7c59c35811e934026efeb6601633cec9a9111b86dc004ade99b76dd9f61d46b4"
+          },
+          {
+            "sample_ids": [
+              "action_prediction|9OMY1.mp4|31",
+              "action_prediction|9OMY1.mp4|80"
+            ],
+            "sample_ids_sha256": "4240064ddbe889655cbeadcb98b3ad9c664d71727446c7db9112a90bed8111d4",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/9OMY1.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 23.5,
+                "start": 0.0
+              }
+            },
+            "source_contract_sha256": "8ceae5bfd1297c5ee14b90189b629d947eb7858d3cf4038b87bc5568ac0cb5d4"
+          },
+          {
+            "sample_ids": [
+              "moving_direction|video_14704.mp4|38",
+              "object_existence|video_14704.mp4|89"
+            ],
+            "sample_ids_sha256": "62285c370b462cf181e494777d6c3b4c90343ce13391a3f00ea9571fd91b264c",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14704.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "92fbe7f900ddef040d06aa719c161ba7e9a140c8254b5ed2a8e945cb6dffca1c"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_12821.mp4|77",
+              "moving_count|video_12821.mp4|117",
+              "moving_direction|video_12821.mp4|100"
+            ],
+            "sample_ids_sha256": "7dc3f103a28bc3478eced1c8f76c035cad32bc587d884b148a20770a61a56d44",
+            "samples": 3,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12821.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "9305ee289cc8e2060e3cf2cc51b29c8ea5aac770069153f69aad4d67410e11a4"
+          },
+          {
+            "sample_ids": [
+              "character_order|video_9985.mp4|67",
+              "state_change|video_9985.mp4|4"
+            ],
+            "sample_ids_sha256": "adb941e7f5ffbf11aa70ce485cfa4ab635f2d05f9b647117b15ecc25c3da6eea",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "perception/videos/video_9985.mp4",
+              "archive_name": "perception.zip",
+              "archive_repository_path": "video/perception.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "93e494e66e8a5b6f39d76ba2d9da6a78541f3f3d5915c246370653b993b528aa"
+          },
+          {
+            "sample_ids": [
+              "action_sequence|86GSE.mp4|135",
+              "action_sequence|86GSE.mp4|186"
+            ],
+            "sample_ids_sha256": "755a1e505adddea1650bd8061bb0bc609bdf9af9d5d05b6ecde5c12709a841ca",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/86GSE.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 20.0,
+                "start": 9.6
+              }
+            },
+            "source_contract_sha256": "97e24833a564da1af5aedcd753b0f4df0157f3757577df62eebff8b0cd296027"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_14328.mp4|169",
+              "object_existence|video_14328.mp4|110"
+            ],
+            "sample_ids_sha256": "ab623e2504a3d26499f723de5cd36f44ab8c7d4653a42c0e95ce9c7b77627424",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14328.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "9898c0c1d86aefc23b08e5c8ca4e671317008b0a9fea1953133101608b6f9bb6"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_10708.mp4|175",
+              "moving_direction|video_10708.mp4|150"
+            ],
+            "sample_ids_sha256": "937010f150a15526413b89fac71d41c995d23a84f082cbbecb35d14e5e11532a",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10708.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "98cd5e7ee63c404ba68b1826525592013a2e97c7cf3983437cca9a279edf453b"
+          },
+          {
+            "sample_ids": [
+              "moving_count|video_14502.mp4|15",
+              "moving_direction|video_14502.mp4|119"
+            ],
+            "sample_ids_sha256": "129977ed822655fae8a6f194c63a70e82f08d373a8219d8431bf2cc6fa6b5678",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14502.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "9a9dd649115c999a42873bf0ccf55be842c36804baf49238505050af7e59f052"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_12027.mp4|71",
+              "moving_count|video_12027.mp4|97"
+            ],
+            "sample_ids_sha256": "04b80e1a951732fda35f8573412e2ec34f0203e03b6b2bef112ffc205677c967",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12027.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "9bf4d74fad2b9b50713aee57bfc1c23aa7bb0305e6f2fb18efb48bbd1e1158ea"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_13493.mp4|35",
+              "moving_count|video_13493.mp4|138",
+              "moving_direction|video_13493.mp4|125"
+            ],
+            "sample_ids_sha256": "8a959284e22fd491649667ffc8405948038cfd7fd5ac6f1b73c1e87f6b41feb9",
+            "samples": 3,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_13493.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "9d7e10580f045f3f31de23e676f00fde671dfa6373d177c9574ef6c1b225181a"
+          },
+          {
+            "sample_ids": [
+              "moving_direction|video_11093.mp4|69",
+              "object_existence|video_11093.mp4|130"
+            ],
+            "sample_ids_sha256": "9358271d5d5f1972c11a988ba85639172788b542d4e52452c4050f11e04583f0",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_11093.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "9e28f308621c2ee4caffe39529bb038a87265fe0fa2addab077b85cc7fd1ed50"
+          },
+          {
+            "sample_ids": [
+              "action_sequence|1L5D3.mp4|144",
+              "action_sequence|1L5D3.mp4|192"
+            ],
+            "sample_ids_sha256": "60f0bd1062493c2d526d5415715de7b52619ce8724583908b04cc2f8ef85bb88",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/1L5D3.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 32.0,
+                "start": 13.6
+              }
+            },
+            "source_contract_sha256": "9eeb30537f88c39eee3cf30e64dd8170e74bedfdf0b3705492604893055b792e"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_14652.mp4|150",
+              "moving_count|video_14652.mp4|124"
+            ],
+            "sample_ids_sha256": "8ac4181b20856a17ffa19a1d2cfa8bbf31fe37de745c9b3716971ea8097a1d49",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14652.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "9f6ea5f200ac8edf1983e423cb934290a7494e9ee2e984d8b6ac36501e2a94bc"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_14667.mp4|63",
+              "object_existence|video_14667.mp4|34"
+            ],
+            "sample_ids_sha256": "0b75d811cbc674d7c47d1e801360c8c9565bd52cdf73cca8836bef413f295315",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14667.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "a178080e10b0dae0a4c4a8f761460ea5f81163d6370bb313b2de126fb52f89ac"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_12844.mp4|82",
+              "moving_direction|video_12844.mp4|32"
+            ],
+            "sample_ids_sha256": "4f4518a2c4c65d788e3c0239ea68cd5fb840c1aebcefd935918c2fdc734d6f02",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12844.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "a8702a4d27af68e02572a478b8d8b16eced55b32f92f23907fe9d24e75198586"
+          },
+          {
+            "sample_ids": [
+              "action_sequence|EUJK0.mp4|159",
+              "action_sequence|EUJK0.mp4|161"
+            ],
+            "sample_ids_sha256": "397f8aff7270da289cf6819ec371cfe787953fe4a734462673a5092836cd1606",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/EUJK0.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 26.6,
+                "start": 17.1
+              }
+            },
+            "source_contract_sha256": "a90b317b19adb89161f3c1202a7ea64aa773a5d3eabc514f8f35996de9764184"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_10729.mp4|196",
+              "object_existence|video_10729.mp4|160"
+            ],
+            "sample_ids_sha256": "718fc832a6ed6f286c84693a4b59bfb84fa6d1fc2006b62cb1df8d772a01cd25",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10729.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "a9461a7573ae16e545ce339b63e331d7c9bdb64fa42b249a6e2835088b45b65c"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_11232.mp4|112",
+              "moving_direction|video_11232.mp4|15"
+            ],
+            "sample_ids_sha256": "5d9a08430e16a5a6469fde808302c45f0a9c5cd7bf4a1a82962db392e88903fc",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_11232.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "adf16af5282eb2566a075ba0af7b7854b06e8191d97fc1e18240aa71d1097e28"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_12197.mp4|33",
+              "moving_direction|video_12197.mp4|75"
+            ],
+            "sample_ids_sha256": "377b4a4ee8468e5469943bb5a0591dd306af8d9016bb54d156ab7028d129e5c1",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12197.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "b0dfd55ac340698f1d3b517675c522f40727fbef66bbe497b35040a6b9bac2be"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_12268.mp4|129",
+              "moving_attribute|video_12268.mp4|91"
+            ],
+            "sample_ids_sha256": "e22bc791b3306037d061d2fc0f4b9623684884d24bfbe85237c84d10c732b77e",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12268.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "b61d3b74bd0931cedefc862ee2432d50605c7f2e13e8764456435907e88a657a"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_12283.mp4|49",
+              "moving_attribute|video_12283.mp4|18"
+            ],
+            "sample_ids_sha256": "b249ce3c0709dab96d93b82e8731e90a89d342db68745ef6fcfb50b13c52607c",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12283.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "b644481729932e2df629859e2dbc50ffe3c0e17a27c19a7e91db089ccaec5429"
+          },
+          {
+            "sample_ids": [
+              "character_order|video_11119.mp4|173",
+              "state_change|video_11119.mp4|152"
+            ],
+            "sample_ids_sha256": "36855ceebaf3412e90ff47b28780affe98fde2abfdab6c45816f3c7f70643f95",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "perception/videos/video_11119.mp4",
+              "archive_name": "perception.zip",
+              "archive_repository_path": "video/perception.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "b8608c0522acb54f9070043fb62b59822a2a0b7ac2ed93b5a17e1ddd5d5eebc0"
+          },
+          {
+            "sample_ids": [
+              "character_order|video_9001.mp4|133",
+              "state_change|video_9001.mp4|34"
+            ],
+            "sample_ids_sha256": "2ef932c4d5737879ed3684c278e722f3b54d52c4157a865320244b846be3417e",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "perception/videos/video_9001.mp4",
+              "archive_name": "perception.zip",
+              "archive_repository_path": "video/perception.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "b986d5dfe729a636f3c80023f09bea135d5f42f0055bd49c8e961b80a76b0167"
+          },
+          {
+            "sample_ids": [
+              "action_sequence|FL6DF.mp4|105",
+              "action_sequence|FL6DF.mp4|171"
+            ],
+            "sample_ids_sha256": "502c2d2476c467d85892f78dfa4e2e604b4902db6746dab381e50eca2205d8e5",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/FL6DF.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 19.7,
+                "start": 10.3
+              }
+            },
+            "source_contract_sha256": "bb51d64e0a7a728ef8d52c052aa29039a9cbfc25cd46d59ce24d0f5823654eda"
+          },
+          {
+            "sample_ids": [
+              "moving_direction|video_14700.mp4|121",
+              "object_existence|video_14700.mp4|162"
+            ],
+            "sample_ids_sha256": "afc57eb5da407dbc66c32ce0cf897917007248aadb6920232905692e1ca4f365",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14700.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "bc366546a564552d9f108d30734b037de7395d0b65c7770d8f8e9ec0e4126e43"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_humor/H_T_848_0000_0538.mp4|28",
+              "unexpected_action|test_humor/H_T_848_0000_0538.mp4|38"
+            ],
+            "sample_ids_sha256": "6f818da92b528e8408ac3419789a863a51dbf731c63803010e384a607304f380",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_humor/H_T_848_0000_0538.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "bceb11982fdd6fb823ee9c6c6fc6e10dfb2348c44a79fccbbd8f42f3dd311459"
+          },
+          {
+            "sample_ids": [
+              "action_sequence|JOLLV.mp4|100",
+              "action_sequence|JOLLV.mp4|138"
+            ],
+            "sample_ids_sha256": "5a21117632979b6e8a16efcb1b793d4290b53c8609dfbc9ec9d9e7d5ced7296b",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/JOLLV.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 17.3,
+                "start": 0.0
+              }
+            },
+            "source_contract_sha256": "bd9b1a185757c298905fd0ff3cf11435d2ad2eeb318ac3357c9130e93668b141"
+          },
+          {
+            "sample_ids": [
+              "moving_direction|video_11916.mp4|143",
+              "object_existence|video_11916.mp4|179"
+            ],
+            "sample_ids_sha256": "aa9c3a9e7b45bee1cbda36359a08122e8c8c56a84d9e2d8173e981b18a686997",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_11916.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "be350c4873951bd068035ab4616c17058ed39712ed5b026a449780df0de471dd"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_13405.mp4|161",
+              "moving_direction|video_13405.mp4|126"
+            ],
+            "sample_ids_sha256": "8a9546c91c99e00f614cff69beec58f3a6e5c5b17c2c1e87e04b1db32468b8c1",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_13405.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "bf02d0c1cc0e8027337c21a001333f3bba92a645f2a7efe8c313245c404fbc88"
+          },
+          {
+            "sample_ids": [
+              "moving_attribute|video_14655.mp4|115",
+              "moving_direction|video_14655.mp4|149",
+              "object_existence|video_14655.mp4|45"
+            ],
+            "sample_ids_sha256": "f16377e2afe06c3f2002b5d6d1d459d4676739d04f0e9f92dfc6d193a335fbca",
+            "samples": 3,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14655.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "c044c9cc64cc1590f4eb4fe0edd38b8c8bdc78d8fc8531200b1320a8bd26ff65"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_creative/C_KT_13_0752_0824.mp4|95",
+              "unexpected_action|test_creative/C_KT_13_0752_0824.mp4|110"
+            ],
+            "sample_ids_sha256": "127b8d0d32c895a66670c71d42afede7c2876ea9c8f200fa683df025998c7b58",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_creative/C_KT_13_0752_0824.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "c261ab42294142c715a5a18d14248229eba51c50f33012b5ef77520badb8beac"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_14293.mp4|29",
+              "moving_count|video_14293.mp4|136"
+            ],
+            "sample_ids_sha256": "ea855ce162e8463babdd8494ead0b035913826a94149389aed678964d0989a18",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14293.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "c8a8affe3a08566074cc074d9bad67e29050e956aff8500a41afa42900976146"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_creative/C_KT_17_8120_8159.mp4|84",
+              "unexpected_action|test_creative/C_KT_17_8120_8159.mp4|122"
+            ],
+            "sample_ids_sha256": "f1ef803095dcca2f28e49f18f41c84ad88a74864c931e2b35d833bdcc0e90640",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_creative/C_KT_17_8120_8159.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "ca5e67701f33435902daf75afcbec17bb57c01ac93fc581fafeb55ff5e0a15ab"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10644.mp4|164",
+              "moving_count|video_10644.mp4|171"
+            ],
+            "sample_ids_sha256": "71b3e96088f4363951f2fcc40b6fe27152ba5ecda6e2d971f47585f403b914b4",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10644.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "ce04842a565c43e11d4225df66f42c93662e0728cc4069e07ff13c820a3595f1"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_creative/C_KT_14_3500_3554.mp4|68",
+              "unexpected_action|test_creative/C_KT_14_3500_3554.mp4|120"
+            ],
+            "sample_ids_sha256": "3acc426184a43b88b487bc34254f597b20e33b5f38e783817cb84ca27ba5b3ba",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_creative/C_KT_14_3500_3554.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "cf41887eac05938f0516f6cdeed4c8006a9ffae153f89e98e460238f6324c6b8"
+          },
+          {
+            "sample_ids": [
+              "character_order|video_4370.mp4|139",
+              "state_change|video_4370.mp4|160"
+            ],
+            "sample_ids_sha256": "90af7836c0064100afc2195281a27401b06a0be14a518783cfb6852482eb0bce",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "perception/videos/video_4370.mp4",
+              "archive_name": "perception.zip",
+              "archive_repository_path": "video/perception.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "d0f60462eca48dcbdd05dfe8e473e849aad1201986b9701c5ed0609b8198715d"
+          },
+          {
+            "sample_ids": [
+              "action_prediction|NVBBD.mp4|75",
+              "action_prediction|NVBBD.mp4|152"
+            ],
+            "sample_ids_sha256": "fbed7385c0bf55201a19b9ff109272e1510ae2582aa8b51db19822e6e8233893",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/NVBBD.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 12.25,
+                "start": 0.0
+              }
+            },
+            "source_contract_sha256": "d26678b4bfd3f795d08e78277fe9dfaba862b1d67018b5eadaf952df339ef5dd"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_magic/M_Z_206_4085_4350.mp4|165",
+              "unexpected_action|test_magic/M_Z_206_4085_4350.mp4|181"
+            ],
+            "sample_ids_sha256": "e2997109e0cab2f0ae106a6609ecaf43800a958572d05ba8bb220c58fb081d6f",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_magic/M_Z_206_4085_4350.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "d697e2806c78cce39c78bee3fe0a13ad420cb56cd2f3d3e94198a126e687d09e"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_14132.mp4|14",
+              "moving_attribute|video_14132.mp4|104"
+            ],
+            "sample_ids_sha256": "341db0960aff951f2cb0cb3c4fd420dcccc2aba34c4adbb502747c0a30c2db7d",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14132.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "d9796327ea882d485eadd9f4d83aa225f328cb6de0cf5a2f117069c56e542993"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_12872.mp4|192",
+              "moving_direction|video_12872.mp4|193"
+            ],
+            "sample_ids_sha256": "c0659cb650c64f0efc8735ce6b2af780943a68cc775c45d9905f800b38684d3f",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12872.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "d9c4840060ea132236816bc11f89f011fd28faa7887ebc9db5553d3f828bd4b5"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_creative/C_KT_97_6143_6339.mp4|86",
+              "unexpected_action|test_creative/C_KT_97_6143_6339.mp4|118"
+            ],
+            "sample_ids_sha256": "9aed8865e9f22b944b82c07e4f73fc15ebfea6f827653dc49f051f9b43f26bcf",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_creative/C_KT_97_6143_6339.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "da302371ad81cc8c7493c861680a084931465ca92ea363f7bc8767b1317c5e32"
+          },
+          {
+            "sample_ids": [
+              "moving_direction|video_14727.mp4|0",
+              "object_existence|video_14727.mp4|123"
+            ],
+            "sample_ids_sha256": "942c4c09152368f9768a2317deab1ba30db66f9f2f20c30096f334dc7d9baab1",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14727.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "daea4ae37864ac0c40114e6dd0553be97709cd21835889272047883739db5e74"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10312.mp4|65",
+              "moving_attribute|video_10312.mp4|77",
+              "moving_count|video_10312.mp4|102"
+            ],
+            "sample_ids_sha256": "c0a4edb7dc19de8e0afa52222babd2409f8e44d7910496ac859930167b7b6532",
+            "samples": 3,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10312.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "dc39f80624fda93a9a2e08687f2dfd661358a80fe32ace1aba0c294a02a58d86"
+          },
+          {
+            "sample_ids": [
+              "action_prediction|XLR4B.mp4|77",
+              "action_prediction|XLR4B.mp4|136"
+            ],
+            "sample_ids_sha256": "2823e5faef2a46dd145e13f12383258cacb6ff1cca01b23eecb33ef3047a28a8",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/XLR4B.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 24.075,
+                "start": 0.4
+              }
+            },
+            "source_contract_sha256": "dd652a7df0b15f4e460cfeefc671504311b2340f814799a79928d4ca10d66c64"
+          },
+          {
+            "sample_ids": [
+              "character_order|video_1715.mp4|97",
+              "state_change|video_1715.mp4|58"
+            ],
+            "sample_ids_sha256": "9bb3dcc02a4125bb6c1f9acd1f3a3661e9535a97b7d642e184c2e14d5eadb51c",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "perception/videos/video_1715.mp4",
+              "archive_name": "perception.zip",
+              "archive_repository_path": "video/perception.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "e247f5022294b5d2da2ff38c3a134fc71f776d168c134c0613dc2aa1c88ca049"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10951.mp4|155",
+              "moving_direction|video_10951.mp4|66"
+            ],
+            "sample_ids_sha256": "e6837930088e28e355dc537c262f4488e001bd6d3d2d8535ad2b79317153d03e",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10951.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "e523d9f5eba44ae66723d768de44cd327852e38ced6ca15077f2675ca2b49424"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_magic/M_Z_280_6258_6451.mp4|150",
+              "unexpected_action|test_magic/M_Z_280_6258_6451.mp4|199"
+            ],
+            "sample_ids_sha256": "9d909dab79b6358c828860792be3992d5dbb52f71a7f42fab3fbaa3d3be40e6c",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_magic/M_Z_280_6258_6451.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "ea3d371226f7e3d5fe4b1e496d95659076e58eb6a08fa4dd7274278b66ad269f"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10262.mp4|128",
+              "object_existence|video_10262.mp4|167"
+            ],
+            "sample_ids_sha256": "b75991834aad2d72ad16c84a54568ffb0e91cf2221becc6a359a26645f754e83",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10262.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "ea3e211b02c7ee81d5d3c97c342abe0c538397175497a28515a0eb093d12567d"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_13615.mp4|168",
+              "moving_attribute|video_13615.mp4|25"
+            ],
+            "sample_ids_sha256": "40daa241db179b8579db5d05fa20af13aa957664623cddc7804465ef4421610c",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_13615.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "eb32d6df8024edb03544469c73342308e2b496c28c018ff4f89d6b48299bf1e0"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_10998.mp4|114",
+              "moving_attribute|video_10998.mp4|160"
+            ],
+            "sample_ids_sha256": "90e2753c7a6b1af7d63d37cb2e853b72bd475fefbf8aa7698e032935844ebb7a",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_10998.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "ec9239b7bdd9bfc047fda63d291548400a9c3a97dd7f22a41598a47cc75cf98a"
+          },
+          {
+            "sample_ids": [
+              "unexpected_action|test_creative/C_KT_20_0247_0322.mp4|99",
+              "unexpected_action|test_creative/C_KT_20_0247_0322.mp4|101"
+            ],
+            "sample_ids_sha256": "57d197255b41d19fc5311cb834584a5ec5a03229a3189351ad462aaa28d7dd04",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "FunQA_test/test/test_creative/C_KT_20_0247_0322.mp4",
+              "archive_name": "FunQA_test.zip",
+              "archive_repository_path": "video/FunQA_test.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "f1412f170b4d53bf22b2beb8821091a756bd2df1c60988fcf69382028a0234d5"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_11548.mp4|138",
+              "moving_attribute|video_11548.mp4|141"
+            ],
+            "sample_ids_sha256": "1c8509e9b0854f78fa9c60da74a6c594de7d365632bc46f6c42021dfbcde2bfe",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_11548.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "f501a11fc3bf7938c2d5de2fde62b2d42bf0bb4e94dec6a42c7f13588b796dfb"
+          },
+          {
+            "sample_ids": [
+              "moving_direction|video_12645.mp4|8",
+              "object_existence|video_12645.mp4|128"
+            ],
+            "sample_ids_sha256": "7c2f13432a071286200abde2df53d4f1c0252e46e20926f2cd4476c89b543cab",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_12645.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "f5911ec7f38e83b163431d0b8d941c09c038f818ef4a6f2e1e8f441bacf523e0"
+          },
+          {
+            "sample_ids": [
+              "counterfactual_inference|video_14400.mp4|113",
+              "moving_attribute|video_14400.mp4|34"
+            ],
+            "sample_ids_sha256": "76d25ae32ec3caa587fb0f301aadf27cc42d2b9537f9886179652c3239f79f8a",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_14400.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "f6766df8014b231284f7a7508f3f76ab9510c625e371b6fb5baff38a9e5d1135"
+          },
+          {
+            "sample_ids": [
+              "action_prediction|84893.mp4|88",
+              "action_prediction|84893.mp4|125"
+            ],
+            "sample_ids_sha256": "d4e6de4f8d3e374d9727b29ccced19e58bef2e4adbb118e5a9aaed46953ce0b6",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "star/Charades_v1_480/84893.mp4",
+              "archive_name": "star.zip",
+              "archive_repository_path": "video/star.zip",
+              "media_type": "video",
+              "temporal_bound": {
+                "end": 9.675,
+                "start": 0.0
+              }
+            },
+            "source_contract_sha256": "f847f79d7e8e4f3e6add88248783bc976633aa5cbf03da5a1cfcdb76f27596b6"
+          },
+          {
+            "sample_ids": [
+              "object_existence|video_11683.mp4|29",
+              "object_existence|video_11683.mp4|152"
+            ],
+            "sample_ids_sha256": "0364a812df3a3db4192ae532337698d0587724ce56b5686a0e33d74e509570fe",
+            "samples": 2,
+            "source_contract": {
+              "archive_member_path": "clevrer/video_validation/video_11683.mp4",
+              "archive_name": "clevrer.zip",
+              "archive_repository_path": "video/clevrer.zip",
+              "media_type": "video",
+              "temporal_bound": null
+            },
+            "source_contract_sha256": "fc5fe074716f2f419cfc99a224ad7b47ad7690c41d0b34dc2704c013fd70e407"
+          }
+        ],
+        "groups": 123,
+        "samples": 252
+      },
+      "repository": "OpenGVLab/MVBench",
+      "revision": "230a2d4fac8900333c61754641c7a13e069ac9c6",
+      "sample_id_field": "task + video + question_index",
+      "selected_records": {
+        "path": "records/mvbench_test.final.jsonl",
+        "sha256": "9c422c355abef36a3cd8e5558a0e65e18d232e0afb08a9c89ba8b5407af55f4b"
+      },
+      "selection": {
+        "development": {
+          "sample_ids": [
+            "counterfactual_inference|video_10553.mp4|172",
+            "moving_count|video_10553.mp4|186",
+            "moving_count|video_11081.mp4|59",
+            "object_existence|video_11081.mp4|15",
+            "counterfactual_inference|video_12477.mp4|95",
+            "moving_attribute|video_12477.mp4|146",
+            "action_prediction|BI31D.mp4|120",
+            "action_prediction|BI31D.mp4|144",
+            "counterfactual_inference|video_11842.mp4|180",
+            "moving_attribute|video_11842.mp4|65",
+            "unexpected_action|test_creative/C_KT_8_0418_0453.mp4|97",
+            "unexpected_action|test_creative/C_KT_8_0418_0453.mp4|105",
+            "moving_attribute|video_12637.mp4|64",
+            "moving_direction|video_12637.mp4|139",
+            "action_prediction|3ND23.mp4|74",
+            "action_prediction|3ND23.mp4|181",
+            "moving_attribute|video_10995.mp4|97",
+            "moving_direction|video_10995.mp4|58",
+            "counterfactual_inference|video_10921.mp4|5",
+            "counterfactual_inference|video_10921.mp4|197",
+            "character_order|video_10782.mp4|32",
+            "state_change|video_10782.mp4|146",
+            "counterfactual_inference|video_10030.mp4|68",
+            "moving_count|video_10030.mp4|28",
+            "unexpected_action|test_magic/M_Z_320_3788_4140.mp4|146",
+            "unexpected_action|test_magic/M_Z_320_3788_4140.mp4|179",
+            "counterfactual_inference|video_11939.mp4|57",
+            "counterfactual_inference|video_11939.mp4|185",
+            "moving_count|video_13396.mp4|36",
+            "object_existence|video_13396.mp4|195",
+            "moving_count|video_14515.mp4|77",
+            "moving_direction|video_14515.mp4|5",
+            "counterfactual_inference|video_10242.mp4|107",
+            "moving_attribute|video_10242.mp4|180",
+            "object_existence|video_10242.mp4|16",
+            "unexpected_action|test_creative/C_KT_21_8758_8835.mp4|71",
+            "unexpected_action|test_creative/C_KT_21_8758_8835.mp4|128",
+            "unexpected_action|test_humor/H_H_95_0700_0801.mp4|14",
+            "unexpected_action|test_humor/H_H_95_0700_0801.mp4|66",
+            "moving_attribute|video_12175.mp4|189",
+            "moving_direction|video_12175.mp4|73",
+            "counterfactual_inference|video_12989.mp4|6",
+            "moving_count|video_12989.mp4|69",
+            "action_prediction|Z6HEA.mp4|35",
+            "action_prediction|Z6HEA.mp4|162",
+            "unexpected_action|test_magic/M_Z_321_10180_10589.mp4|138",
+            "unexpected_action|test_magic/M_Z_321_10180_10589.mp4|191",
+            "unexpected_action|test_creative/C_KT_17_3643_3725.mp4|70",
+            "unexpected_action|test_creative/C_KT_17_3643_3725.mp4|117",
+            "unexpected_action|test_creative/C_KT_28_5325_5442.mp4|92",
+            "unexpected_action|test_creative/C_KT_28_5325_5442.mp4|114",
+            "counterfactual_inference|video_10929.mp4|182",
+            "moving_attribute|video_10929.mp4|163",
+            "object_existence|video_12615.mp4|107",
+            "object_existence|video_12615.mp4|148",
+            "counterfactual_inference|video_10661.mp4|96",
+            "moving_count|video_10661.mp4|80",
+            "moving_attribute|video_14836.mp4|166",
+            "moving_direction|video_14836.mp4|133",
+            "object_existence|video_14506.mp4|75",
+            "object_existence|video_14506.mp4|143",
+            "moving_attribute|video_13809.mp4|116",
+            "moving_direction|video_13809.mp4|199",
+            "object_existence|video_14101.mp4|19",
+            "object_existence|video_14101.mp4|100",
+            "action_sequence|AK9IB.mp4|84",
+            "action_sequence|AK9IB.mp4|98",
+            "moving_attribute|video_13463.mp4|83",
+            "object_existence|video_13463.mp4|56",
+            "object_existence|video_13463.mp4|119",
+            "unexpected_action|test_humor/H_H_258_4389_4472.mp4|11",
+            "unexpected_action|test_humor/H_H_258_4389_4472.mp4|60",
+            "counterfactual_inference|video_11834.mp4|13",
+            "moving_count|video_11834.mp4|173",
+            "counterfactual_inference|video_13235.mp4|22",
+            "moving_direction|video_13235.mp4|185",
+            "counterfactual_inference|video_13566.mp4|11",
+            "moving_attribute|video_13566.mp4|40",
+            "counterfactual_inference|video_10955.mp4|53",
+            "moving_count|video_10955.mp4|181",
+            "object_existence|video_13922.mp4|44",
+            "object_existence|video_13922.mp4|177",
+            "unexpected_action|test_magic/M_Z_270_0000_0170.mp4|154",
+            "unexpected_action|test_magic/M_Z_270_0000_0170.mp4|170",
+            "moving_count|video_14346.mp4|44",
+            "moving_direction|video_14346.mp4|175",
+            "moving_direction|video_14966.mp4|65",
+            "object_existence|video_14966.mp4|131",
+            "unexpected_action|test_creative/C_KT_14_6653_6758.mp4|98",
+            "unexpected_action|test_creative/C_KT_14_6653_6758.mp4|106",
+            "unexpected_action|test_creative/C_KT_21_8053_8120.mp4|88",
+            "unexpected_action|test_creative/C_KT_21_8053_8120.mp4|103",
+            "moving_count|video_12573.mp4|119",
+            "moving_direction|video_12573.mp4|14",
+            "counterfactual_inference|video_14244.mp4|44",
+            "object_existence|video_14244.mp4|57",
+            "action_sequence|9BCZU.mp4|64",
+            "action_sequence|9BCZU.mp4|195",
+            "unexpected_action|test_humor/H_H_132_1393_1497.mp4|10",
+            "unexpected_action|test_humor/H_H_132_1393_1497.mp4|36",
+            "character_order|video_1021.mp4|192",
+            "state_change|video_1021.mp4|35",
+            "counterfactual_inference|video_10094.mp4|196",
+            "moving_direction|video_10094.mp4|40",
+            "unexpected_action|test_humor/H_A_135_3404_3567.mp4|26",
+            "unexpected_action|test_humor/H_A_135_3404_3567.mp4|34",
+            "moving_count|video_12177.mp4|88",
+            "moving_direction|video_12177.mp4|182",
+            "moving_attribute|video_12262.mp4|4",
+            "object_existence|video_12262.mp4|196",
+            "counterfactual_inference|video_13829.mp4|116",
+            "object_existence|video_13829.mp4|1",
+            "counterfactual_inference|video_12359.mp4|150",
+            "object_existence|video_12359.mp4|37",
+            "action_prediction|N2GFQ.mp4|6",
+            "action_prediction|N2GFQ.mp4|29",
+            "character_order|video_5724.mp4|76",
+            "state_change|video_5724.mp4|93",
+            "moving_attribute|video_10528.mp4|69",
+            "moving_direction|video_10528.mp4|95",
+            "moving_attribute|video_12806.mp4|84",
+            "moving_direction|video_12806.mp4|145",
+            "moving_direction|video_13978.mp4|164",
+            "object_existence|video_13978.mp4|50",
+            "object_existence|video_10197.mp4|140",
+            "object_existence|video_10197.mp4|163",
+            "moving_attribute|video_14259.mp4|87",
+            "moving_direction|video_14259.mp4|62",
+            "counterfactual_inference|video_12670.mp4|160",
+            "moving_attribute|video_12670.mp4|36",
+            "moving_count|video_12413.mp4|131",
+            "moving_direction|video_12413.mp4|174",
+            "moving_attribute|video_12516.mp4|135",
+            "moving_direction|video_12516.mp4|17",
+            "counterfactual_inference|video_11896.mp4|188",
+            "moving_direction|video_11896.mp4|79",
+            "action_prediction|9OMY1.mp4|31",
+            "action_prediction|9OMY1.mp4|80",
+            "moving_direction|video_14704.mp4|38",
+            "object_existence|video_14704.mp4|89",
+            "counterfactual_inference|video_12821.mp4|77",
+            "moving_count|video_12821.mp4|117",
+            "moving_direction|video_12821.mp4|100",
+            "character_order|video_9985.mp4|67",
+            "state_change|video_9985.mp4|4",
+            "action_sequence|86GSE.mp4|135",
+            "action_sequence|86GSE.mp4|186",
+            "moving_attribute|video_14328.mp4|169",
+            "object_existence|video_14328.mp4|110",
+            "moving_attribute|video_10708.mp4|175",
+            "moving_direction|video_10708.mp4|150",
+            "moving_count|video_14502.mp4|15",
+            "moving_direction|video_14502.mp4|119",
+            "moving_attribute|video_12027.mp4|71",
+            "moving_count|video_12027.mp4|97",
+            "moving_attribute|video_13493.mp4|35",
+            "moving_count|video_13493.mp4|138",
+            "moving_direction|video_13493.mp4|125",
+            "moving_direction|video_11093.mp4|69",
+            "object_existence|video_11093.mp4|130",
+            "action_sequence|1L5D3.mp4|144",
+            "action_sequence|1L5D3.mp4|192",
+            "moving_attribute|video_14652.mp4|150",
+            "moving_count|video_14652.mp4|124",
+            "moving_attribute|video_14667.mp4|63",
+            "object_existence|video_14667.mp4|34",
+            "moving_attribute|video_12844.mp4|82",
+            "moving_direction|video_12844.mp4|32",
+            "action_sequence|EUJK0.mp4|159",
+            "action_sequence|EUJK0.mp4|161",
+            "moving_attribute|video_10729.mp4|196",
+            "object_existence|video_10729.mp4|160",
+            "counterfactual_inference|video_11232.mp4|112",
+            "moving_direction|video_11232.mp4|15",
+            "counterfactual_inference|video_12197.mp4|33",
+            "moving_direction|video_12197.mp4|75",
+            "counterfactual_inference|video_12268.mp4|129",
+            "moving_attribute|video_12268.mp4|91",
+            "counterfactual_inference|video_12283.mp4|49",
+            "moving_attribute|video_12283.mp4|18",
+            "character_order|video_11119.mp4|173",
+            "state_change|video_11119.mp4|152",
+            "character_order|video_9001.mp4|133",
+            "state_change|video_9001.mp4|34",
+            "action_sequence|FL6DF.mp4|105",
+            "action_sequence|FL6DF.mp4|171",
+            "moving_direction|video_14700.mp4|121",
+            "object_existence|video_14700.mp4|162",
+            "unexpected_action|test_humor/H_T_848_0000_0538.mp4|28",
+            "unexpected_action|test_humor/H_T_848_0000_0538.mp4|38",
+            "action_sequence|JOLLV.mp4|100",
+            "action_sequence|JOLLV.mp4|138",
+            "moving_direction|video_11916.mp4|143",
+            "object_existence|video_11916.mp4|179",
+            "moving_attribute|video_13405.mp4|161",
+            "moving_direction|video_13405.mp4|126",
+            "moving_attribute|video_14655.mp4|115",
+            "moving_direction|video_14655.mp4|149",
+            "object_existence|video_14655.mp4|45",
+            "unexpected_action|test_creative/C_KT_13_0752_0824.mp4|95",
+            "unexpected_action|test_creative/C_KT_13_0752_0824.mp4|110",
+            "counterfactual_inference|video_14293.mp4|29",
+            "moving_count|video_14293.mp4|136",
+            "unexpected_action|test_creative/C_KT_17_8120_8159.mp4|84",
+            "unexpected_action|test_creative/C_KT_17_8120_8159.mp4|122",
+            "counterfactual_inference|video_10644.mp4|164",
+            "moving_count|video_10644.mp4|171",
+            "unexpected_action|test_creative/C_KT_14_3500_3554.mp4|68",
+            "unexpected_action|test_creative/C_KT_14_3500_3554.mp4|120",
+            "character_order|video_4370.mp4|139",
+            "state_change|video_4370.mp4|160",
+            "action_prediction|NVBBD.mp4|75",
+            "action_prediction|NVBBD.mp4|152",
+            "unexpected_action|test_magic/M_Z_206_4085_4350.mp4|165",
+            "unexpected_action|test_magic/M_Z_206_4085_4350.mp4|181",
+            "counterfactual_inference|video_14132.mp4|14",
+            "moving_attribute|video_14132.mp4|104",
+            "counterfactual_inference|video_12872.mp4|192",
+            "moving_direction|video_12872.mp4|193",
+            "unexpected_action|test_creative/C_KT_97_6143_6339.mp4|86",
+            "unexpected_action|test_creative/C_KT_97_6143_6339.mp4|118",
+            "moving_direction|video_14727.mp4|0",
+            "object_existence|video_14727.mp4|123",
+            "counterfactual_inference|video_10312.mp4|65",
+            "moving_attribute|video_10312.mp4|77",
+            "moving_count|video_10312.mp4|102",
+            "action_prediction|XLR4B.mp4|77",
+            "action_prediction|XLR4B.mp4|136",
+            "character_order|video_1715.mp4|97",
+            "state_change|video_1715.mp4|58",
+            "counterfactual_inference|video_10951.mp4|155",
+            "moving_direction|video_10951.mp4|66",
+            "unexpected_action|test_magic/M_Z_280_6258_6451.mp4|150",
+            "unexpected_action|test_magic/M_Z_280_6258_6451.mp4|199",
+            "counterfactual_inference|video_10262.mp4|128",
+            "object_existence|video_10262.mp4|167",
+            "counterfactual_inference|video_13615.mp4|168",
+            "moving_attribute|video_13615.mp4|25",
+            "counterfactual_inference|video_10998.mp4|114",
+            "moving_attribute|video_10998.mp4|160",
+            "unexpected_action|test_creative/C_KT_20_0247_0322.mp4|99",
+            "unexpected_action|test_creative/C_KT_20_0247_0322.mp4|101",
+            "counterfactual_inference|video_11548.mp4|138",
+            "moving_attribute|video_11548.mp4|141",
+            "moving_direction|video_12645.mp4|8",
+            "object_existence|video_12645.mp4|128",
+            "counterfactual_inference|video_14400.mp4|113",
+            "moving_attribute|video_14400.mp4|34",
+            "action_prediction|84893.mp4|88",
+            "action_prediction|84893.mp4|125",
+            "object_existence|video_11683.mp4|29",
+            "object_existence|video_11683.mp4|152"
+          ],
+          "samples": 252,
+          "selected_sample_ids_sha256": "b9ec4d3655c41b5f920749017906a2a5d2bbaac6896bb9ee3499b75c1b9d31dc"
+        },
+        "final": {
+          "sample_ids": [
+            "counterfactual_inference|video_10553.mp4|172",
+            "moving_count|video_10553.mp4|186",
+            "moving_count|video_11081.mp4|59",
+            "object_existence|video_11081.mp4|15",
+            "counterfactual_inference|video_12477.mp4|95",
+            "moving_attribute|video_12477.mp4|146",
+            "action_prediction|BI31D.mp4|120",
+            "action_prediction|BI31D.mp4|144",
+            "counterfactual_inference|video_11842.mp4|180",
+            "moving_attribute|video_11842.mp4|65",
+            "unexpected_action|test_creative/C_KT_8_0418_0453.mp4|97",
+            "unexpected_action|test_creative/C_KT_8_0418_0453.mp4|105",
+            "moving_attribute|video_12637.mp4|64",
+            "moving_direction|video_12637.mp4|139",
+            "action_prediction|3ND23.mp4|74",
+            "action_prediction|3ND23.mp4|181",
+            "moving_attribute|video_10995.mp4|97",
+            "moving_direction|video_10995.mp4|58",
+            "counterfactual_inference|video_10921.mp4|5",
+            "counterfactual_inference|video_10921.mp4|197",
+            "character_order|video_10782.mp4|32",
+            "state_change|video_10782.mp4|146",
+            "counterfactual_inference|video_10030.mp4|68",
+            "moving_count|video_10030.mp4|28",
+            "unexpected_action|test_magic/M_Z_320_3788_4140.mp4|146",
+            "unexpected_action|test_magic/M_Z_320_3788_4140.mp4|179",
+            "counterfactual_inference|video_11939.mp4|57",
+            "counterfactual_inference|video_11939.mp4|185",
+            "moving_count|video_13396.mp4|36",
+            "object_existence|video_13396.mp4|195",
+            "moving_count|video_14515.mp4|77",
+            "moving_direction|video_14515.mp4|5",
+            "counterfactual_inference|video_10242.mp4|107",
+            "moving_attribute|video_10242.mp4|180",
+            "object_existence|video_10242.mp4|16",
+            "unexpected_action|test_creative/C_KT_21_8758_8835.mp4|71",
+            "unexpected_action|test_creative/C_KT_21_8758_8835.mp4|128",
+            "unexpected_action|test_humor/H_H_95_0700_0801.mp4|14",
+            "unexpected_action|test_humor/H_H_95_0700_0801.mp4|66",
+            "moving_attribute|video_12175.mp4|189",
+            "moving_direction|video_12175.mp4|73",
+            "counterfactual_inference|video_12989.mp4|6",
+            "moving_count|video_12989.mp4|69",
+            "action_prediction|Z6HEA.mp4|35",
+            "action_prediction|Z6HEA.mp4|162",
+            "unexpected_action|test_magic/M_Z_321_10180_10589.mp4|138",
+            "unexpected_action|test_magic/M_Z_321_10180_10589.mp4|191",
+            "unexpected_action|test_creative/C_KT_17_3643_3725.mp4|70",
+            "unexpected_action|test_creative/C_KT_17_3643_3725.mp4|117",
+            "unexpected_action|test_creative/C_KT_28_5325_5442.mp4|92",
+            "unexpected_action|test_creative/C_KT_28_5325_5442.mp4|114",
+            "counterfactual_inference|video_10929.mp4|182",
+            "moving_attribute|video_10929.mp4|163",
+            "object_existence|video_12615.mp4|107",
+            "object_existence|video_12615.mp4|148",
+            "counterfactual_inference|video_10661.mp4|96",
+            "moving_count|video_10661.mp4|80",
+            "moving_attribute|video_14836.mp4|166",
+            "moving_direction|video_14836.mp4|133",
+            "object_existence|video_14506.mp4|75",
+            "object_existence|video_14506.mp4|143",
+            "moving_attribute|video_13809.mp4|116",
+            "moving_direction|video_13809.mp4|199",
+            "object_existence|video_14101.mp4|19",
+            "object_existence|video_14101.mp4|100",
+            "action_sequence|AK9IB.mp4|84",
+            "action_sequence|AK9IB.mp4|98",
+            "moving_attribute|video_13463.mp4|83",
+            "object_existence|video_13463.mp4|56",
+            "object_existence|video_13463.mp4|119",
+            "unexpected_action|test_humor/H_H_258_4389_4472.mp4|11",
+            "unexpected_action|test_humor/H_H_258_4389_4472.mp4|60",
+            "counterfactual_inference|video_11834.mp4|13",
+            "moving_count|video_11834.mp4|173",
+            "counterfactual_inference|video_13235.mp4|22",
+            "moving_direction|video_13235.mp4|185",
+            "counterfactual_inference|video_13566.mp4|11",
+            "moving_attribute|video_13566.mp4|40",
+            "counterfactual_inference|video_10955.mp4|53",
+            "moving_count|video_10955.mp4|181",
+            "object_existence|video_13922.mp4|44",
+            "object_existence|video_13922.mp4|177",
+            "unexpected_action|test_magic/M_Z_270_0000_0170.mp4|154",
+            "unexpected_action|test_magic/M_Z_270_0000_0170.mp4|170",
+            "moving_count|video_14346.mp4|44",
+            "moving_direction|video_14346.mp4|175",
+            "moving_direction|video_14966.mp4|65",
+            "object_existence|video_14966.mp4|131",
+            "unexpected_action|test_creative/C_KT_14_6653_6758.mp4|98",
+            "unexpected_action|test_creative/C_KT_14_6653_6758.mp4|106",
+            "unexpected_action|test_creative/C_KT_21_8053_8120.mp4|88",
+            "unexpected_action|test_creative/C_KT_21_8053_8120.mp4|103",
+            "moving_count|video_12573.mp4|119",
+            "moving_direction|video_12573.mp4|14",
+            "counterfactual_inference|video_14244.mp4|44",
+            "object_existence|video_14244.mp4|57",
+            "action_sequence|9BCZU.mp4|64",
+            "action_sequence|9BCZU.mp4|195",
+            "unexpected_action|test_humor/H_H_132_1393_1497.mp4|10",
+            "unexpected_action|test_humor/H_H_132_1393_1497.mp4|36",
+            "character_order|video_1021.mp4|192",
+            "state_change|video_1021.mp4|35",
+            "counterfactual_inference|video_10094.mp4|196",
+            "moving_direction|video_10094.mp4|40",
+            "unexpected_action|test_humor/H_A_135_3404_3567.mp4|26",
+            "unexpected_action|test_humor/H_A_135_3404_3567.mp4|34",
+            "moving_count|video_12177.mp4|88",
+            "moving_direction|video_12177.mp4|182",
+            "moving_attribute|video_12262.mp4|4",
+            "object_existence|video_12262.mp4|196",
+            "counterfactual_inference|video_13829.mp4|116",
+            "object_existence|video_13829.mp4|1",
+            "counterfactual_inference|video_12359.mp4|150",
+            "object_existence|video_12359.mp4|37",
+            "action_prediction|N2GFQ.mp4|6",
+            "action_prediction|N2GFQ.mp4|29",
+            "character_order|video_5724.mp4|76",
+            "state_change|video_5724.mp4|93",
+            "moving_attribute|video_10528.mp4|69",
+            "moving_direction|video_10528.mp4|95",
+            "moving_attribute|video_12806.mp4|84",
+            "moving_direction|video_12806.mp4|145",
+            "moving_direction|video_13978.mp4|164",
+            "object_existence|video_13978.mp4|50",
+            "object_existence|video_10197.mp4|140",
+            "object_existence|video_10197.mp4|163",
+            "moving_attribute|video_14259.mp4|87",
+            "moving_direction|video_14259.mp4|62",
+            "counterfactual_inference|video_12670.mp4|160",
+            "moving_attribute|video_12670.mp4|36",
+            "moving_count|video_12413.mp4|131",
+            "moving_direction|video_12413.mp4|174",
+            "moving_attribute|video_12516.mp4|135",
+            "moving_direction|video_12516.mp4|17",
+            "counterfactual_inference|video_11896.mp4|188",
+            "moving_direction|video_11896.mp4|79",
+            "action_prediction|9OMY1.mp4|31",
+            "action_prediction|9OMY1.mp4|80",
+            "moving_direction|video_14704.mp4|38",
+            "object_existence|video_14704.mp4|89",
+            "counterfactual_inference|video_12821.mp4|77",
+            "moving_count|video_12821.mp4|117",
+            "moving_direction|video_12821.mp4|100",
+            "character_order|video_9985.mp4|67",
+            "state_change|video_9985.mp4|4",
+            "action_sequence|86GSE.mp4|135",
+            "action_sequence|86GSE.mp4|186",
+            "moving_attribute|video_14328.mp4|169",
+            "object_existence|video_14328.mp4|110",
+            "moving_attribute|video_10708.mp4|175",
+            "moving_direction|video_10708.mp4|150",
+            "moving_count|video_14502.mp4|15",
+            "moving_direction|video_14502.mp4|119",
+            "moving_attribute|video_12027.mp4|71",
+            "moving_count|video_12027.mp4|97",
+            "moving_attribute|video_13493.mp4|35",
+            "moving_count|video_13493.mp4|138",
+            "moving_direction|video_13493.mp4|125",
+            "moving_direction|video_11093.mp4|69",
+            "object_existence|video_11093.mp4|130",
+            "action_sequence|1L5D3.mp4|144",
+            "action_sequence|1L5D3.mp4|192",
+            "moving_attribute|video_14652.mp4|150",
+            "moving_count|video_14652.mp4|124",
+            "moving_attribute|video_14667.mp4|63",
+            "object_existence|video_14667.mp4|34",
+            "moving_attribute|video_12844.mp4|82",
+            "moving_direction|video_12844.mp4|32",
+            "action_sequence|EUJK0.mp4|159",
+            "action_sequence|EUJK0.mp4|161",
+            "moving_attribute|video_10729.mp4|196",
+            "object_existence|video_10729.mp4|160",
+            "counterfactual_inference|video_11232.mp4|112",
+            "moving_direction|video_11232.mp4|15",
+            "counterfactual_inference|video_12197.mp4|33",
+            "moving_direction|video_12197.mp4|75",
+            "counterfactual_inference|video_12268.mp4|129",
+            "moving_attribute|video_12268.mp4|91",
+            "counterfactual_inference|video_12283.mp4|49",
+            "moving_attribute|video_12283.mp4|18",
+            "character_order|video_11119.mp4|173",
+            "state_change|video_11119.mp4|152",
+            "character_order|video_9001.mp4|133",
+            "state_change|video_9001.mp4|34",
+            "action_sequence|FL6DF.mp4|105",
+            "action_sequence|FL6DF.mp4|171",
+            "moving_direction|video_14700.mp4|121",
+            "object_existence|video_14700.mp4|162",
+            "unexpected_action|test_humor/H_T_848_0000_0538.mp4|28",
+            "unexpected_action|test_humor/H_T_848_0000_0538.mp4|38",
+            "action_sequence|JOLLV.mp4|100",
+            "action_sequence|JOLLV.mp4|138",
+            "moving_direction|video_11916.mp4|143",
+            "object_existence|video_11916.mp4|179",
+            "moving_attribute|video_13405.mp4|161",
+            "moving_direction|video_13405.mp4|126",
+            "moving_attribute|video_14655.mp4|115",
+            "moving_direction|video_14655.mp4|149",
+            "object_existence|video_14655.mp4|45",
+            "unexpected_action|test_creative/C_KT_13_0752_0824.mp4|95",
+            "unexpected_action|test_creative/C_KT_13_0752_0824.mp4|110",
+            "counterfactual_inference|video_14293.mp4|29",
+            "moving_count|video_14293.mp4|136",
+            "unexpected_action|test_creative/C_KT_17_8120_8159.mp4|84",
+            "unexpected_action|test_creative/C_KT_17_8120_8159.mp4|122",
+            "counterfactual_inference|video_10644.mp4|164",
+            "moving_count|video_10644.mp4|171",
+            "unexpected_action|test_creative/C_KT_14_3500_3554.mp4|68",
+            "unexpected_action|test_creative/C_KT_14_3500_3554.mp4|120",
+            "character_order|video_4370.mp4|139",
+            "state_change|video_4370.mp4|160",
+            "action_prediction|NVBBD.mp4|75",
+            "action_prediction|NVBBD.mp4|152",
+            "unexpected_action|test_magic/M_Z_206_4085_4350.mp4|165",
+            "unexpected_action|test_magic/M_Z_206_4085_4350.mp4|181",
+            "counterfactual_inference|video_14132.mp4|14",
+            "moving_attribute|video_14132.mp4|104",
+            "counterfactual_inference|video_12872.mp4|192",
+            "moving_direction|video_12872.mp4|193",
+            "unexpected_action|test_creative/C_KT_97_6143_6339.mp4|86",
+            "unexpected_action|test_creative/C_KT_97_6143_6339.mp4|118",
+            "moving_direction|video_14727.mp4|0",
+            "object_existence|video_14727.mp4|123",
+            "counterfactual_inference|video_10312.mp4|65",
+            "moving_attribute|video_10312.mp4|77",
+            "moving_count|video_10312.mp4|102",
+            "action_prediction|XLR4B.mp4|77",
+            "action_prediction|XLR4B.mp4|136",
+            "character_order|video_1715.mp4|97",
+            "state_change|video_1715.mp4|58",
+            "counterfactual_inference|video_10951.mp4|155",
+            "moving_direction|video_10951.mp4|66",
+            "unexpected_action|test_magic/M_Z_280_6258_6451.mp4|150",
+            "unexpected_action|test_magic/M_Z_280_6258_6451.mp4|199",
+            "counterfactual_inference|video_10262.mp4|128",
+            "object_existence|video_10262.mp4|167",
+            "counterfactual_inference|video_13615.mp4|168",
+            "moving_attribute|video_13615.mp4|25",
+            "counterfactual_inference|video_10998.mp4|114",
+            "moving_attribute|video_10998.mp4|160",
+            "unexpected_action|test_creative/C_KT_20_0247_0322.mp4|99",
+            "unexpected_action|test_creative/C_KT_20_0247_0322.mp4|101",
+            "counterfactual_inference|video_11548.mp4|138",
+            "moving_attribute|video_11548.mp4|141",
+            "moving_direction|video_12645.mp4|8",
+            "object_existence|video_12645.mp4|128",
+            "counterfactual_inference|video_14400.mp4|113",
+            "moving_attribute|video_14400.mp4|34",
+            "action_prediction|84893.mp4|88",
+            "action_prediction|84893.mp4|125",
+            "object_existence|video_11683.mp4|29",
+            "object_existence|video_11683.mp4|152"
+          ],
+          "samples": 252,
+          "selected_sample_ids_sha256": "b9ec4d3655c41b5f920749017906a2a5d2bbaac6896bb9ee3499b75c1b9d31dc"
+        },
+        "population_samples": 4000
+      },
+      "source_files": [
+        {
+          "bytes": 53338,
+          "repository_path": "json/action_antonym.json",
+          "sha256": "0ebbec1f540f598a82bf27f569e7377fdc5c4b6e62d53d3847a88abb785f5513"
+        },
+        {
+          "bytes": 32742,
+          "repository_path": "json/action_count.json",
+          "sha256": "5e3389d3f8a81744096825d735d45d04b1842fb49da7f5b9a70d4c2224505117"
+        },
+        {
+          "bytes": 78029,
+          "repository_path": "json/action_localization.json",
+          "sha256": "164290bb5f447b6cdff26eb51a2470bcf4ce31f84d092ec4337f7bd4ce558eec"
+        },
+        {
+          "bytes": 46197,
+          "repository_path": "json/action_prediction.json",
+          "sha256": "15601d39ca8604dbb642149c097f416518f4816b0c0bec57a6202d95f8bdac79"
+        },
+        {
+          "bytes": 51606,
+          "repository_path": "json/action_sequence.json",
+          "sha256": "d5f8c063a5ae5a433c3fb8ff78a03acbf0513a01928b384ed90a1e044adf230e"
+        },
+        {
+          "bytes": 30205,
+          "repository_path": "json/character_order.json",
+          "sha256": "72c20ad5749da31759c92f4ed83ed117a52f70963ce1d85d5dfd1582accdead4"
+        },
+        {
+          "bytes": 65394,
+          "repository_path": "json/counterfactual_inference.json",
+          "sha256": "6fabbbaba68b10b48bfb714c51b87569266bc65303530e5ab9c39cab2924bdfa"
+        },
+        {
+          "bytes": 82642,
+          "repository_path": "json/egocentric_navigation.json",
+          "sha256": "4a5f80cca3471a15efe6d7d4ded192218871992cab32fa3a3eede93ea7fb3972"
+        },
+        {
+          "bytes": 177477,
+          "repository_path": "json/episodic_reasoning.json",
+          "sha256": "39ca717f721c274a20835835e4ca417f58d5fb2d17ffebb7042d373561c871c3"
+        },
+        {
+          "bytes": 48694,
+          "repository_path": "json/fine_grained_action.json",
+          "sha256": "21fb61328ab02e399170a22a2a4080a05dff18e8423de709e49b9fa2180fde58"
+        },
+        {
+          "bytes": 42247,
+          "repository_path": "json/fine_grained_pose.json",
+          "sha256": "f0cebc0a498474c03618aac20f67810cc41197ac97534a51f930c217dc13f091"
+        },
+        {
+          "bytes": 34139,
+          "repository_path": "json/moving_attribute.json",
+          "sha256": "b760214e4320b2ceed4580cc0febfc8c8b084487c7efcaef712b704adb850548"
+        },
+        {
+          "bytes": 27859,
+          "repository_path": "json/moving_count.json",
+          "sha256": "a561538a69b2722c96d2b608af488c04db6a0d803b03b49661b8834e9425d245"
+        },
+        {
+          "bytes": 52782,
+          "repository_path": "json/moving_direction.json",
+          "sha256": "81379646d91fb078a8b38de897f40977eeeebd946ca1c6ef0f58e4bde9d21209"
+        },
+        {
+          "bytes": 30079,
+          "repository_path": "json/object_existence.json",
+          "sha256": "2bb290258243c7dafe57042768d491e6a239d30d0ff74d0f163a989c60f69620"
+        },
+        {
+          "bytes": 52932,
+          "repository_path": "json/object_interaction.json",
+          "sha256": "9624cf2fef5ad4ec882edf955ce1d10c806e71e4e8c6a880fd867b224914302b"
+        },
+        {
+          "bytes": 77141,
+          "repository_path": "json/object_shuffle.json",
+          "sha256": "f9e1bd17a9bbab1d9f5be71411ca619cf9743ca47bb808985b202138b7928118"
+        },
+        {
+          "bytes": 67576,
+          "repository_path": "json/scene_transition.json",
+          "sha256": "edab8a7992851061cac170f7e50782961ec21826f99e70ee72ae73a9dafb79f9"
+        },
+        {
+          "bytes": 60586,
+          "repository_path": "json/state_change.json",
+          "sha256": "21fa00a1e4fdbd3a0fda4d04f1b4dfd8ee62a1e3f3663fdb0f6e40799c36027f"
+        },
+        {
+          "bytes": 81671,
+          "repository_path": "json/unexpected_action.json",
+          "sha256": "76b6f440ccb1ed007c67236c0ec7a39ee7cfbfb04197e9cc4a303b9230ca958b"
+        }
+      ],
+      "split": "test"
+    }
+  ],
+  "protocol_sha256": "85adb4b246ab3fc55bc70e02ad75d97c5aa903e89387e499fc3aea1ac2edb25d",
+  "record_type": "p9_quality_materialization",
+  "schema_version": 1,
+  "selection_contract": {
+    "algorithm": "all_exact_mvbench_source_contract_groups",
+    "development_is_prefix_of_final": true,
+    "group_order": "source_contract_sha256_ascending",
+    "group_preimage": "canonical JSON of archive name/path, member path, media type, temporal bound",
+    "within_group_order": "task_then_question_index_then_sample_id"
+  }
+}

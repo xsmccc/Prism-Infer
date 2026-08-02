@@ -1,102 +1,94 @@
 # Prism-Infer
 
-面向 **Qwen3-VL** 的多模态推理引擎，重点优化 Decode 延迟、KV Cache 容量和重复媒体请求。
+Prism-Infer 是一套面向 **Qwen3-VL** 的多模态推理引擎。本项目当前聚焦一个具体的
+在线场景：用户上传一组图片后，围绕同一组视觉内容连续提出不同问题。
 
-Prism-Infer 从模型执行层开始实现 Qwen3-VL 推理，包括 Vision Encoder、DeepStack、
-M-RoPE、Paged KV Cache、Continuous Batching、HTTP/SSE Serving 和双卡 Tensor
-Parallel。项目没有照搬通用推理框架，而是围绕 Qwen3-VL 的实际流水做 profiler
-分析，再决定哪些计算适合编译、融合、捕获或压缩。
+普通视觉缓存只能省去 Vision Encoder；语言模型仍需为每个新问题重算长视觉前缀。
+Prism-Infer 将公共视觉上下文保存为物理压实的 Scaled-FP8 Prefix KV，在固定 KV
+显存预算下驻留更多媒体，并让后续问题同时跳过 Vision/DeepStack 和公共语言 Prefill。
 
-多模态推理的问题不只在 Decode Kernel：图像和视频会产生很长的视觉前缀，占用大量
-KV；同一媒体经常被重复提问；而动态页表和请求调度又很难直接放进编译图。这个项目把
-这些问题放在同一套运行时里处理，而不是只做一个孤立的 Kernel Demo。
+## 重复视觉上下文
 
-## 主要实现
+请求使用带编号的 media-first 布局：
 
-- **Qwen3-VL 执行链路**：实现图像/视频输入、Vision Encoder、DeepStack、3D
-  Position IDs、M-RoPE、Language Decoder 和 Sampling。
-- **Scaled-FP8 KV Cache**：K/V 使用 E4M3FN，每个 token、每个 KV head 保存独立
-  FP32 scale，并支持写入、Paged Attention、CoW、Swap 和页压实。
-- **视觉 KV 压实**：根据注意力分数保留重要视觉 token，移动有效 KV 并释放空页，
-  M-RoPE 逻辑位置不随物理页变化。
-- **多模态前缀缓存**：根据媒体内容和 prompt 生成缓存 key，复用 Processor、
-  Vision/DeepStack 输出和已经压实的 KV 页，而不是依赖 Python 对象身份。
-- **torch.compile + CUDA Graph**：编译稳定的 QKV、QK-Norm 和 M-RoPE 计算，
-  CUDA Graph 负责完整 Decode，包括 Paged Attention、LM Head、选词和 TP2 NCCL。
-- **双卡 TP2**：按 rank 切分 QKV、MLP、词表和 KV heads；row-parallel 层使用
-  NCCL AllReduce，greedy decoding 只交换每张卡的局部 top-1。
-- **在线推理**：支持 Chunked Prefill、Continuous Batching、SLO-aware Scheduling、
-  请求取消、HTTP 非流式响应和 SSE 流式输出。
-
-## 性能结果
-
-测试模型为 Qwen3-VL-8B-Instruct，设备为 RTX 5090。对比版本为 vLLM 0.25.1 和
-SGLang 0.5.15.post1；详细设置见 [Results](docs/RESULTS.md)。
-
-### Decode 延迟
-
-| 场景 | Prism | SGLang | vLLM |
-|---|---:|---:|---:|
-| TP1，8 张 448×448 图片，TPOT | **9.8821 ms** | 10.3520 ms | 10.5276 ms |
-| TP1，16 帧 448×448 视频，TPOT | **9.8680 ms** | 10.3689 ms | 10.5278 ms |
-| TP2，单图 batch 1，TPOT | **5.9701 ms** | 5.9701 ms | 6.1612 ms |
-
-TP1 两组多模态测试中，Prism 的 TPOT 比 vLLM 低 6.13%–6.27%。TP2 单图测试中，
-Prism 比 vLLM 低 3.10%，两者生成的 32 个 token 完全相同。SGLang TP2 的延迟与
-Prism 接近，但从第 21 个 token 开始输出不同。
-
-TP2 的优化主要作用于 Decode。当前单图 TTFT 为 86.057 ms，vLLM 为 61.251 ms；
-Vision Encoder 仍在两张卡上各执行一次，这是后续最值得继续优化的部分。
-
-### KV Cache
-
-| 配置 | Token capacity | KV 存储 | 进程显存峰值 |
-|---|---:|---:|---:|
-| BF16 | 28,928 | 4,068.000 MiB | 23,938 MiB |
-| Scaled-FP8，同容量 | 28,928 | 2,097.562 MiB | 21,966 MiB |
-| Scaled-FP8，约 4 GiB KV | 56,320 | 4,083.750 MiB | 23,952 MiB |
-
-Scaled-FP8 将 KV 存储减少 **48.44%**，同等 KV 预算下 token capacity 提升
-**94.69%**。它的目标是提升容量，不是降低单 token 延迟。
-
-### 重复媒体请求
-
-60 请求、4 req/s、output 64：
-
-| 媒体重复率 | Prism raw / Goodput | vLLM raw / Goodput |
-|---:|---:|---:|
-| 0% | 216.188 / 133.316 | **223.079 / 215.643** |
-| 50% | 217.083 / 206.228 | **223.521 / 219.796** |
-| 75% | 224.279 / 224.279 | **225.112 / 225.112** |
-| 100% | 224.369 / 224.369 | **225.004 / 225.004** |
-
-媒体重复率达到 75% 后，Prism 与 vLLM 的吞吐差距缩小到 0.28%–0.37%。没有缓存
-命中时，冷 Vision/Prefill 会打断 Decode 节奏，vLLM 仍然更快。
-
-## 推理流程
-
-```mermaid
-flowchart LR
-    A["Text / Image / Video"] --> B["Tokenizer / Processor"]
-    B --> C{"Multimodal cache"}
-    C -- "miss" --> D["Vision Encoder + DeepStack"]
-    D --> E["Qwen3-VL Prefill"]
-    E --> F["Visual KV compaction"]
-    F --> G["Scaled-FP8 Paged KV"]
-    C -- "hit" --> H["Shared prefix pages"]
-    G --> I["Scheduler"]
-    H --> I
-    I --> J["torch.compile + CUDA Graph"]
-    J --> K["HTTP / SSE output"]
+```text
+Image 1: <image>
+Image 2: <image>
+...
+Question: ...
 ```
 
-`torch.compile` 只处理形状稳定的计算；KV 页表、slot mapping 和请求调度仍由运行时
-管理。这样既能利用 Inductor，又不会把动态 KV 状态塞进编译图。TP2 中，每个 rank
-独立运行编译后的 QKV 子图，外层 CUDA Graph 再捕获 NCCL 和完整 Decode。
+运行时在 Scheduler admission 之前完成内容寻址查询。命中时直接挂接只读 Prefix
+pages；未命中时才恢复或计算视觉特征、执行 Prefill、压实 KV 并写入缓存。缓存可以
+使用整个暂时空闲的 KV Pool，活跃请求需要空间时先回收 tail clone，再淘汰完整条目。
+
+![MuirBench working-set result](artifacts/working_set/performance/working_set_summary.png)
+
+图中的三组 MuirBench 工作集分别包含 151、223、333 个 Dense Prefix pages，而固定
+预算只有 220 pages。每组先建立一次媒体工作集，再运行 600 条 Zipf-1.0 多问题请求；
+三套引擎使用相同图片、prompt token、到达顺序、greedy 参数和 4,282,122,240-byte
+KV 预算。
+
+在 `pressure` 工作集上：
+
+| 引擎 | TTFT p50 | TTFT p99 | E2E p50 | E2E p99 | 进程峰值 | 重算 prompt tokens |
+|---|---:|---:|---:|---:|---:|---:|
+| **Prism Compact Prefix** | **102.401 ms** | **270.588 ms** | 350.512 ms | **774.318 ms** | 24,006 MiB | **83,018** |
+| vLLM 0.25.1 | 131.483 ms | 581.976 ms | **323.228 ms** | 886.035 ms | **23,714 MiB** | 165,031 |
+| SGLang 0.5.15.post1 | 494.911 ms | 1,623.782 ms | 855.944 ms | 2,270.308 ms | 24,284 MiB | 179,111 |
+
+Prism 相对 vLLM 的 TTFT p50/p99 低 22.1%/53.5%，E2E p99 低 12.6%；E2E p50
+慢 8.4%，进程峰值高 292 MiB。三者的输出吞吐均约为 64.1–64.2 tok/s，因为该负载
+由固定到达率和 output 16 主导，不能据此声称吞吐领先。
+
+Prism 内部对照显示：
+
+- Compact 运行中的 Prefix pages 相对其 Dense-equivalent 从 4,412 减至 2,910
+  （-34.0%）；
+- 相对 Dense Prefix 路径，驻留媒体从 33 组增至 48 组（+45.5%）；
+- 淘汰从 110 次减至 33 次，重算 prompt tokens 减少 56.8%；
+- TTFT p50/p99 分别降低 17.4%/61.8%。
+
+这组性能只适用于 RTX 5090、Qwen3-VL-8B、TP1、给定 KV 预算和重复多图提问场景。
+它也不是等质量的通用引擎排名：在 49 条实际删除视觉 token 的 MuirBench 样本上，
+Dense media-first 为 27/49，Uniform Compact 为 20/49。带编号的 media-first 在完整
+85 条样本上为 46/85，官方交错布局为 49/85。项目同时公开容量、延迟和质量，不把有损
+压实的性能收益描述成无代价领先；MVBench 的视频压实质量下降，因此视频删除默认关闭。
+
+详细设计、质量对照、Trace 和限制见
+[重复视觉上下文技术记录](docs/REPEATED_VISUAL_CONTEXT.md)。请求级 JSON、共用 plan
+与派生表位于 [artifacts/working_set](artifacts/working_set/README.md)。
+
+## 其他推理能力
+
+- **Qwen3-VL 执行链路**：Vision Encoder、DeepStack、3D Position IDs、M-RoPE、
+  Language Decoder 和 Sampling。
+- **Scaled-FP8 Paged KV**：E4M3FN K/V 与 per-token、per-KV-head FP32 scale，贯通
+  Store、Paged Attention、CoW、Swap、物理压实和 CUDA Graph Replay。
+- **视觉 KV 物理压实**：移动保留 K/V 并释放真实 pages，同时保持原始 M-RoPE
+  logical positions。图片主路径使用 query-agnostic Uniform；视频删除默认关闭。
+- **torch.compile + CUDA Graph**：编译稳定的 QKV、QK-Norm 和 M-RoPE 子图，外层
+  CUDA Graph 捕获完整 Decode，包括 Paged Attention、LM Head、选词和 TP2 NCCL。
+- **在线与分布式**：Continuous Batching、Chunked Prefill、HTTP/SSE，以及单机
+  双卡 Tensor Parallel。
+
+### Decode 与 KV 容量
+
+RTX 5090、TP1、batch 1、greedy output 128：
+
+| 场景 | Prism TPOT | SGLang | vLLM |
+|---|---:|---:|---:|
+| 8 张 448×448 图片 | **9.8821 ms** | 10.3520 ms | 10.5276 ms |
+| 16 帧 448×448 视频 | **9.8680 ms** | 10.3689 ms | 10.5278 ms |
+
+Scaled-FP8 将同容量 KV 存储减少 48.44%；在约 4 GiB KV 预算下，token capacity 从
+28,928 提升到 56,320（+94.69%）。双卡 TP2 单图 batch 1 的 TPOT 为 5.9701 ms，
+较同配置 vLLM 的 6.1612 ms 低 3.10%，但 TTFT/E2E 仍慢于 vLLM，原因是 Vision
+Encoder 在两个 rank 上重复执行。
 
 ## 快速开始
 
-项目支持 Python 3.10–3.12。RTX 5090 测试环境使用 Python 3.12、PyTorch
+项目支持 Python 3.10–3.12。RTX 5090 实测环境使用 Python 3.12、PyTorch
 2.11.0+cu130 和 Transformers 5.14.1。
 
 ```bash
@@ -121,17 +113,7 @@ prism-serve \
   --port 8000
 ```
 
-双卡 TP2：
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1 prism-serve \
-  --model "$PRISM_MODEL_PATH" \
-  --engine-config configs/tp2_graph.json \
-  --host 127.0.0.1 \
-  --port 8000
-```
-
-## 代码结构
+## 代码与文档
 
 ```text
 prism_infer/
@@ -142,21 +124,16 @@ prism_infer/
   ops/          Triton KV Store、Paged Decode、Compaction、Fused Kernels
   serving/      HTTP/SSE Runtime
   analysis/     Benchmark 与 Profiler 分析
-benchmarks/     Offline、Online、vLLM/SGLang 对比脚本
+benchmarks/     Offline、Online、质量与 vLLM/SGLang 对比入口
 configs/        Serving 和 TP2 配置
 ```
 
-## 文档
-
 - [架构设计](docs/ARCHITECTURE.md)
-- [性能结果](docs/RESULTS.md)
+- [完整结果](docs/RESULTS.md)
 - [运行与复现](docs/REPRODUCIBILITY.md)
 
-## 当前支持
-
-Prism-Infer 当前面向 Qwen3-VL，完成了单机 TP1/TP2、多模态 Continuous Batching、
-Paged KV、FP8 KV、CUDA Graph 和原生 HTTP/SSE。暂未实现 PP、多机 TP、MoE Expert
-Parallel 和 OpenAI-compatible API。
+当前未实现 PP、多机 TP、MoE Expert Parallel、跨进程 Prefix Cache 和
+OpenAI-compatible API。
 
 ## 致谢与许可
 

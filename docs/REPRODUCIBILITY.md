@@ -1,8 +1,8 @@
 # 运行与复现
 
-## 环境
+## 1. 环境
 
-项目结果使用以下环境：
+主要工作集结果使用：
 
 ```text
 GPU: RTX 5090 32 GB
@@ -14,19 +14,15 @@ Transformers: 5.14.1
 vLLM: 0.25.1
 SGLang: 0.5.15.post1
 Model: Qwen3-VL-8B-Instruct
+Model revision: 0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
 ```
 
-不同 PyTorch、CUDA、Attention Backend 和 GPU 会影响结果，建议在输出 JSON 中保留
-完整版本信息。
-
-## 安装
-
-先安装与 CUDA 匹配的 PyTorch，再安装 Prism-Infer：
+Prism、vLLM 和 SGLang 使用独立 Python 环境，避免它们对 Torch、Transformers 和
+Attention backend 的依赖互相覆盖。原始 JSON 保存实际版本、模型、输入身份和配置。
 
 ```bash
 git clone https://github.com/xsmccc/Prism-Infer.git
 cd Prism-Infer
-
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -34,145 +30,193 @@ python -m pip install -e ".[blackwell,quality,serving,dev]"
 
 export PRISM_MODEL_PATH=/path/to/Qwen3-VL-8B-Instruct
 python scripts/check_environment.py --model "$PRISM_MODEL_PATH"
-python example.py
 ```
 
-## TP1 图片和视频测试
+## 2. 检查仓库内的结果
 
-H1/H2 输入定义在 `benchmarks/workloads/p9_headline.json`。
+仓库包含共用 plan、15 个请求级性能记录、9 个质量记录和代表性 Nsight Trace：
 
 ```bash
-python benchmarks/bench_external_prism.py \
-  --model "$PRISM_MODEL_PATH" \
-  --manifest benchmarks/workloads/p9_headline.json \
-  --case h1_eight_image_448 \
-  --execution-backend compile_graph \
-  --compression-mode off \
-  --num-kvcache-blocks 113 \
-  --kvcache-block-size 256 \
-  --warmup 2 \
-  --repeat 5 \
-  --max-tokens 128 \
-  --output data/repro/prism_h1_bf16.json
+cd artifacts/working_set
+sha256sum -c SHA256SUMS
 ```
 
-将 case 改为 `h2_video_16x448` 可以运行视频测试。Scaled-FP8 配置：
+压缩 JSON 可以单独展开：
 
 ```bash
-python benchmarks/bench_external_prism.py \
-  --model "$PRISM_MODEL_PATH" \
-  --manifest benchmarks/workloads/p9_headline.json \
-  --case h1_eight_image_448 \
-  --execution-backend compile_graph \
-  --compression-mode scaled_fp8_kv \
-  --num-kvcache-blocks 220 \
-  --kvcache-block-size 256 \
-  --warmup 2 \
-  --repeat 5 \
-  --max-tokens 128 \
-  --output data/repro/prism_h1_scaled_fp8.json
+gzip -dk performance/performance_raw/prism_compact_prefix_pressure.json.gz
+gzip -dk quality/quality_raw/muir_uniform_reuse.json.gz
 ```
 
-vLLM 和 SGLang 使用对应 adapter：
+`performance/working_set_summary.json` 与 `quality/quality_summary.json` 是机器可读汇总；
+Markdown、CSV 和 PNG 是派生展示。
+
+## 3. 数据准备
+
+MuirBench 与 DocVQA 从固定 Sample IDs 物化：
+
+```bash
+python scripts/materialize_p9_quality.py \
+  --raw-root /path/to/p9_quality/raw \
+  --output-root /path/to/p9_quality/materialized \
+  --selection-output /path/to/p9_quality/materialized/selection.json
+```
+
+MVBench 先按精确媒体身份建立同视频多问题子集，再用 HTTP Range、CRC 和 SHA256 物化
+选中的 archive members：
+
+```bash
+python scripts/build_mvbench_repeated_subset.py \
+  --raw-root /path/to/p9_quality/raw \
+  --output-root /path/to/mvbench_repeated \
+  --selection-output /path/to/mvbench_repeated/p9_mvbench_repeated_selection.json
+
+python scripts/materialize_p9_mvbench_media.py \
+  --output-root /path/to/mvbench_repeated \
+  --selection-output /path/to/mvbench_repeated/p9_mvbench_repeated_selection.json \
+  --exclude-unavailable-manual
+```
+
+最终选择包含 123 个可验证视频、252 个问题。仓库记录选择、archive revision、CRC 与
+SHA256，但不分发数据集媒体。
+
+## 4. 生成 Working-set Plan
+
+Dense Scaled-FP8 预运行真实加载每个媒体组并原子保存 page 进度，随后生成三个请求流：
+
+```bash
+python benchmarks/build_working_set_plan.py \
+  --model "$PRISM_MODEL_PATH" \
+  --model-revision 0c351dd01ed87e9c1b53cbc748cba10e6187ff3b \
+  --materialized-root /path/to/p9_quality/materialized \
+  --page-artifact data/working_set/muirbench_dense_prefix_pages_8192.json \
+  --output data/working_set/muirbench_working_set_plan.json
+```
+
+最终身份：
 
 ```text
-benchmarks/bench_external_vllm.py
-benchmarks/bench_external_sglang.py
+dense pages SHA256: 028f471748d7431f63b7cfbb859fc73680aa7a8b97b4c9ff9c4d969eff7ebbef
+plan SHA256:        3af9e6e29656c9fe93d08c760e64a71ee4c6deb67782cbe228cc27cd56ff984a
 ```
 
-比较时保持模型、prompt tokens、KV 预算、output length、warmup 和 repeat 相同。
-
-## 双卡 TP2
-
-先确认两张 GPU 可见：
+## 5. 运行性能矩阵
 
 ```bash
-nvidia-smi topo -m
-```
-
-单图 batch1：
-
-```bash
-python benchmarks/bench_system.py \
+python benchmarks/run_working_set_matrix.py \
   --model "$PRISM_MODEL_PATH" \
-  --case single_image_448 \
-  --modes tp2_compile_graph \
-  --tensor-parallel-size 2 \
-  --max-tokens 32 \
-  --warmup 1 \
-  --repeat 3 \
-  --max-model-len 512 \
-  --max-num-batched-tokens 512 \
-  --max-num-seqs 1 \
-  --num-kvcache-blocks 8 \
-  --output data/repro/tp2_single_image_32.jsonl
+  --plan data/working_set/muirbench_working_set_plan.json \
+  --materialized-root /path/to/p9_quality/materialized \
+  --output-dir data/working_set/matrix \
+  --prism-python /path/to/prism/.venv/bin/python \
+  --vllm-python /path/to/vllm/.venv/bin/python \
+  --sglang-overlay /path/to/sglang/overlay
 ```
 
-text + image + video 混合 batch3：
+矩阵包含 Prism 的 `vision_only`、`dense_prefix`、`compact_prefix`，以及 vLLM、SGLang，
+覆盖 `fit`、`knee`、`pressure`，共 15 个 cell。实例中断后对同一输出目录增加
+`--resume`；程序会核对已完成 cell 的 plan、模型、配置和 SHA256，只运行缺失 cell。
 
 ```bash
-python benchmarks/bench_system.py \
+python benchmarks/summarize_working_set.py \
+  data/working_set/matrix/raw/*.json \
+  --output-dir data/working_set/summary
+```
+
+完整汇总要求 15/15 cell，不设置人为性能阈值。
+
+## 6. 质量对照
+
+标准 stage 调用格式：
+
+```bash
+python benchmarks/bench_working_set_quality.py run \
   --model "$PRISM_MODEL_PATH" \
-  --case mixed_text_image_video \
-  --modes tp2_compile_graph \
-  --tensor-parallel-size 2 \
-  --max-tokens 8 \
-  --warmup 1 \
-  --repeat 2 \
-  --max-model-len 768 \
-  --max-num-batched-tokens 2304 \
-  --max-num-seqs 3 \
-  --num-kvcache-blocks 16 \
-  --output data/repro/tp2_mixed_b3.jsonl
+  --stage muir_uniform_reuse \
+  --output data/working_set/quality/muir_uniform_reuse.json \
+  --materialized-root /path/to/p9_quality/materialized \
+  --raw-root /path/to/p9_quality/raw \
+  --phase all
 ```
 
-外部引擎 adapter 同样支持 `--tensor-parallel-size 2`。RTX 5090 环境中，vLLM 使用
-PyTorch native sampler，SGLang 使用 Triton Attention。
+用同一格式依次运行：
 
-## 在线重复媒体测试
+```text
+muir_dense_official
+muir_dense_media_first
+muir_uniform_reuse
+docvqa_dense
+docvqa_uniform
+```
+
+`muir_attention_per_question` 与 `muir_attention_first_reuse` 必须把 Attention 选择和 replay
+放在独立进程；第一次使用 `--phase selection`，第二次使用 `--phase replay --resume`。
+
+`mvbench_dense` 与 `mvbench_uniform` 使用相同命令，但把 `--materialized-root` 指向
+MVBench 物化目录，并增加：
 
 ```bash
-P17_RUN_REVISION=repro \
-  benchmarks/run_p17_repeat_matrix.sh \
-  "$PRISM_MODEL_PATH" \
-  data/p17_repeat_matrix
-
-benchmarks/run_p17_vllm_repeat_matrix.sh \
-  "$PRISM_MODEL_PATH" \
-  data/p17_repeat_matrix
+--selection /path/to/mvbench_repeated/p9_mvbench_repeated_selection.json
 ```
 
-脚本依次运行 0%、25%、50%、75%、100% 媒体重复率，以及相同媒体、更换问题的测试。
-
-## HTTP/SSE Serving
+九个 stage 完成后做严格配对汇总：
 
 ```bash
-prism-serve \
-  --model "$PRISM_MODEL_PATH" \
-  --host 127.0.0.1 \
-  --port 8000
+python benchmarks/bench_working_set_quality.py summarize \
+  --input data/working_set/quality/*.json \
+  --output data/working_set/quality_summary.json
 ```
 
-双卡配置：
+汇总只用候选配置真正物理删除过 token 的样本评价压实质量；没有删除的样本不会稀释
+结果。DocVQA 因而明确报告 0 个 actual-deletion samples。
+
+## 7. Prefix-hit Nsight Trace
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 prism-serve \
-  --model "$PRISM_MODEL_PATH" \
-  --engine-config configs/tp2_graph.json \
-  --host 127.0.0.1 \
-  --port 8000
+nsys profile \
+  --capture-range=cudaProfilerApi \
+  --capture-range-end=stop \
+  --trace=cuda,nvtx,osrt \
+  --sample=none \
+  --cpuctxsw=none \
+  --output=data/working_set/trace/prefix_hit \
+  python benchmarks/trace_working_set_prefix.py \
+    --model "$PRISM_MODEL_PATH" \
+    --working-set-plan data/working_set/muirbench_working_set_plan.json \
+    --materialized-root /path/to/p9_quality/materialized \
+    --output data/working_set/trace/trace_evidence.json
+
+nsys export \
+  --type=sqlite \
+  --output=data/working_set/trace/prefix_hit.sqlite \
+  data/working_set/trace/prefix_hit.nsys-rep
 ```
 
-## JSON 输出
+分析与语义审计：
 
-Benchmark JSON 包含：
+```bash
+python benchmarks/analyze_nsys.py \
+  data/working_set/trace/prefix_hit.sqlite \
+  --engine-range prism::prefix_hit_request \
+  --prefill-steps 0 \
+  --target-range prism::cold_request \
+  --target-range prism::prefix_hit_request \
+  --output data/working_set/trace/nsys_summary.json \
+  --quiet
 
-- 模型、GPU、PyTorch 和执行后端；
-- TTFT、TPOT、E2E 和吞吐；
-- CUDA Graph capture/replay 次数；
-- torch.compile region 和首次编译时间；
-- KV Cache 配置与显存；
-- 输入 token、输出 token 和 SHA256。
+python benchmarks/audit_working_set_prefix_trace.py \
+  --sqlite data/working_set/trace/prefix_hit.sqlite \
+  --evidence data/working_set/trace/trace_evidence.json \
+  --output data/working_set/trace/trace_audit.json
+```
 
-性能测试和 Nsight Profiling 分开运行，避免 profiler 改变延迟。显存采样也使用单独
-进程，不与 TPOT 测试混在一起。
+审计检查 cold range 有 Vision、hit range 无 Vision/DeepStack、命中跳过 hydration、复用
+公共 tokens 且没有 stale fallback。Trace 带有 profiler 开销，不与在线 TTFT 表混用。
+
+## 8. Decode 与 TP2 补充测量
+
+TP1 图片/视频输入定义在 `benchmarks/workloads/p9_headline.json`，入口为
+`benchmarks/bench_external_prism.py` 及对应 vLLM/SGLang adapter。TP2 使用
+`benchmarks/bench_system.py --tensor-parallel-size 2`。完整固定参数见原始结果 JSON；
+性能测量与 Nsight capture 分开运行，Process peak 由 NVML 进程显存采样记录，不从整卡
+`memory.used` 推断。

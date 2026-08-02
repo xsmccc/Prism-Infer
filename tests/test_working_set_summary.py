@@ -117,7 +117,15 @@ def _prism_record() -> dict[str, object]:
             "physical_prompt_blocks": 36,
             "released_blocks": 24,
         },
-        "memory": {"kv_cache": {"total_bytes": 4_000}},
+        "memory": {
+            "kv_cache": {"total_bytes": 4_000},
+            "process_device": {
+                "peak_serving_mib": 24_000.0,
+                "after_llm_init_mib": 23_500.0,
+                "after_benchmark_mib": 23_750.0,
+                "measurement": "NVML total compute-process usedGpuMemory",
+            },
+        },
         "population": _population("prism"),
         "run": {
             "duration_s": 2.0,
@@ -142,6 +150,14 @@ def _external_record(engine: str) -> dict[str, object]:
         },
         "arrival": {"trace_sha256": "trace-fit"},
         "backend": backend,
+        "memory": {
+            "process_device": {
+                "peak_serving_mib": 23_000.0,
+                "after_llm_init_mib": 22_000.0,
+                "after_benchmark_mib": 22_500.0,
+                "measurement": "NVML total compute-process usedGpuMemory",
+            }
+        },
         "population": _population(engine),
         "run": {"duration_s": 2.0, "requests": _requests(cached_tokens=True)},
     }
@@ -184,10 +200,12 @@ class WorkingSetSummaryTest(unittest.TestCase):
         prism = cells[("prism", "compact_prefix")]
         vllm = cells[("vllm", "engine_default")]
 
+        self.assertEqual(summary["schema_version"], 2)
         self.assertEqual(prism["latency_ms"]["ttft"]["p50"], 150.0)
         self.assertEqual(prism["latency_ms"]["ttft"]["p99"], 199.0)
         self.assertEqual(prism["latency_ms"]["e2e"]["p50"], 400.0)
         self.assertEqual(prism["throughput"]["output_tokens_per_s"], 10.0)
+        self.assertEqual(prism["process_memory"]["peak_serving_mib"], 24_000.0)
         self.assertEqual(prism["resident_media_entries"], 2)
         self.assertEqual(prism["prefix_cache"]["pre_admission_hits"], 2)
         self.assertEqual(prism["prefix_cache"]["visual_hydration_skips"], 2)
@@ -207,6 +225,7 @@ class WorkingSetSummaryTest(unittest.TestCase):
         self.assertEqual(vllm["vision_cache"]["hits"], UNAVAILABLE)
         self.assertEqual(vllm["cached_token_signal"]["requests_with_cached_tokens"], 1)
         self.assertEqual(vllm["recomputed_prompt_tokens"], 150)
+        self.assertEqual(vllm["process_memory"]["peak_serving_mib"], 23_000.0)
 
         prism_rows, engine_rows = build_tables(summary)
         self.assertEqual(len(prism_rows), 3)
@@ -274,6 +293,13 @@ class WorkingSetSummaryTest(unittest.TestCase):
             self.assertIn(
                 "unavailable",
                 Path(outputs["engines_csv"]).read_text(encoding="utf-8"),
+            )
+            prism_csv = Path(outputs["prism_csv"]).read_text(encoding="utf-8")
+            self.assertIn("process_peak_mib", prism_csv)
+            self.assertIn("24000.000", prism_csv)
+            self.assertIn(
+                "Process peak MiB",
+                Path(outputs["prism_markdown"]).read_text(encoding="utf-8"),
             )
 
 

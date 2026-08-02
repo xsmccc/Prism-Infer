@@ -1,0 +1,72 @@
+{
+  "checks": {
+    "cold_trace_contains_vision_ranges": true,
+    "prefix_hit_had_no_stale_fallback": true,
+    "prefix_hit_skipped_visual_hydration": true,
+    "prefix_hit_trace_contains_no_vision_or_deepstack_ranges": true,
+    "prefix_hit_used_cached_public_prefix_tokens": true,
+    "semantic_prefix_hit_passed": true
+  },
+  "cold_nested_ranges": {
+    "cub::DeviceReduce::Sum": 6,
+    "cub::DeviceScan::ExclusiveScan": 1,
+    "cub::DeviceScan::InclusiveScan": 2,
+    "cub::DeviceScan::InclusiveSumByKey": 4,
+    "cub::DeviceSelect::Flagged": 6,
+    "prism::attention.kv_store.triton_scaled_fp8": 72,
+    "prism::attention.prefill.paged_gather": 36,
+    "prism::attention.prefill.paged_sdpa": 36,
+    "prism::attention.prefill.vllm_flash_attn_varlen": 36,
+    "prism::cold_request": 1,
+    "prism::engine.kv.visual_compact": 2,
+    "prism::engine.model_runner": 17,
+    "prism::engine.scheduler.postprocess": 17,
+    "prism::engine.scheduler.schedule": 17,
+    "prism::engine.step": 17,
+    "prism::model.language_model": 2,
+    "prism::model.token_embedding": 2,
+    "prism::model.vision.embedding_cache_miss": 1,
+    "prism::runner.cudagraph.copy_inputs": 15,
+    "prism::runner.cudagraph.replay": 15,
+    "prism::runner.model.compute_logits": 2,
+    "prism::runner.model.forward": 2,
+    "prism::runner.prepare_inputs": 2,
+    "prism::runner.prepare_sample_inputs": 2,
+    "prism::runner.run_model": 17,
+    "prism::runner.sampler": 17
+  },
+  "cold_vision_ranges": {
+    "prism::model.vision.embedding_cache_miss": 1
+  },
+  "common_prefix_reuse": {
+    "cached_fraction": 0.5272727272727272,
+    "cached_tokens": 145,
+    "prompt_tokens": 275
+  },
+  "passed": true,
+  "prefix_hit_nested_ranges": {
+    "cub::DeviceScan::InclusiveSumByKey": 2,
+    "prism::attention.kv_store.triton_scaled_fp8": 36,
+    "prism::attention.prefill.paged_gather": 36,
+    "prism::attention.prefill.paged_sdpa": 36,
+    "prism::engine.kv.copy_prefix": 1,
+    "prism::engine.kv.visual_compact": 1,
+    "prism::engine.model_runner": 16,
+    "prism::engine.scheduler.postprocess": 16,
+    "prism::engine.scheduler.schedule": 16,
+    "prism::engine.step": 16,
+    "prism::model.language_model": 1,
+    "prism::model.token_embedding": 1,
+    "prism::prefix_hit_request": 1,
+    "prism::runner.cudagraph.copy_inputs": 15,
+    "prism::runner.cudagraph.replay": 15,
+    "prism::runner.model.compute_logits": 1,
+    "prism::runner.model.forward": 1,
+    "prism::runner.prepare_inputs": 1,
+    "prism::runner.prepare_sample_inputs": 1,
+    "prism::runner.run_model": 16,
+    "prism::runner.sampler": 16
+  },
+  "prefix_hit_vision_ranges": {},
+  "record_type": "working_set_prefix_trace_audit"
+}

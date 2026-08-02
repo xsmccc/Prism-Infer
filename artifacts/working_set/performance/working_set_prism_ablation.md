@@ -1,0 +1,13 @@
+# Prism working-set ablation
+
+| Workset | Label | Dense pages | Media groups | Resident media | TTFT p50 ms | TTFT p99 ms | E2E p50 ms | E2E p99 ms | Output tok/s | Process peak MiB | Pre-admission hits | Visual hydration skips | Stale-probe fallbacks | Prefix hits | Prefix misses | Prefix evictions | Prefix entries | Prefix resident blocks | Tail-clone hits | Tail-clone admissions | Tail-clone evictions | Tail-clone resident blocks | Dense prompt pages | Actual compact pages | Released pages | Vision hits | Vision misses | Requests with cached-token signal | Cached-token signal total | Recomputed prompt tokens |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fit | vision_only | 151 | 25 | 5 | 627.628 | 2085.377 | 1824.992 | 3511.067 | 64.129 | 23992.000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 296 | 304 | 0 | 0 | 1086564 |
+| fit | dense_prefix | 151 | 25 | 25 | 99.378 | 209.943 | 346.333 | 703.148 | 64.234 | 23998.000 | 600 | 600 | 0 | 600 | 0 | 0 | 25 | 187 | 564 | 36 | 0 | 36 | 4649 | 4649 | 0 | 0 | 0 | 600 | 1022342 | 64222 |
+| fit | compact_prefix | 151 | 25 | 25 | 97.693 | 253.682 | 330.853 | 690.553 | 64.239 | 23998.000 | 600 | 600 | 0 | 600 | 0 | 0 | 25 | 138 | 568 | 32 | 0 | 32 | 4649 | 3060 | 1589 | 0 | 0 | 600 | 1022342 | 64222 |
+| knee | vision_only | 223 | 38 | 6 | 413.673 | 2154.481 | 1395.473 | 3641.962 | 64.152 | 23996.000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 256 | 344 | 0 | 0 | 1049715 |
+| knee | dense_prefix | 223 | 38 | 35 | 103.911 | 270.224 | 353.546 | 743.239 | 64.239 | 24002.000 | 575 | 575 | 0 | 575 | 25 | 25 | 35 | 216 | 246 | 329 | 319 | 9 | 4416 | 4416 | 0 | 16 | 9 | 575 | 970342 | 79373 |
+| knee | compact_prefix | 223 | 38 | 38 | 97.837 | 218.424 | 333.900 | 701.338 | 64.245 | 24002.000 | 600 | 600 | 0 | 600 | 0 | 0 | 38 | 201 | 557 | 43 | 0 | 43 | 4504 | 2987 | 1517 | 0 | 0 | 600 | 986323 | 63392 |
+| pressure | vision_only | 333 | 59 | 7 | 578.965 | 3044.275 | 1832.086 | 4646.051 | 64.149 | 24000.000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 206 | 394 | 0 | 0 | 1052583 |
+| pressure | dense_prefix | 333 | 59 | 33 | 124.009 | 707.520 | 420.122 | 1179.932 | 64.207 | 24004.000 | 483 | 483 | 0 | 485 | 115 | 110 | 33 | 215 | 155 | 330 | 327 | 2 | 3907 | 3907 | 0 | 26 | 91 | 485 | 860493 | 192090 |
+| pressure | compact_prefix | 333 | 59 | 48 | 102.401 | 270.588 | 350.512 | 774.318 | 64.227 | 24006.000 | 567 | 567 | 0 | 567 | 33 | 33 | 48 | 216 | 199 | 368 | 365 | 3 | 4412 | 2910 | 1502 | 16 | 17 | 567 | 969565 | 83018 |
