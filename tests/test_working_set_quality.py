@@ -20,6 +20,7 @@ from prism_infer.engine.visual_pruning import (
     VisualPruningConfig,
     compute_pruning_decision,
 )
+from scripts.build_mvbench_repeated_subset import select_repeated_mvbench_records
 
 
 def _record(sample_id: str, media_digest: str) -> dict[str, object]:
@@ -154,6 +155,37 @@ def test_mvbench_group_identity_includes_temporal_bound_and_sampling_contract():
         records[0],
         sampling_identity={"algorithm": "segment_center", "frames": 8},
     )
+
+
+def test_mvbench_repeated_selection_uses_exact_source_and_temporal_contract():
+    def row(sample_id, *, member, temporal_bound=None, question_index=0):
+        return {
+            "sample_id": sample_id,
+            "task": "task",
+            "question_index": question_index,
+            "temporal_bound": temporal_bound,
+            "media": [
+                {
+                    "archive": {"name": "archive.zip", "repository_path": "archive.zip"},
+                    "archive_member_path": member,
+                    "media_type": "video",
+                }
+            ],
+        }
+
+    records = [
+        row("b", member="shared.mp4", question_index=1),
+        row("a", member="shared.mp4", question_index=0),
+        row("other-time-1", member="clip.mp4", temporal_bound={"start": 0, "end": 1}),
+        row("other-time-2", member="clip.mp4", temporal_bound={"start": 1, "end": 2}),
+        row("single", member="single.mp4"),
+    ]
+
+    selected, groups = select_repeated_mvbench_records(records)
+
+    assert [record["sample_id"] for record in selected] == ["a", "b"]
+    assert len(groups) == 1
+    assert groups[0]["sample_ids"] == ["a", "b"]
 
 
 def _attention_replay_fixture():
