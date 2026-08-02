@@ -91,6 +91,12 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _absolute_without_resolving_symlinks(path: Path) -> Path:
+    """Keep virtual-environment launchers intact while making paths absolute."""
+
+    return Path(os.path.abspath(path))
+
+
 def main() -> None:
     args = _parse_args()
     git = collect_git_metadata(REPO_ROOT, strict=True)
@@ -145,8 +151,8 @@ def main() -> None:
             plan=args.plan.resolve(),
             materialized_root=args.materialized_root.resolve(),
             output=output,
-            prism_python=args.prism_python.resolve(),
-            vllm_python=args.vllm_python.resolve(),
+            prism_python=_absolute_without_resolving_symlinks(args.prism_python),
+            vllm_python=_absolute_without_resolving_symlinks(args.vllm_python),
         )
         record = {
             "index": index,
