@@ -272,6 +272,7 @@ def _generate_with_audit(
         "prefix_hit_on_submit": bool(sequence.multimodal_prefix_cache_hit),
         "pre_admission_hit": bool(getattr(sequence, "multimodal_prefix_pre_admission_hit", False)),
         "prefix_cache_candidate_tokens": int(sequence.prefix_cache_candidate_tokens),
+        "multimodal_prefix_boundary": sequence.multimodal_prefix_boundary,
     }
     output = llm._finish_single_generation(sequence_id, None)
     submission_audit["compression_decision"] = copy.deepcopy(
@@ -332,9 +333,7 @@ def _run_sample(
             replay_record=replay_record,
         )
         decision = audit["compression_decision"]
-        used_prefix_boundary = bool(audit["pre_admission_hit"]) or (
-            int(audit["prefix_cache_candidate_tokens"]) > 0
-        )
+        used_prefix_boundary = audit["multimodal_prefix_boundary"] is not None
         if spec.requires_prefix_boundary and not used_prefix_boundary:
             raise RuntimeError(
                 "quality output did not expose the required media-first prefix boundary"
@@ -395,6 +394,7 @@ def _run_sample(
             "prefix_hit_on_submit": audit["prefix_hit_on_submit"],
             "pre_admission_hit": audit["pre_admission_hit"],
             "prefix_cache_candidate_tokens": audit["prefix_cache_candidate_tokens"],
+            "multimodal_prefix_boundary": audit["multimodal_prefix_boundary"],
             "compression_decision": decision,
             "quality_used_prefix_boundary": used_prefix_boundary,
             "quality_used_physical_prefix_kv": used_physical_prefix_kv,
@@ -587,9 +587,7 @@ def _restore_first_question_prefix(
     if output["token_ids"] != recorded["output_token_ids"]:
         raise RuntimeError("resume prefix restoration changed first-question output tokens")
     decision = audit["compression_decision"]
-    used_prefix_boundary = bool(audit["pre_admission_hit"]) or (
-        int(audit["prefix_cache_candidate_tokens"]) > 0
-    )
+    used_prefix_boundary = audit["multimodal_prefix_boundary"] is not None
     if spec.requires_prefix_boundary and not used_prefix_boundary:
         raise RuntimeError("resume prefix restoration did not expose a prefix boundary")
     used_physical_prefix_kv = isinstance(decision, dict) and bool(
