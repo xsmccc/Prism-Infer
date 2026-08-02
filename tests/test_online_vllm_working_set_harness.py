@@ -64,13 +64,17 @@ def test_runtime_audits_initialized_blocks_and_allocated_bytes(
     )
     model_config = SimpleNamespace(
         hf_text_config=text_config,
-        mm_processor_kwargs=processor_kwargs,
+        multimodal_config=SimpleNamespace(
+            mm_processor_kwargs=processor_kwargs,
+            mm_processor_cache_gb=1.0,
+        ),
     )
     cache_config = SimpleNamespace(
         kv_cache_memory_bytes=4_282_122_240,
         cache_dtype="fp8_per_token_head",
         num_gpu_blocks=220,
         block_size=256,
+        enable_prefix_caching=True,
     )
     config = SimpleNamespace(
         cache_config=cache_config,

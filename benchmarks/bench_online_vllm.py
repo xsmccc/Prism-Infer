@@ -616,9 +616,11 @@ def _verify_vllm_working_set_runtime(
     expected_max_num_seqs = int(working_set.plan["serving"]["max_num_seqs"])
     expected_max_num_batched_tokens = int(working_set.plan["serving"]["max_chunk_size"])
     expected_processor_kwargs = working_set_processor_kwargs(working_set.plan)
-    actual_processor_kwargs = getattr(config.model_config, "mm_processor_kwargs", None)
+    multimodal_config = getattr(config.model_config, "multimodal_config", None)
+    actual_processor_kwargs = getattr(multimodal_config, "mm_processor_kwargs", None)
     if not isinstance(actual_processor_kwargs, Mapping):
         raise RuntimeError("vLLM exposes no effective multimodal processor kwargs")
+    actual_mm_processor_cache_gb = float(getattr(multimodal_config, "mm_processor_cache_gb", -1.0))
     actual_num_gpu_blocks = getattr(cache, "num_gpu_blocks", None)
     if actual_num_gpu_blocks is None:
         raise RuntimeError("vLLM exposes no initialized GPU block count")
@@ -641,6 +643,8 @@ def _verify_vllm_working_set_runtime(
         "max_num_batched_tokens": int(scheduler.max_num_batched_tokens)
         == expected_max_num_batched_tokens,
         "attention_backend": actual_attention_backend == WORKING_SET_ATTENTION_BACKEND,
+        "prefix_caching": bool(cache.enable_prefix_caching),
+        "mm_processor_cache_gb": actual_mm_processor_cache_gb == 1.0,
         "processor_kwargs": dict(actual_processor_kwargs) == expected_processor_kwargs,
         "local_processor": processor_verification["image_size"]
         == {
@@ -662,6 +666,8 @@ def _verify_vllm_working_set_runtime(
         "max_num_seqs": int(scheduler.max_num_seqs),
         "max_num_batched_tokens": int(scheduler.max_num_batched_tokens),
         "attention_backend": actual_attention_backend,
+        "prefix_caching": bool(cache.enable_prefix_caching),
+        "mm_processor_cache_gb": actual_mm_processor_cache_gb,
         "mm_processor_kwargs": dict(actual_processor_kwargs),
         "processor": processor_verification,
     }
