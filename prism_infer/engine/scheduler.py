@@ -509,7 +509,11 @@ class Scheduler:
             seq = self.running[0]
             if seq.status is RequestState.DECODING and self.block_manager.can_append(seq):
                 block_count = len(seq.block_table)
-                cow_pair = self.block_manager.copy_on_write(seq)
+                cow_pair = (
+                    None
+                    if seq.physical_kv_len % self.block_manager.block_size == 1
+                    else self.block_manager.copy_on_write(seq)
+                )
                 self.block_manager.may_append(seq)
                 # Queue cardinality cannot grow on this path.  Only a newly
                 # allocated KV block can advance a scheduler peak.
@@ -565,7 +569,11 @@ class Scheduler:
                     self.preempt(seq, swap_out_map)
                     break
             else:
-                cow_pair = self.block_manager.copy_on_write(seq)
+                cow_pair = (
+                    None
+                    if seq.physical_kv_len % self.block_manager.block_size == 1
+                    else self.block_manager.copy_on_write(seq)
+                )
                 if cow_pair is not None:
                     cow_pairs.append(cow_pair)
                 self.block_manager.may_append(seq)
@@ -705,6 +713,7 @@ class Scheduler:
                     reason=("eos" if not seq.ignore_eos and token_id == self.eos else "length"),
                 )
                 self.block_manager.deallocate(seq)
+                seq.release_multimodal_runtime_tensors()
                 self.running.remove(seq)
                 outputs.append(
                     RequestOutput(
@@ -740,6 +749,7 @@ class Scheduler:
                 queue.remove(seq)
                 if seq.block_table or seq.cpu_block_table:
                     self.block_manager.deallocate(seq)
+                seq.release_multimodal_runtime_tensors()
                 seq.transition_to(
                     RequestState.CANCELLED,
                     reason="cancelled by caller",

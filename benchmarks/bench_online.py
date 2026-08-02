@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import random
 import sys
 from collections import Counter
@@ -39,6 +40,13 @@ from benchmarks.harness import (
 from benchmarks.multimodal_cache_workload import (
     build_multimodal_cache_workload,
 )
+from benchmarks.working_set_workload import (
+    MaterializedWorkingSet,
+    materialize_working_set,
+    source_prompt_schedule_sha256,
+    verify_working_set_model,
+    verify_working_set_processor,
+)
 from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import load_workload_manifest
 from prism_infer.analysis.online_serving import (
@@ -63,6 +71,24 @@ P12_ONLINE_MODES = (
     "visual_compact_scaled_fp8_compile_graph",
 )
 H3_PROFILES = ("primary", "conditional_video")
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    """Create one evidence file atomically without replacing an earlier run."""
+
+    if path.exists():
+        raise FileExistsError(f"refusing to replace existing benchmark output: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 class _DeviceProcessMemorySampler:
@@ -199,6 +225,33 @@ def _online_requests(
     )
 
 
+def _planned_online_requests(
+    payloads: list[dict],
+    *,
+    request_ids: list[str],
+    offsets_s: list[float],
+    sampling: SamplingParams,
+) -> tuple[OnlineRequest, ...]:
+    """Build requests from the framework-neutral plan without resampling it."""
+
+    if not (len(payloads) == len(request_ids) == len(offsets_s)):
+        raise ValueError("planned payload, request-id and arrival counts must match")
+    return tuple(
+        OnlineRequest(
+            request_key=request_id,
+            arrival_offset_s=offset_s,
+            payload=payload,
+            sampling_params=sampling,
+        )
+        for payload, request_id, offset_s in zip(
+            payloads,
+            request_ids,
+            offsets_s,
+            strict=True,
+        )
+    )
+
+
 def _smooth_weighted_period(
     classes: list[dict[str, object]],
 ) -> tuple[str, ...]:
@@ -308,6 +361,143 @@ def _prompt_audit(
         "prompt_token_ids_sha256": _canonical_sha256(prompt_ids),
         "prompt_token_ids_sha256_by_class": {
             case_id: _canonical_sha256(rows) for case_id, rows in sorted(by_class.items())
+        },
+    }
+
+
+_PREFIX_COUNTER_FIELDS = (
+    "pre_admission_hits",
+    "visual_hydration_skips",
+    "stale_probe_fallbacks",
+    "hits",
+    "misses",
+    "admissions",
+    "evictions",
+    "rejections",
+    "cow_copies",
+    "tail_clone_hits",
+    "tail_clone_admissions",
+    "tail_clone_evictions",
+)
+
+
+def _prefix_metadata_delta(
+    before: dict[str, object],
+    after: dict[str, object],
+) -> dict[str, int]:
+    return {name: int(after[name]) - int(before[name]) for name in _PREFIX_COUNTER_FIELDS}
+
+
+def _population_prefix_evidence(
+    llm,
+    run,
+    *,
+    group_id: str,
+    sample_id: str,
+    expected_dense_pages: int,
+    page_size_tokens: int,
+    variant: str,
+    metadata_before: dict[str, object],
+    metadata_after: dict[str, object],
+) -> dict[str, object]:
+    if len(run.requests) != 1:
+        raise RuntimeError("working-set population runs must contain one request")
+    result = run.requests[0]
+    if result.state != "finished":
+        raise RuntimeError(f"working-set population request did not finish: {result.request_key!r}")
+    seq = llm.scheduler.requests[result.request_id]
+    prompt_ids = list(seq.token_ids[: seq.num_prompt_tokens])
+    decision = dict(seq.visual_pruning_decision_record or {})
+    compacted_tokens = decision.get("compacted_prefix_kv_tokens")
+    compacted_pages = (
+        None
+        if compacted_tokens is None
+        else (int(compacted_tokens) + page_size_tokens - 1) // page_size_tokens
+    )
+    if variant != "vision_only" and compacted_pages is None:
+        raise RuntimeError(
+            f"prefix population produced no compact-page evidence for group {group_id!r}"
+        )
+    if variant == "dense_prefix" and compacted_pages != expected_dense_pages:
+        raise RuntimeError(
+            "dense-prefix population differs from the measured working-set plan: "
+            f"group={group_id}, expected={expected_dense_pages}, actual={compacted_pages}"
+        )
+    return {
+        "group_id": group_id,
+        "sample_id": sample_id,
+        "request_id": result.request_key,
+        "prompt_tokens": len(prompt_ids),
+        "prompt_token_ids_sha256": _canonical_sha256([prompt_ids]),
+        "expected_dense_prefix_pages": expected_dense_pages,
+        "compact_prefix_tokens": (None if compacted_tokens is None else int(compacted_tokens)),
+        "compact_prefix_pages": compacted_pages,
+        "dropped_visual_tokens": int(decision.get("dropped_visual_tokens", 0)),
+        "physical_compaction": bool(decision.get("physical_compaction", False)),
+        "prefix_cache_hit": bool(seq.multimodal_prefix_cache_hit),
+        "prefix_cache_counter_delta": _prefix_metadata_delta(
+            metadata_before,
+            metadata_after,
+        ),
+        "resident_prefix_pages_before": int(metadata_before["resident_blocks"]),
+        "resident_prefix_pages_after": int(metadata_after["resident_blocks"]),
+        "resident_prefix_entries_before": int(metadata_before["entries"]),
+        "resident_prefix_entries_after": int(metadata_after["entries"]),
+    }
+
+
+def _verify_prism_working_set_runtime(
+    llm,
+    working_set: MaterializedWorkingSet,
+) -> dict[str, object]:
+    plan = working_set.plan
+    budget = plan["kv_budget"]
+    serving = plan["serving"]
+    expected = {
+        "image_max_pixels": int(plan["processor"]["image_max_pixels"]),
+        "max_num_seqs": int(serving["max_num_seqs"]),
+        "max_chunk_size": int(serving["max_chunk_size"]),
+        "kv_budget_pages": int(budget["pages"]),
+        "page_size_tokens": int(budget["page_size_tokens"]),
+        "kv_budget_bytes": int(budget["bytes"]),
+    }
+    actual = {
+        "image_max_pixels": int(llm.config.image_max_pixels),
+        "max_num_seqs": int(llm.config.max_num_seqs),
+        "max_chunk_size": int(llm.config.max_chunk_size),
+        "kv_budget_pages": int(llm.config.num_kvcache_blocks),
+        "page_size_tokens": int(llm.config.kvcache_block_size),
+    }
+    for name in (
+        "image_max_pixels",
+        "max_num_seqs",
+        "max_chunk_size",
+        "kv_budget_pages",
+        "page_size_tokens",
+    ):
+        if actual[name] != expected[name]:
+            raise RuntimeError(
+                f"Prism working-set {name} mismatch: {actual[name]} != {expected[name]}"
+            )
+    prefix_metadata = llm.multimodal_prefix_cache_metadata()
+    actual_pool_bytes = int(prefix_metadata["total_pool_blocks"]) * int(
+        prefix_metadata["bytes_per_block_all_ranks"]
+    )
+    if int(prefix_metadata["total_pool_blocks"]) != expected["kv_budget_pages"]:
+        raise RuntimeError("Prism KV pool page count differs from the working-set plan")
+    if actual_pool_bytes != expected["kv_budget_bytes"]:
+        raise RuntimeError(
+            "Prism KV pool byte size differs from the working-set plan: "
+            f"{actual_pool_bytes} != {expected['kv_budget_bytes']}"
+        )
+    return {
+        "expected": expected,
+        "actual": {**actual, "kv_budget_bytes": actual_pool_bytes},
+        "processor": verify_working_set_processor(llm.vl_processor, plan),
+        "kv_pool_lookup": {
+            "total_pool_blocks": int(prefix_metadata["total_pool_blocks"]),
+            "prefix_cache_max_blocks": int(prefix_metadata["max_blocks"]),
+            "bytes_per_block_all_ranks": int(prefix_metadata["bytes_per_block_all_ranks"]),
         },
     }
 
@@ -617,6 +807,7 @@ def _build_engine(args: argparse.Namespace):
         enable_vision_tensor_cudagraph=args.enable_vision_tensor_cudagraph,
         enable_visual_embedding_cache=args.enable_visual_embedding_cache,
         vision_attention_backend="sdpa",
+        image_max_pixels=args.image_max_pixels,
     )
 
 
@@ -624,6 +815,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
+    parser.add_argument(
+        "--working-set-plan",
+        help="run one shared MuirBench media-first working-set plan",
+    )
+    parser.add_argument(
+        "--working-set-id",
+        choices=("fit", "knee", "pressure"),
+        help="workset selected from --working-set-plan",
+    )
+    parser.add_argument(
+        "--working-set-variant",
+        choices=("vision_only", "dense_prefix", "compact_prefix"),
+        help="Prism ablation used with --working-set-plan",
+    )
+    parser.add_argument(
+        "--materialized-root",
+        help="root containing the MuirBench media referenced by the plan",
+    )
     parser.add_argument("--case", default="single_image_448")
     parser.add_argument(
         "--mode",
@@ -663,6 +872,7 @@ def main() -> None:
     parser.add_argument("--max-model-len", type=int, default=1280)
     parser.add_argument("--max-num-batched-tokens", type=int, default=2048)
     parser.add_argument("--max-num-seqs", type=int, default=16)
+    parser.add_argument("--image-max-pixels", type=int)
     parser.add_argument("--max-chunk-size", type=int, default=512)
     parser.add_argument("--max-queue-size", type=int)
     parser.add_argument(
@@ -777,6 +987,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    output_paths = [Path(path) for path in (args.output, args.profile_output) if path]
+    if len(set(output_paths)) != len(output_paths):
+        raise SystemExit("--output and --profile-output must be different files")
+    for output_path in output_paths:
+        if output_path.exists():
+            raise SystemExit(f"refusing to replace existing benchmark output: {output_path}")
+
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required for the online benchmark")
     if args.requests <= 0 or args.warmup_requests < 0:
@@ -792,34 +1009,126 @@ def main() -> None:
     if args.media_repeat_rate is not None and not 0.0 <= args.media_repeat_rate <= 1.0:
         raise SystemExit("--media-repeat-rate must be in [0, 1]")
 
+    working_set_args = (
+        args.working_set_plan,
+        args.working_set_id,
+        args.working_set_variant,
+        args.materialized_root,
+    )
+    if any(working_set_args) and not all(working_set_args):
+        raise SystemExit(
+            "--working-set-plan, --working-set-id, --working-set-variant and "
+            "--materialized-root must be used together"
+        )
+    if args.working_set_plan and (
+        args.h3_profile is not None
+        or args.media_repeat_rate is not None
+        or args.vary_media_questions
+    ):
+        raise SystemExit("working-set plans cannot be combined with legacy H3/cache workload flags")
+
     torch.set_num_threads(args.online_cpu_intraop_threads)
-    manifest = load_workload_manifest(args.manifest)
-    if args.h3_profile is None:
-        case = find_workload_case(manifest, args.case)
-        payloads = materialize_requests(case, repo_root=REPO_ROOT)
-        request_classes = [args.case] * args.requests
+    working_set: MaterializedWorkingSet | None = None
+    working_set_audit: dict[str, object] | None = None
+    model_verification: dict[str, object] | None = None
+    if args.working_set_plan:
+        working_set = materialize_working_set(
+            args.working_set_plan,
+            workset_id=args.working_set_id,
+            materialized_root=args.materialized_root,
+        )
+        model_verification = verify_working_set_model(working_set.plan, args.model)
+        traffic = working_set.plan["traffic"]
+        kv_budget = working_set.plan["kv_budget"]
+        model_contract = working_set.plan["model"]
+        processor_contract = working_set.plan["processor"]
+        serving_contract = working_set.plan["serving"]
+        args.requests = len(working_set.measured_payloads)
+        args.max_tokens = int(traffic["max_new_tokens"])
+        args.request_rate = float(traffic["request_rate_per_s"])
+        args.arrival_process = str(traffic["arrival_process"])
+        args.seed = int(traffic["seed"])
+        args.max_model_len = int(model_contract["max_model_len"])
+        args.max_num_batched_tokens = args.max_model_len
+        args.max_num_seqs = int(serving_contract["max_num_seqs"])
+        args.max_chunk_size = int(serving_contract["max_chunk_size"])
+        args.image_max_pixels = int(processor_contract["image_max_pixels"])
+        args.num_kvcache_blocks = int(kv_budget["pages"])
+        args.kvcache_block_size = int(kv_budget["page_size_tokens"])
+        args.enable_visual_embedding_cache = True
+        args.visual_pruning_strategy = "uniform"
+        args.visual_pruning_min_keep_tokens = 768
+        args.visual_pruning_video_min_keep_tokens = 256
+        if args.working_set_variant == "vision_only":
+            args.mode = "scaled_fp8_kv_compile_graph"
+            args.enable_prefix_caching = False
+        else:
+            args.mode = "visual_compact_scaled_fp8_compile_graph"
+            args.enable_prefix_caching = True
+            args.visual_pruning_keep_ratio = (
+                1.0 if args.working_set_variant == "dense_prefix" else 0.6
+            )
+        manifest = {"name": "muirbench_media_first_working_set"}
+        payloads = working_set.measured_payloads
+        request_classes = working_set.measured_sample_ids
         h3_contract = None
-        workload_case = args.case
+        workload_case = f"muirbench_{args.working_set_id}"
+        cache_workload = None
+        warmup_payloads = []
+        plan_path = Path(args.working_set_plan)
+        working_set_audit = {
+            "plan_path": str(plan_path.resolve()),
+            "plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+            "workset_id": args.working_set_id,
+            "variant": args.working_set_variant,
+            "group_ids": list(working_set.workset["group_ids"]),
+            "dense_prefix_pages": int(working_set.workset["dense_prefix_pages"]),
+            "kv_budget_bytes": int(kv_budget["bytes"]),
+            "kv_budget_pages": int(kv_budget["pages"]),
+            "page_size_tokens": int(kv_budget["page_size_tokens"]),
+            "model_revision": str(model_contract["revision"]),
+            "model_verification": model_verification,
+            "image_min_pixels": int(processor_contract["image_min_pixels"]),
+            "image_max_pixels": int(processor_contract["image_max_pixels"]),
+            "max_num_batched_tokens": args.max_num_batched_tokens,
+            "max_num_seqs": int(serving_contract["max_num_seqs"]),
+            "max_chunk_size": int(serving_contract["max_chunk_size"]),
+            "source_prompt_sha256": source_prompt_schedule_sha256(working_set.measured_payloads),
+            "population_source_prompt_sha256": source_prompt_schedule_sha256(
+                working_set.population_payloads
+            ),
+            "prompt_token_hash_contract": "exact_token_ids_sha256_across_engines",
+            "population_requests": len(working_set.population_payloads),
+            "measured_requests": len(working_set.measured_payloads),
+        }
     else:
-        payloads, request_classes, h3_contract = _h3_payload_schedule(
-            manifest,
-            profile=args.h3_profile,
-            count=args.requests,
-        )
-        workload_case = f"h3_{args.h3_profile}"
-    cache_workload = None
-    warmup_payloads = payloads
-    if args.media_repeat_rate is not None or args.vary_media_questions:
-        warmup_payloads, _ = build_multimodal_cache_workload(
-            payloads,
-            repeat_rate=1.0,
-            vary_questions=False,
-        )
-        payloads, cache_workload = build_multimodal_cache_workload(
-            payloads,
-            repeat_rate=(1.0 if args.media_repeat_rate is None else args.media_repeat_rate),
-            vary_questions=args.vary_media_questions,
-        )
+        manifest = load_workload_manifest(args.manifest)
+        if args.h3_profile is None:
+            case = find_workload_case(manifest, args.case)
+            payloads = materialize_requests(case, repo_root=REPO_ROOT)
+            request_classes = [args.case] * args.requests
+            h3_contract = None
+            workload_case = args.case
+        else:
+            payloads, request_classes, h3_contract = _h3_payload_schedule(
+                manifest,
+                profile=args.h3_profile,
+                count=args.requests,
+            )
+            workload_case = f"h3_{args.h3_profile}"
+        cache_workload = None
+        warmup_payloads = payloads
+        if args.media_repeat_rate is not None or args.vary_media_questions:
+            warmup_payloads, _ = build_multimodal_cache_workload(
+                payloads,
+                repeat_rate=1.0,
+                vary_questions=False,
+            )
+            payloads, cache_workload = build_multimodal_cache_workload(
+                payloads,
+                repeat_rate=(1.0 if args.media_repeat_rate is None else args.media_repeat_rate),
+                vary_questions=args.vary_media_questions,
+            )
     class_slos, class_slo_source = _load_class_slos(
         args.class_slo_file,
         request_classes=request_classes,
@@ -835,12 +1144,85 @@ def main() -> None:
     )
     mode = MODE_SPECS[args.mode]
     llm = _build_engine(args)
+    if working_set is not None:
+        working_set_audit["runtime_verification"] = _verify_prism_working_set_runtime(
+            llm,
+            working_set,
+        )
     process_memory_sampler = _DeviceProcessMemorySampler()
     profile_record = None
+    population_record = None
+    population_cache_state = None
     serving_session = OnlineServingSession(llm)
     process_memory_sampler.start()
     try:
-        if args.warmup_requests:
+        if working_set is not None:
+            population_requests = _planned_online_requests(
+                working_set.population_payloads,
+                request_ids=working_set.population_request_ids,
+                offsets_s=working_set.population_offsets_s,
+                sampling=sampling,
+            )
+            population_runs = []
+            population_evidence = []
+            population_initial_metadata = llm.multimodal_prefix_cache_metadata()
+            dense_pages_by_group = {
+                str(group["group_id"]): int(group["dense_prefix_pages"])
+                for group in working_set.plan["groups"]
+            }
+            for population_request, group_id, sample_id in zip(
+                population_requests,
+                working_set.population_group_ids,
+                working_set.population_sample_ids,
+                strict=True,
+            ):
+                metadata_before = llm.multimodal_prefix_cache_metadata()
+                population_run = serving_session.run((population_request,))
+                metadata_after = llm.multimodal_prefix_cache_metadata()
+                run_record = population_run.to_record()
+                _annotate_request_classes(run_record, [sample_id])
+                population_runs.append(run_record)
+                population_evidence.append(
+                    _population_prefix_evidence(
+                        llm,
+                        population_run,
+                        group_id=group_id,
+                        sample_id=sample_id,
+                        expected_dense_pages=dense_pages_by_group[group_id],
+                        page_size_tokens=args.kvcache_block_size,
+                        variant=args.working_set_variant,
+                        metadata_before=metadata_before,
+                        metadata_after=metadata_after,
+                    )
+                )
+            population_final_metadata = llm.multimodal_prefix_cache_metadata()
+            actual_compact_pages = [
+                int(row["compact_prefix_pages"])
+                for row in population_evidence
+                if row["compact_prefix_pages"] is not None
+            ]
+            population_record = {
+                "policy": "one_request_per_group_closed_loop",
+                "groups": population_evidence,
+                "expected_dense_prefix_pages": sum(
+                    int(row["expected_dense_prefix_pages"]) for row in population_evidence
+                ),
+                "compact_prefix_pages": sum(actual_compact_pages),
+                "prefix_cache_counter_delta": _prefix_metadata_delta(
+                    population_initial_metadata,
+                    population_final_metadata,
+                ),
+                "resident_prefix_pages_after": int(population_final_metadata["resident_blocks"]),
+                "resident_prefix_entries_after": int(population_final_metadata["entries"]),
+                "runs": population_runs,
+            }
+            population_cache_state = {
+                "visual_embedding_cache": llm.visual_embedding_cache_metadata(),
+                "multimodal_prefix_cache": llm.multimodal_prefix_cache_metadata(),
+            }
+            llm.reset_metrics()
+            serving_session.reset_metrics()
+        elif args.warmup_requests:
             warmup = _online_requests(
                 warmup_payloads,
                 count=args.warmup_requests,
@@ -857,16 +1239,24 @@ def main() -> None:
 
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
-        requests = _online_requests(
-            payloads,
-            count=args.requests,
-            process=args.arrival_process,
-            request_rate=args.request_rate,
-            seed=args.seed,
-            sampling=sampling,
-            key_prefix="formal",
-            ttft_slo_ms_by_request=ttft_slo_ms_by_request,
-        )
+        if working_set is None:
+            requests = _online_requests(
+                payloads,
+                count=args.requests,
+                process=args.arrival_process,
+                request_rate=args.request_rate,
+                seed=args.seed,
+                sampling=sampling,
+                key_prefix="formal",
+                ttft_slo_ms_by_request=ttft_slo_ms_by_request,
+            )
+        else:
+            requests = _planned_online_requests(
+                payloads,
+                request_ids=working_set.measured_request_ids,
+                offsets_s=working_set.measured_offsets_s,
+                sampling=sampling,
+            )
         trace_sha256 = _canonical_sha256(
             {
                 "classes": request_classes,
@@ -943,6 +1333,7 @@ def main() -> None:
                 "h3_contract": h3_contract,
                 "h3_conformance": _h3_conformance(h3_contract, args),
                 "multimodal_cache_workload": cache_workload,
+                "working_set_plan": working_set_audit,
                 **prompt_audit,
             },
             "arrival": {
@@ -961,6 +1352,7 @@ def main() -> None:
                 "max_model_len": args.max_model_len,
                 "max_num_batched_tokens": args.max_num_batched_tokens,
                 "max_num_seqs": args.max_num_seqs,
+                "image_max_pixels": args.image_max_pixels,
                 "max_chunk_size": args.max_chunk_size,
                 "max_queue_size": args.max_queue_size,
                 "scheduler_policy": args.scheduler_policy,
@@ -1026,6 +1418,14 @@ def main() -> None:
                 },
             },
             "visual_compaction": compaction_summary,
+            "population": (
+                None
+                if population_record is None
+                else {
+                    "run": population_record,
+                    "cache_state_after": population_cache_state,
+                }
+            ),
             "execution_evidence": _execution_evidence(llm, run_record),
             "terminal_failures": _terminal_failure_summary(
                 llm,
@@ -1068,24 +1468,24 @@ def main() -> None:
             except Exception:
                 pass
         llm.exit()
+        if working_set is not None:
+            working_set.close()
 
     rendered = json.dumps(record, ensure_ascii=False, sort_keys=True)
     if args.output:
         output = Path(args.output)
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(rendered + "\n", encoding="utf-8")
+        _write_text_atomic(output, rendered + "\n")
         print(f"wrote online record to {output}", file=sys.stderr)
     if args.profile_output:
         profile_output = Path(args.profile_output)
-        profile_output.parent.mkdir(parents=True, exist_ok=True)
-        profile_output.write_text(
+        _write_text_atomic(
+            profile_output,
             json.dumps(
                 profile_record,
                 ensure_ascii=False,
                 sort_keys=True,
             )
             + "\n",
-            encoding="utf-8",
         )
         print(f"wrote online profile to {profile_output}", file=sys.stderr)
     print(rendered)

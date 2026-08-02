@@ -38,10 +38,39 @@ from benchmarks.bench_external_sglang import (
     _stage_lossless_video,
 )
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
+from benchmarks.working_set_workload import (
+    MaterializedWorkingSet,
+    materialize_working_set,
+    source_prompt_schedule_sha256,
+    verify_working_set_model,
+    verify_working_set_processor,
+    working_set_processor_kwargs,
+)
 from prism_infer.analysis.online_serving import summarize_distribution
+from prism_infer.analysis.p9_quality_materialization import write_json_atomic
+from prism_infer.analysis.working_set_plan import DEFAULT_MAX_NUM_SEQS
 
 H3_PROFILES = ("primary", "conditional_video")
 TERMINAL_FINISH_REASONS = {"eos", "length", "stop"}
+WORKING_SET_KV_CACHE_DTYPE = "fp8_e4m3"
+
+
+def _kv_bytes_per_token(model_path: str | Path, *, kv_cache_dtype: str) -> int:
+    """Derive decoder KV payload bytes per token from the model config."""
+
+    config = json.loads((Path(model_path) / "config.json").read_text(encoding="utf-8"))
+    text_config = config.get("text_config", config)
+    layers = int(text_config["num_hidden_layers"])
+    kv_heads = int(text_config["num_key_value_heads"])
+    attention_heads = int(text_config["num_attention_heads"])
+    head_dim = int(
+        text_config.get(
+            "head_dim",
+            int(text_config["hidden_size"]) // attention_heads,
+        )
+    )
+    element_bytes = 1 if kv_cache_dtype.startswith("fp8") else 2
+    return 2 * layers * kv_heads * head_dim * element_bytes
 
 
 class _DeviceProcessMemorySampler:
@@ -61,6 +90,7 @@ class _DeviceProcessMemorySampler:
         self._final_bytes = 0
         self._pids: set[int] = set()
         self._failure: BaseException | None = None
+        self._nvml_initialized = False
 
     def _sample(self) -> int:
         used_bytes = 0
@@ -83,14 +113,19 @@ class _DeviceProcessMemorySampler:
 
     def start(self) -> None:
         pynvml.nvmlInit()
-        self._handle = pynvml.nvmlDeviceGetHandleByIndex(self.device_index)
-        self._initial_bytes = self._sample()
-        self._thread = Thread(
-            target=self._run,
-            name="sglang-device-process-memory-sampler",
-            daemon=True,
-        )
-        self._thread.start()
+        self._nvml_initialized = True
+        try:
+            self._handle = pynvml.nvmlDeviceGetHandleByIndex(self.device_index)
+            self._initial_bytes = self._sample()
+            self._thread = Thread(
+                target=self._run,
+                name="sglang-device-process-memory-sampler",
+                daemon=True,
+            )
+            self._thread.start()
+        except BaseException:
+            self.close()
+            raise
 
     def stop(self) -> dict[str, object]:
         if self._thread is None:
@@ -101,6 +136,7 @@ class _DeviceProcessMemorySampler:
             self._final_bytes = self._sample()
         finally:
             pynvml.nvmlShutdown()
+            self._nvml_initialized = False
             self._thread = None
         if self._failure is not None:
             raise RuntimeError("NVML process-memory sampling failed") from self._failure
@@ -118,6 +154,51 @@ class _DeviceProcessMemorySampler:
             "after_benchmark_mib": self._final_bytes / mib,
         }
 
+    def close(self) -> None:
+        """Stop sampling and release NVML after partial or complete startup."""
+
+        if self._thread is not None:
+            self.stop()
+        elif self._nvml_initialized:
+            pynvml.nvmlShutdown()
+            self._nvml_initialized = False
+
+
+class _RunResources:
+    """Own external-engine resources so every exit path releases them."""
+
+    def __init__(self) -> None:
+        self.working_set: MaterializedWorkingSet | None = None
+        self.engine: Engine | None = None
+        self.memory_sampler: _DeviceProcessMemorySampler | None = None
+
+    def close(self, *, suppress_errors: bool) -> None:
+        failures: list[BaseException] = []
+        callbacks = (
+            (
+                "memory sampler",
+                None if self.memory_sampler is None else self.memory_sampler.close,
+            ),
+            ("SGLang engine", None if self.engine is None else self.engine.shutdown),
+            (
+                "working-set images",
+                None if self.working_set is None else self.working_set.close,
+            ),
+        )
+        for name, callback in callbacks:
+            if callback is None:
+                continue
+            try:
+                callback()
+            except BaseException as exc:  # Preserve an active benchmark failure.
+                failures.append(RuntimeError(f"failed to close {name}"))
+                failures[-1].__cause__ = exc
+        self.memory_sampler = None
+        self.engine = None
+        self.working_set = None
+        if failures and not suppress_errors:
+            raise failures[0]
+
 
 def _canonical_sha256(value: object) -> str:
     payload = json.dumps(
@@ -127,6 +208,13 @@ def _canonical_sha256(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _require_new_output(path: Path) -> None:
+    """Reject an existing artifact instead of silently overwriting evidence."""
+
+    if path.exists():
+        raise FileExistsError(f"refusing to overwrite existing output: {path}")
 
 
 def _arrival_offsets(
@@ -311,9 +399,12 @@ async def _run_arrivals_async(
     sampling: dict[str, Any],
     *,
     key_prefix: str,
+    request_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     if not (len(requests) == len(request_classes) == len(offsets_s)):
         raise ValueError("request, class and arrival schedules must have equal lengths")
+    if request_ids is not None and len(request_ids) != len(requests):
+        raise ValueError("request id count must match the request schedule")
     started = time.perf_counter()
     active = 0
     peak_inflight = 0
@@ -327,7 +418,7 @@ async def _run_arrivals_async(
         wait_s = max(0.0, arrival - time.perf_counter())
         if wait_s:
             await asyncio.sleep(wait_s)
-        request_id = f"{key_prefix}-{index:05d}"
+        request_id = f"{key_prefix}-{index:05d}" if request_ids is None else request_ids[index]
         prompt = (
             request["prompt"] if request["type"] == "text" else _prompts(processor, [request])[0]
         )
@@ -387,6 +478,10 @@ async def _run_arrivals_async(
                 0.0 if len(generated) <= 1 else (finished - first) * 1000.0 / (len(generated) - 1)
             ),
             "latency_ms": (finished - arrival) * 1000.0,
+            "cached_tokens": output["meta_info"].get(
+                "cached_tokens",
+                output["meta_info"].get("prefix_matched_len"),
+            ),
         }
         return record, prompt_token_ids, generated
 
@@ -419,6 +514,7 @@ def _run_arrivals(
     sampling: dict[str, Any],
     *,
     key_prefix: str,
+    request_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     return engine.loop.run_until_complete(
         _run_arrivals_async(
@@ -429,6 +525,7 @@ def _run_arrivals(
             offsets_s,
             sampling,
             key_prefix=key_prefix,
+            request_ids=request_ids,
         )
     )
 
@@ -521,6 +618,93 @@ def _prompt_audit(
     }
 
 
+def _resolve_working_set_kv_cache_dtype(requested: str) -> str:
+    """Resolve the one supported working-set KV format, failing closed."""
+
+    if requested == "auto":
+        return WORKING_SET_KV_CACHE_DTYPE
+    if requested != WORKING_SET_KV_CACHE_DTYPE:
+        raise ValueError(
+            "working-set SGLang requires --kv-cache-dtype="
+            f"{WORKING_SET_KV_CACHE_DTYPE}, got {requested!r}"
+        )
+    return requested
+
+
+def _validate_formal_contract(
+    *,
+    formal: bool,
+    git_dirty: bool,
+    has_working_set_plan: bool,
+    h3_conformance: dict[str, Any] | None,
+) -> None:
+    """Apply the formal contract for either a fixed plan or legacy H3."""
+
+    if not formal:
+        return
+    if git_dirty:
+        raise SystemExit("--formal requires a clean harness worktree")
+    if has_working_set_plan:
+        return
+    if h3_conformance is None or not h3_conformance["full_frozen_h3"]:
+        raise SystemExit("--formal legacy runs require the complete frozen H3 contract")
+
+
+def _verify_fixed_working_set_plan(audit: dict[str, object]) -> None:
+    """Fail if the authoritative plan changed while the engine was running."""
+
+    plan_path = Path(str(audit["plan_path"]))
+    actual_sha256 = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    if actual_sha256 != audit["plan_sha256"]:
+        raise RuntimeError("working-set plan changed during the benchmark run")
+    audit["fixed_plan_verified"] = True
+
+
+def _verify_sglang_working_set_runtime(
+    engine: Engine,
+    working_set: MaterializedWorkingSet,
+    *,
+    kv_bytes_per_token: int,
+    processor_verification: dict[str, Any],
+    mm_process_config: dict[str, Any],
+) -> dict[str, Any]:
+    server_args = engine.server_args
+    budget = working_set.plan["kv_budget"]
+    expected_max_num_seqs = int(working_set.plan["serving"]["max_num_seqs"])
+    capacity_bytes = int(server_args.max_total_tokens) * kv_bytes_per_token
+    unused_budget_bytes = int(budget["bytes"]) - capacity_bytes
+    one_page_bytes = int(budget["page_size_tokens"]) * kv_bytes_per_token
+    actual_cache_dtype = str(getattr(server_args, "kv_cache_dtype", "unknown"))
+    checks = {
+        "kv_budget_not_exceeded": 0 <= unused_budget_bytes < one_page_bytes,
+        "kv_cache_dtype": actual_cache_dtype == WORKING_SET_KV_CACHE_DTYPE,
+        "page_size_tokens": int(server_args.page_size) == int(budget["page_size_tokens"]),
+        "max_num_seqs": int(server_args.max_running_requests) == expected_max_num_seqs,
+        "processor_config": server_args.mm_process_config == mm_process_config,
+        "local_processor": processor_verification["image_size"]
+        == {
+            "shortest_edge": working_set_processor_kwargs(working_set.plan)["min_pixels"],
+            "longest_edge": working_set_processor_kwargs(working_set.plan)["max_pixels"],
+        },
+    }
+    if not all(checks.values()):
+        failed = [name for name, passed in checks.items() if not passed]
+        raise RuntimeError(f"SGLang working-set runtime contract mismatch: {failed}")
+    return {
+        "checks": checks,
+        "kv_budget_bytes": int(budget["bytes"]),
+        "kv_capacity_bytes": capacity_bytes,
+        "unused_budget_bytes": unused_budget_bytes,
+        "kv_bytes_per_token": kv_bytes_per_token,
+        "kv_cache_dtype_effective": actual_cache_dtype,
+        "page_size_tokens": int(server_args.page_size),
+        "max_total_tokens": int(server_args.max_total_tokens),
+        "max_num_seqs": int(server_args.max_running_requests),
+        "mm_process_config": server_args.mm_process_config,
+        "processor": processor_verification,
+    }
+
+
 def _load_class_slos(
     path: Path,
     *,
@@ -554,11 +738,14 @@ def _load_class_slos(
     }
 
 
-def main() -> None:
+def _run(resources: _RunResources) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
-    parser.add_argument("--manifest", required=True)
-    parser.add_argument("--h3-profile", choices=H3_PROFILES, required=True)
+    parser.add_argument("--manifest")
+    parser.add_argument("--h3-profile", choices=H3_PROFILES)
+    parser.add_argument("--working-set-plan")
+    parser.add_argument("--working-set-id", choices=("fit", "knee", "pressure"))
+    parser.add_argument("--materialized-root")
     parser.add_argument("--requests", type=int, default=600)
     parser.add_argument(
         "--arrival-process",
@@ -572,6 +759,8 @@ def main() -> None:
     parser.add_argument("--max-model-len", type=int, default=4096)
     parser.add_argument("--max-num-seqs", type=int, default=8)
     parser.add_argument("--max-total-tokens", type=int, default=28928)
+    parser.add_argument("--page-size", type=int, default=1)
+    parser.add_argument("--kv-cache-dtype", default="auto")
     parser.add_argument("--mem-fraction-static", type=float, default=0.8)
     parser.add_argument("--chunked-prefill-size", type=int, default=-1)
     parser.add_argument("--attention-backend", default="triton")
@@ -583,28 +772,118 @@ def main() -> None:
     parser.add_argument("--class-slo-file")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
+    output_path = Path(args.output)
+    _require_new_output(output_path)
+    kv_cache_dtype_requested_cli = args.kv_cache_dtype
     if args.requests <= 0 or args.warmup_requests < 0 or args.max_tokens < 2:
         raise SystemExit("--requests must be positive, warmup non-negative and max-tokens >= 2")
+    working_set_args = (
+        args.working_set_plan,
+        args.working_set_id,
+        args.materialized_root,
+    )
+    if any(working_set_args) and not all(working_set_args):
+        raise SystemExit(
+            "--working-set-plan, --working-set-id and --materialized-root must be used together"
+        )
+    if args.working_set_plan and any((args.manifest, args.h3_profile, args.class_slo_file)):
+        raise SystemExit("working-set plans cannot be combined with legacy H3/SLO flags")
+    if not args.working_set_plan and (not args.manifest or not args.h3_profile):
+        raise SystemExit("legacy runs require --manifest and --h3-profile")
 
-    manifest_path = Path(args.manifest)
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    output_path = Path(args.output)
-    requests, request_classes, h3_contract = _h3_schedule(
-        manifest,
-        profile=args.h3_profile,
-        count=args.requests,
-        video_staging_dir=output_path.parent / "sglang_staging",
-    )
-    offsets_s = _arrival_offsets(
-        args.requests,
-        process=args.arrival_process,
-        request_rate=args.request_rate,
-        seed=args.seed,
-    )
-    conformance = _protocol_conformance(h3_contract, args)
+    working_set: MaterializedWorkingSet | None = None
+    working_set_audit: dict[str, object] | None = None
+    model_verification: dict[str, object] | None = None
+    kv_bytes_per_token = None
+    if args.working_set_plan:
+        working_set = materialize_working_set(
+            args.working_set_plan,
+            workset_id=args.working_set_id,
+            materialized_root=args.materialized_root,
+        )
+        resources.working_set = working_set
+        model_verification = verify_working_set_model(working_set.plan, args.model)
+        traffic = working_set.plan["traffic"]
+        kv_budget = working_set.plan["kv_budget"]
+        model_contract = working_set.plan["model"]
+        processor_contract = working_set.plan["processor"]
+        serving_contract = working_set.plan["serving"]
+        args.requests = len(working_set.measured_payloads)
+        args.warmup_requests = 0
+        args.max_tokens = int(traffic["max_new_tokens"])
+        args.request_rate = float(traffic["request_rate_per_s"])
+        args.arrival_process = str(traffic["arrival_process"])
+        args.seed = int(traffic["seed"])
+        args.max_model_len = int(model_contract["max_model_len"])
+        args.max_num_seqs = int(serving_contract["max_num_seqs"])
+        if args.max_num_seqs != DEFAULT_MAX_NUM_SEQS:
+            raise ValueError("working-set SGLang requires max_num_seqs=8")
+        args.page_size = int(kv_budget["page_size_tokens"])
+        args.enable_prefix_caching = True
+        args.enable_mm_global_cache = True
+        args.kv_cache_dtype = _resolve_working_set_kv_cache_dtype(args.kv_cache_dtype)
+        kv_bytes_per_token = _kv_bytes_per_token(
+            args.model,
+            kv_cache_dtype=args.kv_cache_dtype,
+        )
+        raw_capacity_tokens = int(kv_budget["bytes"]) // kv_bytes_per_token
+        args.max_total_tokens = (raw_capacity_tokens // args.page_size) * args.page_size
+        if args.max_total_tokens <= 0:
+            raise ValueError("fixed KV budget cannot hold one SGLang page")
+        requests = working_set.measured_payloads
+        request_classes = working_set.measured_sample_ids
+        offsets_s = working_set.measured_offsets_s
+        h3_contract = None
+        conformance = None
+        manifest = {"name": "muirbench_media_first_working_set"}
+        plan_path = Path(args.working_set_plan)
+        working_set_audit = {
+            "plan_path": str(plan_path.resolve()),
+            "plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+            "workset_id": args.working_set_id,
+            "group_ids": list(working_set.workset["group_ids"]),
+            "dense_prefix_pages": int(working_set.workset["dense_prefix_pages"]),
+            "kv_budget_bytes": int(kv_budget["bytes"]),
+            "kv_budget_pages": int(kv_budget["pages"]),
+            "page_size_tokens": int(kv_budget["page_size_tokens"]),
+            "model_revision": str(model_contract["revision"]),
+            "model_verification": model_verification,
+            "image_min_pixels": int(processor_contract["image_min_pixels"]),
+            "image_max_pixels": int(processor_contract["image_max_pixels"]),
+            "max_num_seqs": int(serving_contract["max_num_seqs"]),
+            "source_prompt_sha256": source_prompt_schedule_sha256(working_set.measured_payloads),
+            "population_source_prompt_sha256": source_prompt_schedule_sha256(
+                working_set.population_payloads
+            ),
+            "prompt_token_hash_contract": "exact_token_ids_sha256_across_engines",
+            "population_requests": len(working_set.population_payloads),
+            "measured_requests": len(working_set.measured_payloads),
+            "kv_cache_dtype_requested_cli": kv_cache_dtype_requested_cli,
+            "kv_cache_dtype_enforced": args.kv_cache_dtype,
+        }
+    else:
+        manifest_path = Path(args.manifest)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        requests, request_classes, h3_contract = _h3_schedule(
+            manifest,
+            profile=args.h3_profile,
+            count=args.requests,
+            video_staging_dir=output_path.parent / "sglang_staging",
+        )
+        offsets_s = _arrival_offsets(
+            args.requests,
+            process=args.arrival_process,
+            request_rate=args.request_rate,
+            seed=args.seed,
+        )
+        conformance = _protocol_conformance(h3_contract, args)
     git = collect_git_metadata(REPO_ROOT, strict=True)
-    if args.formal and (git.dirty or not conformance["full_frozen_h3"]):
-        raise SystemExit("--formal requires a clean harness and the complete frozen H3 contract")
+    _validate_formal_contract(
+        formal=args.formal,
+        git_dirty=git.dirty,
+        has_working_set_plan=working_set is not None,
+        h3_conformance=conformance,
+    )
     class_slos = None
     class_slo_audit = None
     if args.class_slo_file:
@@ -613,20 +892,34 @@ def main() -> None:
             expected_classes=set(request_classes),
             expected_profile=args.h3_profile,
         )
-    elif args.formal:
+    elif args.formal and working_set is None:
         raise SystemExit("formal SGLang H3 runs require --class-slo-file")
 
-    processor = AutoProcessor.from_pretrained(args.model, local_files_only=True)
+    processor_kwargs = {} if working_set is None else working_set_processor_kwargs(working_set.plan)
+    processor = AutoProcessor.from_pretrained(
+        args.model,
+        local_files_only=True,
+        **processor_kwargs,
+    )
+    processor_verification = (
+        None if working_set is None else verify_working_set_processor(processor, working_set.plan)
+    )
     video_fps = {float(request["fps"]) for request in requests if "video" in request}
     if len(video_fps) > 1:
         raise ValueError(f"SGLang H3 requires one global video fps: {video_fps}")
-    mm_process_config = {"video": {"fps": next(iter(video_fps))}} if video_fps else {}
+    mm_process_config = {}
+    if working_set is not None:
+        mm_process_config["image"] = dict(processor_kwargs)
+    if video_fps:
+        mm_process_config["video"] = {"fps": next(iter(video_fps))}
     engine = Engine(
         model_path=args.model,
         dtype="bfloat16",
         tp_size=1,
         context_length=args.max_model_len,
         max_total_tokens=args.max_total_tokens,
+        page_size=args.page_size,
+        kv_cache_dtype=args.kv_cache_dtype,
         mem_fraction_static=args.mem_fraction_static,
         max_running_requests=args.max_num_seqs,
         chunked_prefill_size=args.chunked_prefill_size,
@@ -641,8 +934,19 @@ def main() -> None:
         random_seed=0,
         mm_process_config=mm_process_config,
     )
+    resources.engine = engine
+    if working_set is not None:
+        working_set_audit["runtime_verification"] = _verify_sglang_working_set_runtime(
+            engine,
+            working_set,
+            kv_bytes_per_token=kv_bytes_per_token,
+            processor_verification=processor_verification,
+            mm_process_config=mm_process_config,
+        )
     process_memory_sampler = _DeviceProcessMemorySampler()
+    resources.memory_sampler = process_memory_sampler
     process_memory_sampler.start()
+    population_run = None
     sampling = {
         "temperature": 0.0,
         "max_new_tokens": args.max_tokens,
@@ -662,6 +966,35 @@ def main() -> None:
             sampling,
             key_prefix="warmup",
         )
+    if working_set is not None:
+        population_runs = []
+        for payload, group_id, sample_id, request_id in zip(
+            working_set.population_payloads,
+            working_set.population_group_ids,
+            working_set.population_sample_ids,
+            working_set.population_request_ids,
+            strict=True,
+        ):
+            population_result = _run_arrivals(
+                engine,
+                processor,
+                [payload],
+                [sample_id],
+                [0.0],
+                sampling,
+                key_prefix="population",
+                request_ids=[request_id],
+            )
+            population_result["group_id"] = group_id
+            population_result["source_prompt_sha256"] = source_prompt_schedule_sha256([payload])
+            population_result["prompt_token_ids_sha256"] = _canonical_sha256(
+                population_result["prompt_token_ids"]
+            )
+            population_runs.append(population_result)
+        population_run = {
+            "policy": "one_request_per_group_closed_loop",
+            "runs": population_runs,
+        }
 
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
@@ -673,27 +1006,19 @@ def main() -> None:
         offsets_s,
         sampling,
         key_prefix="formal",
+        request_ids=(None if working_set is None else working_set.measured_request_ids),
     )
     torch.cuda.synchronize()
     process_device_memory = process_memory_sampler.stop()
     if any(record["finish_reason"] not in TERMINAL_FINISH_REASONS for record in run["requests"]):
         raise RuntimeError("SGLang online run contains a non-completed request")
+    if working_set_audit is not None:
+        _verify_fixed_working_set_plan(working_set_audit)
 
     model_config_path = Path(args.model) / "config.json"
-    model_config = json.loads(model_config_path.read_text(encoding="utf-8"))
-    text_config = model_config.get("text_config", model_config)
-    head_dim = int(
-        text_config.get(
-            "head_dim",
-            int(text_config["hidden_size"]) // int(text_config["num_attention_heads"]),
-        )
-    )
-    kv_bytes_per_token = (
-        int(text_config["num_hidden_layers"])
-        * 2
-        * int(text_config["num_key_value_heads"])
-        * head_dim
-        * 2
+    kv_bytes_per_token = _kv_bytes_per_token(
+        args.model,
+        kv_cache_dtype=args.kv_cache_dtype,
     )
     prompt_audit = _prompt_audit(run.pop("prompt_token_ids"), request_classes)
     output_token_ids = run.pop("output_token_ids")
@@ -703,8 +1028,19 @@ def main() -> None:
         "record_type": "external_online_run",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "protocol": {
-            "name": "p12_external_online_h3_v1",
+            "name": (
+                "muirbench_media_first_working_set_v1"
+                if working_set is not None
+                else "p12_external_online_h3_v1"
+            ),
             "formal": args.formal,
+            "formal_contract": (
+                "clean_worktree_fixed_working_set_plan"
+                if args.formal and working_set is not None
+                else "frozen_h3"
+                if args.formal
+                else None
+            ),
             "command": [sys.executable, *sys.argv],
             "harness_git_commit": git.commit,
             "harness_git_dirty": git.dirty,
@@ -734,13 +1070,18 @@ def main() -> None:
         "workload": {
             "manifest": manifest["name"],
             "manifest_sha256": _canonical_sha256(manifest),
-            "case": f"h3_{args.h3_profile}",
+            "case": (
+                f"muirbench_{args.working_set_id}"
+                if working_set is not None
+                else f"h3_{args.h3_profile}"
+            ),
             "requests": args.requests,
             "request_classes": request_classes,
             "max_tokens": args.max_tokens,
             "h3_contract": h3_contract,
             "h3_conformance": conformance,
             "class_slo": class_slo_audit,
+            "working_set_plan": working_set_audit,
             **prompt_audit,
         },
         "arrival": {
@@ -758,10 +1099,20 @@ def main() -> None:
             "chunked_prefill_size": args.chunked_prefill_size,
             "prefix_caching": args.enable_prefix_caching,
             "mm_global_cache": args.enable_mm_global_cache,
+            "mm_process_config": mm_process_config,
+            "kv_cache_dtype_requested": kv_cache_dtype_requested_cli,
+            "kv_cache_dtype_enforced": args.kv_cache_dtype,
+            "kv_cache_dtype_effective": str(
+                getattr(engine.server_args, "kv_cache_dtype", "unknown")
+            ),
             "cuda_graph_max_bs_decode": args.max_num_seqs,
             "kv_cache_capacity_tokens": args.max_total_tokens,
+            "page_size": args.page_size,
             "kv_cache_bytes_per_token_theoretical": kv_bytes_per_token,
             "kv_cache_memory_bytes_theoretical": (args.max_total_tokens * kv_bytes_per_token),
+            "kv_cache_budget_bytes": (
+                None if working_set is None else int(working_set.plan["kv_budget"]["bytes"])
+            ),
         },
         "memory": {
             "process_device": process_device_memory,
@@ -774,14 +1125,11 @@ def main() -> None:
             "output_token_ids": output_token_ids,
             "output_token_ids_sha256": _canonical_sha256(output_token_ids),
         },
+        "population": population_run,
         "run": run,
         "class_summary": class_summary,
     }
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(record, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    write_json_atomic(output_path, record)
     print(
         json.dumps(
             {
@@ -798,7 +1146,18 @@ def main() -> None:
             sort_keys=True,
         )
     )
-    engine.shutdown()
+
+
+def main() -> None:
+    resources = _RunResources()
+    failed = False
+    try:
+        _run(resources)
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        resources.close(suppress_errors=failed)
 
 
 if __name__ == "__main__":

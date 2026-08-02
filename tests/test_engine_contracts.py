@@ -507,22 +507,22 @@ def test_model_runner_exit_breaks_backend_ownership_cycle(
 ) -> None:
     runner = ModelRunner.__new__(ModelRunner)
     runner.world_size = 1
-    released: list[bool] = []
+    events: list[str] = []
 
     class BackendStub:
         def release(self) -> None:
-            released.append(True)
+            events.append("release")
 
     runner.execution_backend = BackendStub()
-    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: events.append("synchronize"))
     monkeypatch.setattr(
         "prism_infer.engine.model_runner.dist.destroy_process_group",
-        lambda: None,
+        lambda: events.append("destroy_process_group"),
     )
 
     runner.exit()
 
-    assert released == [True]
+    assert events == ["synchronize", "release", "destroy_process_group"]
     assert not hasattr(runner, "execution_backend")
 
 
@@ -570,6 +570,7 @@ def test_engine_metrics_observe_without_driving_scheduler() -> None:
     )
     metrics = EngineMetrics()
     metrics.on_request_submitted(seq, timestamp_ns=1_000_000)
+    seq.num_cached_tokens = 1
     metrics.on_batch_planned(plan)
     execution = ExecutionResult(token_ids=(7,))
     metrics.on_batch_completed(
@@ -592,6 +593,7 @@ def test_engine_metrics_observe_without_driving_scheduler() -> None:
     snapshot = metrics.snapshot()
     request = snapshot["requests"][0]
     assert request["queue_ms"] == pytest.approx(0.5)
+    assert request["cached_tokens"] == 1
     assert request["ttft_ms"] == pytest.approx(2.0)
     assert request["latency_ms"] == pytest.approx(2.1)
     assert snapshot["batches"][0]["duration_ms"] == pytest.approx(1.0)

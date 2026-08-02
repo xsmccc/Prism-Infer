@@ -366,13 +366,34 @@ class ModelInputPreparer:
         compression_metadata,
     ):
         pruning_config = compression_metadata.visual_pruning_config
-        enabled = (
+        attention_active = (
             pruning_config is not None
             and pruning_config.get("strategy") == "attention"
             and compression_metadata.enabled
             and compression_metadata.total_visual_tokens > 0
-            and has_visual_payload
         )
+        records = compression_metadata.visual_pruning_records_by_batch
+        if attention_active and records:
+            visual_rows = [
+                batch_index
+                for batch_index, seq in enumerate(seqs)
+                if seq.image_token_count + seq.video_token_count > 0
+            ]
+            locked_rows = [
+                batch_index
+                for batch_index in visual_rows
+                if records[batch_index] is not None
+                and bool(records[batch_index].get("selection_replay_locked"))
+            ]
+            if locked_rows:
+                unlocked_rows = sorted(set(visual_rows) - set(locked_rows))
+                if unlocked_rows:
+                    raise RuntimeError(
+                        "locked attention replay cannot share a prefill batch with "
+                        f"runtime attention selection; unlocked rows={unlocked_rows}"
+                    )
+                return None
+        enabled = attention_active and has_visual_payload
         if not enabled:
             return None
         incomplete = [

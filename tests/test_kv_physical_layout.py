@@ -13,6 +13,8 @@ from prism_infer.engine.kv_layout import (
     KV_LAYOUT_VISUAL_COMPACT,
     KVCacheLayoutDescriptor,
 )
+from prism_infer.engine.llm_engine import LLMEngine
+from prism_infer.engine.metrics import EngineMetrics
 from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.engine.sequence import Sequence
 from prism_infer.utils.context import get_context, reset_context
@@ -159,6 +161,255 @@ def _manager_sequence(block_size: int = 4) -> Sequence:
         "dropped_token_indices": [3, 4, 5, 6],
     }
     return seq
+
+
+def _store_one_page_multimodal_prefix(
+    manager: BlockManager,
+    *,
+    cache_key: str,
+) -> None:
+    cold = _manager_sequence(manager.block_size)
+    cold.multimodal_prefix_cache_key = cache_key
+    cold.visual_pruning_decision_record.update(
+        {
+            "kept_visual_tokens": 1,
+            "dropped_visual_tokens": 5,
+            "keep_ratio_actual": 1 / 6,
+            "kept_token_indices": [2],
+            "dropped_token_indices": [3, 4, 5, 6, 7],
+        }
+    )
+    manager.allocate(cold)
+    plan = manager.build_compaction_plan(
+        cold,
+        kv_dtype="torch.float8_e4m3fn",
+    )
+    assert plan is not None
+    cold.num_computed_tokens = cold.num_prompt_tokens
+    manager.commit_compaction(cold, plan)
+    assert manager.store_multimodal_prefix(cold)
+    manager.deallocate(cold)
+
+
+def test_submit_probes_prefix_before_visual_hydration() -> None:
+    """A pre-admission prefix hit bypasses Vision cache hydration."""
+
+    manager = BlockManager(num_blocks=32, block_size=4)
+    _store_one_page_multimodal_prefix(manager, cache_key="same-media-layout")
+    hydration_calls: list[int] = []
+
+    class _Scheduler:
+        block_manager = manager
+
+        def add(self, seq: Sequence, *, raise_on_reject: bool):
+            del raise_on_reject
+            self.block_manager.cached_prefix_tokens(seq)
+            return SimpleNamespace(accepted=True)
+
+    engine = LLMEngine.__new__(LLMEngine)
+    engine.config = SimpleNamespace(enable_visual_embedding_cache=True)
+    engine.scheduler = _Scheduler()
+    engine.model_runner = SimpleNamespace(
+        hydrate_visual_embedding_cache=lambda seq: hydration_calls.append(seq.seq_id)
+    )
+    engine.metrics = EngineMetrics()
+    engine.clock_ns = lambda: 123
+
+    hit = _manager_sequence()
+    hit.multimodal_prefix_cache_key = "same-media-layout"
+    hit.visual_embedding_cache_key = "same-visual-output"
+    original_pixels = torch.arange(8, dtype=torch.float32).reshape(2, 4)
+    hit.pixel_values = original_pixels
+
+    assert engine._submit_sequence(hit) == hit.seq_id
+    assert hydration_calls == []
+    assert hit.pixel_values is original_pixels
+    assert hit.prefix_cache_candidate_tokens == 8
+    metadata = manager.multimodal_prefix_cache_metadata()
+    assert metadata["pre_admission_hits"] == 1
+    assert metadata["visual_hydration_skips"] == 1
+
+    manager.clear_multimodal_prefix_cache()
+
+
+def test_stale_pre_admission_probe_falls_back_to_dense_prefill() -> None:
+    """An evicted early hit keeps raw media and becomes a normal cold prefill."""
+
+    manager = BlockManager(num_blocks=32, block_size=4)
+    _store_one_page_multimodal_prefix(manager, cache_key="evicted-media-layout")
+    hit = _manager_sequence()
+    hit.multimodal_prefix_cache_key = "evicted-media-layout"
+    original_pixels = torch.arange(8, dtype=torch.float32).reshape(2, 4)
+    hit.pixel_values = original_pixels
+
+    assert manager.probe_multimodal_prefix(hit, would_hydrate_visual=True) == 8
+    manager.clear_multimodal_prefix_cache()
+    assert manager.cached_prefix_tokens(hit) == 0
+    assert not hit.multimodal_prefix_stale_fallback
+    assert manager.multimodal_prefix_cache_metadata()["stale_probe_fallbacks"] == 0
+    assert hit.pixel_values is original_pixels
+    assert manager.can_allocate(hit)
+    assert manager.allocate(hit) == ()
+    assert hit.multimodal_prefix_stale_fallback
+    assert not hit.multimodal_prefix_cache_hit
+    assert len(hit.block_table) == hit.num_blocks == 3
+
+    metadata = manager.multimodal_prefix_cache_metadata()
+    assert metadata["stale_probe_fallbacks"] == 1
+    manager.deallocate(hit)
+
+
+def test_multimodal_prefix_identity_uses_media_boundary_and_prompt_digest() -> None:
+    """Only the exact media namespace and public prompt prefix can hit."""
+
+    manager = BlockManager(num_blocks=32, block_size=4)
+    _store_one_page_multimodal_prefix(manager, cache_key="media-layout-a")
+
+    same_prefix = _manager_sequence()
+    same_prefix.token_ids[-2:] = [42, 43]
+    same_prefix.multimodal_prefix_cache_key = "media-layout-a"
+    assert manager.cached_prefix_tokens(same_prefix) == 8
+
+    different_prompt_prefix = _manager_sequence()
+    different_prompt_prefix.token_ids[0] = 77
+    different_prompt_prefix.multimodal_prefix_cache_key = "media-layout-a"
+    assert manager.cached_prefix_tokens(different_prompt_prefix) == 0
+
+    different_processor_layout = _manager_sequence()
+    different_processor_layout.multimodal_prefix_cache_key = "media-layout-b"
+    assert manager.cached_prefix_tokens(different_processor_layout) == 0
+
+    metadata = manager.multimodal_prefix_cache_metadata()
+    assert metadata["lookup_strategy"] == "direct_boundary_prompt_sha256"
+    manager.clear_multimodal_prefix_cache()
+
+
+def test_multimodal_prefix_cache_uses_full_pool_and_yields_to_active_request() -> None:
+    """A 32-page pool can retain more than four prefixes and reclaim on demand."""
+
+    manager = BlockManager(num_blocks=32, block_size=4)
+    for index in range(5):
+        _store_one_page_multimodal_prefix(
+            manager,
+            cache_key=f"media-layout-{index}",
+        )
+
+    metadata = manager.multimodal_prefix_cache_metadata()
+    assert metadata["total_pool_blocks"] == 32
+    assert metadata["max_blocks"] == 32
+    assert metadata["entries"] == 5
+    assert metadata["resident_blocks"] == 5
+
+    active = Sequence(
+        list(range(112)),
+        block_size=4,
+        request_id=100,
+    )
+    assert active.num_blocks == 28
+    assert manager.can_allocate(active)
+    manager.allocate(active)
+    assert len(active.block_table) == 28
+    assert manager.multimodal_prefix_cache_metadata()["evictions"] >= 1
+
+    manager.deallocate(active)
+    manager.clear_multimodal_prefix_cache()
+    assert not manager.used_block_ids
+
+
+def test_decode_append_reclaims_idle_prefix_page() -> None:
+    """Decode can grow after the idle Prefix Cache consumes the last page."""
+
+    manager = BlockManager(num_blocks=5, block_size=4)
+    for index in range(3):
+        _store_one_page_multimodal_prefix(manager, cache_key=f"cached-{index}")
+
+    active = Sequence(list(range(8)), block_size=4, request_id=200)
+    manager.allocate(active)
+    assert not manager.free_block_id_set
+
+    active.append_token(8)
+    assert manager.can_append(active)
+    manager.may_append(active)
+
+    assert len(active.block_table) == 3
+    assert manager.multimodal_prefix_cache_metadata()["evictions"] >= 1
+    manager.deallocate(active)
+    manager.clear_multimodal_prefix_cache()
+
+
+def test_decode_cow_reclaims_idle_prefix_page() -> None:
+    """A shared decode tail can CoW by reclaiming an idle cached prefix."""
+
+    manager = BlockManager(num_blocks=3, block_size=4)
+    _store_one_page_multimodal_prefix(manager, cache_key="reclaim-for-cow")
+    first = Sequence([1, 2, 3, 4], block_size=4, request_id=201)
+    second = Sequence([1, 2, 3, 4], block_size=4, request_id=202)
+    filler = Sequence([5, 6, 7, 8], block_size=4, request_id=203)
+    manager.allocate(first)
+    manager.allocate(second)
+    manager.allocate(filler)
+    assert first.block_table == second.block_table
+    assert not manager.free_block_id_set
+
+    pair = manager.copy_on_write(first)
+
+    assert pair is not None
+    assert first.block_table != second.block_table
+    assert manager.multimodal_prefix_cache_metadata()["evictions"] == 1
+    manager.deallocate(first)
+    manager.deallocate(second)
+    manager.deallocate(filler)
+
+
+def test_swap_in_reclaims_idle_prefix_pages() -> None:
+    """Atomic swap-in can reclaim cached pages from the shared GPU pool."""
+
+    manager = BlockManager(
+        num_blocks=8,
+        block_size=4,
+        num_cpu_blocks=4,
+    )
+    swapped = Sequence(list(range(8)), block_size=4, request_id=204)
+    manager.allocate(swapped)
+    manager.swap_out(swapped)
+    for index in range(6):
+        _store_one_page_multimodal_prefix(manager, cache_key=f"swap-cache-{index}")
+    filler = Sequence(list(range(100, 108)), block_size=4, request_id=205)
+    manager.allocate(filler)
+    assert not manager.free_block_id_set
+
+    assert manager.can_swap_in(swapped)
+    swap_map = manager.swap_in(swapped)
+
+    assert len(swap_map) == 2
+    assert len(swapped.block_table) == 2
+    assert manager.multimodal_prefix_cache_metadata()["evictions"] >= 2
+    manager.deallocate(swapped)
+    manager.deallocate(filler)
+    manager.clear_multimodal_prefix_cache()
+
+
+def test_terminal_sequence_releases_multimodal_runtime_tensors() -> None:
+    """Completed requests do not pin evicted Vision/DeepStack cache tensors."""
+
+    seq = _manager_sequence()
+    seq.pixel_values = torch.ones(2, 4)
+    seq.image_grid_thw = torch.ones(1, 3, dtype=torch.long)
+    seq.pixel_values_videos = torch.ones(2, 4)
+    seq.video_grid_thw = torch.ones(1, 3, dtype=torch.long)
+    seq.position_ids = torch.ones(3, 10, dtype=torch.long)
+    seq.precomputed_visual_embeds = torch.ones(6, 8)
+    seq.precomputed_deepstack_visual_embeds = (torch.ones(6, 8),)
+
+    seq.release_multimodal_runtime_tensors()
+
+    assert seq.pixel_values is None
+    assert seq.image_grid_thw is None
+    assert seq.pixel_values_videos is None
+    assert seq.video_grid_thw is None
+    assert seq.position_ids is None
+    assert seq.precomputed_visual_embeds is None
+    assert seq.precomputed_deepstack_visual_embeds == ()
 
 
 def test_block_manager_and_runner_commit_physical_compaction() -> None:

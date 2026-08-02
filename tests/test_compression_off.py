@@ -264,6 +264,36 @@ def test_attention_pruning_active_prefill_defers_runtime_decision():
     print("P6.12 attention pruning runtime-decision deferral: PASS")
 
 
+def test_attention_pruning_shadow_prefill_defers_without_compaction():
+    """Dense attention selection must not alter the KV layout it observes."""
+
+    config = SimpleNamespace(
+        compression_mode="scaled_fp8_kv",
+        kvcache_block_size=256,
+        enable_visual_pruning_shadow=True,
+        visual_pruning_keep_ratio=0.5,
+        visual_pruning_min_keep_tokens=1,
+        visual_pruning_strategy="attention",
+        visual_pruning_attention_last_n_layers=2,
+    )
+    seq = Sequence(
+        [1, 99, 99, 2],
+        SamplingParams(temperature=0.0, max_tokens=1),
+        block_size=256,
+        request_id=0,
+        image_token_id=99,
+        image_token_count=2,
+    )
+
+    metadata = build_compression_metadata(config, [seq], is_prefill=True)
+
+    assert metadata.mode == "scaled_fp8_kv"
+    assert metadata.visual_pruning_shadow_enabled
+    assert metadata.visual_pruning_records_by_batch == (None,)
+    assert metadata.visual_pruning_decision_records == ()
+    assert seq.visual_pruning_decision_record is None
+
+
 def test_visual_prune_active_metadata_persists_prefill_to_decode():
     """Active visual pruning must store prefill decisions for decode reuse."""
 

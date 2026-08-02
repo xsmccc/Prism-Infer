@@ -7,6 +7,7 @@ physical KV storage without changing the logical context contract.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from collections.abc import Sequence as TypingSequence
 from dataclasses import asdict, dataclass
 
@@ -18,6 +19,7 @@ from prism_infer.engine.visual_pruning import (
     DEFAULT_VISUAL_PRUNING_VIDEO_MIN_KEEP_TOKENS,
     VisualPruningConfig,
     compute_pruning_decision,
+    find_visual_token_spans,
 )
 
 COMPRESSION_OFF = "off"
@@ -216,6 +218,121 @@ def _with_batch_index(record: dict[str, object], batch_index: int) -> dict[str, 
     return annotated
 
 
+def _replay_index_tuple(value: object, *, name: str) -> tuple[int, ...]:
+    """Validate one sorted, unique sequence-local token-index list."""
+
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"visual pruning replay {name} must be a list or tuple")
+    indices = tuple(value)
+    if any(isinstance(index, bool) or not isinstance(index, int) for index in indices):
+        raise ValueError(f"visual pruning replay {name} must contain integers")
+    if tuple(sorted(set(indices))) != indices:
+        raise ValueError(f"visual pruning replay {name} must be sorted and unique")
+    return indices
+
+
+def _normalize_visual_pruning_replay_record(
+    seq,
+    pruning_config: VisualPruningConfig,
+    replay_record: object,
+) -> dict[str, object]:
+    """Validate and normalize a locked visual-token selection for fresh prefill."""
+
+    if not isinstance(replay_record, Mapping):
+        raise ValueError("visual_pruning_replay_record must be a mapping")
+    source_strategy = replay_record.get("strategy")
+    if source_strategy != pruning_config.strategy:
+        raise ValueError(
+            "visual pruning replay strategy differs from runtime strategy: "
+            f"source={source_strategy!r}, runtime={pruning_config.strategy!r}"
+        )
+
+    source_prompt_token_count = replay_record.get("prompt_token_count")
+    if (
+        isinstance(source_prompt_token_count, bool)
+        or not isinstance(source_prompt_token_count, int)
+        or source_prompt_token_count != int(seq.num_prompt_tokens)
+    ):
+        raise ValueError(
+            "visual pruning replay prompt length differs from the current prompt: "
+            f"source={source_prompt_token_count!r}, current={seq.num_prompt_tokens}"
+        )
+
+    expected_spans = [span.to_record() for span in find_visual_token_spans(seq)]
+    if replay_record.get("visual_token_spans") != expected_spans:
+        raise ValueError("visual pruning replay spans differ from the current prompt")
+    visual_indices = {
+        token_index
+        for span in expected_spans
+        for token_index in range(int(span["start"]), int(span["end"]))
+    }
+    kept_indices = _replay_index_tuple(
+        replay_record.get("kept_token_indices"),
+        name="kept_token_indices",
+    )
+    dropped_indices = _replay_index_tuple(
+        replay_record.get("dropped_token_indices"),
+        name="dropped_token_indices",
+    )
+    kept_set = set(kept_indices)
+    dropped_set = set(dropped_indices)
+    if kept_set & dropped_set:
+        raise ValueError("visual pruning replay kept and dropped indices overlap")
+    if kept_set | dropped_set != visual_indices:
+        raise ValueError("visual pruning replay must partition exactly the visual tokens")
+    count_fields = {
+        "total_visual_tokens": len(visual_indices),
+        "kept_visual_tokens": len(kept_indices),
+        "dropped_visual_tokens": len(dropped_indices),
+    }
+    for name, expected in count_fields.items():
+        value = replay_record.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value != expected:
+            raise ValueError(
+                f"visual pruning replay {name} is inconsistent: "
+                f"source={value!r}, expected={expected}"
+            )
+
+    score_config = VisualPruningConfig(
+        keep_ratio=pruning_config.keep_ratio,
+        min_keep_tokens=pruning_config.min_keep_tokens,
+        video_min_keep_tokens=pruning_config.video_min_keep_tokens,
+        strategy="score",
+        attention_last_n_layers=pruning_config.attention_last_n_layers,
+    )
+    token_scores = {
+        token_index: (1.0 if token_index in kept_set else 0.0) for token_index in visual_indices
+    }
+    validated = compute_pruning_decision(
+        seq,
+        score_config,
+        token_scores=token_scores,
+    )
+    if validated is None or validated.kept_token_indices != kept_indices:
+        raise ValueError("visual pruning replay kept count differs from the runtime policy")
+
+    normalized = validated.to_record()
+    normalized.update(
+        {
+            "strategy": pruning_config.strategy,
+            "selection_replay_locked": True,
+            "selection_source_seq_id": replay_record.get("seq_id"),
+            "selection_source_prompt_token_count": source_prompt_token_count,
+        }
+    )
+    for name in (
+        "score_source",
+        "score_layers",
+        "score_min",
+        "score_max",
+        "score_mean",
+        "selection_source_sample_id",
+    ):
+        if name in replay_record:
+            normalized[name] = replay_record[name]
+    return normalized
+
+
 def _build_visual_pruning_records_by_batch(
     config,
     seqs: TypingSequence,
@@ -241,6 +358,33 @@ def _build_visual_pruning_records_by_batch(
         pruning_config = build_visual_pruning_config(config)
         records: list[dict[str, object] | None] = []
         for batch_index, seq in enumerate(seqs):
+            replay_record = getattr(seq, "visual_pruning_replay_record", None)
+            if replay_record is not None:
+                compact_record = getattr(seq, "visual_pruning_decision_record", None)
+                if getattr(seq, "kv_layout", None) is not None:
+                    if not isinstance(compact_record, dict) or not bool(
+                        compact_record.get("selection_replay_locked")
+                    ):
+                        raise RuntimeError(
+                            "locked visual pruning replay lost its compacted decision"
+                        )
+                    records.append(_with_batch_index(compact_record, batch_index))
+                    continue
+                record = _with_batch_index(
+                    _normalize_visual_pruning_replay_record(
+                        seq,
+                        pruning_config,
+                        replay_record,
+                    ),
+                    batch_index,
+                )
+                if not active:
+                    raise ValueError(
+                        "visual pruning replay requires an active visual compaction mode"
+                    )
+                seq.visual_pruning_decision_record = record
+                records.append(record)
+                continue
             cached_record = getattr(
                 seq,
                 "visual_pruning_decision_record",
@@ -253,9 +397,11 @@ def _build_visual_pruning_records_by_batch(
             ):
                 records.append(_with_batch_index(cached_record, batch_index))
                 continue
-            if active and pruning_config.strategy == "attention":
+            if (active or shadow_enabled) and pruning_config.strategy == "attention":
                 # Runtime scores are collected in selected decoder layers.
                 # The decision is finalized only after a complete cold prefill.
+                # Shadow mode keeps the dense KV layout and is used only to
+                # produce a selection record for a later locked replay.
                 records.append(None)
                 continue
             decision = compute_pruning_decision(seq, pruning_config)

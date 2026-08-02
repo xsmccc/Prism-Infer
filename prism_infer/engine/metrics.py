@@ -20,6 +20,7 @@ class RequestMetrics:
     submitted_ns: int
     prompt_tokens: int
     max_tokens: int
+    cached_tokens: int | None = None
     first_scheduled_ns: int | None = None
     first_token_ns: int | None = None
     last_token_ns: int | None = None
@@ -49,6 +50,7 @@ class RequestMetrics:
         return {
             "request_id": self.request_id,
             "prompt_tokens": self.prompt_tokens,
+            "cached_tokens": self.cached_tokens,
             "max_tokens": self.max_tokens,
             "output_tokens": len(self.token_timestamps_ns),
             "submitted_ns": self.submitted_ns,
@@ -121,6 +123,10 @@ class EngineMetrics:
                 request = self._requests.get(seq.seq_id)
                 if request is not None and request.first_scheduled_ns is None:
                     request.first_scheduled_ns = plan.created_ns
+                    request.cached_tokens = min(
+                        request.prompt_tokens,
+                        max(0, int(seq.num_cached_tokens)),
+                    )
 
     def on_batch_completed(
         self,

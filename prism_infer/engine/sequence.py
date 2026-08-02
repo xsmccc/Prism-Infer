@@ -83,12 +83,17 @@ class Sequence:
         self.multimodal_prefix_cache_enabled = False
         self.prefix_cache_candidate_tokens = 0
         self.multimodal_prefix_cache_hit = False
+        self.multimodal_prefix_pre_admission_hit = False
+        self.multimodal_prefix_stale_fallback = False
         self.precomputed_visual_embeds: torch.Tensor | None = None
         self.precomputed_deepstack_visual_embeds: tuple[
             torch.Tensor,
             ...,
         ] = ()
         self.visual_pruning_decision_record: dict[str, object] | None = None
+        # Optional benchmark/research input: a previously measured visual-token
+        # selection that must be validated before it can drive a fresh prefill.
+        self.visual_pruning_replay_record: dict[str, object] | None = None
         self.kv_layout: KVCacheLayoutDescriptor | None = None
 
     @classmethod
@@ -410,6 +415,17 @@ class Sequence:
         if self.kv_layout is not None:
             self.kv_layout.append_generated_token()
 
+    def release_multimodal_runtime_tensors(self) -> None:
+        """Release per-request media tensors after a terminal transition."""
+
+        self.pixel_values = None
+        self.image_grid_thw = None
+        self.pixel_values_videos = None
+        self.video_grid_thw = None
+        self.position_ids = None
+        self.precomputed_visual_embeds = None
+        self.precomputed_deepstack_visual_embeds = ()
+
     # === 跨进程序列化优化 ===
     # Python pickle序列化对象时自动调用这两个方法
     # 目的: 减少主进程→子进程的数据传输量
@@ -451,6 +467,7 @@ class Sequence:
             "video_token_id": self.video_token_id,
             "video_token_count": self.video_token_count,
             "visual_pruning_decision_record": self.visual_pruning_decision_record,
+            "visual_pruning_replay_record": self.visual_pruning_replay_record,
             "kv_layout": (
                 None
                 if self.kv_layout is None
@@ -537,9 +554,12 @@ class Sequence:
         self.multimodal_prefix_cache_enabled = False
         self.prefix_cache_candidate_tokens = 0
         self.multimodal_prefix_cache_hit = False
+        self.multimodal_prefix_pre_admission_hit = False
+        self.multimodal_prefix_stale_fallback = False
         self.precomputed_visual_embeds = None
         self.precomputed_deepstack_visual_embeds = ()
         self.visual_pruning_decision_record = state.get("visual_pruning_decision_record")
+        self.visual_pruning_replay_record = state.get("visual_pruning_replay_record")
         layout_record = state.get("kv_layout")
         self.kv_layout = (
             None if layout_record is None else KVCacheLayoutDescriptor.from_record(layout_record)

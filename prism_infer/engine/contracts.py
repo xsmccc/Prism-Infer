@@ -552,6 +552,13 @@ class KVCacheManager(Protocol):
 
     def cached_prefix_tokens(self, seq: Sequence) -> int: ...
 
+    def probe_multimodal_prefix(
+        self,
+        seq: Sequence,
+        *,
+        would_hydrate_visual: bool = False,
+    ) -> int: ...
+
     def can_append(self, seq: Sequence) -> bool: ...
 
     def may_append(self, seq: Sequence) -> None: ...

@@ -32,8 +32,6 @@ from prism_infer.engine.kv_layout import (
 )
 from prism_infer.engine.sequence import Sequence
 
-MULTIMODAL_PREFIX_CACHE_MAX_BLOCKS = 256
-
 
 @dataclass(slots=True)
 class _MultimodalPrefixCacheEntry:
@@ -88,11 +86,11 @@ class BlockManager:
             str,
             _MultimodalPrefixCacheEntry,
         ] = OrderedDict()
-        self._multimodal_prefix_cache_max_blocks = min(
-            MULTIMODAL_PREFIX_CACHE_MAX_BLOCKS,
-            max(1, num_blocks // 8),
-        )
+        self._multimodal_prefix_cache_max_blocks = num_blocks
         self._multimodal_prefix_cache_blocks = 0
+        self._multimodal_prefix_pre_admission_hits = 0
+        self._multimodal_prefix_visual_hydration_skips = 0
+        self._multimodal_prefix_stale_probe_fallbacks = 0
         self._multimodal_prefix_cache_hits = 0
         self._multimodal_prefix_cache_misses = 0
         self._multimodal_prefix_cache_admissions = 0
@@ -127,17 +125,41 @@ class BlockManager:
         if not self.enable_prefix_caching:
             return None
         media_key = seq.multimodal_prefix_cache_key
-        if media_key is None:
+        boundary = self._multimodal_prefix_boundary(seq)
+        if media_key is None or boundary is None:
             return None
-        for cache_id, entry in self._multimodal_prefix_cache.items():
-            if entry.key != media_key:
-                continue
-            if tuple(seq.prompt_token_ids[: entry.logical_prefix_len]) != (
-                entry.prompt_prefix_token_ids
-            ):
-                continue
-            return cache_id, entry
-        return None
+        prompt_prefix = tuple(seq.prompt_token_ids[:boundary])
+        cache_id = self._multimodal_prefix_cache_id(media_key, prompt_prefix)
+        entry = self._multimodal_prefix_cache.get(cache_id)
+        if entry is None:
+            return None
+        if (
+            entry.key != media_key
+            or entry.logical_prefix_len != boundary
+            or entry.prompt_prefix_token_ids != prompt_prefix
+        ):
+            raise RuntimeError("multimodal prefix cache digest collision")
+        return cache_id, entry
+
+    def probe_multimodal_prefix(
+        self,
+        seq: Sequence,
+        *,
+        would_hydrate_visual: bool = False,
+    ) -> int:
+        """Probe before admission so a prefix hit can bypass Vision hydration."""
+
+        self._assert_sequence_block_size(seq)
+        seq.multimodal_prefix_cache_enabled = self.enable_prefix_caching
+        match = self._matching_multimodal_prefix(seq)
+        candidate_tokens = 0 if match is None else match[1].logical_prefix_len
+        seq.prefix_cache_candidate_tokens = candidate_tokens
+        if candidate_tokens:
+            seq.multimodal_prefix_pre_admission_hit = True
+            self._multimodal_prefix_pre_admission_hits += 1
+            if would_hydrate_visual:
+                self._multimodal_prefix_visual_hydration_skips += 1
+        return candidate_tokens
 
     def cached_prefix_tokens(self, seq: Sequence) -> int:
         """Publish a read-only cache candidate for cache-aware scheduling."""
@@ -477,6 +499,9 @@ class BlockManager:
             )
         match = self._matching_multimodal_prefix(seq)
         if match is None:
+            if seq.multimodal_prefix_pre_admission_hit and not seq.multimodal_prefix_stale_fallback:
+                seq.multimodal_prefix_stale_fallback = True
+                self._multimodal_prefix_stale_probe_fallbacks += 1
             if self.enable_prefix_caching and seq.multimodal_prefix_cache_key is not None:
                 self._multimodal_prefix_cache_misses += 1
             return self._allocate_dense(seq)
@@ -603,11 +628,16 @@ class BlockManager:
         return {
             "enabled": self.enable_prefix_caching,
             "identity": "sha256_model_processor_media_layout_prompt_prefix_v1",
+            "lookup_strategy": "direct_boundary_prompt_sha256",
             "scope": "compacted_scaled_fp8_multimodal_prefix_kv",
             "admission_policy": "lifetime_hits_times_logical_tokens_per_page",
+            "total_pool_blocks": self._gpu_pool.capacity,
             "max_blocks": self._multimodal_prefix_cache_max_blocks,
             "resident_blocks": self._multimodal_prefix_cache_blocks,
             "entries": len(self._multimodal_prefix_cache),
+            "pre_admission_hits": self._multimodal_prefix_pre_admission_hits,
+            "visual_hydration_skips": self._multimodal_prefix_visual_hydration_skips,
+            "stale_probe_fallbacks": self._multimodal_prefix_stale_probe_fallbacks,
             "hits": self._multimodal_prefix_cache_hits,
             "misses": self._multimodal_prefix_cache_misses,
             "admissions": self._multimodal_prefix_cache_admissions,
@@ -638,6 +668,9 @@ class BlockManager:
     def reset_multimodal_prefix_cache_metrics(self) -> None:
         """Reset counters while retaining warm compacted prefix pages."""
 
+        self._multimodal_prefix_pre_admission_hits = 0
+        self._multimodal_prefix_visual_hydration_skips = 0
+        self._multimodal_prefix_stale_probe_fallbacks = 0
         self._multimodal_prefix_cache_hits = 0
         self._multimodal_prefix_cache_misses = 0
         self._multimodal_prefix_cache_admissions = 0
@@ -673,7 +706,20 @@ class BlockManager:
 
     def can_append(self, seq: Sequence) -> bool:
         self._assert_sequence_block_size(seq)
-        return self._gpu_pool.free_count >= (seq.physical_kv_len % self.block_size == 1)
+        if seq.physical_kv_len % self.block_size == 1:
+            required_blocks = 1
+        elif not seq.block_table or self.blocks[seq.block_table[-1]].ref_count <= 1:
+            required_blocks = 0
+        else:
+            match = self._matching_multimodal_prefix(seq)
+            cache_owns_tail = bool(
+                match is not None
+                and seq.block_table[-1] in (*match[1].block_ids, *match[1].tail_clone_block_ids)
+            )
+            required_blocks = int(
+                not (cache_owns_tail and self.blocks[seq.block_table[-1]].ref_count == 2)
+            )
+        return self._gpu_pool.free_count + self._reclaimable_cache_blocks() >= required_blocks
         # 注意: (len(seq) % block_size == 1) 是 bool, 转成 int 就是 0 或 1
         # >= 1 → 需要 1 个空闲块
         # >= 0 → 永远 True (不需要新块)
@@ -696,6 +742,7 @@ class BlockManager:
             ):
                 if last_block.hash == NO_BLOCK_HASH:
                     raise RuntimeError("completed dense KV block is missing its hash")
+            self._ensure_free_blocks(1)
             block = self._allocate_free_block()
             block_table.append(block.block_id)
         elif physical_remainder == 0:
@@ -774,7 +821,9 @@ class BlockManager:
     def can_swap_in(self, seq: Sequence) -> bool:
         """是否有足够的 GPU block 来换入这个序列"""
         self._assert_sequence_block_size(seq)
-        return bool(seq.cpu_block_table) and self._gpu_pool.free_count >= len(seq.cpu_block_table)
+        return bool(seq.cpu_block_table) and (
+            self._gpu_pool.free_count + self._reclaimable_cache_blocks() >= len(seq.cpu_block_table)
+        )
 
     def _validate_swap_in_metadata(
         self,
@@ -818,12 +867,7 @@ class BlockManager:
                 block_table=seq.cpu_block_table,
             )
         cpu_block_table = self._cpu_pool.validate_owned(seq.cpu_block_table)
-        if self._gpu_pool.free_count < len(cpu_block_table):
-            raise RuntimeError(
-                "insufficient free GPU KV-cache blocks for atomic swap-in: "
-                f"required={len(cpu_block_table)}, "
-                f"available={self._gpu_pool.free_count}"
-            )
+        self._ensure_free_blocks(len(cpu_block_table))
         cpu_block_hashes, cpu_block_token_ids = self._validate_swap_in_metadata(
             seq,
             cpu_block_table,
@@ -876,6 +920,27 @@ class BlockManager:
             return None  # 独占, 不需要复制
 
         # 需要 CoW: 分配新 block, 旧 block 引用计数 -1
+        match = self._matching_multimodal_prefix(seq)
+        protected_cache_id = None if match is None else match[0]
+        try:
+            self._ensure_free_blocks(
+                1,
+                protected_cache_id=protected_cache_id,
+            )
+        except RuntimeError:
+            if match is None or last_block_id not in (
+                *match[1].block_ids,
+                *match[1].tail_clone_block_ids,
+            ):
+                raise
+            self._evict_multimodal_prefix(match[0])
+            last_block = self.blocks[last_block_id]
+            if last_block.ref_count <= 1:
+                return None
+            self._ensure_free_blocks(1)
+        last_block = self.blocks[last_block_id]
+        if last_block.ref_count <= 1:
+            return None
         new_block = self._allocate_free_block()
         new_block_id = new_block.block_id
         # 复制旧 block 的元数据 (hash, token_ids) 到新 block

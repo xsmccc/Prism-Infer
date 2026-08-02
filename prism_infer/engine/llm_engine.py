@@ -464,7 +464,18 @@ class LLMEngine:
             raise ValueError("ttft_slo_ms must be a finite positive number or None")
         seq.submitted_ns = arrival_ns
         seq.ttft_slo_ms = None if ttft_slo_ms is None else float(ttft_slo_ms)
-        if getattr(self.config, "enable_visual_embedding_cache", False):
+        visual_cache_enabled = getattr(
+            self.config,
+            "enable_visual_embedding_cache",
+            False,
+        )
+        cached_prefix_tokens = self.scheduler.block_manager.probe_multimodal_prefix(
+            seq,
+            would_hydrate_visual=(
+                visual_cache_enabled and seq.visual_embedding_cache_key is not None
+            ),
+        )
+        if visual_cache_enabled and not cached_prefix_tokens:
             self.model_runner.hydrate_visual_embedding_cache(seq)
         self.metrics.on_request_submitted(seq, timestamp_ns=arrival_ns)
         try:
@@ -480,6 +491,7 @@ class LLMEngine:
                     reason="rejected",
                     timestamp_ns=clock_ns(),
                 )
+            seq.release_multimodal_runtime_tensors()
             raise
         if not decision.accepted:
             marker = getattr(self.metrics, "mark_terminal", None)
@@ -489,6 +501,7 @@ class LLMEngine:
                     reason="rejected",
                     timestamp_ns=clock_ns(),
                 )
+            seq.release_multimodal_runtime_tensors()
         return seq.seq_id
 
     def _submit_image_inputs(
