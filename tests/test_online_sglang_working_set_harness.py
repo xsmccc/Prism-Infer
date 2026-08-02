@@ -15,7 +15,7 @@ def _working_set() -> SimpleNamespace:
                 "pages": 220,
                 "page_size_tokens": 256,
             },
-            "serving": {"max_num_seqs": 8},
+            "serving": {"max_num_seqs": 8, "max_chunk_size": 8192},
         }
     )
 
@@ -59,6 +59,7 @@ def test_runtime_preserves_effective_token_and_byte_audit(
         max_total_tokens=max_total_tokens,
         page_size=256,
         max_running_requests=8,
+        chunked_prefill_size=8192,
         kv_cache_dtype="fp8_e4m3",
         mm_process_config={"image": processor_kwargs},
     )
@@ -73,6 +74,7 @@ def test_runtime_preserves_effective_token_and_byte_audit(
     assert verification["max_total_tokens"] == max_total_tokens
     assert verification["kv_capacity_bytes"] <= 4_282_122_240
     assert verification["unused_budget_bytes"] < 256 * kv_bytes_per_token
+    assert verification["chunked_prefill_size"] == 8192
     assert all(verification["checks"].values())
 
     server_args.kv_cache_dtype = "bfloat16"

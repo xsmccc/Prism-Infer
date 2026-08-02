@@ -671,6 +671,7 @@ def _verify_sglang_working_set_runtime(
     server_args = engine.server_args
     budget = working_set.plan["kv_budget"]
     expected_max_num_seqs = int(working_set.plan["serving"]["max_num_seqs"])
+    expected_chunked_prefill_size = int(working_set.plan["serving"]["max_chunk_size"])
     capacity_bytes = int(server_args.max_total_tokens) * kv_bytes_per_token
     unused_budget_bytes = int(budget["bytes"]) - capacity_bytes
     one_page_bytes = int(budget["page_size_tokens"]) * kv_bytes_per_token
@@ -680,6 +681,8 @@ def _verify_sglang_working_set_runtime(
         "kv_cache_dtype": actual_cache_dtype == WORKING_SET_KV_CACHE_DTYPE,
         "page_size_tokens": int(server_args.page_size) == int(budget["page_size_tokens"]),
         "max_num_seqs": int(server_args.max_running_requests) == expected_max_num_seqs,
+        "chunked_prefill_size": int(server_args.chunked_prefill_size)
+        == expected_chunked_prefill_size,
         "processor_config": server_args.mm_process_config == mm_process_config,
         "local_processor": processor_verification["image_size"]
         == {
@@ -700,6 +703,7 @@ def _verify_sglang_working_set_runtime(
         "page_size_tokens": int(server_args.page_size),
         "max_total_tokens": int(server_args.max_total_tokens),
         "max_num_seqs": int(server_args.max_running_requests),
+        "chunked_prefill_size": int(server_args.chunked_prefill_size),
         "mm_process_config": server_args.mm_process_config,
         "processor": processor_verification,
     }
@@ -816,6 +820,7 @@ def _run(resources: _RunResources) -> None:
         args.seed = int(traffic["seed"])
         args.max_model_len = int(model_contract["max_model_len"])
         args.max_num_seqs = int(serving_contract["max_num_seqs"])
+        args.chunked_prefill_size = int(serving_contract["max_chunk_size"])
         if args.max_num_seqs != DEFAULT_MAX_NUM_SEQS:
             raise ValueError("working-set SGLang requires max_num_seqs=8")
         args.page_size = int(kv_budget["page_size_tokens"])
@@ -851,6 +856,7 @@ def _run(resources: _RunResources) -> None:
             "image_min_pixels": int(processor_contract["image_min_pixels"]),
             "image_max_pixels": int(processor_contract["image_max_pixels"]),
             "max_num_seqs": int(serving_contract["max_num_seqs"]),
+            "chunked_prefill_size": int(serving_contract["max_chunk_size"]),
             "source_prompt_sha256": source_prompt_schedule_sha256(working_set.measured_payloads),
             "population_source_prompt_sha256": source_prompt_schedule_sha256(
                 working_set.population_payloads

@@ -15,7 +15,7 @@ def _working_set() -> SimpleNamespace:
                 "pages": 220,
                 "page_size_tokens": 256,
             },
-            "serving": {"max_num_seqs": 8},
+            "serving": {"max_num_seqs": 8, "max_chunk_size": 8192},
         }
     )
 
@@ -74,8 +74,12 @@ def test_runtime_audits_initialized_blocks_and_allocated_bytes(
     )
     config = SimpleNamespace(
         cache_config=cache_config,
-        scheduler_config=SimpleNamespace(max_num_seqs=8),
+        scheduler_config=SimpleNamespace(
+            max_num_seqs=8,
+            max_num_batched_tokens=8192,
+        ),
         model_config=model_config,
+        attention_config=SimpleNamespace(backend=SimpleNamespace(name="TRITON_ATTN")),
     )
     llm = SimpleNamespace(llm_engine=SimpleNamespace(vllm_config=config))
     verification = vllm_harness._verify_vllm_working_set_runtime(
@@ -86,6 +90,8 @@ def test_runtime_audits_initialized_blocks_and_allocated_bytes(
     assert verification["num_gpu_blocks"] == 220
     assert verification["kv_bytes_per_block"] == 19_464_192
     assert verification["kv_allocated_bytes"] == 4_282_122_240
+    assert verification["max_num_batched_tokens"] == 8192
+    assert verification["attention_backend"] == "TRITON_ATTN"
     assert all(verification["checks"].values())
 
     cache_config.num_gpu_blocks = 219

@@ -55,6 +55,7 @@ from prism_infer.analysis.working_set_plan import DEFAULT_MAX_NUM_SEQS
 H3_PROFILES = ("primary", "conditional_video")
 TERMINAL_FINISH_REASONS = {"eos", "length", "stop"}
 WORKING_SET_KV_CACHE_DTYPE = "fp8_per_token_head"
+WORKING_SET_ATTENTION_BACKEND = "TRITON_ATTN"
 
 
 class _DeviceProcessMemorySampler:
@@ -613,6 +614,7 @@ def _verify_vllm_working_set_runtime(
     scheduler = config.scheduler_config
     expected_budget = working_set.plan["kv_budget"]
     expected_max_num_seqs = int(working_set.plan["serving"]["max_num_seqs"])
+    expected_max_num_batched_tokens = int(working_set.plan["serving"]["max_chunk_size"])
     expected_processor_kwargs = working_set_processor_kwargs(working_set.plan)
     actual_processor_kwargs = getattr(config.model_config, "mm_processor_kwargs", None)
     if not isinstance(actual_processor_kwargs, Mapping):
@@ -622,6 +624,8 @@ def _verify_vllm_working_set_runtime(
         raise RuntimeError("vLLM exposes no initialized GPU block count")
     actual_num_gpu_blocks = int(actual_num_gpu_blocks)
     actual_cache_dtype = str(getattr(cache, "cache_dtype", "unknown"))
+    attention_backend = getattr(config.attention_config, "backend", None)
+    actual_attention_backend = str(getattr(attention_backend, "name", attention_backend))
     bytes_per_block = _vllm_fp8_block_bytes(
         config.model_config,
         block_size=int(cache.block_size),
@@ -634,6 +638,9 @@ def _verify_vllm_working_set_runtime(
         "allocated_kv_bytes": actual_allocated_bytes == int(expected_budget["bytes"]),
         "page_size_tokens": int(cache.block_size) == int(expected_budget["page_size_tokens"]),
         "max_num_seqs": int(scheduler.max_num_seqs) == expected_max_num_seqs,
+        "max_num_batched_tokens": int(scheduler.max_num_batched_tokens)
+        == expected_max_num_batched_tokens,
+        "attention_backend": actual_attention_backend == WORKING_SET_ATTENTION_BACKEND,
         "processor_kwargs": dict(actual_processor_kwargs) == expected_processor_kwargs,
         "local_processor": processor_verification["image_size"]
         == {
@@ -653,6 +660,8 @@ def _verify_vllm_working_set_runtime(
         "kv_allocated_bytes": actual_allocated_bytes,
         "page_size_tokens": int(cache.block_size),
         "max_num_seqs": int(scheduler.max_num_seqs),
+        "max_num_batched_tokens": int(scheduler.max_num_batched_tokens),
+        "attention_backend": actual_attention_backend,
         "mm_processor_kwargs": dict(actual_processor_kwargs),
         "processor": processor_verification,
     }
@@ -763,6 +772,7 @@ def _run(resources: _RunResources) -> None:
     if args.slo_output:
         _require_new_output(Path(args.slo_output))
     kv_cache_dtype_requested_cli = args.kv_cache_dtype
+    attention_backend_requested_cli = args.attention_backend
     if args.requests <= 0 or args.warmup_requests < 0 or args.max_tokens < 2:
         raise SystemExit("--requests must be positive, warmup non-negative and max-tokens >= 2")
     if args.media_repeat_rate is not None and not 0.0 <= args.media_repeat_rate <= 1.0:
@@ -814,6 +824,7 @@ def _run(resources: _RunResources) -> None:
         args.seed = int(traffic["seed"])
         args.max_model_len = int(model_contract["max_model_len"])
         args.max_num_seqs = int(serving_contract["max_num_seqs"])
+        args.max_num_batched_tokens = int(serving_contract["max_chunk_size"])
         if args.max_num_seqs != DEFAULT_MAX_NUM_SEQS:
             raise ValueError("working-set vLLM requires max_num_seqs=8")
         args.kv_cache_memory_bytes = int(kv_budget["bytes"])
@@ -821,6 +832,7 @@ def _run(resources: _RunResources) -> None:
         args.enable_prefix_caching = True
         args.mm_processor_cache_gb = 1.0
         args.kv_cache_dtype = _resolve_working_set_kv_cache_dtype(args.kv_cache_dtype)
+        args.attention_backend = WORKING_SET_ATTENTION_BACKEND
         requests = working_set.measured_payloads
         request_classes = working_set.measured_sample_ids
         offsets_s = working_set.measured_offsets_s
@@ -843,6 +855,7 @@ def _run(resources: _RunResources) -> None:
             "image_min_pixels": int(processor_contract["image_min_pixels"]),
             "image_max_pixels": int(processor_contract["image_max_pixels"]),
             "max_num_seqs": int(serving_contract["max_num_seqs"]),
+            "max_num_batched_tokens": int(serving_contract["max_chunk_size"]),
             "source_prompt_sha256": source_prompt_schedule_sha256(working_set.measured_payloads),
             "population_source_prompt_sha256": source_prompt_schedule_sha256(
                 working_set.population_payloads
@@ -852,6 +865,8 @@ def _run(resources: _RunResources) -> None:
             "measured_requests": len(working_set.measured_payloads),
             "kv_cache_dtype_requested_cli": kv_cache_dtype_requested_cli,
             "kv_cache_dtype_enforced": args.kv_cache_dtype,
+            "attention_backend_requested_cli": attention_backend_requested_cli,
+            "attention_backend_enforced": args.attention_backend,
         }
         conformance = None
     else:
@@ -1111,6 +1126,7 @@ def _run(resources: _RunResources) -> None:
         "backend": {
             **effective_backend,
             "attention": args.attention_backend,
+            "attention_requested": attention_backend_requested_cli,
             "block_size": args.block_size,
             "prefix_caching": args.enable_prefix_caching,
             "mm_processor_cache_gb": args.mm_processor_cache_gb,
