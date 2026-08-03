@@ -712,8 +712,12 @@ def _numeric(value: object) -> float | None:
 
 def _series_label(cell: Mapping[str, Any]) -> str:
     if cell["engine"] == "prism":
-        return f"Prism {cell['variant']}"
-    return str(cell["engine"]).upper()
+        return {
+            "vision_only": "Prism Vision only",
+            "dense_prefix": "Prism Dense Prefix",
+            "compact_prefix": "Prism Compact Prefix",
+        }[str(cell["variant"])]
+    return {"vllm": "vLLM", "sglang": "SGLang"}[str(cell["engine"])]
 
 
 def _draw_panel(
@@ -775,7 +779,7 @@ def _draw_panel(
         ordered = sorted(points)
         coordinates = [xy(point) for point in ordered]
         color = colors[label]
-        width = 4 if label.startswith("Prism compact_prefix") else 2
+        width = 4 if label == "Prism Compact Prefix" else 2
         if len(coordinates) > 1:
             if label in dashed:
                 for start, end in zip(coordinates, coordinates[1:], strict=False):
@@ -804,24 +808,25 @@ def _render_plot(path: Path, summary: Mapping[str, Any]) -> None:
     draw = ImageDraw.Draw(image)
     draw.text(
         (70, 28),
-        "Working-set pressure: Dense pages / media groups -> resident media -> TTFT",
+        "Repeated visual-context working set: capacity, residency, and TTFT",
         fill="#202124",
         font=_font(27, bold=True),
     )
     cells = list(summary["cells"])
     worksets = summary["identity"]["worksets"]
     annotations = [
-        f"{name}: {details['dense_prefix_pages']} dense pages / {details['media_groups']} media"
+        f"{name}: {details['dense_prefix_pages']} dense pages / "
+        f"{details['media_groups']} media groups"
         for name, details in worksets.items()
     ]
     draw.text((72, 72), " | ".join(annotations), fill="#5f6368", font=_font(15))
 
     palette = {
-        "Prism vision_only": "#4285f4",
-        "Prism dense_prefix": "#f9ab00",
-        "Prism compact_prefix": "#7b1fa2",
-        "VLLM": "#0f9d58",
-        "SGLANG": "#d93025",
+        "Prism Vision only": "#4285f4",
+        "Prism Dense Prefix": "#f9ab00",
+        "Prism Compact Prefix": "#7b1fa2",
+        "vLLM": "#0f9d58",
+        "SGLang": "#d93025",
     }
     resident_series: dict[str, list[tuple[float, float]]] = {}
     ttft_series: dict[str, list[tuple[float, float]]] = {}
@@ -841,7 +846,7 @@ def _render_plot(path: Path, summary: Mapping[str, Any]) -> None:
     _draw_panel(
         draw,
         (105, 160, 750, 690),
-        title="Explicit resident media entries (count)",
+        title="Resident Prefix entries reported by Prism",
         y_label="",
         series=resident_series,
         colors=colors,
@@ -849,14 +854,13 @@ def _render_plot(path: Path, summary: Mapping[str, Any]) -> None:
     _draw_panel(
         draw,
         (900, 160, 1535, 690),
-        title="Measured TTFT p50 (ms)",
+        title="TTFT p50 across engines (ms)",
         y_label="",
         series=ttft_series,
         colors=colors,
         dashed=frozenset(dashed),
     )
     legend_y = 770
-    draw.text((85, legend_y - 30), "Series", fill="#202124", font=_font(16, bold=True))
     x = 85
     for label in palette:
         if not any(_series_label(cell) == label for cell in cells):
@@ -866,8 +870,7 @@ def _render_plot(path: Path, summary: Mapping[str, Any]) -> None:
         x += 260
     draw.text(
         (85, 830),
-        "Only explicit residency/cache counters are plotted; "
-        "unavailable backend fields are not inferred.",
+        "vLLM and SGLang do not expose a directly comparable resident-entry counter.",
         fill="#5f6368",
         font=_font(14),
     )
