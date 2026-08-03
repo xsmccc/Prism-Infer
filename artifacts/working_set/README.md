@@ -15,6 +15,8 @@ Dataset media and model weights are not included.
   `74102cb70c6a62cdb62c1c6ed72c92a878d3a11eda4c43da101c2305fabb2739`
 - Dense-page pre-run SHA256:
   `028f471748d7431f63b7cfbb859fc73680aa7a8b97b4c9ff9c4d969eff7ebbef`
+- Quality selection JSON SHA256 recorded by the request-level quality runs:
+  `c511ab44dca420a5b4ef65ae378104ce046f21f81703203a26a73620f9a9651e`
 
 The performance plan contains only media groups with at least two different questions. Its
 `fit`/`knee`/`pressure` streams cover 42/56/85 questions; every measured request switches questions
@@ -37,6 +39,9 @@ within its media group.
 - `protocol/mvbench_repeated_selection.json`: the exact 123-video, 252-question MVBench subset.
 - `protocol/mvbench_repeated_materialization.json`: archive revision, HTTP Range, CRC and media
   SHA256 records for the MVBench files.
+- `protocol/quality_raw/*.json.gz`: exact measurement-time quality protocol, evaluator and
+  selection JSON. These preserve the source identities stored in the request-level quality
+  records; the files under `benchmarks/workloads/` are the cleaned current entry points.
 
 ### Performance
 

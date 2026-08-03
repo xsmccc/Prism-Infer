@@ -51,6 +51,12 @@ gzip -dk performance/performance_raw/prism_compact_prefix_pressure.json.gz
 gzip -dk quality/quality_raw/muir_uniform_reuse.json.gz
 ```
 
+质量请求记录中的 `materialization_verification.selection_sha256` 指向测量当时的选择文件。
+原件保存在 `protocol/quality_raw/quality_selection.json.gz`；解压后 SHA256 为
+`c511ab44dca420a5b4ef65ae378104ce046f21f81703203a26a73620f9a9651e`。当前
+`benchmarks/workloads/` 下的文件使用清理后的命名和元数据，用于新的运行，不替代历史
+测量身份。
+
 适合快速检查的文件：
 
 - `highlights.json`：主结果、质量代价和适用范围；
