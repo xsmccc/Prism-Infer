@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the fixed 15-cell repeated-visual-context performance matrix."""
+"""Run the repeated-visual-context performance comparison."""
 
 from __future__ import annotations
 

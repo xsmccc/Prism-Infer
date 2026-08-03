@@ -847,6 +847,11 @@ def _run(resources: _RunResources) -> None:
             "plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
             "workset_id": args.working_set_id,
             "group_ids": list(working_set.workset["group_ids"]),
+            "available_questions": int(working_set.workset["available_questions"]),
+            "observed_questions": int(working_set.workset["observed_questions"]),
+            "measured_question_switches": int(
+                working_set.workset["measured_question_switches"]
+            ),
             "dense_prefix_pages": int(working_set.workset["dense_prefix_pages"]),
             "kv_budget_bytes": int(kv_budget["bytes"]),
             "kv_budget_pages": int(kv_budget["pages"]),

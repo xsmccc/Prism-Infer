@@ -44,6 +44,9 @@ def _audit(*, variant: str | None = None) -> dict[str, object]:
         "workset_id": "fit",
         "group_ids": ["media-a", "media-b"],
         "dense_prefix_pages": 60,
+        "available_questions": 4,
+        "observed_questions": 4,
+        "measured_question_switches": 2,
         "population_requests": 2,
         "measured_requests": 2,
     }
@@ -200,7 +203,7 @@ class WorkingSetSummaryTest(unittest.TestCase):
         prism = cells[("prism", "compact_prefix")]
         vllm = cells[("vllm", "engine_default")]
 
-        self.assertEqual(summary["schema_version"], 2)
+        self.assertEqual(summary["schema_version"], 3)
         self.assertEqual(prism["latency_ms"]["ttft"]["p50"], 150.0)
         self.assertEqual(prism["latency_ms"]["ttft"]["p99"], 199.0)
         self.assertEqual(prism["latency_ms"]["e2e"]["p50"], 400.0)
@@ -255,7 +258,7 @@ class WorkingSetSummaryTest(unittest.TestCase):
 
     def test_requires_complete_matrix_and_complete_population(self) -> None:
         partial = [_prism_record(), _external_record("vllm"), _external_record("sglang")]
-        with self.assertRaisesRegex(ValueError, "incomplete 15-cell"):
+        with self.assertRaisesRegex(ValueError, "working-set comparison is missing"):
             summarize_records(partial)
 
         complete = summarize_records(_complete_matrix_records())

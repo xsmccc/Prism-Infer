@@ -1101,6 +1101,11 @@ def main() -> None:
             "workset_id": args.working_set_id,
             "variant": args.working_set_variant,
             "group_ids": list(working_set.workset["group_ids"]),
+            "available_questions": int(working_set.workset["available_questions"]),
+            "observed_questions": int(working_set.workset["observed_questions"]),
+            "measured_question_switches": int(
+                working_set.workset["measured_question_switches"]
+            ),
             "dense_prefix_pages": int(working_set.workset["dense_prefix_pages"]),
             "kv_budget_bytes": int(kv_budget["bytes"]),
             "kv_budget_pages": int(kv_budget["pages"]),

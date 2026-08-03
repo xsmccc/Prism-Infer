@@ -43,8 +43,8 @@ from prism_infer.analysis.working_set_plan import (
     DEFAULT_MODEL_NAME,
     DEFAULT_PAGE_SIZE_TOKENS,
     DENSE_PREFIX_PAGES_RECORD_TYPE,
+    DENSE_PREFIX_PAGES_SCHEMA_VERSION,
     MUIRBENCH_DATASET_ID,
-    WORKING_SET_PLAN_SCHEMA_VERSION,
     build_media_first_groups,
     build_working_set_plan,
     load_muirbench_records,
@@ -143,7 +143,7 @@ def _new_page_artifact(
     groups: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     return {
-        "schema_version": WORKING_SET_PLAN_SCHEMA_VERSION,
+        "schema_version": DENSE_PREFIX_PAGES_SCHEMA_VERSION,
         "record_type": DENSE_PREFIX_PAGES_RECORD_TYPE,
         "dataset": {
             "id": MUIRBENCH_DATASET_ID,
@@ -412,7 +412,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--materialized-root",
         required=True,
-        help="P9 quality materialization root containing MuirBench records and media",
+        help="materialization root containing MuirBench records and media",
     )
     parser.add_argument("--selection", default=str(DEFAULT_SELECTION))
     parser.add_argument("--subset", default=DEFAULT_SUBSET)

@@ -1,9 +1,7 @@
-"""Deterministic repeated-media working-set plans for MuirBench.
+"""Build deterministic repeated-media working sets for MuirBench.
 
-The module is inference-engine independent.  It turns the existing P9
-materialized MuirBench selection plus measured dense-prefix page counts into
-one JSON plan that Prism, vLLM, and SGLang can consume without independently
-sampling requests.
+The generated plan is inference-engine independent. Prism-Infer, vLLM, and
+SGLang consume the same media groups, questions, and arrival schedule.
 """
 
 from __future__ import annotations
@@ -21,8 +19,9 @@ from typing import Any
 
 from prism_infer.analysis.p9_quality_metrics import build_muirbench_prompt
 
-WORKING_SET_PLAN_SCHEMA_VERSION = 2
+WORKING_SET_PLAN_SCHEMA_VERSION = 3
 WORKING_SET_PLAN_RECORD_TYPE = "multimodal_working_set_plan"
+DENSE_PREFIX_PAGES_SCHEMA_VERSION = 2
 DENSE_PREFIX_PAGES_RECORD_TYPE = "muirbench_dense_prefix_pages"
 MUIRBENCH_DATASET_ID = "muirbench_test"
 
@@ -55,15 +54,15 @@ def load_muirbench_records(
     selection_path: str | Path | None = None,
     subset: str = "final",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Load and verify one P9 materialized MuirBench selection.
+    """Load and verify a materialized MuirBench selection.
 
     Args:
-        materialized_root: Directory containing ``p9_quality_materialization.json``.
-        selection_path: Optional P9 selection manifest to bind to the same IDs.
-        subset: Existing P9 selection subset, normally ``final``.
+        materialized_root: Directory containing the materialization manifest.
+        selection_path: Optional selection manifest to bind to the same IDs.
+        subset: Selection subset, normally ``final``.
 
     Returns:
-        Eligible records in frozen selection order and their source identity.
+        Selected records in source order and their source identity.
     """
 
     root = Path(materialized_root).resolve()
@@ -266,7 +265,10 @@ def build_working_set_plan(
             f"dense_prefix_pages[{group['group_id']!r}]",
         )
 
-    selected_groups = _select_worksets(groups, kv_budget_pages=kv_budget_pages)
+    repeated_groups = [group for group in groups if len(group["samples"]) >= 2]
+    if not repeated_groups:
+        raise ValueError("MuirBench selection has no repeated-media question groups")
+    selected_groups = _select_worksets(repeated_groups, kv_budget_pages=kv_budget_pages)
     worksets = [
         _build_workset(
             workset_id,
@@ -283,6 +285,8 @@ def build_working_set_plan(
         "id": MUIRBENCH_DATASET_ID,
         "selected_samples": len(records),
         "media_groups": len(groups),
+        "repeated_media_groups": len(repeated_groups),
+        "repeated_media_questions": sum(len(group["samples"]) for group in repeated_groups),
         "selected_sample_ids_sha256": _selected_ids_sha256(
             [str(record["sample_id"]) for record in records]
         ),
@@ -327,6 +331,7 @@ def build_working_set_plan(
             "measured_requests": measured_requests,
             "max_new_tokens": max_new_tokens,
             "group_distribution": "zipf",
+            "group_eligibility": "at_least_two_questions_per_ordered_media",
             "zipf_alpha": float(zipf_alpha),
             "zipf_rank_order": "group_id_ascending",
             "arrival_process": "poisson",
@@ -439,11 +444,19 @@ def validate_working_set_plan(plan: Mapping[str, Any]) -> None:
         raise ValueError("dataset.selected_samples does not match grouped samples")
     if dataset.get("media_groups") != len(groups):
         raise ValueError("dataset.media_groups does not match groups")
-    # Group sorting intentionally changes the original P9 sample order.  The
+    repeated_groups = [group for group in groups if len(group["samples"]) >= 2]
+    if dataset.get("repeated_media_groups") != len(repeated_groups):
+        raise ValueError("dataset.repeated_media_groups does not match groups")
+    repeated_questions = sum(len(group["samples"]) for group in repeated_groups)
+    if dataset.get("repeated_media_questions") != repeated_questions:
+        raise ValueError("dataset.repeated_media_questions does not match groups")
+    if traffic.get("group_eligibility") != "at_least_two_questions_per_ordered_media":
+        raise ValueError("working-set traffic must contain repeated-media question groups")
+    # Group sorting intentionally changes the source sample order. The
     # dataset identity binds the source order, so only validate its digest form.
     _sha256(dataset.get("selected_sample_ids_sha256"), "plan.dataset.selected_sample_ids_sha256")
 
-    expected_worksets = _select_worksets(groups, kv_budget_pages=budget_pages)
+    expected_worksets = _select_worksets(repeated_groups, kv_budget_pages=budget_pages)
     raw_worksets = plan.get("worksets")
     if not isinstance(raw_worksets, list) or len(raw_worksets) != len(_WORKSET_IDS):
         raise ValueError("working-set plan must contain fit, knee, and pressure")
@@ -477,6 +490,8 @@ def _select_worksets(
     *,
     kv_budget_pages: int,
 ) -> dict[str, list[Mapping[str, Any]]]:
+    if any(len(group["samples"]) < 2 for group in groups):
+        raise ValueError("working sets require at least two questions per media group")
     fit_limit = math.floor(kv_budget_pages * 0.70)
     fit = []
     fit_pages = 0
@@ -539,17 +554,34 @@ def _build_workset(
         zipf_alpha=zipf_alpha,
         seed=seed,
     )
+    previous_sample = {
+        request["group_id"]: request["sample_id"] for request in population
+    }
+    question_switches = 0
+    for request in measured:
+        group_id = request["group_id"]
+        if previous_sample[group_id] != request["sample_id"]:
+            question_switches += 1
+        previous_sample[group_id] = request["sample_id"]
+    observed_questions = {
+        request["sample_id"] for request in (*population, *measured)
+    }
     return {
         "id": workset_id,
         "selection_rule": {
-            "fit": "largest_hash_sorted_prefix_not_above_70pct_budget",
-            "knee": "first_hash_sorted_prefix_above_budget",
-            "pressure": "first_hash_sorted_prefix_at_or_above_150pct_budget_or_all",
+            "fit": "largest_hash_sorted_repeated_media_prefix_not_above_70pct_budget",
+            "knee": "first_hash_sorted_repeated_media_prefix_above_budget",
+            "pressure": (
+                "first_hash_sorted_repeated_media_prefix_at_or_above_150pct_budget_or_all"
+            ),
         }[workset_id],
         "target_dense_prefix_pages": target_pages,
         "target_reached": target_reached,
         "group_ids": [group["group_id"] for group in groups],
         "groups": len(groups),
+        "available_questions": sum(len(group["samples"]) for group in groups),
+        "observed_questions": len(observed_questions),
+        "measured_question_switches": question_switches,
         "dense_prefix_pages": dense_pages,
         "population_requests": population,
         "measured_requests": measured,

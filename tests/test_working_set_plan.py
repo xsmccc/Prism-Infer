@@ -96,6 +96,22 @@ class WorkingSetPlanTest(unittest.TestCase):
 
     def test_plan_selects_boundaries_and_generates_deterministic_traffic(self) -> None:
         records = _records(groups=6)
+        single_media_digest = _digest("single-question-media")
+        records.append(
+            {
+                "sample_id": "single-question-sample",
+                "question": "<image> This group has no follow-up question.",
+                "options": ["first", "second", "third", "fourth"],
+                "media": [
+                    {
+                        "sha256": single_media_digest,
+                        "materialized_path": f"media/{single_media_digest}.png",
+                        "width": 64,
+                        "height": 64,
+                    }
+                ],
+            }
+        )
         kwargs = {
             "dense_prefix_pages": _page_map(records),
             "model_revision": "revision-1",
@@ -113,6 +129,13 @@ class WorkingSetPlanTest(unittest.TestCase):
         self.assertEqual(plan["traffic"]["seed"], 20260801)
         self.assertEqual(plan["traffic"]["measured_requests"], 600)
         self.assertEqual(plan["traffic"]["max_new_tokens"], 16)
+        self.assertEqual(
+            plan["traffic"]["group_eligibility"],
+            "at_least_two_questions_per_ordered_media",
+        )
+        self.assertEqual(plan["dataset"]["media_groups"], 7)
+        self.assertEqual(plan["dataset"]["repeated_media_groups"], 6)
+        self.assertEqual(plan["dataset"]["repeated_media_questions"], 12)
         self.assertEqual(plan["processor"]["image_min_pixels"], DEFAULT_IMAGE_MIN_PIXELS)
         self.assertEqual(plan["processor"]["image_max_pixels"], DEFAULT_IMAGE_MAX_PIXELS)
         self.assertEqual(plan["serving"]["max_num_seqs"], DEFAULT_MAX_NUM_SEQS)
@@ -128,6 +151,17 @@ class WorkingSetPlanTest(unittest.TestCase):
         self.assertEqual(worksets["fit"]["groups"], 2)
         self.assertEqual(worksets["knee"]["groups"], 4)
         self.assertEqual(worksets["pressure"]["groups"], 5)
+        for workset in worksets.values():
+            self.assertEqual(workset["available_questions"], workset["groups"] * 2)
+            self.assertEqual(workset["measured_question_switches"], 600)
+        single_group_id = next(
+            group["group_id"]
+            for group in plan["groups"]
+            if group["sample_ids"] == ["single-question-sample"]
+        )
+        self.assertTrue(
+            all(single_group_id not in workset["group_ids"] for workset in worksets.values())
+        )
         for workset in worksets.values():
             self.assertEqual(len(workset["population_requests"]), workset["groups"])
             self.assertEqual(len(workset["measured_requests"]), 600)

@@ -1273,7 +1273,7 @@ def summarize_artifacts(args: argparse.Namespace) -> None:
         if stage in by_stage:
             raise ValueError(f"duplicate quality stage: {stage}")
         by_stage[stage] = artifact
-        input_records.append({"path": str(path.resolve()), "sha256": sha256_file(path)})
+        input_records.append({"path": path.name, "sha256": sha256_file(path)})
 
     expected_stages = set(QUALITY_STAGE_SPECS)
     missing_stages = sorted(expected_stages - by_stage.keys())

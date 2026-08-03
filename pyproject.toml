@@ -28,7 +28,7 @@ blackwell = [
     "nvidia-cutlass==4.2.0.0",
 ]
 quality = [
-    "opencv-python-headless==4.10.0.84",
+    "opencv-python-headless>=4.10,<5",
     "pyarrow>=14.0",
     "requests>=2.31",
 ]

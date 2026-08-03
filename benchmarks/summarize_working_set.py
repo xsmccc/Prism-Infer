@@ -442,6 +442,20 @@ def _summarize_record(
             _nonnegative_number(audit.get("dense_prefix_pages"), "dense prefix pages")
         ),
         "media_groups": len(group_ids),
+        "questions": {
+            "available": int(
+                _nonnegative_number(audit.get("available_questions"), "available questions")
+            ),
+            "observed": int(
+                _nonnegative_number(audit.get("observed_questions"), "observed questions")
+            ),
+            "measured_switches": int(
+                _nonnegative_number(
+                    audit.get("measured_question_switches"),
+                    "measured question switches",
+                )
+            ),
+        },
         "population": population,
         "measured_requests": measured_requests,
         "completed_requests": len(completed),
@@ -466,11 +480,7 @@ def summarize_records(
     source_sha256: Sequence[str] | None = None,
     allow_partial: bool = False,
 ) -> dict[str, Any]:
-    """Validate and aggregate compatible raw working-set records.
-
-    A formal summary requires all 15 engine/variant/workset cells.  Partial
-    summaries are available only when ``allow_partial`` is explicitly enabled.
-    """
+    """Validate and aggregate compatible raw working-set records."""
 
     if not records:
         raise ValueError("at least one working-set record is required")
@@ -502,6 +512,7 @@ def summarize_records(
             "group_ids": list(cell["group_ids"]),
             "dense_prefix_pages": cell["dense_prefix_pages"],
             "media_groups": cell["media_groups"],
+            "questions": dict(cell["questions"]),
             "population_requests": cell["population"]["expected_requests"],
             "measured_requests": cell["measured_requests"],
         }
@@ -519,10 +530,7 @@ def summarize_records(
     missing_cells = _REQUIRED_CELLS - seen
     if missing_cells and not allow_partial:
         missing = ", ".join("/".join(cell) for cell in sorted(missing_cells))
-        raise ValueError(
-            f"incomplete 15-cell working-set matrix; missing: {missing}. "
-            "Use --allow-partial only for intermediate inspection."
-        )
+        raise ValueError(f"working-set comparison is missing: {missing}")
 
     cells.sort(
         key=lambda cell: (
@@ -532,7 +540,7 @@ def summarize_records(
         )
     )
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "record_type": "multimodal_working_set_summary",
         "matrix": {
             "required_cells": len(_REQUIRED_CELLS),
@@ -867,7 +875,7 @@ def _render_plot(path: Path, summary: Mapping[str, Any]) -> None:
 
 
 def write_outputs(summary: Mapping[str, Any], output_dir: str | Path) -> dict[str, str]:
-    """Write JSON, PNG, and the two requested tables in Markdown and CSV."""
+    """Write the machine-readable summary, plot, and comparison tables."""
 
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
@@ -902,7 +910,7 @@ def _load_inputs(paths: Sequence[Path]) -> tuple[list[dict[str, Any]], list[str]
         if not isinstance(value, dict):
             raise ValueError(f"expected JSON object: {path}")
         records.append(value)
-        sources.append(str(path.resolve()))
+        sources.append(path.name)
         digests.append(hashlib.sha256(payload).hexdigest())
     return records, sources, digests
 
@@ -914,7 +922,7 @@ def main() -> None:
     parser.add_argument(
         "--allow-partial",
         action="store_true",
-        help="allow an incomplete 15-cell matrix for intermediate inspection only",
+        help="summarize the available engine and workset combinations",
     )
     args = parser.parse_args()
     records, sources, digests = _load_inputs(args.inputs)
