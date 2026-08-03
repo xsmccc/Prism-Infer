@@ -18,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from benchmarks.harness import collect_git_metadata
-from prism_infer.analysis.p9_quality_materialization import write_json_atomic
+from prism_infer.analysis.quality_materialization import write_json_atomic
 from prism_infer.analysis.working_set_plan import load_working_set_plan
 
 WORKSETS = ("fit", "knee", "pressure")
@@ -77,7 +77,7 @@ def _command(
             cell.variant,
         ]
     script = REPO_ROOT / f"benchmarks/bench_online_{cell.engine}.py"
-    return [str(vllm_python), str(script), *common, "--formal"]
+    return [str(vllm_python), str(script), *common]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -240,7 +240,7 @@ def main() -> None:
     args = _parse_args()
     git = collect_git_metadata(REPO_ROOT, strict=True)
     if git.dirty:
-        raise SystemExit("formal matrix requires a clean Git worktree")
+        raise SystemExit("working-set matrix requires a clean Git worktree")
     plan = load_working_set_plan(args.plan)
     if {str(item["id"]) for item in plan["worksets"]} != set(WORKSETS):
         raise SystemExit("working-set plan must contain fit, knee and pressure")

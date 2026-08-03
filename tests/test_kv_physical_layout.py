@@ -1,4 +1,4 @@
-"""P6.4 logical/physical KV layout contract tests。"""
+"""Logical and physically compacted KV-layout tests."""
 
 import pickle
 from collections.abc import Iterator
@@ -69,7 +69,6 @@ def test_kv_layout_separates_logical_and_physical_lengths() -> None:
     print(f"retained original positions: {layout.retained_original_positions}")
     assert layout.logical_context_len == 6
     assert layout.physical_kv_len == 4
-    print("P6.4 KV layout logical/physical split: PASS")
 
 
 def test_compact_sequence_append_and_decode_pickle_preserve_layout() -> None:
@@ -97,7 +96,6 @@ def test_compact_sequence_append_and_decode_pickle_preserve_layout() -> None:
         assert restored.physical_last_block_num_tokens == 1
         assert restored.block_table == [7, 8]
         assert restored.kv_layout is not None
-        print("P6.4 compact Sequence decode pickle: PASS")
 
 
 def test_compact_sequence_swapped_pickle_uses_cpu_table() -> None:
@@ -117,7 +115,6 @@ def test_compact_sequence_swapped_pickle_uses_cpu_table() -> None:
         assert restored.block_table == []
         assert restored.cpu_block_table == [3]
         assert restored.physical_kv_len == 4
-        print("P6.4 compact Sequence swapped pickle: PASS")
 
 
 def test_kv_layout_rejects_inconsistent_retained_positions() -> None:
@@ -126,7 +123,6 @@ def test_kv_layout_rejects_inconsistent_retained_positions() -> None:
 
     with pytest.raises(ValueError, match="sorted and unique"):
         layout.validate(block_size=4, block_table=[7])
-    print("P6.4 KV layout retained-position guard: PASS")
 
 
 def _manager_sequence(block_size: int = 4) -> Sequence:
@@ -455,7 +451,6 @@ def test_block_manager_and_runner_commit_physical_compaction() -> None:
         assert seq.physical_kv_len == 6
         assert seq.visual_pruning_decision_record["physical_compaction"] is True
         assert diff.max().item() == 0.0
-        print("P6.4 post-prefill KV compact/block release: PASS")
 
 
 def test_multimodal_prefix_cache_reuses_compacted_pages_with_tail_cow() -> None:
@@ -495,9 +490,13 @@ def test_multimodal_prefix_cache_reuses_compacted_pages_with_tail_cow() -> None:
         assert retained_decision["physical_compaction"] is True
         assert retained_decision["dropped_visual_tokens"] == 5
         retained_decision["dropped_token_indices"].clear()
-        assert manager.multimodal_prefix_compression_record(cold)[
-            "dropped_token_indices"
-        ] == [3, 4, 5, 6, 7]
+        assert manager.multimodal_prefix_compression_record(cold)["dropped_token_indices"] == [
+            3,
+            4,
+            5,
+            6,
+            7,
+        ]
         cached_block_id = cold.block_table[0]
         manager.deallocate(cold)
 
@@ -600,7 +599,6 @@ def test_compact_decode_append_uses_physical_tail_and_clears_hashes() -> None:
         assert seq.physical_kv_len == 9
         assert len(seq.block_table) == 3
         assert seq.physical_last_block_num_tokens == 1
-        print("P6.4 compact decode physical-tail append: PASS")
 
 
 def test_compaction_rejects_prefix_shared_blocks() -> None:
@@ -612,7 +610,6 @@ def test_compaction_rejects_prefix_shared_blocks() -> None:
 
         with pytest.raises(RuntimeError, match="prefix-shared blocks"):
             manager.build_compaction_plan(seq, kv_dtype="torch.float32")
-        print("P6.4 shared-block compaction guard: PASS")
 
 
 def test_compact_swap_pickle_swap_in_preserves_layout_and_hash_state() -> None:
@@ -659,7 +656,6 @@ def test_compact_swap_pickle_swap_in_preserves_layout_and_hash_state() -> None:
         assert all(
             block_id not in manager.hash_to_block_id.values() for block_id in restored.block_table
         )
-        print("P6.4 compact swap/pickle/swap-in lifecycle: PASS")
 
 
 @pytest.mark.gpu
@@ -702,7 +698,6 @@ def test_prepare_decode_uses_logical_mrope_and_physical_kv_tail() -> None:
         assert context.logical_context_lens.tolist() == [len(seq)]
         assert context.context_lens.tolist() == [seq.physical_kv_len]
         assert context.slot_mapping.tolist() == [expected_physical_slot]
-        print("P6.4 compact decode logical/physical metadata: PASS")
 
 
 @pytest.mark.gpu
@@ -762,4 +757,3 @@ def test_fp8_kv_compaction_matches_independent_retained_reference() -> None:
         print(f"FP8 compact max diff: {diff.max().item():.6e}")
         assert actual.shape == expected.shape == (2, 2, 6, 1, 8)
         assert diff.max().item() == 0.0
-        print("P6.6 FP8 physical compaction: PASS")

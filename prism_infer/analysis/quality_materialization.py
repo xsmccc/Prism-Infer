@@ -1,4 +1,4 @@
-"""P9 标准质量集的确定性选样、媒体身份与物化契约。
+"""质量集的确定性选样、媒体身份与物化契约。
 
 该模块不下载数据，也不运行模型。数据集适配器只向这里传入公开数据行；本模块负责
 把固定的 SHA256 选样规则变成可测试的纯函数，并确保每个已物化媒体都有内容
@@ -26,6 +26,8 @@ from prism_infer.analysis.schema_constants import (
 )
 
 MATERIALIZATION_SCHEMA_VERSION = 1
+QUALITY_MATERIALIZATION_RECORD_TYPE = "quality_materialization"
+QUALITY_SELECTION_RECORD_TYPE = "quality_selection"
 MV_SAMPLE_ID_SEPARATOR = "|"
 SELECTION_PREIMAGE_ENCODING = "utf8(dataset_id + revision + sample_id + decimal_seed)"
 IMAGE_FORMAT_SUFFIXES = {
@@ -59,7 +61,7 @@ def sha256_file(path: str | Path) -> str:
 def canonical_sample_id(value: object) -> str:
     """将公开数据 ID 规范成稳定字符串；拒绝隐式 bool/float 转换。"""
 
-    if isinstance(value, bool) or not isinstance(value, (str, int)):
+    if isinstance(value, bool) or not isinstance(value, str | int):
         raise ValueError(f"sample id must be a string or integer, got {value!r}")
     sample_id = str(value)
     if not sample_id:
@@ -417,9 +419,9 @@ def _mvbench_temporal_bound(
     end = row.get("end")
     valid = (
         not isinstance(start, bool)
-        and isinstance(start, (int, float))
+        and isinstance(start, int | float)
         and not isinstance(end, bool)
-        and isinstance(end, (int, float))
+        and isinstance(end, int | float)
         and math.isfinite(float(start))
         and math.isfinite(float(end))
         and float(start) >= 0.0
@@ -624,7 +626,7 @@ def selection_manifest_from_materialization(
         datasets.append(dataset)
     return {
         "schema_version": MATERIALIZATION_SCHEMA_VERSION,
-        "record_type": "p9_quality_selection",
+        "record_type": QUALITY_SELECTION_RECORD_TYPE,
         "protocol_sha256": manifest["protocol_sha256"],
         "selection_contract": manifest["selection_contract"],
         "datasets": datasets,

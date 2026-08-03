@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "record_type": "prism_infer_project_highlights",
+  "scope": {
+    "model": "Qwen3-VL-8B-Instruct",
+    "model_revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "device": "NVIDIA GeForce RTX 5090 32 GB",
+    "tensor_parallel_size": 1,
+    "kv_budget_bytes": 4282122240,
+    "kv_pages": 220,
+    "page_size_tokens": 256,
+    "traffic": "Poisson 4 req/s, Zipf-1.0, greedy, output 16"
+  },
+  "working_sets": {
+    "fit": {
+      "media_groups": 21,
+      "questions": 42,
+      "dense_prefix_pages": 154,
+      "measured_requests": 600,
+      "question_switches": 600
+    },
+    "knee": {
+      "media_groups": 28,
+      "questions": 56,
+      "dense_prefix_pages": 224,
+      "measured_requests": 600,
+      "question_switches": 600
+    },
+    "pressure": {
+      "media_groups": 42,
+      "questions": 85,
+      "dense_prefix_pages": 312,
+      "measured_requests": 600,
+      "question_switches": 600
+    }
+  },
+  "pressure_result": {
+    "prism_compact_prefix": {
+      "ttft_p50_ms": 101.692,
+      "ttft_p99_ms": 497.899,
+      "e2e_p50_ms": 334.834,
+      "e2e_p99_ms": 832.635,
+      "process_peak_mib": 24002,
+      "recomputed_prompt_tokens": 75951
+    },
+    "vllm_0_25_1": {
+      "ttft_p50_ms": 134.719,
+      "ttft_p99_ms": 709.764,
+      "e2e_p50_ms": 325.141,
+      "e2e_p99_ms": 1026.414,
+      "process_peak_mib": 24440,
+      "recomputed_prompt_tokens": 165678
+    },
+    "sglang_0_5_15_post1": {
+      "ttft_p50_ms": 305.77,
+      "ttft_p99_ms": 1165.342,
+      "e2e_p50_ms": 523.622,
+      "e2e_p99_ms": 1909.157,
+      "process_peak_mib": 26598,
+      "recomputed_prompt_tokens": 181294
+    },
+    "prism_vs_vllm_percent": {
+      "ttft_p50": -24.52,
+      "ttft_p99": -29.85,
+      "e2e_p50": 2.98,
+      "e2e_p99": -18.88,
+      "recomputed_prompt_tokens": -54.16
+    },
+    "prism_vs_vllm_process_peak_mib": -438
+  },
+  "pressure_prism_ablation": {
+    "dense_prefix": {
+      "actual_prefix_pages": 3413,
+      "resident_media": 27,
+      "prefix_evictions": 96,
+      "recomputed_prompt_tokens": 188169,
+      "ttft_p50_ms": 124.994,
+      "ttft_p99_ms": 695.924,
+      "e2e_p50_ms": 403.902,
+      "e2e_p99_ms": 1112.062
+    },
+    "compact_prefix": {
+      "dense_equivalent_pages": 3941,
+      "actual_prefix_pages": 2762,
+      "resident_media": 40,
+      "prefix_evictions": 15,
+      "recomputed_prompt_tokens": 75951,
+      "ttft_p50_ms": 101.692,
+      "ttft_p99_ms": 497.899,
+      "e2e_p50_ms": 334.834,
+      "e2e_p99_ms": 832.635
+    },
+    "compact_vs_dense_percent": {
+      "actual_pages_vs_dense_equivalent": -29.92,
+      "resident_media": 48.15,
+      "prefix_evictions": -84.38,
+      "recomputed_prompt_tokens": -59.64,
+      "ttft_p50": -18.64,
+      "ttft_p99": -28.46,
+      "e2e_p50": -17.1,
+      "e2e_p99": -25.13
+    }
+  },
+  "quality": {
+    "muirbench_all_questions": {
+      "official_interleaved_dense": "49/85",
+      "media_first_dense": "46/85"
+    },
+    "muirbench_actual_deletion_cohort": {
+      "samples": 49,
+      "media_first_dense": "27/49",
+      "uniform_compact": "20/49",
+      "attention_topk_per_question": "20/49",
+      "first_question_attention_topk_reuse": "20/49"
+    },
+    "docvqa": {
+      "dense_anls": 0.93335,
+      "uniform_anls": 0.93335,
+      "samples_with_token_deletion": 0
+    },
+    "mvbench": {
+      "dense": "183/252",
+      "uniform_compact": "113/252",
+      "decision": "video token deletion is disabled by default"
+    }
+  },
+  "supplementary_results": {
+    "tp1_batch1_tpot_ms": {
+      "eight_image_prism": 9.8821,
+      "eight_image_sglang": 10.352,
+      "eight_image_vllm": 10.5276,
+      "video_prism": 9.868,
+      "video_sglang": 10.3689,
+      "video_vllm": 10.5278
+    },
+    "scaled_fp8_kv": {
+      "same_capacity_storage_reduction_percent": 48.44,
+      "same_capacity_process_peak_reduction_percent": 8.24,
+      "bf16_capacity_tokens": 28928,
+      "scaled_fp8_capacity_tokens": 56320,
+      "same_budget_capacity_increase_percent": 94.69
+    },
+    "tp2_batch1": {
+      "prism_tpot_ms": 5.9701,
+      "vllm_tpot_ms": 6.1612,
+      "prism_vs_vllm_tpot_percent": -3.1,
+      "prism_ttft_ms": 86.057,
+      "vllm_ttft_ms": 61.251,
+      "prism_e2e_ms": 281.098,
+      "vllm_e2e_ms": 252.744
+    }
+  },
+  "evidence": {
+    "working_set_plan_sha256": "74102cb70c6a62cdb62c1c6ed72c92a878d3a11eda4c43da101c2305fabb2739",
+    "working_set_summary_sha256": "4f69954cd84cd1e67e7f10a635aca5ef4f833ca3b6f239157a877efffafb8d38",
+    "quality_summary_sha256": "8cd23e5384fa097a717449c2e4e261ea692216f568954b4da79a557cc176bdaf",
+    "trace_audit_sha256": "3bae8645e29ce17c1f1f9faf354b3d910c9eb5de4248da110c88ee8983b3f29f"
+  },
+  "limitations": [
+    "The cross-engine latency result is scoped to the fixed-budget repeated multi-image workload.",
+    "Compact image Prefix reuse is lossy and is not an equal-quality engine ranking.",
+    "Fixed arrival rate limits output throughput to about 64.2 tokens/s for all three engines.",
+    "TP2 improves the measured Decode TPOT but not end-to-end multimodal latency.",
+    "Prefix Cache is process-local; PP, multi-node TP and MoE expert parallelism are not implemented."
+  ]
+}

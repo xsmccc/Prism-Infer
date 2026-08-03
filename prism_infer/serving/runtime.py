@@ -170,7 +170,7 @@ class ServingRuntime:
             raise ValueError("ingress_capacity must be a positive integer")
         if (
             isinstance(idle_poll_seconds, bool)
-            or not isinstance(idle_poll_seconds, (int, float))
+            or not isinstance(idle_poll_seconds, int | float)
             or idle_poll_seconds <= 0
         ):
             raise ValueError("idle_poll_seconds must be positive")

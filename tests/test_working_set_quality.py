@@ -21,7 +21,7 @@ from prism_infer.engine.visual_pruning import (
     compute_pruning_decision,
 )
 from scripts.build_mvbench_repeated_subset import select_repeated_mvbench_records
-from scripts.materialize_p9_mvbench_media import _archive_url
+from scripts.materialize_mvbench_media import _archive_url
 
 
 def _record(sample_id: str, media_digest: str) -> dict[str, object]:

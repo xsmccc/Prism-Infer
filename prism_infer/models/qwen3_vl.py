@@ -41,10 +41,6 @@ from prism_infer.ops.add_rmsnorm import (
     fused_add_rmsnorm,
     fused_add_rmsnorm_prefill,
 )
-from prism_infer.ops.block4_gate_up import (
-    block4_gate_up_swiglu,
-    compress_block4_gate_up_weight,
-)
 from prism_infer.ops.cutlass_swiglu import maybe_cutlass_dual_swiglu
 from prism_infer.ops.qk_rmsnorm import (
     MAX_EXACT_QK_RMSNORM_BATCH,
@@ -722,32 +718,9 @@ class Qwen3VLTextMLP(nn.Module):
             local_intermediate_size,
             local_intermediate_size,
         )
-        self.register_buffer(
-            "_decode_gate_up_weight_fp8",
-            None,
-            persistent=False,
-        )
-        self.register_buffer(
-            "_decode_gate_up_scales",
-            None,
-            persistent=False,
-        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        use_block4_decode = (
-            self._decode_gate_up_weight_fp8 is not None
-            and self._decode_gate_up_scales is not None
-            and x.ndim == 2
-            and x.shape[0] == 1
-            and not torch.compiler.is_compiling()
-        )
-        if use_block4_decode:
-            activated = block4_gate_up_swiglu(
-                x,
-                self._decode_gate_up_weight_fp8,
-                self._decode_gate_up_scales,
-            )
-        elif self.projection_mode == "packed":
+        if self.projection_mode == "packed":
             activated = maybe_cutlass_dual_swiglu(x, self.gate_up_proj.weight)
             if activated is None:
                 packed = self.gate_up_proj(x)
@@ -766,21 +739,6 @@ class Qwen3VLTextMLP(nn.Module):
             up = self.up_proj(x)
             activated = F.silu(gate) * up
         return self.down_proj(activated)
-
-    @torch.no_grad()
-    def prepare_decode_block4_gate_up(self) -> int:
-        """Materialize the SM120 decode-only compressed projection."""
-
-        if self.projection_mode != "packed":
-            raise RuntimeError("block-4 gate-up requires packed projection mode")
-        if self._decode_gate_up_weight_fp8 is not None:
-            raise RuntimeError("block-4 gate-up weight was already prepared")
-        weight_fp8, scales = compress_block4_gate_up_weight(self.gate_up_proj.weight)
-        self._decode_gate_up_weight_fp8 = weight_fp8
-        self._decode_gate_up_scales = scales
-        return (
-            weight_fp8.numel() * weight_fp8.element_size() + scales.numel() * scales.element_size()
-        )
 
     def _apply(self, fn, recurse: bool = True):
         super()._apply(fn, recurse=recurse)
@@ -1811,34 +1769,6 @@ class Qwen3VLForCausalLM(nn.Module):
         self._decode_lm_head_weight_fp8 = weight_fp8
         self._decode_lm_head_weight_scale = weight_scale
         return weight_fp8.t(), weight_scale
-
-    @torch.no_grad()
-    def prepare_decode_block4_gate_up(self) -> int:
-        """Prepare every decoder layer's compressed batch-one MLP projection."""
-
-        layers = list(self.model.language_model.layers)
-        required_bytes = sum(
-            (layer.mlp.gate_up_proj.weight.numel() + layer.mlp.gate_up_proj.weight.numel() // 4 * 2)
-            for layer in layers
-        )
-        free_bytes, _ = torch.cuda.mem_get_info(
-            self.model.language_model.embed_tokens.weight.device
-        )
-        reserve_bytes = 2 * 1024**3
-        if free_bytes < required_bytes + reserve_bytes:
-            raise RuntimeError(
-                "decode block-4 gate-up requires enough free memory to retain "
-                "the BF16 prefill weights, compressed decode weights and a "
-                f"2 GiB runtime reserve; free={free_bytes}, "
-                f"required={required_bytes + reserve_bytes}"
-            )
-        compressed_bytes = sum(layer.mlp.prepare_decode_block4_gate_up() for layer in layers)
-        if compressed_bytes != required_bytes:
-            raise RuntimeError(
-                "decode block-4 gate-up compressed byte accounting mismatch: "
-                f"expected={required_bytes}, actual={compressed_bytes}"
-            )
-        return compressed_bytes
 
     def enable_decode_fp8_greedy_lm_head_compile(self, compiled_lm_head) -> None:
         """Bind compiled FP8 candidate projection after its persistent weight is ready."""

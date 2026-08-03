@@ -1,4 +1,4 @@
-"""P4.5 KV Engine hardening 回归测试。"""
+"""KV block ownership, capacity, and lifecycle tests."""
 
 import pickle
 from collections.abc import Iterator
@@ -137,7 +137,6 @@ def test_block_manager_can_disable_prefix_hash_reuse() -> None:
         assert first.num_cached_tokens == second.num_cached_tokens == 0
         assert manager.hash_to_block_id == {}
         assert all(manager.blocks[block_id].hash == -1 for block_id in manager.used_block_ids)
-        print("P6.6 prefix-cache disable contract: PASS")
 
 
 def test_block_manager_never_hash_reuses_multimodal_placeholders() -> None:

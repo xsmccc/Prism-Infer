@@ -108,7 +108,7 @@ def _stage_lossless_video(
         decoded = decoder.get_frames_at(list(range(len(decoder))))
         decoded_fps = decoder.avg_fps
     if decoded.shape != arrays.shape or not np.array_equal(decoded, arrays):
-        raise RuntimeError("SGLang video staging changed the frozen RGB frames")
+        raise RuntimeError("SGLang video staging changed the selected RGB frames")
     if decoded_fps != fps:
         raise RuntimeError(f"SGLang video staging changed fps: {decoded_fps} != {fps}")
     return {
@@ -158,8 +158,7 @@ def _materialize(
             continue
         else:
             raise ValueError(
-                "SGLang P6 adapter supports image/image_file/images/video only; "
-                f"got {request_type!r}"
+                f"SGLang adapter supports image/image_file/images/video only; got {request_type!r}"
             )
         requests.append({"type": request_type, "prompt": request["prompt"], "images": images})
     return requests
@@ -256,7 +255,7 @@ def main() -> None:
         video_staging_path=output_path.with_suffix(".video.mkv"),
     )
     if len(requests) != 1:
-        raise ValueError("SGLang streaming P6 adapter currently requires one request")
+        raise ValueError("SGLang streaming adapter currently requires one request")
     processor = AutoProcessor.from_pretrained(args.model, local_files_only=True)
     prompts = _prompts(processor, requests)
     image_data = [request.get("images") for request in requests]
@@ -424,7 +423,7 @@ def main() -> None:
                 "decode_tpot_scope": "first_to_last_token_divided_by_output_intervals",
             },
             "protocol": {
-                "name": "p9_external_sglang_offline_v2",
+                "name": "sglang_offline_comparison_v2",
                 "harness_git_commit": git.commit,
                 "harness_git_dirty": git.dirty,
                 "framework_source_dirty": False,

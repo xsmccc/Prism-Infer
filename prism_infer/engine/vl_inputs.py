@@ -133,7 +133,7 @@ def load_vl_processor(
 def _normalize_images(images: Any | list[Any] | tuple[Any, ...]) -> list[Any]:
     """把单图或多图参数统一为非空 list。"""
 
-    if isinstance(images, (list, tuple)):
+    if isinstance(images, list | tuple):
         normalized = list(images)
     else:
         normalized = [images]
@@ -145,11 +145,11 @@ def _normalize_images(images: Any | list[Any] | tuple[Any, ...]) -> list[Any]:
 def _normalize_video(video: Any | list[Any] | tuple[Any, ...]) -> Any:
     """把视频参数规范为 processor 的单个 video 对象。
 
-    P3.2 先支持一条请求包含一个视频。视频通常是帧列表
+    一条请求包含一个视频。视频通常是帧列表
     `list[PIL.Image.Image]`，传给 HF processor 时再包装为 `[video]`。
     """
 
-    if isinstance(video, (list, tuple)) and len(video) == 0:
+    if isinstance(video, list | tuple) and len(video) == 0:
         raise ValueError("video must contain at least one frame")
     return list(video) if isinstance(video, tuple) else video
 
@@ -174,7 +174,7 @@ def _processor_video_metadata(
     sampled_indices = metadata["sampled_indices"]
     if (
         isinstance(fps, bool)
-        or not isinstance(fps, (int, float))
+        or not isinstance(fps, int | float)
         or not math.isfinite(float(fps))
         or float(fps) <= 0.0
     ):
@@ -313,7 +313,7 @@ def build_single_image_prompt(
     *,
     add_generation_prompt: bool = True,
 ) -> str:
-    """构造单图 chat prompt，兼容 P2 API。"""
+    """构造单图 chat prompt，保留单图便捷接口。"""
 
     return build_image_prompt(
         processor,
@@ -418,7 +418,7 @@ def prepare_single_image_inputs(
 ) -> SingleImageInputs:
     """把单图 prompt 预处理为 Prism-Infer engine 可消费的数据。
 
-    兼容 P2 API。多图请使用 prepare_image_inputs。
+    多图请使用 prepare_image_inputs。
     """
 
     result = prepare_image_inputs(
@@ -664,7 +664,7 @@ def validate_single_image_inputs(
     inputs: SingleImageInputs,
     merge_size: int,
 ) -> SingleImageInputs:
-    """校验单图 processor 输出，兼容 P2 测试。"""
+    """校验单图 processor 输出。"""
 
     result = validate_image_inputs(inputs, merge_size)
     if result.image_grid_thw.shape[0] != 1:

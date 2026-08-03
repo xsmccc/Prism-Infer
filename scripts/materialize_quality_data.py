@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""从指定 revision 的本地原始文件物化 P9 标准质量子集。
+"""从指定 revision 的本地原始文件物化质量子集。
 
 DocVQA 与 MuirBench 的图片嵌在 parquet 中，本脚本只提取 SHA256 选中的 final
 子集。MVBench 先固定 4,000 条 metadata 上的选样和 archive member 路径；在视频内容
@@ -21,9 +21,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
-from prism_infer.analysis.p9_protocol import load_p9_quality_protocol
-from prism_infer.analysis.p9_quality_materialization import (
+from prism_infer.analysis.quality_materialization import (
     MATERIALIZATION_SCHEMA_VERSION,
+    QUALITY_MATERIALIZATION_RECORD_TYPE,
     SELECTION_PREIMAGE_ENCODING,
     SampleSelection,
     build_mvbench_row,
@@ -39,11 +39,12 @@ from prism_infer.analysis.p9_quality_materialization import (
     write_json_atomic,
     write_jsonl_atomic,
 )
+from prism_infer.analysis.quality_protocol import load_quality_protocol
 
-DEFAULT_PROTOCOL = REPO_ROOT / "benchmarks/workloads/p9_quality_protocol.json"
-DEFAULT_MVBENCH_MAP = REPO_ROOT / "benchmarks/workloads/p9_mvbench_media_map.json"
-DEFAULT_RAW_ROOT = REPO_ROOT / "data/p9_quality/raw"
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data/p9_quality/materialized"
+DEFAULT_PROTOCOL = REPO_ROOT / "benchmarks/workloads/quality_protocol.json"
+DEFAULT_MVBENCH_MAP = REPO_ROOT / "benchmarks/workloads/mvbench_media_map.json"
+DEFAULT_RAW_ROOT = REPO_ROOT / "data/quality/raw"
+DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data/quality/materialized"
 SHARD_PATTERN = re.compile(r"^(?P<split>[a-z]+)-(?P<index>\d{5})-of-(?P<total>\d{5})\.parquet$")
 
 
@@ -96,9 +97,7 @@ def _parquet_batches(
     try:
         import pyarrow.parquet as parquet
     except ImportError as exc:
-        raise RuntimeError(
-            "P9 quality materialization requires optional dependency pyarrow"
-        ) from exc
+        raise RuntimeError("quality materialization requires optional dependency pyarrow") from exc
     for path in paths:
         parquet_file = parquet.ParquetFile(path)
         for batch in parquet_file.iter_batches(
@@ -332,7 +331,7 @@ def _load_mvbench_population(
     task_names = {path.stem for path in json_paths}
     if task_names != set(task_specs):
         raise ValueError(
-            "MVBench JSON task set differs from frozen media map: "
+            "MVBench JSON task set differs from the recorded media map: "
             f"missing={sorted(set(task_specs) - task_names)}, "
             f"extra={sorted(task_names - set(task_specs))}"
         )
@@ -428,7 +427,7 @@ def main() -> None:
     if args.parquet_batch_size <= 0:
         raise SystemExit("--parquet-batch-size must be positive")
 
-    protocol = load_p9_quality_protocol(args.protocol)
+    protocol = load_quality_protocol(args.protocol)
     media_map = _load_json(args.mvbench_map)
     seed = protocol["selection"]["seed"]
     output_root = args.output_root.resolve()
@@ -458,7 +457,7 @@ def main() -> None:
     ]
     manifest = {
         "schema_version": MATERIALIZATION_SCHEMA_VERSION,
-        "record_type": "p9_quality_materialization",
+        "record_type": QUALITY_MATERIALIZATION_RECORD_TYPE,
         "protocol_sha256": canonical_json_sha256(protocol),
         "selection_contract": {
             "algorithm": protocol["selection"]["algorithm"],
@@ -469,7 +468,7 @@ def main() -> None:
         },
         "datasets": artifacts,
     }
-    manifest_path = output_root / "p9_quality_materialization.json"
+    manifest_path = output_root / "quality_materialization.json"
     manifest_sha256 = write_json_atomic(manifest_path, manifest)
     if args.selection_output is not None:
         write_json_atomic(

@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
-  "name": "p9_quality_evaluator",
-  "quality_protocol_sha256": "85adb4b246ab3fc55bc70e02ad75d97c5aa903e89387e499fc3aea1ac2edb25d",
+  "schema_version": 2,
+  "name": "repeated_visual_context_evaluator",
+  "quality_protocol_sha256": "fae029240803faccf8b2cc909c3245f032d9b1919e8aad184edffb79de2fbd1b",
   "model": {
     "name": "Qwen3-VL-8B-Instruct",
     "revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
@@ -86,16 +86,5 @@
         "path": "video_chat2/mvbench.ipynb"
       }
     }
-  },
-  "artifact_contract": {
-    "raw_prediction": true,
-    "decoded_with_special_tokens": true,
-    "output_token_ids": true,
-    "prompt_token_ids_sha256": true,
-    "prompt_token_count": true,
-    "media_sha256": true,
-    "per_sample_score": true,
-    "incremental_atomic_checkpoint": true,
-    "aggregate_only_is_invalid": true
   }
 }

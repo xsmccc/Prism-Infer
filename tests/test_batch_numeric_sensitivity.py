@@ -1,9 +1,9 @@
-"""P3.4 batch-size 数值敏感性记录。
+"""Batch-size-dependent numerical sensitivity tests.
 
 Qwen3-VL bf16 full forward 在 batch=1 与 batch=4 duplicate 输入上会选择
 不同 GEMM/attention 计算路径，HF 和 Prism-Infer 都会产生同量级 logits 差异。
 该测试用于解释 mixed batch 长输出中 text-only row 不能强制要求与单请求
-32-token 完全一致。P7.4 同时验证历史 fp32 logits 与模型原生 BF16 logits，
+32-token 完全一致。同时验证 fp32 logits 与模型原生 BF16 logits，
 确保移除逐步整权重转换不会改变 duplicate-batch greedy 决策。
 """
 
@@ -140,4 +140,3 @@ def test_hf_and_prism_share_text_duplicate_batch_numeric_sensitivity() -> None:
     assert abs(hf_mean - model_mean) < 1e-3
     assert hf_single_arg == fp32_single_arg == model_single_arg
     assert hf_batch_arg == fp32_batch_arg == model_batch_arg
-    print("HF/Prism duplicate batch numeric sensitivity: PASS")

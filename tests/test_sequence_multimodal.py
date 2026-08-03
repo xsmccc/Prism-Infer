@@ -1,4 +1,4 @@
-"""P2.2 Sequence 多模态字段和序列化验证。"""
+"""Multimodal Sequence fields and serialization tests."""
 
 import pickle
 

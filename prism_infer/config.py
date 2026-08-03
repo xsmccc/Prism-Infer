@@ -146,7 +146,7 @@ class CacheConfig:
 
     def __post_init__(self) -> None:
         if isinstance(self.gpu_memory_utilization, bool) or not isinstance(
-            self.gpu_memory_utilization, (int, float)
+            self.gpu_memory_utilization, int | float
         ):
             raise ValueError(
                 "gpu_memory_utilization must be a number in (0, 1], "
@@ -170,7 +170,7 @@ class CacheConfig:
             _positive_int(self.num_gpu_blocks, name="num_kvcache_blocks")
         if isinstance(self.cpu_kv_cache_ratio, bool) or not isinstance(
             self.cpu_kv_cache_ratio,
-            (int, float),
+            int | float,
         ):
             raise TypeError(
                 "cpu_kv_cache_ratio must be a non-negative finite number, "
@@ -193,7 +193,7 @@ class CacheConfig:
         )
         if isinstance(self.visual_pruning_keep_ratio, bool) or not isinstance(
             self.visual_pruning_keep_ratio,
-            (int, float),
+            int | float,
         ):
             raise TypeError(
                 "visual_pruning_keep_ratio must be a number, "
@@ -335,7 +335,6 @@ class ExecutionConfig:
     fused_qk_mrope: bool = False
     fused_add_rmsnorm: bool = False
     packed_kv_projection: bool = False
-    block4_gate_up: bool = False
     cooperative_prefill: bool = False
     cooperative_prefill_layer_quantum: int = 1
     cooperative_prefill_vision_block_quantum: int | None = None
@@ -376,10 +375,6 @@ class ExecutionConfig:
         _boolean(
             self.packed_kv_projection,
             name="enable_packed_kv_projection",
-        )
-        _boolean(
-            self.block4_gate_up,
-            name="enable_decode_block4_gate_up",
         )
         _boolean(
             self.cooperative_prefill,
@@ -568,18 +563,6 @@ class PrismConfig:
                 raise ValueError(
                     "tensor parallel compile_graph requires the rank-local attention compile region"
                 )
-        if self.execution.block4_gate_up:
-            if self.model.mlp_projection_mode != "packed":
-                raise ValueError(
-                    "enable_decode_block4_gate_up requires mlp_projection_mode='packed'"
-                )
-            if self.model.tensor_parallel_size != 1:
-                raise ValueError("enable_decode_block4_gate_up currently supports TP1 only")
-            if self.execution.backend not in (
-                ExecutionBackendName.CUDA_GRAPH,
-                ExecutionBackendName.COMPILE_GRAPH,
-            ):
-                raise ValueError("enable_decode_block4_gate_up requires a CUDA Graph backend")
         if self.execution.cooperative_prefill and self.model.tensor_parallel_size != 1:
             raise ValueError("enable_cooperative_prefill currently supports TP1 only")
 
@@ -646,7 +629,6 @@ class PrismConfig:
             "enable_fused_qk_mrope": "fused_qk_mrope",
             "enable_fused_add_rmsnorm": "fused_add_rmsnorm",
             "enable_packed_kv_projection": "packed_kv_projection",
-            "enable_decode_block4_gate_up": "block4_gate_up",
             "enable_cooperative_prefill": "cooperative_prefill",
             "cooperative_prefill_layer_quantum": ("cooperative_prefill_layer_quantum"),
             "cooperative_prefill_vision_block_quantum": (
@@ -1057,10 +1039,6 @@ class Config:
     @property
     def enable_packed_kv_projection(self) -> bool:
         return self.execution_config.packed_kv_projection
-
-    @property
-    def enable_decode_block4_gate_up(self) -> bool:
-        return self.execution_config.block4_gate_up
 
     @property
     def enable_cooperative_prefill(self) -> bool:

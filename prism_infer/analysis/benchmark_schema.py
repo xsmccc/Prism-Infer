@@ -1,4 +1,4 @@
-"""P6 系统 benchmark 结果与 workload schema 工具。
+"""System benchmark records and workload schema helpers.
 
 本模块不包含模型执行逻辑。它校验带版本且可 JSON 序列化的 benchmark
 记录，防止性能脚本静默遗漏环境、输入、正确性、计时、显存或 KV cache 证据。
@@ -114,7 +114,7 @@ def _tensor_bytes_from_metadata(
 
 
 def load_workload_manifest(path: str | Path) -> dict[str, Any]:
-    """加载并校验 deterministic P6 workload manifest。"""
+    """Load and validate a deterministic workload manifest."""
 
     manifest_path = Path(path)
     with manifest_path.open("r", encoding="utf-8") as handle:
@@ -172,7 +172,7 @@ def _require_number(
     minimum: float = 0.0,
 ) -> float:
     value = container.get(key)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError(f"{path}.{key} must be numeric")
     numeric = float(value)
     if not math.isfinite(numeric) or numeric < minimum:
@@ -468,7 +468,7 @@ def _validate_input_shapes(shapes: list[Any], expected_requests: int) -> None:
 
 
 def validate_benchmark_record(record: Mapping[str, Any]) -> None:
-    """校验一条 P6 系统 benchmark JSONL 记录。"""
+    """Validate one system benchmark JSONL record."""
 
     schema_version = record.get("schema_version")
     if schema_version not in SUPPORTED_BENCHMARK_SCHEMA_VERSIONS:

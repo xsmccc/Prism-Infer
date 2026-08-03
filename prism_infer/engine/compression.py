@@ -1,4 +1,4 @@
-"""KV cache compression metadata and gates.
+"""KV cache compression metadata and runtime checks.
 
 The floating-point ``off`` mode provides the uncompressed baseline.
 ``visual_prune`` controls logical retention, while the FP8 modes select
@@ -221,7 +221,7 @@ def _with_batch_index(record: dict[str, object], batch_index: int) -> dict[str, 
 def _replay_index_tuple(value: object, *, name: str) -> tuple[int, ...]:
     """Validate one sorted, unique sequence-local token-index list."""
 
-    if not isinstance(value, (list, tuple)):
+    if not isinstance(value, list | tuple):
         raise ValueError(f"visual pruning replay {name} must be a list or tuple")
     indices = tuple(value)
     if any(isinstance(index, bool) or not isinstance(index, int) for index in indices):

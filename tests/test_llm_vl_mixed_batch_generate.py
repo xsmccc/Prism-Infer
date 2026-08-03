@@ -1,4 +1,4 @@
-"""P3.3 LLM mixed batch generate correctness 验证。"""
+"""Mixed text and multimodal batch generation tests."""
 
 import pytest
 import torch

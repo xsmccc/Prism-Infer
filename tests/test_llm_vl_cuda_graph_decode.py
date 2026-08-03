@@ -1,4 +1,4 @@
-"""P3.5 VL CUDA Graph decode correctness 验证。"""
+"""Multimodal CUDA Graph decode correctness."""
 
 import gc
 

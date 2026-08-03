@@ -1,4 +1,4 @@
-"""MVBench 固定 16-segment center 视频/帧目录采样。"""
+"""MVBench deterministic 16-segment center video sampling."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def _validate_decoder_contract(
     actual: Mapping[str, str],
     expected: Mapping[str, Any] | None,
 ) -> None:
-    """Fail closed when a formal run's concrete video decoder drifts."""
+    """Reject a run when its concrete video decoder changes."""
 
     if expected is None:
         return
@@ -67,7 +67,7 @@ def uniform_segment_center_indices(
             raise ValueError(f"{name} must be an integer")
     if first_index < 0 or max_index < first_index or frames <= 0:
         raise ValueError("invalid frame index range or sample count")
-    if isinstance(fps, bool) or not isinstance(fps, (int, float)):
+    if isinstance(fps, bool) or not isinstance(fps, int | float):
         raise ValueError("fps must be numeric")
     fps = float(fps)
     if not math.isfinite(fps) or fps <= 0.0:
@@ -80,9 +80,9 @@ def uniform_segment_center_indices(
         end = temporal_bound.get("end")
         if (
             isinstance(start, bool)
-            or not isinstance(start, (int, float))
+            or not isinstance(start, int | float)
             or isinstance(end, bool)
-            or not isinstance(end, (int, float))
+            or not isinstance(end, int | float)
             or not math.isfinite(float(start))
             or not math.isfinite(float(end))
             or float(start) < 0.0

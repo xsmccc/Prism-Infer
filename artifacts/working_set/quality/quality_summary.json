@@ -132,45 +132,54 @@
   "created_at_utc": "2026-08-02T13:56:45.132028+00:00",
   "inputs": [
     {
-      "path": "/root/autodl-tmp/prism-working-set-final-20260802/formal/quality-0673658/raw/docvqa_dense.json",
-      "sha256": "8aceeab984146187ba1446ef76277ababd56657e009a254bc7e0ff4249a33d33"
+      "json_sha256": "8aceeab984146187ba1446ef76277ababd56657e009a254bc7e0ff4249a33d33",
+      "name": "docvqa_dense.json",
+      "portable_path": "quality_raw/docvqa_dense.json.gz"
     },
     {
-      "path": "/root/autodl-tmp/prism-working-set-final-20260802/formal/quality-0673658/raw/docvqa_uniform.json",
-      "sha256": "69de46929f96f72e5338a6343b99a032f26dc316ac52b74de8a161364ca8d539"
+      "json_sha256": "69de46929f96f72e5338a6343b99a032f26dc316ac52b74de8a161364ca8d539",
+      "name": "docvqa_uniform.json",
+      "portable_path": "quality_raw/docvqa_uniform.json.gz"
     },
     {
-      "path": "/root/autodl-tmp/prism-working-set-final-20260802/formal/quality-0673658/raw/muir_attention_first_reuse.json",
-      "sha256": "d2efa2fe9d2e961d16abc7d5e56f34ac4922adba0db49690c697a45b21129d75"
+      "json_sha256": "d2efa2fe9d2e961d16abc7d5e56f34ac4922adba0db49690c697a45b21129d75",
+      "name": "muir_attention_first_reuse.json",
+      "portable_path": "quality_raw/muir_attention_first_reuse.json.gz"
     },
     {
-      "path": "/root/autodl-tmp/prism-working-set-final-20260802/formal/quality-0673658/raw/muir_attention_per_question.json",
-      "sha256": "577384f5cd061d4429353e126fdbf3b746b4a4fd9b3e4cb50ca311628d591b56"
+      "json_sha256": "577384f5cd061d4429353e126fdbf3b746b4a4fd9b3e4cb50ca311628d591b56",
+      "name": "muir_attention_per_question.json",
+      "portable_path": "quality_raw/muir_attention_per_question.json.gz"
     },
     {
-      "path": "/root/autodl-tmp/prism-working-set-final-20260802/formal/quality-0673658/raw/muir_dense_media_first.json",
-      "sha256": "9a75d4ac707df4e839deaf6e73b5057bf66e45d9ebc64c4c92dc9227999f0764"
+      "json_sha256": "9a75d4ac707df4e839deaf6e73b5057bf66e45d9ebc64c4c92dc9227999f0764",
+      "name": "muir_dense_media_first.json",
+      "portable_path": "quality_raw/muir_dense_media_first.json.gz"
     },
     {
-      "path": "/root/autodl-tmp/prism-working-set-final-20260802/formal/quality-0673658/raw/muir_dense_official.json",
-      "sha256": "a62f46c4af0ef4546f3b4cd832ff065d9278d8913913b9f3f1691af58953fdff"
+      "json_sha256": "a62f46c4af0ef4546f3b4cd832ff065d9278d8913913b9f3f1691af58953fdff",
+      "name": "muir_dense_official.json",
+      "portable_path": "quality_raw/muir_dense_official.json.gz"
     },
     {
-      "path": "/root/autodl-tmp/prism-working-set-final-20260802/formal/quality-0673658/raw/muir_uniform_reuse.json",
-      "sha256": "b676c3b9a797f198539b7c3596b9cef553b79957cba9039f53d5f3781b3c95c9"
+      "json_sha256": "b676c3b9a797f198539b7c3596b9cef553b79957cba9039f53d5f3781b3c95c9",
+      "name": "muir_uniform_reuse.json",
+      "portable_path": "quality_raw/muir_uniform_reuse.json.gz"
     },
     {
-      "path": "/root/autodl-tmp/prism-working-set-final-20260802/formal/quality-0673658/raw/mvbench_dense.json",
-      "sha256": "5dc0b3a08ae1fa1a89ddaaac7a761c907cf9f70b054a2da57205a33788527534"
+      "json_sha256": "5dc0b3a08ae1fa1a89ddaaac7a761c907cf9f70b054a2da57205a33788527534",
+      "name": "mvbench_dense.json",
+      "portable_path": "quality_raw/mvbench_dense.json.gz"
     },
     {
-      "path": "/root/autodl-tmp/prism-working-set-final-20260802/formal/quality-0673658/raw/mvbench_uniform.json",
-      "sha256": "548d44ce6cf5b14168b5b911699e037cb45609096c4f800a6a637f81736d3fc1"
+      "json_sha256": "548d44ce6cf5b14168b5b911699e037cb45609096c4f800a6a637f81736d3fc1",
+      "name": "mvbench_uniform.json",
+      "portable_path": "quality_raw/mvbench_uniform.json.gz"
     }
   ],
   "missing_stages": [],
   "record_type": "repeated_visual_context_quality_summary",
-  "schema_version": 1,
+  "schema_version": 2,
   "stage_summaries": {
     "docvqa_dense": {
       "actual_token_deletion": {

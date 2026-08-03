@@ -1,4 +1,4 @@
-"""P7.2 engine boundary and lifecycle contract tests."""
+"""Engine boundary and request-lifecycle tests."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager

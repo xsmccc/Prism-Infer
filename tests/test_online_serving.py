@@ -1,4 +1,4 @@
-"""P7.3 deterministic online arrival, batching and SLO tests."""
+"""Deterministic online-arrival, batching, and latency-accounting tests."""
 
 from types import SimpleNamespace
 
@@ -303,19 +303,13 @@ def test_online_session_preserves_arrival_and_continuous_batching() -> None:
     assert phases[first_decode - 1] == "prefill"
     assert result.scheduler_metrics["peak_active"] == 2
 
-    summary = summarize_online_run(
-        result.to_record(),
-        ttft_slo_ms=100.0,
-        tpot_slo_ms=100.0,
-    )
+    summary = summarize_online_run(result.to_record())
     assert summary["counts"] == {
         "submitted": 2,
         "completed": 2,
         "rejected": 0,
         "cancelled": 0,
-        "good": 2,
     }
-    assert summary["goodput"]["fraction_of_completed"] == 1.0
 
     record = {
         "schema_version": 1,
@@ -353,7 +347,7 @@ def test_online_session_preserves_arrival_and_continuous_batching() -> None:
         "summary": summary,
     }
     validate_online_benchmark_record(record)
-    record["summary"] = {**summary, "counts": {**summary["counts"], "good": 0}}
+    record["summary"] = {**summary, "counts": {**summary["counts"], "completed": 0}}
     with pytest.raises(ValueError, match="does not match"):
         validate_online_benchmark_record(record)
 
@@ -365,11 +359,7 @@ def test_online_schema_v2_requires_projection_mode() -> None:
         clock_ns=clock,
         sleep_fn=clock.advance,
     ).run((_request("a", 0.0),))
-    summary = summarize_online_run(
-        result.to_record(),
-        ttft_slo_ms=100.0,
-        tpot_slo_ms=100.0,
-    )
+    summary = summarize_online_run(result.to_record())
     record = {
         "schema_version": ONLINE_BENCHMARK_SCHEMA_VERSION,
         "record_type": "prism_online_run",
@@ -434,11 +424,7 @@ def test_online_admission_rejection_and_cancellation_are_accounted() -> None:
     assert by_key["a-rejected"].state == "rejected"
     assert result.scheduler_metrics["cancelled_requests"] == 1
     assert result.scheduler_metrics["rejected_requests"] == 1
-    summary = summarize_online_run(
-        result.to_record(),
-        ttft_slo_ms=100.0,
-        tpot_slo_ms=100.0,
-    )
+    summary = summarize_online_run(result.to_record())
     assert summary["counts"]["cancelled"] == 1
     assert summary["counts"]["rejected"] == 1
     assert summary["counts"]["completed"] == 0
@@ -449,8 +435,4 @@ def test_online_percentile_and_schema_fail_closed() -> None:
     with pytest.raises(ValueError, match="non-empty"):
         percentile([], 0.5)
     with pytest.raises(ValueError, match="duration_s"):
-        summarize_online_run(
-            {"duration_s": 0, "engine_metrics": {"requests": []}},
-            ttft_slo_ms=10,
-            tpot_slo_ms=10,
-        )
+        summarize_online_run({"duration_s": 0, "engine_metrics": {"requests": []}})

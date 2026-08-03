@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run SGLang on the frozen P9 H3 online mixed-multimodal protocol."""
+"""Run SGLang on a shared repeated-visual-context working-set plan."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import asyncio
 import hashlib
 import importlib.metadata
 import json
-import random
 import sys
 import time
 from datetime import datetime, timezone
@@ -23,7 +22,7 @@ from transformers import AutoProcessor
 
 try:
     import pynvml
-except ImportError:  # pragma: no cover - formal environment provides NVML
+except ImportError:  # pragma: no cover - optional process-memory telemetry
     pynvml = None
 
 
@@ -32,10 +31,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from benchmarks.bench_external_sglang import (
-    DEFAULT_VIDEO_FPS,
-    _image,
     _prompts,
-    _stage_lossless_video,
 )
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
 from benchmarks.working_set_workload import (
@@ -46,11 +42,9 @@ from benchmarks.working_set_workload import (
     verify_working_set_processor,
     working_set_processor_kwargs,
 )
-from prism_infer.analysis.online_serving import summarize_distribution
-from prism_infer.analysis.p9_quality_materialization import write_json_atomic
+from prism_infer.analysis.quality_materialization import write_json_atomic
 from prism_infer.analysis.working_set_plan import DEFAULT_MAX_NUM_SEQS
 
-H3_PROFILES = ("primary", "conditional_video")
 TERMINAL_FINISH_REASONS = {"eos", "length", "stop"}
 WORKING_SET_KV_CACHE_DTYPE = "fp8_e4m3"
 
@@ -217,170 +211,6 @@ def _require_new_output(path: Path) -> None:
         raise FileExistsError(f"refusing to overwrite existing output: {path}")
 
 
-def _arrival_offsets(
-    count: int,
-    *,
-    process: str,
-    request_rate: float,
-    seed: int,
-) -> list[float]:
-    if count <= 0:
-        raise ValueError("online request count must be positive")
-    if process == "burst":
-        return [0.0] * count
-    if request_rate <= 0:
-        raise ValueError("request_rate must be positive")
-    if process == "constant":
-        return [index / request_rate for index in range(count)]
-    if process != "poisson":
-        raise ValueError(f"unsupported arrival process: {process!r}")
-    rng = random.Random(seed)
-    offsets = [0.0]
-    for _ in range(1, count):
-        offsets.append(offsets[-1] + rng.expovariate(request_rate))
-    return offsets
-
-
-def _smooth_weighted_period(
-    classes: list[dict[str, object]],
-) -> tuple[str, ...]:
-    case_ids = [str(item["case_id"]) for item in classes]
-    counts = [int(round(float(item["weight"]) * 10)) for item in classes]
-    if sum(counts) != 10 or any(count <= 0 for count in counts):
-        raise ValueError(f"H3 class weights must form a positive period 10: {counts}")
-    current = [0] * len(counts)
-    period: list[str] = []
-    for _ in range(10):
-        for index, count in enumerate(counts):
-            current[index] += count
-        selected = max(
-            range(len(counts)),
-            key=lambda index: (current[index], -index),
-        )
-        period.append(case_ids[selected])
-        current[selected] -= 10
-    return tuple(period)
-
-
-def _materialize_case(
-    case: dict[str, Any],
-    *,
-    video_staging_dir: Path,
-) -> list[dict[str, Any]]:
-    requests = []
-    for index, request in enumerate(case["requests"]):
-        request_type = request["type"]
-        if request_type == "text":
-            requests.append(
-                {
-                    "type": request_type,
-                    "prompt": request["prompt"],
-                    "images": [],
-                }
-            )
-            continue
-        if request_type in ("image", "image_file"):
-            images = [_image(request["image"])]
-        elif request_type == "images":
-            images = [_image(spec) for spec in request["images"]]
-        elif request_type == "video":
-            frames = [_image(spec) for spec in request["frames"]]
-            fps = float(request.get("fps", DEFAULT_VIDEO_FPS))
-            staging_path = video_staging_dir / f"{case['id']}-{index}.mkv"
-            staging = _stage_lossless_video(
-                frames,
-                path=staging_path,
-                fps=fps,
-            )
-            requests.append(
-                {
-                    "type": request_type,
-                    "prompt": request["prompt"],
-                    "video": str(staging_path),
-                    "fps": fps,
-                    "video_staging": staging,
-                }
-            )
-            continue
-        else:
-            raise ValueError(f"unsupported SGLang H3 request type: {request_type!r}")
-        requests.append(
-            {
-                "type": request_type,
-                "prompt": request["prompt"],
-                "images": images,
-            }
-        )
-    return requests
-
-
-def _h3_schedule(
-    manifest: dict[str, Any],
-    *,
-    profile: str,
-    count: int,
-    video_staging_dir: Path,
-) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
-    h3 = manifest["p9_protocol"]["headline"]["H3"]
-    field = "primary_classes" if profile == "primary" else "conditional_video_classes"
-    classes = h3[field]
-    period = _smooth_weighted_period(classes)
-    case_by_id = {case["id"]: case for case in manifest["cases"]}
-    request_by_class = {}
-    for item in classes:
-        case_id = item["case_id"]
-        requests = _materialize_case(
-            case_by_id[case_id],
-            video_staging_dir=video_staging_dir,
-        )
-        if len(requests) != 1:
-            raise ValueError(f"H3 class must materialize one request: {case_id}")
-        request_by_class[case_id] = requests[0]
-    request_classes = [period[index % len(period)] for index in range(count)]
-    requests = [request_by_class[case_id] for case_id in request_classes]
-    return (
-        requests,
-        request_classes,
-        {
-            "profile": profile,
-            "class_field": field,
-            "class_schedule": h3["class_schedule"],
-            "materialized_schedule_algorithm": ("smooth_weighted_round_robin_integer_counts"),
-            "period": list(period),
-            "classes": classes,
-            "arrival_process": h3["arrival_process"],
-            "request_rates_per_second": h3["request_rates_per_second"],
-            "completed_requests_per_run": h3["completed_requests_per_run"],
-            "arrival_seeds": h3["arrival_seeds"],
-            "max_tokens": h3["max_tokens"],
-            "max_model_len": h3["max_model_len"],
-            "ttft_slo_formula": h3["ttft_slo_formula"],
-            "tpot_slo_formula": h3["tpot_slo_formula"],
-            "goodput_unit": h3["goodput_unit"],
-        },
-    )
-
-
-def _protocol_conformance(
-    contract: dict[str, Any],
-    args: argparse.Namespace,
-) -> dict[str, object]:
-    checks = {
-        "arrival_process": args.arrival_process == contract["arrival_process"],
-        "request_rate": args.request_rate in contract["request_rates_per_second"],
-        "requests": args.requests == contract["completed_requests_per_run"],
-        "seed": args.seed in contract["arrival_seeds"],
-        "warmup_requests": args.warmup_requests == 10,
-        "max_tokens": args.max_tokens == contract["max_tokens"],
-        "max_model_len": args.max_model_len == contract["max_model_len"],
-    }
-    return {
-        "full_frozen_h3": all(checks.values()),
-        "checks": checks,
-        "deviations": [name for name, passed in checks.items() if not passed],
-    }
-
-
 def _finish_reason(output: dict[str, Any]) -> str:
     reason = output["meta_info"].get("finish_reason")
     if isinstance(reason, dict):
@@ -530,77 +360,6 @@ def _run_arrivals(
     )
 
 
-def _summarize_by_class(
-    run: dict[str, Any],
-    *,
-    class_slos: dict[str, dict[str, float]] | None = None,
-) -> dict[str, object]:
-    duration_s = float(run["duration_s"])
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for record in run["requests"]:
-        grouped.setdefault(record["request_class"], []).append(record)
-    rows = {}
-    for case_id, records in sorted(grouped.items()):
-        completed = [
-            record for record in records if record["finish_reason"] in TERMINAL_FINISH_REASONS
-        ]
-        row = {
-            "counts": {
-                "submitted": len(records),
-                "completed": len(completed),
-            },
-            "latency_ms": {
-                name: summarize_distribution(
-                    [float(record[name]) for record in completed if record[name] is not None]
-                )
-                for name in ("queue_ms", "ttft_ms", "tpot_ms", "latency_ms")
-            },
-            "throughput": {
-                "requests_per_s": len(completed) / duration_s,
-                "output_tokens_per_s": (
-                    sum(int(record["output_tokens"]) for record in completed) / duration_s
-                ),
-            },
-        }
-        if class_slos is not None:
-            thresholds = class_slos[case_id]
-            meeting = [
-                record
-                for record in completed
-                if float(record["ttft_ms"]) <= thresholds["ttft_ms"]
-                and float(record["tpot_ms"]) <= thresholds["tpot_ms"]
-            ]
-            meeting_tokens = sum(int(record["output_tokens"]) for record in meeting)
-            row["slo"] = {
-                "thresholds_ms": thresholds,
-                "requests_meeting_both": len(meeting),
-                "output_tokens_meeting_both": meeting_tokens,
-                "request_attainment": (len(meeting) / len(completed) if completed else 0.0),
-                "goodput_output_tokens_per_s": meeting_tokens / duration_s,
-            }
-        rows[case_id] = row
-    output_tokens = sum(int(record["output_tokens"]) for record in run["requests"])
-    summary = {
-        "by_class": rows,
-        "throughput": {
-            "requests_per_s": len(run["requests"]) / duration_s,
-            "output_tokens_per_s": output_tokens / duration_s,
-        },
-    }
-    if class_slos is not None:
-        meeting_requests = sum(int(row["slo"]["requests_meeting_both"]) for row in rows.values())
-        meeting_tokens = sum(int(row["slo"]["output_tokens_meeting_both"]) for row in rows.values())
-        summary["slo_goodput"] = {
-            "requests_meeting_both": meeting_requests,
-            "output_tokens_meeting_both": meeting_tokens,
-            "request_attainment": (
-                meeting_requests / len(run["requests"]) if run["requests"] else 0.0
-            ),
-            "output_tokens_per_s": meeting_tokens / duration_s,
-        }
-    return summary
-
-
 def _prompt_audit(
     prompt_ids: list[list[int]],
     request_classes: list[str],
@@ -629,25 +388,6 @@ def _resolve_working_set_kv_cache_dtype(requested: str) -> str:
             f"{WORKING_SET_KV_CACHE_DTYPE}, got {requested!r}"
         )
     return requested
-
-
-def _validate_formal_contract(
-    *,
-    formal: bool,
-    git_dirty: bool,
-    has_working_set_plan: bool,
-    h3_conformance: dict[str, Any] | None,
-) -> None:
-    """Apply the formal contract for either a fixed plan or legacy H3."""
-
-    if not formal:
-        return
-    if git_dirty:
-        raise SystemExit("--formal requires a clean harness worktree")
-    if has_working_set_plan:
-        return
-    if h3_conformance is None or not h3_conformance["full_frozen_h3"]:
-        raise SystemExit("--formal legacy runs require the complete frozen H3 contract")
 
 
 def _verify_fixed_working_set_plan(audit: dict[str, object]) -> None:
@@ -709,47 +449,12 @@ def _verify_sglang_working_set_runtime(
     }
 
 
-def _load_class_slos(
-    path: Path,
-    *,
-    expected_classes: set[str],
-    expected_profile: str,
-) -> tuple[dict[str, dict[str, float]], dict[str, object]]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("record_type") != "p12_class_slo":
-        raise ValueError(f"not a P12 class-SLO record: {path}")
-    if payload.get("source", {}).get("framework") != "vllm":
-        raise ValueError("P12 class SLO must be frozen from vLLM")
-    if payload.get("source", {}).get("profile") != expected_profile:
-        raise ValueError("P12 class SLO profile does not match the run")
-    classes = payload.get("classes", {})
-    if set(classes) != expected_classes:
-        raise ValueError(f"P12 class SLO classes differ: {set(classes)} != {expected_classes}")
-    normalized = {}
-    for case_id, thresholds in classes.items():
-        ttft_ms = float(thresholds["ttft_ms"])
-        tpot_ms = float(thresholds["tpot_ms"])
-        if ttft_ms <= 0 or tpot_ms <= 0:
-            raise ValueError(f"invalid P12 class SLO for {case_id}")
-        normalized[case_id] = {
-            "ttft_ms": ttft_ms,
-            "tpot_ms": tpot_ms,
-        }
-    return normalized, {
-        "path": str(path.resolve()),
-        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        "source": payload["source"],
-    }
-
-
 def _run(resources: _RunResources) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
-    parser.add_argument("--manifest")
-    parser.add_argument("--h3-profile", choices=H3_PROFILES)
-    parser.add_argument("--working-set-plan")
-    parser.add_argument("--working-set-id", choices=("fit", "knee", "pressure"))
-    parser.add_argument("--materialized-root")
+    parser.add_argument("--working-set-plan", required=True)
+    parser.add_argument("--working-set-id", choices=("fit", "knee", "pressure"), required=True)
+    parser.add_argument("--materialized-root", required=True)
     parser.add_argument("--requests", type=int, default=600)
     parser.add_argument(
         "--arrival-process",
@@ -772,8 +477,6 @@ def _run(resources: _RunResources) -> None:
     parser.add_argument("--enable-prefix-caching", action="store_true")
     parser.add_argument("--enable-mm-global-cache", action="store_true")
     parser.add_argument("--enforce-eager", action="store_true")
-    parser.add_argument("--formal", action="store_true")
-    parser.add_argument("--class-slo-file")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     output_path = Path(args.output)
@@ -781,148 +484,84 @@ def _run(resources: _RunResources) -> None:
     kv_cache_dtype_requested_cli = args.kv_cache_dtype
     if args.requests <= 0 or args.warmup_requests < 0 or args.max_tokens < 2:
         raise SystemExit("--requests must be positive, warmup non-negative and max-tokens >= 2")
-    working_set_args = (
+
+    working_set = materialize_working_set(
         args.working_set_plan,
-        args.working_set_id,
-        args.materialized_root,
+        workset_id=args.working_set_id,
+        materialized_root=args.materialized_root,
     )
-    if any(working_set_args) and not all(working_set_args):
-        raise SystemExit(
-            "--working-set-plan, --working-set-id and --materialized-root must be used together"
-        )
-    if args.working_set_plan and any((args.manifest, args.h3_profile, args.class_slo_file)):
-        raise SystemExit("working-set plans cannot be combined with legacy H3/SLO flags")
-    if not args.working_set_plan and (not args.manifest or not args.h3_profile):
-        raise SystemExit("legacy runs require --manifest and --h3-profile")
-
-    working_set: MaterializedWorkingSet | None = None
-    working_set_audit: dict[str, object] | None = None
-    model_verification: dict[str, object] | None = None
-    kv_bytes_per_token = None
-    if args.working_set_plan:
-        working_set = materialize_working_set(
-            args.working_set_plan,
-            workset_id=args.working_set_id,
-            materialized_root=args.materialized_root,
-        )
-        resources.working_set = working_set
-        model_verification = verify_working_set_model(working_set.plan, args.model)
-        traffic = working_set.plan["traffic"]
-        kv_budget = working_set.plan["kv_budget"]
-        model_contract = working_set.plan["model"]
-        processor_contract = working_set.plan["processor"]
-        serving_contract = working_set.plan["serving"]
-        args.requests = len(working_set.measured_payloads)
-        args.warmup_requests = 0
-        args.max_tokens = int(traffic["max_new_tokens"])
-        args.request_rate = float(traffic["request_rate_per_s"])
-        args.arrival_process = str(traffic["arrival_process"])
-        args.seed = int(traffic["seed"])
-        args.max_model_len = int(model_contract["max_model_len"])
-        args.max_num_seqs = int(serving_contract["max_num_seqs"])
-        args.chunked_prefill_size = int(serving_contract["max_chunk_size"])
-        if args.max_num_seqs != DEFAULT_MAX_NUM_SEQS:
-            raise ValueError("working-set SGLang requires max_num_seqs=8")
-        args.page_size = int(kv_budget["page_size_tokens"])
-        args.enable_prefix_caching = True
-        args.enable_mm_global_cache = True
-        args.kv_cache_dtype = _resolve_working_set_kv_cache_dtype(args.kv_cache_dtype)
-        kv_bytes_per_token = _kv_bytes_per_token(
-            args.model,
-            kv_cache_dtype=args.kv_cache_dtype,
-        )
-        raw_capacity_tokens = int(kv_budget["bytes"]) // kv_bytes_per_token
-        args.max_total_tokens = (raw_capacity_tokens // args.page_size) * args.page_size
-        if args.max_total_tokens <= 0:
-            raise ValueError("fixed KV budget cannot hold one SGLang page")
-        requests = working_set.measured_payloads
-        request_classes = working_set.measured_sample_ids
-        offsets_s = working_set.measured_offsets_s
-        h3_contract = None
-        conformance = None
-        manifest = {"name": "muirbench_media_first_working_set"}
-        plan_path = Path(args.working_set_plan)
-        working_set_audit = {
-            "plan_path": str(plan_path.resolve()),
-            "plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
-            "workset_id": args.working_set_id,
-            "group_ids": list(working_set.workset["group_ids"]),
-            "available_questions": int(working_set.workset["available_questions"]),
-            "observed_questions": int(working_set.workset["observed_questions"]),
-            "measured_question_switches": int(
-                working_set.workset["measured_question_switches"]
-            ),
-            "dense_prefix_pages": int(working_set.workset["dense_prefix_pages"]),
-            "kv_budget_bytes": int(kv_budget["bytes"]),
-            "kv_budget_pages": int(kv_budget["pages"]),
-            "page_size_tokens": int(kv_budget["page_size_tokens"]),
-            "model_revision": str(model_contract["revision"]),
-            "model_verification": model_verification,
-            "image_min_pixels": int(processor_contract["image_min_pixels"]),
-            "image_max_pixels": int(processor_contract["image_max_pixels"]),
-            "max_num_seqs": int(serving_contract["max_num_seqs"]),
-            "chunked_prefill_size": int(serving_contract["max_chunk_size"]),
-            "source_prompt_sha256": source_prompt_schedule_sha256(working_set.measured_payloads),
-            "population_source_prompt_sha256": source_prompt_schedule_sha256(
-                working_set.population_payloads
-            ),
-            "prompt_token_hash_contract": "exact_token_ids_sha256_across_engines",
-            "population_requests": len(working_set.population_payloads),
-            "measured_requests": len(working_set.measured_payloads),
-            "kv_cache_dtype_requested_cli": kv_cache_dtype_requested_cli,
-            "kv_cache_dtype_enforced": args.kv_cache_dtype,
-        }
-    else:
-        manifest_path = Path(args.manifest)
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        requests, request_classes, h3_contract = _h3_schedule(
-            manifest,
-            profile=args.h3_profile,
-            count=args.requests,
-            video_staging_dir=output_path.parent / "sglang_staging",
-        )
-        offsets_s = _arrival_offsets(
-            args.requests,
-            process=args.arrival_process,
-            request_rate=args.request_rate,
-            seed=args.seed,
-        )
-        conformance = _protocol_conformance(h3_contract, args)
+    resources.working_set = working_set
+    model_verification = verify_working_set_model(working_set.plan, args.model)
+    traffic = working_set.plan["traffic"]
+    kv_budget = working_set.plan["kv_budget"]
+    model_contract = working_set.plan["model"]
+    processor_contract = working_set.plan["processor"]
+    serving_contract = working_set.plan["serving"]
+    args.requests = len(working_set.measured_payloads)
+    args.warmup_requests = 0
+    args.max_tokens = int(traffic["max_new_tokens"])
+    args.request_rate = float(traffic["request_rate_per_s"])
+    args.arrival_process = str(traffic["arrival_process"])
+    args.seed = int(traffic["seed"])
+    args.max_model_len = int(model_contract["max_model_len"])
+    args.max_num_seqs = int(serving_contract["max_num_seqs"])
+    args.chunked_prefill_size = int(serving_contract["max_chunk_size"])
+    if args.max_num_seqs != DEFAULT_MAX_NUM_SEQS:
+        raise ValueError("working-set SGLang requires max_num_seqs=8")
+    args.page_size = int(kv_budget["page_size_tokens"])
+    args.enable_prefix_caching = True
+    args.enable_mm_global_cache = True
+    args.kv_cache_dtype = _resolve_working_set_kv_cache_dtype(args.kv_cache_dtype)
+    kv_bytes_per_token = _kv_bytes_per_token(
+        args.model,
+        kv_cache_dtype=args.kv_cache_dtype,
+    )
+    raw_capacity_tokens = int(kv_budget["bytes"]) // kv_bytes_per_token
+    args.max_total_tokens = (raw_capacity_tokens // args.page_size) * args.page_size
+    if args.max_total_tokens <= 0:
+        raise ValueError("fixed KV budget cannot hold one SGLang page")
+    requests = working_set.measured_payloads
+    request_classes = working_set.measured_sample_ids
+    offsets_s = working_set.measured_offsets_s
+    manifest = {"name": "muirbench_media_first_working_set"}
+    plan_path = Path(args.working_set_plan)
+    working_set_audit = {
+        "plan_path": str(plan_path.resolve()),
+        "plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+        "workset_id": args.working_set_id,
+        "group_ids": list(working_set.workset["group_ids"]),
+        "available_questions": int(working_set.workset["available_questions"]),
+        "observed_questions": int(working_set.workset["observed_questions"]),
+        "measured_question_switches": int(working_set.workset["measured_question_switches"]),
+        "dense_prefix_pages": int(working_set.workset["dense_prefix_pages"]),
+        "kv_budget_bytes": int(kv_budget["bytes"]),
+        "kv_budget_pages": int(kv_budget["pages"]),
+        "page_size_tokens": int(kv_budget["page_size_tokens"]),
+        "model_revision": str(model_contract["revision"]),
+        "model_verification": model_verification,
+        "image_min_pixels": int(processor_contract["image_min_pixels"]),
+        "image_max_pixels": int(processor_contract["image_max_pixels"]),
+        "max_num_seqs": int(serving_contract["max_num_seqs"]),
+        "chunked_prefill_size": int(serving_contract["max_chunk_size"]),
+        "source_prompt_sha256": source_prompt_schedule_sha256(working_set.measured_payloads),
+        "population_source_prompt_sha256": source_prompt_schedule_sha256(
+            working_set.population_payloads
+        ),
+        "prompt_token_hash_contract": "exact_token_ids_sha256_across_engines",
+        "population_requests": len(working_set.population_payloads),
+        "measured_requests": len(working_set.measured_payloads),
+        "kv_cache_dtype_requested_cli": kv_cache_dtype_requested_cli,
+        "kv_cache_dtype_enforced": args.kv_cache_dtype,
+    }
     git = collect_git_metadata(REPO_ROOT, strict=True)
-    _validate_formal_contract(
-        formal=args.formal,
-        git_dirty=git.dirty,
-        has_working_set_plan=working_set is not None,
-        h3_conformance=conformance,
-    )
-    class_slos = None
-    class_slo_audit = None
-    if args.class_slo_file:
-        class_slos, class_slo_audit = _load_class_slos(
-            Path(args.class_slo_file),
-            expected_classes=set(request_classes),
-            expected_profile=args.h3_profile,
-        )
-    elif args.formal and working_set is None:
-        raise SystemExit("formal SGLang H3 runs require --class-slo-file")
-
-    processor_kwargs = {} if working_set is None else working_set_processor_kwargs(working_set.plan)
+    processor_kwargs = working_set_processor_kwargs(working_set.plan)
     processor = AutoProcessor.from_pretrained(
         args.model,
         local_files_only=True,
         **processor_kwargs,
     )
-    processor_verification = (
-        None if working_set is None else verify_working_set_processor(processor, working_set.plan)
-    )
-    video_fps = {float(request["fps"]) for request in requests if "video" in request}
-    if len(video_fps) > 1:
-        raise ValueError(f"SGLang H3 requires one global video fps: {video_fps}")
-    mm_process_config = {}
-    if working_set is not None:
-        mm_process_config["image"] = dict(processor_kwargs)
-    if video_fps:
-        mm_process_config["video"] = {"fps": next(iter(video_fps))}
+    processor_verification = verify_working_set_processor(processor, working_set.plan)
+    mm_process_config = {"image": dict(processor_kwargs)}
     engine = Engine(
         model_path=args.model,
         dtype="bfloat16",
@@ -946,66 +585,49 @@ def _run(resources: _RunResources) -> None:
         mm_process_config=mm_process_config,
     )
     resources.engine = engine
-    if working_set is not None:
-        working_set_audit["runtime_verification"] = _verify_sglang_working_set_runtime(
-            engine,
-            working_set,
-            kv_bytes_per_token=kv_bytes_per_token,
-            processor_verification=processor_verification,
-            mm_process_config=mm_process_config,
-        )
+    working_set_audit["runtime_verification"] = _verify_sglang_working_set_runtime(
+        engine,
+        working_set,
+        kv_bytes_per_token=kv_bytes_per_token,
+        processor_verification=processor_verification,
+        mm_process_config=mm_process_config,
+    )
     process_memory_sampler = _DeviceProcessMemorySampler()
     resources.memory_sampler = process_memory_sampler
     process_memory_sampler.start()
-    population_run = None
     sampling = {
         "temperature": 0.0,
         "max_new_tokens": args.max_tokens,
         "ignore_eos": True,
     }
-    warmup_requests = [requests[index % len(requests)] for index in range(args.warmup_requests)]
-    warmup_classes = [
-        request_classes[index % len(request_classes)] for index in range(args.warmup_requests)
-    ]
-    if args.warmup_requests:
-        _run_arrivals(
+    population_runs = []
+    for payload, group_id, sample_id, request_id in zip(
+        working_set.population_payloads,
+        working_set.population_group_ids,
+        working_set.population_sample_ids,
+        working_set.population_request_ids,
+        strict=True,
+    ):
+        population_result = _run_arrivals(
             engine,
             processor,
-            warmup_requests,
-            warmup_classes,
-            [0.0] * args.warmup_requests,
+            [payload],
+            [sample_id],
+            [0.0],
             sampling,
-            key_prefix="warmup",
+            key_prefix="population",
+            request_ids=[request_id],
         )
-    if working_set is not None:
-        population_runs = []
-        for payload, group_id, sample_id, request_id in zip(
-            working_set.population_payloads,
-            working_set.population_group_ids,
-            working_set.population_sample_ids,
-            working_set.population_request_ids,
-            strict=True,
-        ):
-            population_result = _run_arrivals(
-                engine,
-                processor,
-                [payload],
-                [sample_id],
-                [0.0],
-                sampling,
-                key_prefix="population",
-                request_ids=[request_id],
-            )
-            population_result["group_id"] = group_id
-            population_result["source_prompt_sha256"] = source_prompt_schedule_sha256([payload])
-            population_result["prompt_token_ids_sha256"] = _canonical_sha256(
-                population_result["prompt_token_ids"]
-            )
-            population_runs.append(population_result)
-        population_run = {
-            "policy": "one_request_per_group_closed_loop",
-            "runs": population_runs,
-        }
+        population_result["group_id"] = group_id
+        population_result["source_prompt_sha256"] = source_prompt_schedule_sha256([payload])
+        population_result["prompt_token_ids_sha256"] = _canonical_sha256(
+            population_result["prompt_token_ids"]
+        )
+        population_runs.append(population_result)
+    population_run = {
+        "policy": "one_request_per_group_closed_loop",
+        "runs": population_runs,
+    }
 
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
@@ -1016,15 +638,14 @@ def _run(resources: _RunResources) -> None:
         request_classes,
         offsets_s,
         sampling,
-        key_prefix="formal",
-        request_ids=(None if working_set is None else working_set.measured_request_ids),
+        key_prefix="measured",
+        request_ids=working_set.measured_request_ids,
     )
     torch.cuda.synchronize()
     process_device_memory = process_memory_sampler.stop()
     if any(record["finish_reason"] not in TERMINAL_FINISH_REASONS for record in run["requests"]):
         raise RuntimeError("SGLang online run contains a non-completed request")
-    if working_set_audit is not None:
-        _verify_fixed_working_set_plan(working_set_audit)
+    _verify_fixed_working_set_plan(working_set_audit)
 
     model_config_path = Path(args.model) / "config.json"
     kv_bytes_per_token = _kv_bytes_per_token(
@@ -1033,25 +654,12 @@ def _run(resources: _RunResources) -> None:
     )
     prompt_audit = _prompt_audit(run.pop("prompt_token_ids"), request_classes)
     output_token_ids = run.pop("output_token_ids")
-    class_summary = _summarize_by_class(run, class_slos=class_slos)
     record = {
         "schema_version": 1,
         "record_type": "external_online_run",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "protocol": {
-            "name": (
-                "muirbench_media_first_working_set_v1"
-                if working_set is not None
-                else "p12_external_online_h3_v1"
-            ),
-            "formal": args.formal,
-            "formal_contract": (
-                "clean_worktree_fixed_working_set_plan"
-                if args.formal and working_set is not None
-                else "frozen_h3"
-                if args.formal
-                else None
-            ),
+            "name": "muirbench_media_first_working_set_v1",
             "command": [sys.executable, *sys.argv],
             "harness_git_commit": git.commit,
             "harness_git_dirty": git.dirty,
@@ -1081,17 +689,10 @@ def _run(resources: _RunResources) -> None:
         "workload": {
             "manifest": manifest["name"],
             "manifest_sha256": _canonical_sha256(manifest),
-            "case": (
-                f"muirbench_{args.working_set_id}"
-                if working_set is not None
-                else f"h3_{args.h3_profile}"
-            ),
+            "case": f"muirbench_{args.working_set_id}",
             "requests": args.requests,
             "request_classes": request_classes,
             "max_tokens": args.max_tokens,
-            "h3_contract": h3_contract,
-            "h3_conformance": conformance,
-            "class_slo": class_slo_audit,
             "working_set_plan": working_set_audit,
             **prompt_audit,
         },
@@ -1121,9 +722,7 @@ def _run(resources: _RunResources) -> None:
             "page_size": args.page_size,
             "kv_cache_bytes_per_token_theoretical": kv_bytes_per_token,
             "kv_cache_memory_bytes_theoretical": (args.max_total_tokens * kv_bytes_per_token),
-            "kv_cache_budget_bytes": (
-                None if working_set is None else int(working_set.plan["kv_budget"]["bytes"])
-            ),
+            "kv_cache_budget_bytes": int(working_set.plan["kv_budget"]["bytes"]),
         },
         "memory": {
             "process_device": process_device_memory,
@@ -1138,7 +737,6 @@ def _run(resources: _RunResources) -> None:
         },
         "population": population_run,
         "run": run,
-        "class_summary": class_summary,
     }
     write_json_atomic(output_path, record)
     print(
@@ -1147,8 +745,6 @@ def _run(resources: _RunResources) -> None:
                 "output": str(output_path),
                 "git_commit": git.commit,
                 "git_dirty": git.dirty,
-                "h3_conformance": conformance,
-                "class_summary": class_summary,
                 "prompt_token_ids_sha256": prompt_audit["prompt_token_ids_sha256"],
                 "output_token_ids_sha256": record["correctness"]["output_token_ids_sha256"],
                 "controller": run["controller"],

@@ -1,4 +1,4 @@
-"""P7.3 single-node online arrival/continuous-batching benchmark."""
+"""Measure single-node online arrival and continuous batching."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import transformers
 
 try:
     import pynvml
-except ImportError:  # pragma: no cover - formal environment provides NVML
+except ImportError:  # pragma: no cover - optional process-memory telemetry
     pynvml = None
 
 
@@ -51,7 +51,6 @@ from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import load_workload_manifest
 from prism_infer.analysis.online_serving import (
     ONLINE_BENCHMARK_SCHEMA_VERSION,
-    summarize_distribution,
     summarize_online_run,
     validate_online_benchmark_record,
 )
@@ -62,7 +61,7 @@ from prism_infer.analysis.performance_profile import (
 from prism_infer.engine.kv_quantization import kv_cache_storage_bytes
 from prism_infer.engine.online import OnlineRequest, OnlineServingSession
 
-P12_ONLINE_MODES = (
+ONLINE_MODES = (
     "off_eager",
     "off_graph",
     "visual_compact_graph",
@@ -70,7 +69,6 @@ P12_ONLINE_MODES = (
     "scaled_fp8_kv_compile_graph",
     "visual_compact_scaled_fp8_compile_graph",
 )
-H3_PROFILES = ("primary", "conditional_video")
 
 
 def _write_text_atomic(path: Path, text: str) -> None:
@@ -203,7 +201,6 @@ def _online_requests(
     seed: int,
     sampling: SamplingParams,
     key_prefix: str,
-    ttft_slo_ms_by_request: list[float | None] | None = None,
 ) -> tuple[OnlineRequest, ...]:
     offsets = _arrival_offsets(
         count,
@@ -211,15 +208,12 @@ def _online_requests(
         request_rate=request_rate,
         seed=seed,
     )
-    if ttft_slo_ms_by_request is not None and len(ttft_slo_ms_by_request) != count:
-        raise ValueError("per-request TTFT SLO count must match online requests")
     return tuple(
         OnlineRequest(
             request_key=f"{key_prefix}-{index:05d}",
             arrival_offset_s=offset,
             payload=payloads[index % len(payloads)],
             sampling_params=sampling,
-            ttft_slo_ms=(None if ttft_slo_ms_by_request is None else ttft_slo_ms_by_request[index]),
         )
         for index, offset in enumerate(offsets)
     )
@@ -249,85 +243,6 @@ def _planned_online_requests(
             offsets_s,
             strict=True,
         )
-    )
-
-
-def _smooth_weighted_period(
-    classes: list[dict[str, object]],
-) -> tuple[str, ...]:
-    """Build the frozen period-10 smooth weighted round-robin schedule."""
-
-    case_ids = [str(item["case_id"]) for item in classes]
-    counts = [int(round(float(item["weight"]) * 10)) for item in classes]
-    if sum(counts) != 10 or any(count <= 0 for count in counts):
-        raise ValueError(f"H3 class weights must form a positive period 10: {counts}")
-    current = [0] * len(counts)
-    period: list[str] = []
-    for _ in range(sum(counts)):
-        for index, count in enumerate(counts):
-            current[index] += count
-        selected = max(
-            range(len(counts)),
-            key=lambda index: (current[index], -index),
-        )
-        period.append(case_ids[selected])
-        current[selected] -= sum(counts)
-    if {case_id: period.count(case_id) for case_id in case_ids} != dict(
-        zip(case_ids, counts, strict=True)
-    ):
-        raise RuntimeError("smooth weighted H3 schedule changed class counts")
-    return tuple(period)
-
-
-def _h3_payload_schedule(
-    manifest: dict[str, object],
-    *,
-    profile: str,
-    count: int,
-) -> tuple[list[dict], list[str], dict[str, object]]:
-    """Materialize the frozen H3 class mix without changing arrival timing."""
-
-    headline = manifest.get("p9_protocol", {})
-    if not isinstance(headline, dict):
-        raise ValueError("H3 profile requires manifest.p9_protocol")
-    h3 = headline.get("headline", {}).get("H3")
-    if not isinstance(h3, dict):
-        raise ValueError("H3 profile requires p9_protocol.headline.H3")
-    field = "primary_classes" if profile == "primary" else "conditional_video_classes"
-    classes = h3.get(field)
-    if not isinstance(classes, list) or not classes:
-        raise ValueError(f"H3 profile is missing {field}")
-    period = _smooth_weighted_period(classes)
-    payload_by_case: dict[str, dict] = {}
-    for item in classes:
-        case_id = str(item["case_id"])
-        case = find_workload_case(manifest, case_id)
-        payloads = materialize_requests(case, repo_root=REPO_ROOT)
-        if len(payloads) != 1:
-            raise ValueError(f"H3 class must materialize one request: {case_id}")
-        payload_by_case[case_id] = payloads[0]
-    request_classes = [period[index % len(period)] for index in range(count)]
-    payloads = [payload_by_case[case_id] for case_id in request_classes]
-    return (
-        payloads,
-        request_classes,
-        {
-            "profile": profile,
-            "class_field": field,
-            "class_schedule": h3.get("class_schedule"),
-            "materialized_schedule_algorithm": ("smooth_weighted_round_robin_integer_counts"),
-            "period": list(period),
-            "classes": classes,
-            "arrival_process": h3.get("arrival_process"),
-            "request_rates_per_second": h3.get("request_rates_per_second"),
-            "completed_requests_per_run": h3.get("completed_requests_per_run"),
-            "arrival_seeds": h3.get("arrival_seeds"),
-            "max_tokens": h3.get("max_tokens"),
-            "max_model_len": h3.get("max_model_len"),
-            "ttft_slo_formula": h3.get("ttft_slo_formula"),
-            "tpot_slo_formula": h3.get("tpot_slo_formula"),
-            "goodput_unit": h3.get("goodput_unit"),
-        },
     )
 
 
@@ -628,158 +543,6 @@ def _terminal_failure_summary(
     }
 
 
-def _annotate_request_classes(
-    run_record: dict[str, object],
-    request_classes: list[str],
-) -> None:
-    results = run_record["requests"]
-    metrics = run_record["engine_metrics"]["requests"]
-    metrics_by_id = {int(record["request_id"]): record for record in metrics}
-    for result, case_id in zip(results, request_classes, strict=True):
-        result["request_class"] = case_id
-        metrics_by_id[int(result["request_id"])]["request_class"] = case_id
-
-
-def _load_class_slos(
-    path: str | None,
-    *,
-    request_classes: list[str],
-) -> tuple[dict[str, dict[str, float]], dict[str, object] | None]:
-    if path is None:
-        return {}, None
-    source = json.loads(Path(path).read_text(encoding="utf-8"))
-    classes = source.get("classes")
-    if not isinstance(classes, dict):
-        raise ValueError("class SLO file requires a classes object")
-    missing = sorted(set(request_classes) - set(classes))
-    if missing:
-        raise ValueError(f"class SLO file is missing request classes: {missing}")
-    parsed: dict[str, dict[str, float]] = {}
-    for case_id in sorted(set(request_classes)):
-        row = classes[case_id]
-        if not isinstance(row, dict):
-            raise ValueError(f"class SLO entry must be an object: {case_id}")
-        ttft_ms = float(row["ttft_ms"])
-        tpot_ms = float(row["tpot_ms"])
-        if ttft_ms <= 0 or tpot_ms <= 0:
-            raise ValueError(f"class SLO thresholds must be positive: {case_id}")
-        parsed[case_id] = {"ttft_ms": ttft_ms, "tpot_ms": tpot_ms}
-    return parsed, {
-        "path": str(Path(path).resolve()),
-        "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
-        "record_type": source.get("record_type"),
-        "source": source.get("source"),
-    }
-
-
-def _summarize_by_class(
-    run_record: dict[str, object],
-    request_classes: list[str],
-    class_slos: dict[str, dict[str, float]],
-) -> dict[str, object]:
-    duration_s = float(run_record["duration_s"])
-    metrics = run_record["engine_metrics"]["requests"]
-    metrics_by_id = {int(record["request_id"]): record for record in metrics}
-    grouped: dict[str, list[dict[str, object]]] = {}
-    for result, case_id in zip(
-        run_record["requests"],
-        request_classes,
-        strict=True,
-    ):
-        grouped.setdefault(case_id, []).append(metrics_by_id[int(result["request_id"])])
-
-    total_good_requests = 0
-    total_good_output_tokens = 0
-    rows: dict[str, object] = {}
-    for case_id, records in sorted(grouped.items()):
-        completed = [
-            record for record in records if record.get("finish_reason") in {"eos", "length"}
-        ]
-        slo = class_slos.get(case_id)
-        good: list[dict[str, object]] = []
-        if slo is not None:
-            good = [
-                record
-                for record in completed
-                if float(record["ttft_ms"]) <= slo["ttft_ms"]
-                and float(record["tpot_ms"]) <= slo["tpot_ms"]
-            ]
-        total_good_requests += len(good)
-        total_good_output_tokens += sum(int(record["output_tokens"]) for record in good)
-        rows[case_id] = {
-            "slo": slo,
-            "counts": {
-                "submitted": len(records),
-                "completed": len(completed),
-                "rejected": sum(record.get("finish_reason") == "rejected" for record in records),
-                "cancelled": sum(record.get("finish_reason") == "cancelled" for record in records),
-                "good": None if slo is None else len(good),
-            },
-            "latency_ms": {
-                "queue": summarize_distribution(
-                    [float(record["queue_ms"]) for record in completed]
-                ),
-                "ttft": summarize_distribution([float(record["ttft_ms"]) for record in completed]),
-                "tpot": summarize_distribution([float(record["tpot_ms"]) for record in completed]),
-                "request": summarize_distribution(
-                    [float(record["latency_ms"]) for record in completed]
-                ),
-            },
-            "throughput": {
-                "requests_per_s": len(completed) / duration_s,
-                "output_tokens_per_s": (
-                    sum(int(record["output_tokens"]) for record in completed) / duration_s
-                ),
-            },
-            "goodput": (
-                None
-                if slo is None
-                else {
-                    "requests_per_s": len(good) / duration_s,
-                    "output_tokens_per_s": (
-                        sum(int(record["output_tokens"]) for record in good) / duration_s
-                    ),
-                    "fraction_of_completed": (0.0 if not completed else len(good) / len(completed)),
-                }
-            ),
-        }
-    return {
-        "headline_unit": "output_tokens_per_second_meeting_both_slos",
-        "slo_available": bool(class_slos),
-        "by_class": rows,
-        "aggregate_goodput": (
-            None
-            if not class_slos
-            else {
-                "requests_per_s": total_good_requests / duration_s,
-                "output_tokens_per_s": total_good_output_tokens / duration_s,
-            }
-        ),
-    }
-
-
-def _h3_conformance(
-    h3_contract: dict[str, object] | None,
-    args: argparse.Namespace,
-) -> dict[str, object] | None:
-    if h3_contract is None:
-        return None
-    checks = {
-        "arrival_process": args.arrival_process == h3_contract["arrival_process"],
-        "request_rate": args.request_rate in h3_contract["request_rates_per_second"],
-        "requests": args.requests == h3_contract["completed_requests_per_run"],
-        "seed": args.seed in h3_contract["arrival_seeds"],
-        "warmup_requests": args.warmup_requests == 10,
-        "max_tokens": args.max_tokens == h3_contract["max_tokens"],
-        "max_model_len": args.max_model_len == h3_contract["max_model_len"],
-    }
-    return {
-        "full_frozen_h3": all(checks.values()),
-        "checks": checks,
-        "deviations": [name for name, passed in checks.items() if not passed],
-    }
-
-
 def _build_engine(args: argparse.Namespace):
     mode = MODE_SPECS[args.mode]
     return LLM(
@@ -855,13 +618,8 @@ def main() -> None:
     parser.add_argument("--case", default="single_image_448")
     parser.add_argument(
         "--mode",
-        choices=P12_ONLINE_MODES,
+        choices=ONLINE_MODES,
         default="off_graph",
-    )
-    parser.add_argument(
-        "--h3-profile",
-        choices=H3_PROFILES,
-        help="run the frozen P9 H3 weighted class schedule instead of one case",
     )
     parser.add_argument("--requests", type=int, default=16)
     parser.add_argument(
@@ -930,8 +688,6 @@ def main() -> None:
         help="explicitly keep online prefix reuse disabled (default)",
     )
     parser.set_defaults(enable_prefix_caching=False)
-    parser.add_argument("--ttft-slo-ms", type=float, default=500.0)
-    parser.add_argument("--tpot-slo-ms", type=float, default=50.0)
     parser.add_argument("--visual-pruning-keep-ratio", type=float, default=0.5)
     parser.add_argument("--visual-pruning-min-keep-tokens", type=int, default=32)
     parser.add_argument("--visual-pruning-video-min-keep-tokens", type=int)
@@ -995,10 +751,6 @@ def main() -> None:
             "the language-layer quantum"
         ),
     )
-    parser.add_argument(
-        "--class-slo-file",
-        help="JSON file with per-class TTFT/TPOT SLOs derived from vLLM low load",
-    )
     parser.add_argument("--output")
     parser.add_argument(
         "--profile-output",
@@ -1020,7 +772,7 @@ def main() -> None:
     if args.tensor_parallel_size <= 0:
         raise SystemExit("--tensor-parallel-size must be positive")
     if args.max_tokens < 2:
-        raise SystemExit("--max-tokens must be >= 2 for TPOT/goodput")
+        raise SystemExit("--max-tokens must be >= 2 for TPOT measurement")
     if args.online_cpu_intraop_threads <= 0:
         raise SystemExit("--online-cpu-intraop-threads must be positive")
     if args.request_rate <= 0 and args.arrival_process != "burst":
@@ -1039,12 +791,8 @@ def main() -> None:
             "--working-set-plan, --working-set-id, --working-set-variant and "
             "--materialized-root must be used together"
         )
-    if args.working_set_plan and (
-        args.h3_profile is not None
-        or args.media_repeat_rate is not None
-        or args.vary_media_questions
-    ):
-        raise SystemExit("working-set plans cannot be combined with legacy H3/cache workload flags")
+    if args.working_set_plan and (args.media_repeat_rate is not None or args.vary_media_questions):
+        raise SystemExit("working-set plans cannot be combined with generated cache workloads")
 
     torch.set_num_threads(args.online_cpu_intraop_threads)
     working_set: MaterializedWorkingSet | None = None
@@ -1090,7 +838,6 @@ def main() -> None:
         manifest = {"name": "muirbench_media_first_working_set"}
         payloads = working_set.measured_payloads
         request_classes = working_set.measured_sample_ids
-        h3_contract = None
         workload_case = f"muirbench_{args.working_set_id}"
         cache_workload = None
         warmup_payloads = []
@@ -1103,9 +850,7 @@ def main() -> None:
             "group_ids": list(working_set.workset["group_ids"]),
             "available_questions": int(working_set.workset["available_questions"]),
             "observed_questions": int(working_set.workset["observed_questions"]),
-            "measured_question_switches": int(
-                working_set.workset["measured_question_switches"]
-            ),
+            "measured_question_switches": int(working_set.workset["measured_question_switches"]),
             "dense_prefix_pages": int(working_set.workset["dense_prefix_pages"]),
             "kv_budget_bytes": int(kv_budget["bytes"]),
             "kv_budget_pages": int(kv_budget["pages"]),
@@ -1127,19 +872,10 @@ def main() -> None:
         }
     else:
         manifest = load_workload_manifest(args.manifest)
-        if args.h3_profile is None:
-            case = find_workload_case(manifest, args.case)
-            payloads = materialize_requests(case, repo_root=REPO_ROOT)
-            request_classes = [args.case] * args.requests
-            h3_contract = None
-            workload_case = args.case
-        else:
-            payloads, request_classes, h3_contract = _h3_payload_schedule(
-                manifest,
-                profile=args.h3_profile,
-                count=args.requests,
-            )
-            workload_case = f"h3_{args.h3_profile}"
+        case = find_workload_case(manifest, args.case)
+        payloads = materialize_requests(case, repo_root=REPO_ROOT)
+        request_classes = [args.case] * args.requests
+        workload_case = args.case
         cache_workload = None
         warmup_payloads = payloads
         if args.media_repeat_rate is not None or args.vary_media_questions:
@@ -1153,14 +889,6 @@ def main() -> None:
                 repeat_rate=(1.0 if args.media_repeat_rate is None else args.media_repeat_rate),
                 vary_questions=args.vary_media_questions,
             )
-    class_slos, class_slo_source = _load_class_slos(
-        args.class_slo_file,
-        request_classes=request_classes,
-    )
-    ttft_slo_ms_by_request = [
-        (class_slos[case_id]["ttft_ms"] if case_id in class_slos else None)
-        for case_id in request_classes
-    ]
     sampling = SamplingParams(
         temperature=0.0,
         max_tokens=args.max_tokens,
@@ -1204,7 +932,6 @@ def main() -> None:
                 population_run = serving_session.run((population_request,))
                 metadata_after = llm.multimodal_prefix_cache_metadata()
                 run_record = population_run.to_record()
-                _annotate_request_classes(run_record, [sample_id])
                 population_runs.append(run_record)
                 population_evidence.append(
                     _population_prefix_evidence(
@@ -1255,7 +982,6 @@ def main() -> None:
                 seed=args.seed,
                 sampling=sampling,
                 key_prefix="warmup",
-                ttft_slo_ms_by_request=ttft_slo_ms_by_request[: args.warmup_requests],
             )
             serving_session.run(warmup)
             llm.reset_metrics()
@@ -1271,8 +997,7 @@ def main() -> None:
                 request_rate=args.request_rate,
                 seed=args.seed,
                 sampling=sampling,
-                key_prefix="formal",
-                ttft_slo_ms_by_request=ttft_slo_ms_by_request,
+                key_prefix="measured",
             )
         else:
             requests = _planned_online_requests(
@@ -1309,18 +1034,13 @@ def main() -> None:
         torch.cuda.synchronize()
         process_device_memory = process_memory_sampler.stop()
         run_record = run.to_record()
-        _annotate_request_classes(run_record, request_classes)
         prompt_audit = _prompt_audit(llm, run, request_classes)
         compaction_summary = _visual_compaction_summary(
             llm,
             run,
             request_classes,
         )
-        summary = summarize_online_run(
-            run_record,
-            ttft_slo_ms=args.ttft_slo_ms,
-            tpot_slo_ms=args.tpot_slo_ms,
-        )
+        summary = summarize_online_run(run_record)
         git = collect_git_metadata(REPO_ROOT, strict=True)
         config_path = Path(args.model) / "config.json"
         kv_storage = kv_cache_storage_bytes(
@@ -1354,8 +1074,6 @@ def main() -> None:
                 "request_classes": request_classes,
                 "requests": args.requests,
                 "max_tokens": args.max_tokens,
-                "h3_contract": h3_contract,
-                "h3_conformance": _h3_conformance(h3_contract, args),
                 "multimodal_cache_workload": cache_workload,
                 "working_set_plan": working_set_audit,
                 **prompt_audit,
@@ -1455,12 +1173,6 @@ def main() -> None:
                 llm,
                 run,
                 request_classes,
-            ),
-            "class_slo_source": class_slo_source,
-            "class_aware_summary": _summarize_by_class(
-                run_record,
-                request_classes,
-                class_slos,
             ),
             "run": run_record,
             "summary": summary,

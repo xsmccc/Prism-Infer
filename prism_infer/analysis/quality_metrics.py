@@ -1,4 +1,4 @@
-"""P9 标准质量集 prompt、答案解析与逐样本指标。
+"""质量集 prompt、答案解析与逐样本指标。
 
 参考实现均固定到首次正式运行前的 revision：
 
@@ -6,7 +6,7 @@
 - MuirBench prompt/parser: MUIRBench ``840b85fe``，``eval/utils``；
 - MVBench prompt/parser: lmms-eval ``b485e662``，``tasks/mvbench/utils.py``。
 
-MuirBench 官方 parser 在无法解析时随机猜测。这里同时返回 frozen-order、seed=42 的
+MuirBench 官方 parser 在无法解析时随机猜测。这里同时返回固定顺序、seed=42 的
 official-compatible 结果和“无法解析即错误”的 strict 结果，避免随机 fallback 被隐藏。
 """
 
@@ -250,7 +250,7 @@ def score_quality_prediction(
     *,
     muirbench_random: random.Random | None = None,
 ) -> dict[str, Any]:
-    """Return the frozen parser trace and per-sample score."""
+    """Return the deterministic parser trace and per-sample score."""
 
     if dataset_id == "docvqa_validation":
         return {

@@ -27,7 +27,7 @@ def build_interleaved_image_content(request: Mapping[str, Any]) -> list[dict[str
     marker = request.get("image_marker", "<image>")
     if not isinstance(prompt, str) or not prompt:
         raise ValueError("interleaved image payload requires a non-empty prompt")
-    if not isinstance(images, Sequence) or isinstance(images, (str, bytes)) or not images:
+    if not isinstance(images, Sequence) or isinstance(images, str | bytes) or not images:
         raise ValueError("interleaved image payload requires a non-empty image sequence")
     if not isinstance(marker, str) or not marker:
         raise ValueError("interleaved image payload requires a non-empty marker")

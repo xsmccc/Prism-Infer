@@ -1,4 +1,4 @@
-"""P3.4 VL 生成轨迹 logits 分布与 perplexity 验证。"""
+"""Multimodal generation-logit and perplexity comparisons."""
 
 import gc
 

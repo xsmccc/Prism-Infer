@@ -1,4 +1,4 @@
-"""P3.5 ModelRunner CUDA Graph decode shape 验证。"""
+"""ModelRunner CUDA Graph decode-shape tests."""
 
 from types import SimpleNamespace
 

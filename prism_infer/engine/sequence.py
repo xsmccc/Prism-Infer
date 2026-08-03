@@ -133,7 +133,7 @@ class Sequence:
         position_ids: torch.Tensor | None = None,
         rope_delta: torch.Tensor | None = None,
     ) -> "Sequence":
-        """从 P2.1 单图预处理结果构造多模态 Sequence。"""
+        """从单图预处理结果构造多模态 Sequence。"""
 
         return cls.from_image_inputs(
             inputs,
@@ -500,7 +500,7 @@ class Sequence:
         ttft_slo_ms = state.get("ttft_slo_ms")
         if ttft_slo_ms is not None and (
             isinstance(ttft_slo_ms, bool)
-            or not isinstance(ttft_slo_ms, (int, float))
+            or not isinstance(ttft_slo_ms, int | float)
             or not isfinite(float(ttft_slo_ms))
             or ttft_slo_ms <= 0
         ):

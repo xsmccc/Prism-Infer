@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "name": "p7_online_smoke",
+  "name": "online_serving_cases",
   "cases": [
     {
       "id": "text_long_chunked",

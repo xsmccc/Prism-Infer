@@ -260,7 +260,7 @@ def build_report(args: argparse.Namespace) -> tuple[dict[str, Any], list[str], l
 
 
 def print_human(report: dict[str, Any]) -> None:
-    """输出适合 README smoke 的紧凑文本。"""
+    """Return a compact environment summary for the README."""
 
     print("Prism-Infer environment check")
     print(f"status: {report['status']}")

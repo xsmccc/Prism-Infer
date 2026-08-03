@@ -31,7 +31,7 @@ from benchmarks.working_set_workload import (
     verify_working_set_processor,
 )
 from prism_infer import LLM, SamplingParams
-from prism_infer.analysis.p9_quality_runtime import safe_materialized_path
+from prism_infer.analysis.quality_runtime import safe_materialized_path
 from prism_infer.analysis.working_set_plan import (
     DEFAULT_IMAGE_MARKER,
     DEFAULT_IMAGE_MAX_PIXELS,
@@ -52,7 +52,7 @@ from prism_infer.analysis.working_set_plan import (
 )
 from prism_infer.engine.online import OnlineRequest, OnlineServingSession
 
-DEFAULT_SELECTION = REPO_ROOT / "benchmarks/workloads/p9_quality_selection.json"
+DEFAULT_SELECTION = REPO_ROOT / "benchmarks/workloads/quality_selection.json"
 DEFAULT_SUBSET = "final"
 _MEASUREMENT_MODE = "visual_compact_scaled_fp8_compile_graph"
 _MAX_NEW_TOKENS = 1

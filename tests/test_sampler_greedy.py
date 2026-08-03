@@ -1,4 +1,4 @@
-"""P2.6 greedy sampler 验证。"""
+"""Greedy sampler tests."""
 
 import torch
 
@@ -7,7 +7,7 @@ from prism_infer.sampling_params import SamplingParams
 
 
 def test_sampling_params_allows_temperature_zero():
-    """temperature=0 是 P2 greedy 对齐门禁需要的合法配置。"""
+    """Temperature zero selects deterministic greedy decoding."""
 
     params = SamplingParams(temperature=0.0, max_tokens=2)
     assert params.temperature == 0.0

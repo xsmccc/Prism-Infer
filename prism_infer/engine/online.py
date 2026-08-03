@@ -57,7 +57,7 @@ def _update_content_hash(hasher: Any, value: object) -> bool:
     identity or ``repr``. That keeps the content-addressed cache fail-closed.
     """
 
-    if isinstance(value, (bytes, bytearray, memoryview)):
+    if isinstance(value, bytes | bytearray | memoryview):
         _update_text(hasher, "bytes")
         _update_length_delimited(hasher, value)
         return True
@@ -97,7 +97,7 @@ def _update_content_hash(hasher: Any, value: object) -> bool:
         _update_text(hasher, json.dumps(tuple(tensor.shape)))
         _update_length_delimited(hasher, memoryview(byte_view))
         return True
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         _update_text(hasher, type(value).__name__)
         hasher.update(len(value).to_bytes(8, "little"))
         return all(_update_content_hash(hasher, item) for item in value)
@@ -202,7 +202,7 @@ def _visual_embedding_fingerprint(
 def _non_negative_seconds(value: object, *, name: str) -> float:
     if (
         isinstance(value, bool)
-        or not isinstance(value, (int, float))
+        or not isinstance(value, int | float)
         or not isfinite(value)
         or value < 0
     ):
@@ -219,7 +219,7 @@ def _validate_online_payload(payload: object) -> None:
     if "prompt" not in payload or payload["prompt"] is None:
         raise ValueError("online request payload requires prompt")
     prompt = payload["prompt"]
-    if request_type == "text" and not isinstance(prompt, (str, list)):
+    if request_type == "text" and not isinstance(prompt, str | list):
         raise TypeError("online text prompt must be a string or token-id list")
     if request_type != "text" and not isinstance(prompt, str):
         raise TypeError(f"online {request_type} prompt must be a string")
@@ -266,7 +266,7 @@ class OnlineRequest:
         object.__setattr__(self, "cancel_offset_s", cancel_offset_s)
         if self.ttft_slo_ms is not None and (
             isinstance(self.ttft_slo_ms, bool)
-            or not isinstance(self.ttft_slo_ms, (int, float))
+            or not isinstance(self.ttft_slo_ms, int | float)
             or not isfinite(float(self.ttft_slo_ms))
             or self.ttft_slo_ms <= 0
         ):
@@ -627,7 +627,7 @@ class OnlineServingSession:
                 f"background preprocessing received unsupported type {request_type!r}"
             )
         media = payload[media_field]
-        media_objects = tuple(media) if isinstance(media, (list, tuple)) else (media,)
+        media_objects = tuple(media) if isinstance(media, list | tuple) else (media,)
         fingerprint_memo_key = (
             request_type,
             tuple(id(item) for item in media_objects),

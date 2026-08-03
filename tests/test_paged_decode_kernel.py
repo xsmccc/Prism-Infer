@@ -1,4 +1,4 @@
-"""P3.6 paged decode Triton kernel correctness 验证。"""
+"""Paged-decode Triton kernel correctness tests."""
 
 import pytest
 import torch
@@ -257,7 +257,7 @@ def test_paged_decode_cuda_graph_replay_reads_runtime_context_bound() -> None:
 
 @pytest.mark.parametrize("cache_dtype_name", ["bf16", "fp8"])
 def test_paged_decode_qwen_batch_context_matrix(cache_dtype_name: str) -> None:
-    """P6.5 Qwen GQA BF16/FP8 paged kernel matrix 应对齐独立 SDPA。"""
+    """Qwen GQA BF16/FP8 paged kernels must match independent SDPA."""
 
     _require_kernel()
     if cache_dtype_name == "fp8" and not hasattr(torch, "float8_e4m3fn"):
@@ -326,22 +326,21 @@ def test_paged_decode_qwen_batch_context_matrix(cache_dtype_name: str) -> None:
             torch.cuda.synchronize()
 
             print(
-                f"P6.5 case dtype={cache_dtype_name} batch={batch} "
+                f"case dtype={cache_dtype_name} batch={batch} "
                 f"context={context_len} q={list(q.shape)} "
                 f"cache={list(k_cache.shape)} blocks={list(block_tables.shape)}"
             )
             print(
-                "P6.5 output/reference mean/std: "
+                "output/reference mean/std: "
                 f"{actual.float().mean().item():.6e}/"
                 f"{actual.float().std().item():.6e} vs "
                 f"{reference.float().mean().item():.6e}/"
                 f"{reference.float().std().item():.6e}"
             )
-            print(f"P6.5 max/mean diff: {diff.max().item():.6e}/{diff.float().mean().item():.6e}")
+            print(f"max/mean diff: {diff.max().item():.6e}/{diff.float().mean().item():.6e}")
             assert actual.shape == reference.shape == q.shape
             assert diff.max().item() < 1e-2
             assert diff.float().mean().item() < 1e-3
-            print("P6.5 paged decode matrix case: PASS")
 
 
 def test_paged_decode_rejects_mismatched_cache_dtype() -> None:
@@ -363,4 +362,3 @@ def test_paged_decode_rejects_mismatched_cache_dtype() -> None:
             context_lens,
             8**-0.5,
         )
-    print("P6.5 mixed cache dtype guard: PASS")

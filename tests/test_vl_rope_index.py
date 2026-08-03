@@ -1,4 +1,4 @@
-"""P2.3 Qwen3-VL 单图 3D position ids 验证。"""
+"""Qwen3-VL single-image 3D position-ID tests."""
 
 import pytest
 import torch

@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "name": "qwen3_vl_decode_cases",
+  "model": {
+    "name": "Qwen3-VL-8B-Instruct",
+    "revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "weight_dtype": "bfloat16"
+  },
+  "cases": [
+    {
+      "id": "eight_image_448",
+      "requests": [
+        {
+          "type": "images",
+          "prompt": "Compare all eight images carefully. Describe the important details in each image, then identify similarities, differences, and any cross-image pattern.",
+          "images": [
+            {"width": 448, "height": 448, "color": [220, 50, 50]},
+            {"width": 448, "height": 448, "color": [50, 180, 80]},
+            {"width": 448, "height": 448, "color": [60, 100, 220]},
+            {"width": 448, "height": 448, "color": [220, 180, 40]},
+            {"width": 448, "height": 448, "color": [170, 70, 200]},
+            {"width": 448, "height": 448, "color": [40, 190, 190]},
+            {"width": 448, "height": 448, "color": [230, 120, 40]},
+            {"width": 448, "height": 448, "color": [120, 120, 120]}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "video_16x448",
+      "requests": [
+        {
+          "type": "video",
+          "prompt": "Describe how this sixteen-frame sequence changes over time, including the initial state, intermediate transitions, final state, and any uncertainty.",
+          "frames": [
+            {"width": 448, "height": 448, "color": [32, 96, 160]},
+            {"width": 448, "height": 448, "color": [40, 100, 156]},
+            {"width": 448, "height": 448, "color": [48, 104, 152]},
+            {"width": 448, "height": 448, "color": [56, 108, 148]},
+            {"width": 448, "height": 448, "color": [64, 112, 144]},
+            {"width": 448, "height": 448, "color": [72, 116, 140]},
+            {"width": 448, "height": 448, "color": [80, 120, 136]},
+            {"width": 448, "height": 448, "color": [88, 124, 132]},
+            {"width": 448, "height": 448, "color": [96, 128, 128]},
+            {"width": 448, "height": 448, "color": [104, 132, 124]},
+            {"width": 448, "height": 448, "color": [112, 136, 120]},
+            {"width": 448, "height": 448, "color": [120, 140, 116]},
+            {"width": 448, "height": 448, "color": [128, 144, 112]},
+            {"width": 448, "height": 448, "color": [136, 148, 108]},
+            {"width": 448, "height": 448, "color": [144, 152, 104]},
+            {"width": 448, "height": 448, "color": [152, 156, 100]}
+          ]
+        }
+      ]
+    }
+  ]
+}

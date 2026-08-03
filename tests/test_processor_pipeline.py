@@ -1,4 +1,4 @@
-"""P2.1 Processor pipeline: 单图图文输入边界验证。"""
+"""Processor boundaries for single-image inputs."""
 
 from dataclasses import replace
 

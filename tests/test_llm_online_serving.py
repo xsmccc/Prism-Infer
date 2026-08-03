@@ -1,4 +1,4 @@
-"""P7.3 real-engine online text/VL integration gates."""
+"""Online text and multimodal serving integration tests."""
 
 import torch
 
@@ -25,7 +25,7 @@ pytestmark = (
     ]
 )
 
-MANIFEST = "benchmarks/workloads/p7_online_smoke.json"
+MANIFEST = "benchmarks/workloads/online_serving_cases.json"
 
 
 def _require_cuda() -> None:

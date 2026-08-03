@@ -1,6 +1,6 @@
 """Vision RoPE 初始化路径回归测试。
 
-覆盖 P2-005: 当默认 device 为 CUDA 时，VisionEncoder 仍必须复现 HF
+当默认 device 为 CUDA 时，VisionEncoder 仍必须复现 HF
 `Qwen3VLVisionRotaryEmbedding` 的 CPU 初始化数值，然后再迁移到目标设备。
 否则极小的 inv_freq 差异会在 bf16 RoPE 后变成 full logits 误差。
 """

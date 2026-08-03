@@ -20,22 +20,6 @@ def _working_set() -> SimpleNamespace:
     )
 
 
-def test_working_set_formal_uses_clean_fixed_plan_contract() -> None:
-    vllm_harness._validate_formal_contract(
-        formal=True,
-        git_dirty=False,
-        has_working_set_plan=True,
-        h3_conformance=None,
-    )
-    with pytest.raises(SystemExit, match="clean harness worktree"):
-        vllm_harness._validate_formal_contract(
-            formal=True,
-            git_dirty=True,
-            has_working_set_plan=True,
-            h3_conformance=None,
-        )
-
-
 def test_working_set_kv_dtype_fails_closed() -> None:
     assert vllm_harness._resolve_working_set_kv_cache_dtype("auto") == "fp8_per_token_head"
     assert (

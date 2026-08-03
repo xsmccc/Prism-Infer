@@ -1,4 +1,4 @@
-"""P2.7 纯文本路径回归验证。"""
+"""Text-only engine generation coverage."""
 
 import pytest
 from conftest import get_model_path
@@ -12,8 +12,8 @@ pytestmark = [
 ]
 
 
-def test_text_only_generate_greedy_smoke():
-    """P2 改动后纯文本 generate 仍能走 engine greedy 路径。"""
+def test_text_only_generate_greedy():
+    """The engine returns one greedy token for a text-only request."""
 
     model_path = get_model_path()
     llm = LLM(
@@ -35,7 +35,5 @@ def test_text_only_generate_greedy_smoke():
     finally:
         llm.exit()
 
-    print(f"text output token_ids: {outputs[0]['token_ids']}")
     assert len(outputs) == 1
     assert len(outputs[0]["token_ids"]) == 1
-    print("text-only engine greedy smoke: PASS")

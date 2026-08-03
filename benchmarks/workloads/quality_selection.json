@@ -12102,8 +12102,8 @@
       "split": "test"
     }
   ],
-  "protocol_sha256": "85adb4b246ab3fc55bc70e02ad75d97c5aa903e89387e499fc3aea1ac2edb25d",
-  "record_type": "p9_quality_selection",
+  "protocol_sha256": "fae029240803faccf8b2cc909c3245f032d9b1919e8aad184edffb79de2fbd1b",
+  "record_type": "quality_selection",
   "schema_version": 1,
   "selection_contract": {
     "algorithm": "sort_by_sha256(dataset_id + revision + sample_id + seed)",

@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from prism_infer.analysis.p9_quality_metrics import build_muirbench_prompt
+from prism_infer.analysis.quality_metrics import build_muirbench_prompt
 
 WORKING_SET_PLAN_SCHEMA_VERSION = 3
 WORKING_SET_PLAN_RECORD_TYPE = "multimodal_working_set_plan"
@@ -66,7 +66,7 @@ def load_muirbench_records(
     """
 
     root = Path(materialized_root).resolve()
-    manifest_path = root / "p9_quality_materialization.json"
+    manifest_path = root / "quality_materialization.json"
     manifest = _read_json_object(manifest_path)
     if manifest.get("schema_version") != 1:
         raise ValueError("materialization manifest has unsupported schema_version")
@@ -402,15 +402,9 @@ def validate_working_set_plan(plan: Mapping[str, Any]) -> None:
     image_marker = _nonempty_string(
         prompt_layout.get("image_marker"), "plan.prompt_layout.image_marker"
     )
-    if (
-        prompt_layout.get("source_prompt_transform")
-        != "labeled_ordered_media_prefix_v1"
-    ):
+    if prompt_layout.get("source_prompt_transform") != "labeled_ordered_media_prefix_v1":
         raise ValueError("working-set plan has unsupported source prompt transform")
-    if (
-        prompt_layout.get("chat_content_order")
-        != "image_label_then_image_repeated_before_question"
-    ):
+    if prompt_layout.get("chat_content_order") != "image_label_then_image_repeated_before_question":
         raise ValueError("working-set plan has unsupported chat content order")
 
     traffic = _mapping(plan.get("traffic"), "plan.traffic")
@@ -554,18 +548,14 @@ def _build_workset(
         zipf_alpha=zipf_alpha,
         seed=seed,
     )
-    previous_sample = {
-        request["group_id"]: request["sample_id"] for request in population
-    }
+    previous_sample = {request["group_id"]: request["sample_id"] for request in population}
     question_switches = 0
     for request in measured:
         group_id = request["group_id"]
         if previous_sample[group_id] != request["sample_id"]:
             question_switches += 1
         previous_sample[group_id] = request["sample_id"]
-    observed_questions = {
-        request["sample_id"] for request in (*population, *measured)
-    }
+    observed_questions = {request["sample_id"] for request in (*population, *measured)}
     return {
         "id": workset_id,
         "selection_rule": {
@@ -703,8 +693,7 @@ def _validate_group(
             raise ValueError("group sample offsets must be contiguous")
         prompt = _nonempty_string(sample.get("source_prompt"), "sample.source_prompt")
         expected_prefix = "\n".join(
-            f"Image {media_index}: {image_marker}"
-            for media_index in range(1, len(media) + 1)
+            f"Image {media_index}: {image_marker}" for media_index in range(1, len(media) + 1)
         )
         if not prompt.startswith(f"{expected_prefix}\n"):
             raise ValueError("media-first source prompt has no labeled media prefix")

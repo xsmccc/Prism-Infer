@@ -1,11 +1,11 @@
-"""Schema and SLO aggregation for P7.3 online-serving runs."""
+"""Schema and latency aggregation for online-serving runs."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import isfinite
 
-ONLINE_SUMMARY_SCHEMA_VERSION = 1
+ONLINE_SUMMARY_SCHEMA_VERSION = 2
 ONLINE_BENCHMARK_SCHEMA_VERSION = 2
 SUPPORTED_ONLINE_BENCHMARK_SCHEMA_VERSIONS = (1, 2)
 ONLINE_PROJECTION_MODE_SCHEMA_VERSION = 2
@@ -57,14 +57,9 @@ def _require_mapping(value: object, label: str) -> Mapping[str, object]:
 
 def summarize_online_run(
     run: Mapping[str, object],
-    *,
-    ttft_slo_ms: float,
-    tpot_slo_ms: float,
 ) -> dict[str, object]:
-    """Aggregate one online run without converting throughput into goodput."""
+    """Aggregate request counts, latency, throughput, and scheduler metrics."""
 
-    if ttft_slo_ms <= 0 or tpot_slo_ms <= 0:
-        raise ValueError("SLO thresholds must be positive")
     duration_s = float(run.get("duration_s", 0.0))
     if not isfinite(duration_s) or duration_s <= 0:
         raise ValueError("online run duration_s must be positive and finite")
@@ -80,23 +75,16 @@ def summarize_online_run(
     completed, rejected, cancelled = _partition_terminal_requests(request_records)
     if len(completed) + len(rejected) + len(cancelled) != len(request_records):
         raise ValueError("every online request must have a terminal finish_reason")
-    good_requests = _count_good_requests(completed, ttft_slo_ms, tpot_slo_ms)
-
     output_tokens = sum(int(record.get("output_tokens", 0)) for record in completed)
     scheduler_metrics = _require_mapping(run.get("scheduler_metrics", {}), "scheduler_metrics")
     return {
         "schema_version": ONLINE_SUMMARY_SCHEMA_VERSION,
         "record_type": "prism_online_summary",
-        "slo": {
-            "ttft_ms": float(ttft_slo_ms),
-            "tpot_ms": float(tpot_slo_ms),
-        },
         "counts": {
             "submitted": len(request_records),
             "completed": len(completed),
             "rejected": len(rejected),
             "cancelled": len(cancelled),
-            "good": good_requests,
         },
         "latency_ms": {
             "queue": summarize_distribution(_completed_metric_values(completed, "queue_ms")),
@@ -109,10 +97,6 @@ def summarize_online_run(
         "throughput": {
             "requests_per_s": len(completed) / duration_s,
             "output_tokens_per_s": output_tokens / duration_s,
-        },
-        "goodput": {
-            "requests_per_s": good_requests / duration_s,
-            "fraction_of_completed": (0.0 if not completed else good_requests / len(completed)),
         },
         "scheduler": dict(scheduler_metrics),
     }
@@ -153,28 +137,8 @@ def _completed_metric_values(
     return values
 
 
-def _count_good_requests(
-    completed: list[Mapping[str, object]],
-    ttft_slo_ms: float,
-    tpot_slo_ms: float,
-) -> int:
-    good_requests = 0
-    for record in completed:
-        ttft = record.get("ttft_ms")
-        if ttft is None:
-            raise ValueError("completed request missing ttft_ms")
-        output_tokens = int(record.get("output_tokens", 0))
-        tpot = record.get("tpot_ms")
-        effective_tpot = 0.0 if output_tokens <= 1 and tpot is None else tpot
-        if effective_tpot is None:
-            raise ValueError("multi-token completed request missing tpot_ms")
-        if float(ttft) <= ttft_slo_ms and float(effective_tpot) <= tpot_slo_ms:
-            good_requests += 1
-    return good_requests
-
-
 def validate_online_benchmark_record(record: Mapping[str, object]) -> None:
-    """Fail closed on malformed/tampered formal online benchmark records."""
+    """Validate the structure and internal consistency of an online run record."""
 
     schema_version = record.get("schema_version")
     if schema_version not in SUPPORTED_ONLINE_BENCHMARK_SCHEMA_VERSIONS:
@@ -274,11 +238,6 @@ def _validate_online_summary(
     run: Mapping[str, object],
 ) -> None:
     summary = _require_mapping(record.get("summary"), "summary")
-    slo = _require_mapping(summary.get("slo"), "summary.slo")
-    expected = summarize_online_run(
-        run,
-        ttft_slo_ms=float(slo.get("ttft_ms", 0.0)),
-        tpot_slo_ms=float(slo.get("tpot_ms", 0.0)),
-    )
+    expected = summarize_online_run(run)
     if dict(summary) != expected:
         raise ValueError("online summary does not match recomputed run metrics")

@@ -72,7 +72,7 @@ def _non_negative_int(value: object, *, name: str) -> int:
 
 
 def _positive_float(value: object, *, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         raise TypeError(f"{name} must be a positive finite number")
     normalized = float(value)
     if normalized <= 0.0 or not isfinite(normalized):
@@ -104,7 +104,7 @@ def _mrope_section(text_config: object) -> tuple[int, ...]:
         if rope_config is not None
         else _read(text_config, "mrope_section")
     )
-    if not isinstance(section, (list, tuple)):
+    if not isinstance(section, list | tuple):
         raise TypeError("mrope_section must be a list or tuple")
     normalized = tuple(
         _positive_int(value, name=f"mrope_section[{index}]") for index, value in enumerate(section)
@@ -256,7 +256,7 @@ class Qwen3VLVisionArchitecture:
             "deepstack_visual_indexes",
             "deepstack_visual_indices",
         )
-        if not isinstance(indexes, (list, tuple)):
+        if not isinstance(indexes, list | tuple):
             raise TypeError("deepstack_visual_indexes must be a list or tuple")
         architecture = cls(
             hidden_size=_positive_int(

@@ -1,4 +1,4 @@
-"""P5.3 FP8 KV baseline 与 P6.2-D vectorized store tests。"""
+"""FP8 KV storage, attention, and vectorized-store tests."""
 
 import pytest
 import torch
@@ -358,4 +358,3 @@ def test_fp8_kv_cuda_attention_uses_paged_kernel_reference_semantics() -> None:
     assert output.shape == reference.shape == q.shape
     assert diff.max().item() < 1e-2
     assert diff.float().mean().item() < 1e-3
-    print("P6.5 FP8 engine paged dispatch: PASS")

@@ -457,7 +457,7 @@ class LLMEngine:
         arrival_ns = clock_ns() if submitted_ns is None else submitted_ns
         if ttft_slo_ms is not None and (
             isinstance(ttft_slo_ms, bool)
-            or not isinstance(ttft_slo_ms, (int, float))
+            or not isinstance(ttft_slo_ms, int | float)
             or not isfinite(float(ttft_slo_ms))
             or ttft_slo_ms <= 0
         ):
@@ -1342,8 +1342,8 @@ class LLMEngine:
     ) -> dict:
         """Qwen3-VL 图像生成入口。
 
-        image 可以是一张图片，也可以是多张图片的 list/tuple。当前仍是
-        单请求 eager correctness 路径；视频和 batch VL 会在 P3 后续阶段扩展。
+        image 可以是一张图片，也可以是多张图片的 list/tuple。该兼容接口使用
+        单请求 eager 路径；批量图文和视频请求由 generate_multimodal 处理。
         """
 
         seq_id = self.add_vl_request(prompt, image, sampling_params)
@@ -1457,7 +1457,7 @@ class LLMEngine:
             raise ValueError(f"mixed request {index} is missing 'prompt'")
         prompt = request["prompt"]
         if request_type == "text":
-            if not isinstance(prompt, (str, list)):
+            if not isinstance(prompt, str | list):
                 raise TypeError(
                     f"mixed text request {index} prompt must be a string or token-id list"
                 )
@@ -1504,7 +1504,7 @@ class LLMEngine:
           - {"type": "images", "prompt": "...", "images": [image0, image1]}
           - {"type": "video", "prompt": "...", "video": frames}
 
-        P3.3 当前覆盖 non-prefix mixed batch eager correctness。
+        当前支持没有共享前缀的 mixed batch eager 路径。
         """
 
         if not requests:

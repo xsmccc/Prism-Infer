@@ -1,4 +1,4 @@
-"""P3.1 Qwen3-VL 多图 3D position ids 验证。"""
+"""Qwen3-VL multi-image 3D position-ID tests."""
 
 import pytest
 from conftest import get_model_path, hf_qwen3_vl_rope_index, require_transformers

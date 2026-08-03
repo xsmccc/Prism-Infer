@@ -1,4 +1,4 @@
-"""P6.6 fixed-GPU-memory KV concurrency capacity benchmark.
+"""Measure KV capacity under a fixed GPU-memory budget.
 
 每次进程只运行一个 mode，避免多个 near-capacity KV pool 在同一 CUDA context
 连续创建造成资源碎片。该 benchmark 记录实际峰值 GPU-resident sequences，而不是

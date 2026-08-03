@@ -1,4 +1,4 @@
-"""P5 compression metadata and compression-off baseline tests."""
+"""Compression metadata and disabled-compression behavior."""
 
 import pickle
 from types import SimpleNamespace
@@ -27,7 +27,7 @@ from prism_infer.utils.context import reset_context, set_context
 
 
 def test_compression_mode_validation():
-    """P5 accepts the off baseline and the first active visual-prune mode."""
+    """The configuration accepts disabled and visual-pruning modes."""
 
     assert normalize_compression_mode(None) == "off"
     assert normalize_compression_mode("OFF") == "off"
@@ -129,7 +129,7 @@ def test_compression_metadata_counts_visual_tokens():
 
 
 def test_visual_pruning_shadow_metadata_records_prefill_decisions():
-    """P5.2 shadow decisions must be auditable without enabling compression."""
+    """Shadow decisions remain observable without enabling compression."""
 
     config = SimpleNamespace(
         compression_mode="off",
@@ -261,7 +261,6 @@ def test_attention_pruning_active_prefill_defers_runtime_decision():
         "strategy": "attention",
         "attention_last_n_layers": 2,
     }
-    print("P6.12 attention pruning runtime-decision deferral: PASS")
 
 
 def test_attention_pruning_shadow_prefill_defers_without_compaction():
@@ -360,7 +359,6 @@ def test_visual_compact_fp8_metadata_activates_both_physical_modes() -> None:
     assert metadata.fp8_kv_active
     assert not metadata.visual_pruning_active
     assert seq.visual_pruning_decision_record is not None
-    print("P6.6 combined compression metadata: PASS")
 
 
 def test_visual_prune_keep_all_metadata_is_not_effective() -> None:
@@ -386,7 +384,6 @@ def test_visual_prune_keep_all_metadata_is_not_effective() -> None:
     print(f"keep-all visual pruning effective: {metadata.visual_pruning_effective}")
     assert metadata.visual_pruning_active
     assert not metadata.visual_pruning_effective
-    print("P6.6 visual-prune keep-all no-op metadata: PASS")
 
 
 def test_visual_prune_decision_survives_decode_serialization():

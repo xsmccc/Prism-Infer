@@ -1,4 +1,4 @@
-"""P5.2 visual-token pruning decision helper tests."""
+"""Visual-token selection and metadata tests."""
 
 import pytest
 import torch
@@ -230,7 +230,6 @@ def test_runtime_attention_scorer_matches_independent_reference():
     )
     print(f"runtime attention max diff: {max_diff:.6e}")
     assert max_diff < 1e-5
-    print("P6.12 runtime attention score reference: PASS")
 
 
 def test_runtime_attention_quality_default_selects_final_decoder_layer():
@@ -245,7 +244,6 @@ def test_runtime_attention_quality_default_selects_final_decoder_layer():
 
     assert config.attention_last_n_layers == 1
     assert scorer.layer_ids == (35,)
-    print("P6.12-C attention default final-layer selection: PASS")
 
 
 def test_runtime_attention_finalize_persists_auditable_decision():
@@ -291,7 +289,6 @@ def test_runtime_attention_finalize_persists_auditable_decision():
     assert float(record["score_min"]) <= float(record["score_mean"])
     assert float(record["score_mean"]) <= float(record["score_max"])
     print(f"runtime attention decision: {record}")
-    print("P6.12 runtime attention decision audit: PASS")
 
 
 def test_runtime_attention_finalize_is_atomic_across_batch():
@@ -347,4 +344,3 @@ def test_runtime_attention_scorer_rejects_missing_layer():
     )
     with pytest.raises(RuntimeError, match=r"missing layers: \[2\]"):
         scorer.finalize()
-    print("P6.12 runtime attention missing-layer guard: PASS")

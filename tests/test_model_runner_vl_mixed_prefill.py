@@ -1,4 +1,4 @@
-"""P3.3 ModelRunner mixed text/VL batch 输入准备验证。"""
+"""ModelRunner input preparation for mixed text and multimodal batches."""
 
 from types import SimpleNamespace
 

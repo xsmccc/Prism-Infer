@@ -1,4 +1,4 @@
-"""P3.4 长输出多 token greedy 质量验证。"""
+"""Long-form greedy multimodal generation tests."""
 
 import gc
 

@@ -20,22 +20,6 @@ def _working_set() -> SimpleNamespace:
     )
 
 
-def test_working_set_formal_uses_clean_fixed_plan_contract() -> None:
-    sglang_harness._validate_formal_contract(
-        formal=True,
-        git_dirty=False,
-        has_working_set_plan=True,
-        h3_conformance=None,
-    )
-    with pytest.raises(SystemExit, match="clean harness worktree"):
-        sglang_harness._validate_formal_contract(
-            formal=True,
-            git_dirty=True,
-            has_working_set_plan=True,
-            h3_conformance=None,
-        )
-
-
 def test_working_set_kv_dtype_fails_closed() -> None:
     assert sglang_harness._resolve_working_set_kv_cache_dtype("auto") == "fp8_e4m3"
     assert sglang_harness._resolve_working_set_kv_cache_dtype("fp8_e4m3") == "fp8_e4m3"

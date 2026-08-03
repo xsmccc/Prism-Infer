@@ -4,7 +4,7 @@
 参考 HF 4.57.1:
 `transformers/models/qwen3_vl/modeling_qwen3_vl.py:916-1033`。
 
-P3.2 扩展为同时支持 image/video span。视频语义与 HF 保持一致:
+同时支持 image/video span。视频语义与 HF 保持一致:
 先按帧展开 `video_grid_thw`，再把 T 置为 1；时间信息由
 processor 展开的 timestamp 文本 token 承载。
 """

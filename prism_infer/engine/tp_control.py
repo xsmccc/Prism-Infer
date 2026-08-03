@@ -75,7 +75,7 @@ class TPControlPlane:
 
     def timeout(self) -> float:
         value = self.timeout_seconds
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
             raise ValueError(f"TP control timeout must be positive, got {value!r}")
         return float(value)
 

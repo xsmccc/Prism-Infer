@@ -1,4 +1,4 @@
-"""P3.2 Processor pipeline: 视频输入边界验证。"""
+"""Processor boundaries for video inputs."""
 
 from dataclasses import replace
 

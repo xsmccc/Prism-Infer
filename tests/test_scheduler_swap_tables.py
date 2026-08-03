@@ -1,4 +1,4 @@
-"""P4.5 Scheduler swap table 语义回归测试。"""
+"""Scheduler swap-table ownership and capacity tests."""
 
 from types import SimpleNamespace
 

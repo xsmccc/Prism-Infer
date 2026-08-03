@@ -1,4 +1,4 @@
-"""P2.6 LLM.generate_vl 单图入口验证。"""
+"""Single-image generation API tests."""
 
 from types import SimpleNamespace
 
@@ -142,7 +142,7 @@ def test_add_video_request_builds_video_sequence():
 
 
 def test_add_vl_request_allows_graph_mode_sequence_building():
-    """P3.5 后 VL 请求在 graph mode 下也应能构造 Sequence。"""
+    """Graph-mode multimodal requests must construct a valid Sequence."""
 
     engine = _make_minimal_engine()
     engine.config.enforce_eager = False

@@ -56,7 +56,7 @@ class MRope(nn.Module):
             raise ValueError(f"head_dim must be a positive even integer: {head_dim!r}")
         if (
             isinstance(theta, bool)
-            or not isinstance(theta, (int, float))
+            or not isinstance(theta, int | float)
             or float(theta) <= 0.0
             or not isfinite(float(theta))
         ):

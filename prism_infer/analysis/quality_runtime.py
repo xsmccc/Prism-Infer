@@ -1,10 +1,10 @@
-"""Shared runtime helpers for Prism and external P9 quality evaluators.
+"""Shared runtime helpers for Prism and external quality evaluators.
 
 This module deliberately contains no inference-engine imports.  Both the Prism
 and vLLM runners use it for materialized-record selection, media loading, input
 identity construction, Git identity, and resumable artifact validation.  A
 single implementation prevents the external baseline from silently drifting
-from the frozen Prism evaluator at these non-framework boundaries.
+from the Prism evaluator at these non-framework boundaries.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import Any
 from PIL import Image
 
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
-from prism_infer.analysis.p9_quality_materialization import (
+from prism_infer.analysis.quality_materialization import (
     selected_ids_sha256,
     sha256_file,
 )
@@ -119,7 +119,7 @@ def prepare_dataset_records(
     subset: str,
     max_samples: int | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]], list[str]]:
-    """Select eligible rows in frozen order and preserve explicit exclusions."""
+    """Select eligible rows in deterministic order and preserve explicit exclusions."""
 
     root = Path(materialized_root)
     records_path = root / artifact["selected_records"]["path"]
@@ -181,7 +181,7 @@ def validate_resume_samples(
     run_identity_sha256: str,
     expected_ids: Sequence[str],
 ) -> list[dict[str, Any]]:
-    """Accept only an exact prefix checkpoint from the same frozen run."""
+    """Accept only an exact prefix checkpoint from the same run identity."""
 
     if artifact.get("run_identity_sha256") != run_identity_sha256:
         raise ValueError("resume artifact run identity differs from requested run")
@@ -190,7 +190,7 @@ def validate_resume_samples(
         raise ValueError("resume artifact has no valid sample list")
     completed_ids = [sample["sample_id"] for sample in samples]
     if completed_ids != list(expected_ids[: len(completed_ids)]):
-        raise ValueError("resume samples are not a prefix of frozen eligible IDs")
+        raise ValueError("resume samples are not a prefix of the eligible sample IDs")
     return samples
 
 
@@ -205,7 +205,7 @@ def load_reference_records_for_artifacts(
     if not artifacts:
         raise ValueError("at least one quality artifact is required")
     root = Path(materialized_root).resolve()
-    manifest_path = root / "p9_quality_materialization.json"
+    manifest_path = root / "quality_materialization.json"
     manifest_sha256 = sha256_file(manifest_path)
     dataset_id = _common_artifact_dataset(artifacts, manifest_sha256)
     manifest = read_json_object(manifest_path)
@@ -270,6 +270,6 @@ def _selected_records_path(root: Path, selected: Mapping[str, Any]) -> Path:
 
 
 def selected_sample_identity(sample_ids: Sequence[str]) -> str:
-    """Alias the frozen sample-ID hash for runner-facing code."""
+    """Expose the deterministic sample-ID hash to runner-facing code."""
 
     return selected_ids_sha256(sample_ids)

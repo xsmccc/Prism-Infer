@@ -1,16 +1,14 @@
 # Tests
 
-The test directory covers contracts that protect Prism-Infer's inference path:
+The test directory covers Prism-Infer's inference path:
 
 - Qwen3-VL model structure, multimodal positions, and processor integration;
 - paged KV storage, scaled-FP8 quantization, and physical token compaction;
 - `torch.compile` and CUDA Graph execution boundaries;
 - scheduling, online serving, and request lifecycle behavior.
 
-Tests that only validated an old benchmark report, a profiling parser, or a
-retired development phase are intentionally not kept here. Performance claims
-are reproduced with the scripts under `benchmarks/`, on the GPU environment
-recorded in the results document.
+Performance scripts and result derivation live under `benchmarks/`; tests here
+focus on runtime behavior and numerical correctness.
 
 Run the focused logic tests with:
 

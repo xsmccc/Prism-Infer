@@ -28,12 +28,12 @@ from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
 from benchmarks.working_set_workload import verify_working_set_model
 from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
-from prism_infer.analysis.p9_quality_materialization import (
+from prism_infer.analysis.quality_materialization import (
     selected_ids_sha256,
     sha256_file,
     write_json_atomic,
 )
-from prism_infer.analysis.p9_quality_metrics import (
+from prism_infer.analysis.quality_metrics import (
     MUIRBENCH_RANDOM_FALLBACK_SEED,
     aggregate_quality_predictions,
     build_docvqa_prompt,
@@ -41,7 +41,7 @@ from prism_infer.analysis.p9_quality_metrics import (
     build_mvbench_prompt,
     score_quality_prediction,
 )
-from prism_infer.analysis.p9_quality_runtime import (
+from prism_infer.analysis.quality_runtime import (
     close_images,
     load_record_images,
     materialization_artifact_by_id,
@@ -51,7 +51,7 @@ from prism_infer.analysis.p9_quality_runtime import (
     safe_materialized_path,
     validate_resume_samples,
 )
-from prism_infer.analysis.p9_video_sampling import (
+from prism_infer.analysis.video_sampling import (
     sample_frame_manifest,
     sample_video_file,
 )
@@ -73,14 +73,14 @@ from prism_infer.engine.vl_inputs import (
     prepare_interleaved_image_inputs,
     prepare_video_inputs,
 )
-from scripts.verify_p9_quality_materialization import verify_materialization
+from scripts.verify_quality_data import verify_materialization
 
-QUALITY_WORKING_SET_SCHEMA_VERSION = 1
-DEFAULT_EVALUATOR = REPO_ROOT / "benchmarks/workloads/p9_quality_evaluator.json"
-DEFAULT_PROTOCOL = REPO_ROOT / "benchmarks/workloads/p9_quality_protocol.json"
-DEFAULT_SELECTION = REPO_ROOT / "benchmarks/workloads/p9_quality_selection.json"
-DEFAULT_RAW_ROOT = REPO_ROOT / "data/p9_quality/raw"
-DEFAULT_MATERIALIZED_ROOT = REPO_ROOT / "data/p9_quality/materialized"
+QUALITY_WORKING_SET_SCHEMA_VERSION = 2
+DEFAULT_EVALUATOR = REPO_ROOT / "benchmarks/workloads/quality_evaluator.json"
+DEFAULT_PROTOCOL = REPO_ROOT / "benchmarks/workloads/quality_protocol.json"
+DEFAULT_SELECTION = REPO_ROOT / "benchmarks/workloads/quality_selection.json"
+DEFAULT_RAW_ROOT = REPO_ROOT / "data/quality/raw"
+DEFAULT_MATERIALIZED_ROOT = REPO_ROOT / "data/quality/materialized"
 DEFAULT_NUM_KV_CACHE_BLOCKS = 220
 EXPECTED_KV_CACHE_BYTES = 4_282_122_240
 DEFAULT_KEEP_RATIO = 0.6
@@ -246,7 +246,7 @@ def _retention_signature(decision: dict[str, Any] | None) -> tuple[int, ...] | N
     if decision is None:
         return None
     values = decision.get("kept_token_indices")
-    if not isinstance(values, (list, tuple)):
+    if not isinstance(values, list | tuple):
         raise ValueError("compression decision has no kept_token_indices")
     return tuple(int(value) for value in values)
 
@@ -279,17 +279,13 @@ def _generate_with_audit(
         "pre_admission_hit": bool(
             getattr(runtime_sequence, "multimodal_prefix_pre_admission_hit", False)
         ),
-        "prefix_cache_candidate_tokens": int(
-            runtime_sequence.prefix_cache_candidate_tokens
-        ),
+        "prefix_cache_candidate_tokens": int(runtime_sequence.prefix_cache_candidate_tokens),
         "multimodal_prefix_boundary": runtime_sequence.multimodal_prefix_boundary,
     }
     output = llm._finish_single_generation(sequence_id, None)
     completed_sequence = llm.scheduler.requests[sequence_id]
-    retained_prefix_decision = (
-        llm.scheduler.block_manager.multimodal_prefix_compression_record(
-            completed_sequence
-        )
+    retained_prefix_decision = llm.scheduler.block_manager.multimodal_prefix_compression_record(
+        completed_sequence
     )
     submission_audit["compression_decision"] = (
         retained_prefix_decision
@@ -360,9 +356,7 @@ def _run_sample(
             decision.get("physical_compaction")
         )
         dropped_visual_tokens = (
-            int(decision.get("dropped_visual_tokens", 0))
-            if isinstance(decision, dict)
-            else 0
+            int(decision.get("dropped_visual_tokens", 0)) if isinstance(decision, dict) else 0
         )
         if dropped_visual_tokens > 0 and not used_physical_prefix_kv:
             raise RuntimeError(
@@ -394,9 +388,7 @@ def _run_sample(
         if selection_record is not None:
             attention_selection_source_sample_id = selection_record["sample_id"]
         elif isinstance(decision, dict):
-            attention_selection_source_sample_id = decision.get(
-                "selection_source_sample_id"
-            )
+            attention_selection_source_sample_id = decision.get("selection_source_sample_id")
         record = grouped_sample.record
         sample = {
             "sample_id": record["sample_id"],
@@ -618,9 +610,7 @@ def _restore_first_question_prefix(
         decision.get("physical_compaction")
     )
     dropped_visual_tokens = (
-        int(decision.get("dropped_visual_tokens", 0))
-        if isinstance(decision, dict)
-        else 0
+        int(decision.get("dropped_visual_tokens", 0)) if isinstance(decision, dict) else 0
     )
     if dropped_visual_tokens > 0 and not used_physical_prefix_kv:
         raise RuntimeError("resume prefix restoration did not use compacted prefix KV")
@@ -868,7 +858,7 @@ def run_stage(args: argparse.Namespace) -> None:
     )
     if evaluator["quality_protocol_sha256"] != canonical_json_sha256(protocol):
         raise SystemExit("evaluator references a different quality protocol")
-    manifest_path = materialized_root / "p9_quality_materialization.json"
+    manifest_path = materialized_root / "quality_materialization.json"
     materialization = read_json_object(manifest_path)
     runtime = evaluator["runtime"]
     evaluator_dataset = evaluator["datasets"][spec.dataset_id]
@@ -1273,7 +1263,7 @@ def summarize_artifacts(args: argparse.Namespace) -> None:
         if stage in by_stage:
             raise ValueError(f"duplicate quality stage: {stage}")
         by_stage[stage] = artifact
-        input_records.append({"path": path.name, "sha256": sha256_file(path)})
+        input_records.append({"name": path.name, "json_sha256": sha256_file(path)})
 
     expected_stages = set(QUALITY_STAGE_SPECS)
     missing_stages = sorted(expected_stages - by_stage.keys())

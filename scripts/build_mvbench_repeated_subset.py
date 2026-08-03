@@ -16,14 +16,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
-from prism_infer.analysis.p9_protocol import load_p9_quality_protocol
-from prism_infer.analysis.p9_quality_materialization import (
+from prism_infer.analysis.quality_materialization import (
     MATERIALIZATION_SCHEMA_VERSION,
+    QUALITY_MATERIALIZATION_RECORD_TYPE,
     SampleSelection,
     selection_manifest_from_materialization,
     write_json_atomic,
 )
-from scripts.materialize_p9_quality import (
+from prism_infer.analysis.quality_protocol import load_quality_protocol
+from scripts.materialize_quality_data import (
     DEFAULT_MVBENCH_MAP,
     DEFAULT_PROTOCOL,
     DEFAULT_RAW_ROOT,
@@ -34,7 +35,7 @@ from scripts.materialize_p9_quality import (
     _source_file_records,
 )
 
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data/p9_quality/mvbench_repeated"
+DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data/quality/mvbench_repeated"
 
 
 def mvbench_source_contract(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -59,9 +60,7 @@ def mvbench_source_contract(record: Mapping[str, Any]) -> dict[str, Any]:
         "media_type": item.get("media_type"),
         "temporal_bound": record.get("temporal_bound"),
     }
-    if not isinstance(contract["archive_member_path"], str) or not contract[
-        "archive_member_path"
-    ]:
+    if not isinstance(contract["archive_member_path"], str) or not contract["archive_member_path"]:
         raise ValueError("MVBench media source has no archive member path")
     if contract["media_type"] not in ("frames", "video"):
         raise ValueError("MVBench media source has an unsupported media type")
@@ -127,10 +126,10 @@ def main() -> None:
     selection_output = (
         args.selection_output.resolve()
         if args.selection_output is not None
-        else output_root / "p9_mvbench_repeated_selection.json"
+        else output_root / "mvbench_repeated_selection.json"
     )
 
-    protocol = load_p9_quality_protocol(args.protocol)
+    protocol = load_quality_protocol(args.protocol)
     dataset = _dataset_by_id(protocol, "mvbench_test")
     media_map = _load_json(args.mvbench_map)
     if media_map.get("dataset_revision") != dataset["revision"]:
@@ -184,7 +183,7 @@ def main() -> None:
     )
     manifest = {
         "schema_version": MATERIALIZATION_SCHEMA_VERSION,
-        "record_type": "p9_quality_materialization",
+        "record_type": QUALITY_MATERIALIZATION_RECORD_TYPE,
         "protocol_sha256": canonical_json_sha256(protocol),
         "selection_contract": {
             "algorithm": "all_exact_mvbench_source_contract_groups",
@@ -197,7 +196,7 @@ def main() -> None:
         },
         "datasets": [artifact],
     }
-    manifest_path = output_root / "p9_quality_materialization.json"
+    manifest_path = output_root / "quality_materialization.json"
     manifest_sha256 = write_json_atomic(manifest_path, manifest)
     selection_sha256 = write_json_atomic(
         selection_output,

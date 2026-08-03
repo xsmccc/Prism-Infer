@@ -3,7 +3,7 @@
 
 脚本不会下载完整 archive，也不会使用近似文件名。每个远端请求必须返回可验证的
 HTTP 206；每个 ZIP member 由标准库校验 CRC，再按内容 SHA256 落盘。官方 archive
-确实缺失或需要 NTU 手工许可的样本保留在 frozen selection 中，并单独记录协议排除。
+确实缺失或需要 NTU 手工许可的样本保留在选样记录中，并单独记录协议排除。
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
 from prism_infer.analysis.http_range_reader import HTTPRangeReader
-from prism_infer.analysis.p9_quality_materialization import (
+from prism_infer.analysis.quality_materialization import (
     evaluation_subset_record,
     media_identity_record,
     selection_manifest_from_materialization,
@@ -34,8 +34,8 @@ from prism_infer.analysis.p9_quality_materialization import (
     write_jsonl_atomic,
 )
 
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data/p9_quality/materialized"
-DEFAULT_SELECTION_OUTPUT = REPO_ROOT / "benchmarks/workloads/p9_quality_selection.json"
+DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data/quality/materialized"
+DEFAULT_SELECTION_OUTPUT = REPO_ROOT / "benchmarks/workloads/quality_selection.json"
 DEFAULT_HF_ENDPOINT = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
 COPY_BUFFER_BYTES = 1024 * 1024
 VIDEO_SUFFIXES = {".avi", ".gif", ".mkv", ".mov", ".mp4", ".webm"}
@@ -89,10 +89,7 @@ def _archive_url(
     repository = artifact["repository"]
     revision = artifact["revision"]
     repository_path = archive["repository_path"]
-    return (
-        f"{endpoint}/datasets/{repository}/resolve/"
-        f"{revision}/{repository_path}?download=true"
-    )
+    return f"{endpoint}/datasets/{repository}/resolve/{revision}/{repository_path}?download=true"
 
 
 def _selected_infos(
@@ -214,7 +211,7 @@ def _materialize_media(
             {
                 "materialization_status": "excluded_missing_frozen_archive_member",
                 "exclusion_reason": (
-                    "exact archive member is absent from the frozen dataset revision"
+                    "exact archive member is absent from the recorded dataset revision"
                 ),
                 "materialized_path": None,
                 "sha256": None,
@@ -278,7 +275,8 @@ def _exclude_manual_sources(records: Sequence[dict[str, Any]]) -> None:
                     {
                         "materialization_status": ("excluded_manual_ntu_rgbd_license_required"),
                         "exclusion_reason": (
-                            "frozen MVBench source requires separately licensed NTU RGB+D media"
+                            "the recorded MVBench source requires separately licensed "
+                            "NTU RGB+D media"
                         ),
                     }
                 )
@@ -379,7 +377,7 @@ def main() -> None:
         raise SystemExit("--range-chunk-mib must be positive")
 
     output_root = args.output_root.resolve()
-    manifest_path = output_root / "p9_quality_materialization.json"
+    manifest_path = output_root / "quality_materialization.json"
     manifest = _read_json(manifest_path)
     artifact = _mvbench_artifact(manifest)
     records_path = output_root / artifact["selected_records"]["path"]

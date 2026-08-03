@@ -1,4 +1,4 @@
-"""P6 统一 Prism-Infer internal system benchmark。
+"""Run the Prism-Infer system benchmark.
 
 runner 在同一个 deterministic workload manifest 上比较正交 internal mode，
 测量 preprocessing、engine TTFT、prefill step、decode-step ITL、端到端延迟、
@@ -54,7 +54,7 @@ from prism_infer.engine.kv_quantization import (
 )
 from prism_infer.engine.request import RequestState
 
-DEFAULT_MANIFEST = Path(__file__).with_name("workloads") / "p6_internal_smoke.json"
+DEFAULT_MANIFEST = Path(__file__).with_name("workloads") / "system_cases.json"
 
 
 @dataclass(frozen=True)
@@ -717,7 +717,7 @@ def _build_record(
         "record_type": "system_benchmark",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "protocol": {
-            "name": "p7.1_prism_offline_v2",
+            "name": "prism_offline_comparison_v2",
             "process_scope": "fresh_model_per_case_and_mode",
         },
         "environment": {
@@ -1262,7 +1262,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
-        raise SystemExit("CUDA is required for the P6 system benchmark")
+        raise SystemExit("CUDA is required for the system benchmark")
     if args.warmup < 0 or args.repeat < 1:
         raise SystemExit("--warmup must be >= 0 and --repeat must be >= 1")
     if args.tensor_parallel_size <= 0:

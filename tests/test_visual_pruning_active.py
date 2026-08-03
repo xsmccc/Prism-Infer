@@ -1,4 +1,4 @@
-"""P5.2 active logical visual-pruning decode tests."""
+"""Active visual-token compaction and decode tests."""
 
 import pytest
 import torch
@@ -325,4 +325,3 @@ def test_visual_prune_text_only_decode_uses_standard_paged_path(monkeypatch) -> 
 
     print(f"text-only visual prune output shape: {list(output.shape)}")
     assert output.shape == q.shape
-    print("P6.6 text-only visual prune paged dispatch: PASS")

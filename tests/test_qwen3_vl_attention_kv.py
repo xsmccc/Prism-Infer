@@ -1,4 +1,4 @@
-"""P2.4 Qwen3-VL engine attention KV cache 验证。"""
+"""Qwen3-VL attention and KV-cache integration tests."""
 
 import torch
 

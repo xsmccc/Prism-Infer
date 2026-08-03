@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""独立复核 P9 quality source、selection、records 与每个媒体内容哈希。"""
+"""独立复核质量集 source、selection、records 与每个媒体内容哈希。"""
 
 from __future__ import annotations
 
@@ -15,19 +15,19 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
-from prism_infer.analysis.p9_protocol import load_p9_quality_protocol
-from prism_infer.analysis.p9_quality_materialization import (
+from prism_infer.analysis.quality_materialization import (
     evaluation_subset_record,
     media_identity_record,
     selected_ids_sha256,
     selection_manifest_from_materialization,
     sha256_file,
 )
+from prism_infer.analysis.quality_protocol import load_quality_protocol
 
-DEFAULT_PROTOCOL = REPO_ROOT / "benchmarks/workloads/p9_quality_protocol.json"
-DEFAULT_SELECTION = REPO_ROOT / "benchmarks/workloads/p9_quality_selection.json"
-DEFAULT_RAW_ROOT = REPO_ROOT / "data/p9_quality/raw"
-DEFAULT_MATERIALIZED_ROOT = REPO_ROOT / "data/p9_quality/materialized"
+DEFAULT_PROTOCOL = REPO_ROOT / "benchmarks/workloads/quality_protocol.json"
+DEFAULT_SELECTION = REPO_ROOT / "benchmarks/workloads/quality_selection.json"
+DEFAULT_RAW_ROOT = REPO_ROOT / "data/quality/raw"
+DEFAULT_MATERIALIZED_ROOT = REPO_ROOT / "data/quality/materialized"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -159,8 +159,8 @@ def verify_materialization(
 ) -> dict[str, Any]:
     """执行完整只读验证；任一身份不一致立即抛错。"""
 
-    protocol = load_p9_quality_protocol(protocol_path)
-    manifest_path = materialized_root / "p9_quality_materialization.json"
+    protocol = load_quality_protocol(protocol_path)
+    manifest_path = materialized_root / "quality_materialization.json"
     manifest = _read_json(manifest_path)
     if manifest.get("protocol_sha256") != canonical_json_sha256(protocol):
         raise ValueError("materialization protocol SHA256 mismatch")

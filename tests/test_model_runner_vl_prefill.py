@@ -1,4 +1,4 @@
-"""P2.4/P2.5 ModelRunner VL prefill/decode 输入准备验证。"""
+"""ModelRunner multimodal prefill and decode input preparation."""
 
 from types import SimpleNamespace
 

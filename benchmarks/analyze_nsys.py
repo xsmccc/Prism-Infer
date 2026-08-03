@@ -1,4 +1,4 @@
-"""分析 Prism-Infer P6 Nsight Systems SQLite capture。
+"""Analyze a Prism-Infer Nsight Systems SQLite capture.
 
 输入 SQLite 由 ``nsys export --type sqlite`` 生成。脚本读取结构化 CUPTI/NVTX
 表，按 engine NVTX range 汇总 kernel、runtime API、同步和 graph execution；

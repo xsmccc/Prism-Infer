@@ -32,14 +32,41 @@ if str(REPO_ROOT) not in sys.path:
 
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
 from benchmarks.working_set_workload import build_interleaved_image_content
-from prism_infer.analysis.p9_external_quality import (
-    VLLM_PROMPT_ADAPTERS,
-    adapt_vllm_prompt_text,
-)
 
 EXTERNAL_SCHEMA_VERSION = 2
 COMPARISON_PROFILES = ("diagnostic_matched", "best_stable")
 DEFAULT_VIDEO_FPS = 24.0
+VLLM_PROMPT_ADAPTERS = {
+    "image": "none",
+    "video": "qwen3_vl_preserve_hf_outer_video_markers_v1",
+}
+
+
+def adapt_vllm_prompt_text(
+    prompt_text: str,
+    *,
+    modality: str,
+    vision_start_token: str,
+    media_token: str,
+    vision_end_token: str,
+) -> str:
+    """Adapt Qwen3-VL video markers to vLLM's prompt expansion."""
+
+    if not isinstance(prompt_text, str) or not prompt_text:
+        raise ValueError("vLLM prompt text must be a non-empty string")
+    adapter = VLLM_PROMPT_ADAPTERS.get(modality)
+    if adapter is None:
+        raise ValueError(f"unsupported vLLM prompt modality: {modality!r}")
+    if adapter == "none":
+        return prompt_text
+    markers = (vision_start_token, media_token, vision_end_token)
+    if not all(isinstance(marker, str) and marker for marker in markers):
+        raise ValueError("vLLM video marker tokens must be non-empty strings")
+    target = "".join(markers)
+    if prompt_text.count(target) != 1:
+        raise ValueError("video prompt must contain exactly one placeholder")
+    replacement = f"{vision_start_token}{target}{vision_end_token}"
+    return prompt_text.replace(target, replacement, 1)
 
 
 def _percentile(values: list[float], fraction: float) -> float:
@@ -383,7 +410,7 @@ def main() -> None:
         "record_type": "external_system_benchmark",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "protocol": {
-            "name": "p7.1_external_offline_v2",
+            "name": "vllm_offline_comparison_v2",
             "comparison_profile": comparison_profile,
             "harness_git_commit": git.commit,
             "harness_git_dirty": git.dirty,

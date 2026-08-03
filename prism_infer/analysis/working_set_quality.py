@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from prism_infer.analysis.benchmark_schema import canonical_json_sha256
-from prism_infer.analysis.p9_quality_metrics import aggregate_quality_predictions
+from prism_infer.analysis.quality_metrics import aggregate_quality_predictions
 from prism_infer.analysis.working_set_plan import (
     build_muirbench_labeled_media_first_prompt,
 )
@@ -48,6 +48,7 @@ class QualityStageSpec:
         """Whether the prompt layout exposes the stable media-first prefix boundary."""
 
         return self.prompt_layout == "media_first"
+
 
 QUALITY_STAGE_SPECS: dict[str, QualityStageSpec] = {
     "muir_dense_official": QualityStageSpec(

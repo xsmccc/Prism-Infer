@@ -213,7 +213,7 @@ class WorkingSetPlanTest(unittest.TestCase):
                 },
                 "selection": {"final": {"sample_ids": sample_ids}},
             }
-            manifest_path = root / "p9_quality_materialization.json"
+            manifest_path = root / "quality_materialization.json"
             manifest_path.write_text(
                 json.dumps({"schema_version": 1, "datasets": [artifact]}),
                 encoding="utf-8",

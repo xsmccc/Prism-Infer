@@ -136,7 +136,7 @@ class HTTPRangeReader(io.RawIOBase):
         if total != self._expected_size:
             response.close()
             raise OSError(
-                "remote object size differs from frozen archive metadata: "
+                "remote object size differs from recorded archive metadata: "
                 f"expected={self._expected_size}, actual={total}"
             )
         return response

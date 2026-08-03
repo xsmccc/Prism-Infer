@@ -1,4 +1,4 @@
-"""P6.3 attention-only compile 配置与 decode dispatch 测试。"""
+"""torch.compile configuration and decode-dispatch tests."""
 
 from types import SimpleNamespace
 
@@ -25,7 +25,7 @@ def _patch_auto_config(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_attention_compile_config_requires_eager_off_baseline(
+def test_attention_compile_config_requires_off_eager_mode(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -161,36 +161,7 @@ def test_compile_graph_config_allows_graph_safe_scaled_kv(
     assert config.decode_compile_region == "stateless"
 
 
-def test_block4_gate_up_requires_explicit_graph_backend(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The SM120 decode kernel must never look enabled on an inactive backend."""
-
-    _patch_auto_config(monkeypatch)
-    valid = Config(
-        str(tmp_path),
-        max_model_len=1024,
-        max_num_batched_tokens=1024,
-        execution_backend="compile_graph",
-        decode_compile_region="stateless",
-        mlp_projection_mode="packed",
-        enable_decode_block4_gate_up=True,
-    )
-    assert valid.enable_decode_block4_gate_up is True
-
-    with pytest.raises(ValueError, match="requires a CUDA Graph backend"):
-        Config(
-            str(tmp_path),
-            max_model_len=1024,
-            max_num_batched_tokens=1024,
-            execution_backend="eager",
-            mlp_projection_mode="packed",
-            enable_decode_block4_gate_up=True,
-        )
-
-
-def test_p611_config_rejects_logical_prune_cuda_graph(
+def test_config_rejects_logical_prune_cuda_graph(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -205,7 +176,6 @@ def test_p611_config_rejects_logical_prune_cuda_graph(
             enforce_eager=False,
             compression_mode="visual_prune",
         )
-    print("P6.11 logical visual-prune CUDA Graph rejection: PASS")
 
 
 @pytest.mark.parametrize(
@@ -218,7 +188,7 @@ def test_p611_config_rejects_logical_prune_cuda_graph(
         "visual_compact_scaled_fp8",
     ),
 )
-def test_p611_config_allows_physical_compression_cuda_graph(
+def test_config_allows_physical_compression_cuda_graph(
     compression_mode: str,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -234,10 +204,9 @@ def test_p611_config_allows_physical_compression_cuda_graph(
         compression_mode=compression_mode,
     )
     assert config.compression_mode == compression_mode
-    print(f"P6.11 physical compression Graph config={compression_mode}: PASS")
 
 
-def test_p74_logits_precision_is_explicit_and_validated(
+def test_logits_precision_is_explicit_and_validated(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -267,7 +236,7 @@ def test_p74_logits_precision_is_explicit_and_validated(
         )
 
 
-def test_p75_mlp_projection_mode_is_explicit_and_validated(
+def test_mlp_projection_mode_is_explicit_and_validated(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -338,7 +307,6 @@ def test_attention_compile_dispatch_is_decode_only() -> None:
 
     assert torch.equal(decode_output, hidden_states + 1)
     assert torch.equal(prefill_output, hidden_states + 2)
-    print("P6.3 attention compile decode-only dispatch: PASS")
 
 
 def test_attention_compile_merges_mode_and_precision_options(
@@ -375,7 +343,6 @@ def test_attention_compile_merges_mode_and_precision_options(
         "emulate_precision_casts": True,
         "force_same_precision": True,
     }
-    print(f"P6.3 merged compile options: {captured['options']} PASS")
 
 
 @pytest.mark.gpu

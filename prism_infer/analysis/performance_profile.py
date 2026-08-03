@@ -1,4 +1,4 @@
-"""P6 分层性能 profiling collector。
+"""Layered performance profiling collector.
 
 collector 只在显式进入 :func:`performance_profile` 时生效。CPU 时间用于观察
 Python、调度和同步等待，CUDA Event 时间用于观察同一语义区域在当前 stream 上的
@@ -46,7 +46,7 @@ def _summarize_profile_regions(
 
 
 def validate_performance_profile_record(record: Mapping[str, Any]) -> None:
-    """校验一条 P6 performance profile record 及其聚合自洽性。"""
+    """Validate one performance profile record and its aggregates."""
 
     if record.get("schema_version") != PERFORMANCE_PROFILE_SCHEMA_VERSION:
         raise ValueError("unsupported performance profile schema_version")
@@ -115,7 +115,7 @@ def _validate_profile_duration(value: object, name: str, *, allow_none: bool) ->
         return
     if (
         isinstance(value, bool)
-        or not isinstance(value, (int, float))
+        or not isinstance(value, int | float)
         or not math.isfinite(float(value))
         or float(value) < 0.0
     ):

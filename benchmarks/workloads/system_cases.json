@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "name": "p6_internal_smoke",
+  "name": "system_cases",
   "cases": [
     {
       "id": "text_short",

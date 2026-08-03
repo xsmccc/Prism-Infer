@@ -218,14 +218,6 @@ def main() -> None:
         help="write semantic CPU/CUDA regions for the measured repeats",
     )
     parser.add_argument(
-        "--enable-decode-block4-gate-up",
-        action="store_true",
-        help=(
-            "retain an SM120 block-4 FP8-weight copy and use the fused "
-            "batch-one decode gate-up/SwiGLU kernel"
-        ),
-    )
-    parser.add_argument(
         "--enable-vision-tensor-cudagraph",
         action="store_true",
         help=(
@@ -246,12 +238,6 @@ def main() -> None:
 
     if args.warmup < 0 or args.repeat < 1 or args.max_tokens < 2:
         raise SystemExit("warmup >= 0, repeat >= 1 and max-tokens >= 2 are required")
-    if args.enable_decode_block4_gate_up and args.compression_mode != "off":
-        raise SystemExit(
-            "the memory profile forbids the duplicate block4 decode weight "
-            "when compression-mode is not off"
-        )
-
     manifest_path = Path(args.manifest)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     case = find_workload_case(manifest, args.case)
@@ -287,7 +273,6 @@ def main() -> None:
         enable_fused_qk_mrope=True,
         enable_fused_add_rmsnorm=True,
         enable_packed_kv_projection=True,
-        enable_decode_block4_gate_up=args.enable_decode_block4_gate_up,
         enable_vision_tensor_cudagraph=args.enable_vision_tensor_cudagraph,
         vision_attention_backend="sdpa",
     )
@@ -501,14 +486,13 @@ def main() -> None:
         gpu = collect_gpu_metadata().environment_dict()
         graph = llm.model_runner.cudagraph_metadata(1)
         compile_metadata = llm.model_runner.compile_metadata()
-        block4_gate_up = llm.model_runner.block4_gate_up_metadata()
         vision_tensor_cudagraph = llm.model_runner.vision_tensor_cudagraph_metadata()
         record = {
             "schema_version": 1,
             "record_type": "external_system_benchmark",
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "protocol": {
-                "name": "p9_external_prism_token_arrival_v1",
+                "name": "external_prism_token_arrival_v1",
                 "process_scope": "fresh_process_per_artifact",
                 "command": [sys.executable, *sys.argv],
             },
@@ -552,7 +536,6 @@ def main() -> None:
                     "strategy": args.visual_pruning_strategy,
                     "attention_last_n_layers": (args.visual_pruning_attention_last_n_layers),
                 },
-                "decode_block4_gate_up": block4_gate_up,
                 "vision_tensor_cudagraph": vision_tensor_cudagraph,
                 "cuda_graph": graph,
                 "torch_compile": compile_metadata,

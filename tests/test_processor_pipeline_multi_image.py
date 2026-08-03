@@ -1,4 +1,4 @@
-"""P3.1 Processor pipeline: 多图图文输入边界验证。"""
+"""Processor boundaries for multi-image inputs."""
 
 from dataclasses import replace
 

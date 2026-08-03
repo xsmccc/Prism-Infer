@@ -220,9 +220,7 @@ def _load_file_image(
         configured_path if configured_path.is_absolute() else Path(repo_root) / configured_path
     )
     if not image_path.is_file():
-        raise FileNotFoundError(
-            f"benchmark image is missing: {image_path}; run scripts/download_p6_real_samples.sh"
-        )
+        raise FileNotFoundError(f"benchmark image is missing: {image_path}")
     actual_sha256 = hashlib.sha256(image_path.read_bytes()).hexdigest()
     expected_sha256 = str(spec["sha256"])
     if actual_sha256 != expected_sha256:

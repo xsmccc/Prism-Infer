@@ -1,6 +1,6 @@
 """无外部依赖的多参考文本质量 preflight 指标。
 
-该模块面向 P6.12 pruning 对比中的 caption/free-text QA 输出。它提供
+This module normalizes caption and free-text QA outputs. It provides
 Unicode 规范化、多重集 token-F1 和 ROUGE-L F1，并对每项指标分别取
 多参考中的最高分。它不是 COCO 官方 CIDEr/SPICE evaluator。
 """

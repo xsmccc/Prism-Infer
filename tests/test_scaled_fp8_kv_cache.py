@@ -1,4 +1,4 @@
-"""P9-C dynamically scaled FP8 KV cache correctness and lifecycle gates."""
+"""Dynamically scaled FP8 KV-cache correctness and lifecycle tests."""
 
 from __future__ import annotations
 

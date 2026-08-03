@@ -3,7 +3,7 @@
 The tool accepts raw Prism, vLLM, and SGLang JSON records produced from the
 same working-set plan.  It fails closed when plan, model, KV-budget, or
 per-workset request-trace/prompt-token identities disagree, when population is
-incomplete, or when the formal 15-cell matrix is missing.  Missing backend
+incomplete, or when the complete 15-cell matrix is missing. Missing backend
 metrics are reported as ``unavailable`` instead of being estimated.
 """
 
