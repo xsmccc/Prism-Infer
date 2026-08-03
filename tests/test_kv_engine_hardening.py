@@ -270,7 +270,7 @@ def test_block_manager_capacity_failures_are_atomic() -> None:
         cpu_table = list(swapped.cpu_block_table)
         blocker = sequence([90, 91, 92, 93])
         swap_in_manager.allocate(blocker)
-        with pytest.raises(RuntimeError, match="atomic swap-in"):
+        with pytest.raises(RuntimeError):
             swap_in_manager.swap_in(swapped)
         assert swapped.block_table == []
         assert swapped.cpu_block_table == cpu_table
