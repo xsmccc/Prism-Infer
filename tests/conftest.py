@@ -13,7 +13,10 @@ except ImportError:  # Allows running lightweight tests as plain python scripts.
 
 
 def _skip(message: str):
-    is_pytest = os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in Path(sys.argv[0]).name
+    entrypoint = Path(sys.argv[0])
+    is_pytest = os.environ.get("PYTEST_CURRENT_TEST") or any(
+        part.startswith("pytest") for part in entrypoint.parts
+    )
     if pytest is not None and is_pytest:
         pytest.skip(message, allow_module_level=True)
     print(f"SKIP: {message}")
