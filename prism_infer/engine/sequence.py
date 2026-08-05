@@ -1,4 +1,6 @@
-from copy import copy  # copy模块: 浅拷贝(复制列表本身, 不复制元素)
+"""Mutable request sequence state and KV-layout bookkeeping."""
+
+from copy import copy
 from math import isfinite
 
 import torch
@@ -50,7 +52,7 @@ class Sequence:
         self.ttft_slo_ms: float | None = None
         self.block_size = block_size
         self.lifecycle = RequestLifecycle(self.seq_id)
-        self.token_ids = copy(token_ids)  # 浅拷贝prompt的token列表(值语义, 类似C++ vector拷贝)
+        self.token_ids = copy(token_ids)
         self.last_token = token_ids[-1]  # 最后一个token(序列化优化用)
         self.num_tokens = len(self.token_ids)  # 当前总token数(prompt+生成)
         self.num_prompt_tokens = len(token_ids)  # prompt token数(固定不变)
@@ -426,16 +428,9 @@ class Sequence:
         self.precomputed_visual_embeds = None
         self.precomputed_deepstack_visual_embeds = ()
 
-    # === 跨进程序列化优化 ===
-    # Python pickle序列化对象时自动调用这两个方法
-    # 目的: 减少主进程→子进程的数据传输量
-
     def __getstate__(self):
-        """序列化: 决定发送什么数据给子进程
-        - Prefill(未生成): 发完整token_ids列表(子进程需要所有prompt做计算)
-        - Decode(已生成): 只发last_token(1个int, 子进程已有KV Cache)
-        - VL Decode: 不再发送 visual payload, 只保留 rope_delta
-        """
+        """Serialize full prefill state or the compact decode control payload."""
+
         is_prefill_payload = self.num_completion_tokens == 0
         return {
             "seq_id": self.seq_id,

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import importlib.metadata
 import json
 import sys
@@ -42,6 +41,7 @@ from benchmarks.working_set_workload import (
     verify_working_set_processor,
     working_set_processor_kwargs,
 )
+from prism_infer.analysis.identity import canonical_json_sha256, sha256_file
 from prism_infer.analysis.quality_materialization import write_json_atomic
 from prism_infer.analysis.working_set_plan import DEFAULT_MAX_NUM_SEQS
 
@@ -192,16 +192,6 @@ class _RunResources:
         self.working_set = None
         if failures and not suppress_errors:
             raise failures[0]
-
-
-def _canonical_sha256(value: object) -> str:
-    payload = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
 
 
 def _require_new_output(path: Path) -> None:
@@ -370,9 +360,9 @@ def _prompt_audit(
     return {
         "prompt_tokens": sum(map(len, prompt_ids)),
         "prompt_tokens_per_request": list(map(len, prompt_ids)),
-        "prompt_token_ids_sha256": _canonical_sha256(prompt_ids),
+        "prompt_token_ids_sha256": canonical_json_sha256(prompt_ids),
         "prompt_token_ids_sha256_by_class": {
-            case_id: _canonical_sha256(rows) for case_id, rows in sorted(by_class.items())
+            case_id: canonical_json_sha256(rows) for case_id, rows in sorted(by_class.items())
         },
     }
 
@@ -394,7 +384,7 @@ def _verify_fixed_working_set_plan(audit: dict[str, object]) -> None:
     """Fail if the authoritative plan changed while the engine was running."""
 
     plan_path = Path(str(audit["plan_path"]))
-    actual_sha256 = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    actual_sha256 = sha256_file(plan_path)
     if actual_sha256 != audit["plan_sha256"]:
         raise RuntimeError("working-set plan changed during the benchmark run")
     audit["fixed_plan_verified"] = True
@@ -527,7 +517,7 @@ def _run(resources: _RunResources) -> None:
     plan_path = Path(args.working_set_plan)
     working_set_audit = {
         "plan_path": str(plan_path.resolve()),
-        "plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+        "plan_sha256": sha256_file(plan_path),
         "workset_id": args.working_set_id,
         "group_ids": list(working_set.workset["group_ids"]),
         "available_questions": int(working_set.workset["available_questions"]),
@@ -620,7 +610,7 @@ def _run(resources: _RunResources) -> None:
         )
         population_result["group_id"] = group_id
         population_result["source_prompt_sha256"] = source_prompt_schedule_sha256([payload])
-        population_result["prompt_token_ids_sha256"] = _canonical_sha256(
+        population_result["prompt_token_ids_sha256"] = canonical_json_sha256(
             population_result["prompt_token_ids"]
         )
         population_runs.append(population_result)
@@ -676,9 +666,7 @@ def _run(resources: _RunResources) -> None:
         "model": {
             "path": str(Path(args.model).resolve()),
             "config_sha256": (
-                hashlib.sha256(model_config_path.read_bytes()).hexdigest()
-                if model_config_path.is_file()
-                else None
+                sha256_file(model_config_path) if model_config_path.is_file() else None
             ),
             "dtype": "torch.bfloat16",
             "max_model_len": args.max_model_len,
@@ -688,7 +676,7 @@ def _run(resources: _RunResources) -> None:
         },
         "workload": {
             "manifest": manifest["name"],
-            "manifest_sha256": _canonical_sha256(manifest),
+            "manifest_sha256": canonical_json_sha256(manifest),
             "case": f"muirbench_{args.working_set_id}",
             "requests": args.requests,
             "request_classes": request_classes,
@@ -701,7 +689,9 @@ def _run(resources: _RunResources) -> None:
             "request_rate_per_s": args.request_rate,
             "seed": args.seed,
             "offsets_s": offsets_s,
-            "trace_sha256": _canonical_sha256({"classes": request_classes, "offsets_s": offsets_s}),
+            "trace_sha256": canonical_json_sha256(
+                {"classes": request_classes, "offsets_s": offsets_s}
+            ),
         },
         "backend": {
             "execution": "eager" if args.enforce_eager else "cuda_graph",
@@ -733,7 +723,7 @@ def _run(resources: _RunResources) -> None:
         },
         "correctness": {
             "output_token_ids": output_token_ids,
-            "output_token_ids_sha256": _canonical_sha256(output_token_ids),
+            "output_token_ids_sha256": canonical_json_sha256(output_token_ids),
         },
         "population": population_run,
         "run": run,

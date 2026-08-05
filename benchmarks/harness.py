@@ -8,7 +8,6 @@ quietly recording incompatible evidence.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import subprocess
 from collections.abc import Mapping
@@ -19,6 +18,8 @@ from typing import Any
 
 import torch
 from PIL import Image
+
+from prism_infer.analysis.identity import sha256_file
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -221,7 +222,7 @@ def _load_file_image(
     )
     if not image_path.is_file():
         raise FileNotFoundError(f"benchmark image is missing: {image_path}")
-    actual_sha256 = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    actual_sha256 = sha256_file(image_path)
     expected_sha256 = str(spec["sha256"])
     if actual_sha256 != expected_sha256:
         raise ValueError(

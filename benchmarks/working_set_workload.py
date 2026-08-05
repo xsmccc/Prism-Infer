@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -11,6 +10,7 @@ from typing import Any
 
 from PIL import Image
 
+from prism_infer.analysis.identity import canonical_json_sha256, sha256_file
 from prism_infer.analysis.working_set_plan import (
     load_working_set_plan,
     validate_working_set_plan,
@@ -79,7 +79,7 @@ def _resolve_media_path(materialized_root: Path, media: Mapping[str, Any]) -> Pa
     if not path.is_relative_to(materialized_root) or not path.is_file():
         raise ValueError(f"invalid working-set media path: {relative_path!r}")
     expected_sha256 = media.get("sha256")
-    actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+    actual_sha256 = sha256_file(path)
     if actual_sha256 != expected_sha256:
         raise ValueError(
             "working-set media SHA256 mismatch: "
@@ -235,7 +235,7 @@ def verify_working_set_model(
             if path_matches
             else "config_commit_hash"
         ),
-        "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        "config_sha256": sha256_file(config_path),
     }
 
 
@@ -298,10 +298,4 @@ def source_prompt_schedule_sha256(payloads: Sequence[Mapping[str, Any]]) -> str:
         if not isinstance(prompt, str) or not prompt:
             raise ValueError(f"working-set payload {index} has no source prompt")
         prompts.append(prompt)
-    encoded = json.dumps(
-        prompts,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return canonical_json_sha256(prompts)

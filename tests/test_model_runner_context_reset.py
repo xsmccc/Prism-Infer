@@ -123,7 +123,11 @@ def test_model_runner_chunk_progress_does_not_become_prefix_hit_state() -> None:
     runner._prepare_prefill_batch = MethodType(prepare_prefill, runner)
     runner.prepare_sample = MethodType(prepare_sample, runner)
     runner.run_model_eager = MethodType(run_model_eager, runner)
-    runner.sampler = lambda logits, temperatures: torch.tensor([7])
+
+    def sample(logits, temperatures, *, sampling_mode=None):
+        return torch.tensor([7])
+
+    runner.sampler = sample
 
     first = runner.run([seq], True, [2])
     assert first == [None]

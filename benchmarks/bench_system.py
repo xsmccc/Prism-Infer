@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import gc
-import hashlib
 import json
 import sys
 from collections import Counter
@@ -38,11 +37,11 @@ from benchmarks.harness import (
 from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import (
     BENCHMARK_SCHEMA_VERSION,
-    canonical_json_sha256,
     load_workload_manifest,
     summarize_values,
     validate_benchmark_record,
 )
+from prism_infer.analysis.identity import canonical_json_sha256, sha256_file
 from prism_infer.analysis.performance_profile import (
     performance_profile,
     validate_performance_profile_record,
@@ -732,9 +731,7 @@ def _build_record(
         "model": {
             "path": str(Path(args.model).resolve()),
             "config_sha256": (
-                hashlib.sha256(model_config_path.read_bytes()).hexdigest()
-                if model_config_path.is_file()
-                else "unknown"
+                sha256_file(model_config_path) if model_config_path.is_file() else "unknown"
             ),
             "dtype": str(llm.model_runner.model_dtype),
             "tensor_parallel_size": config.tensor_parallel_size,

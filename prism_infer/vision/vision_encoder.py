@@ -104,10 +104,6 @@ def _config_dtype(config: object | None) -> torch.dtype:
     return value
 
 
-# ═══════════════════════════════════════════════════════════════
-# PatchEmbed — Conv3d Patch Embedding
-# Ref: HF modeling_qwen3_vl.py:59-76
-# ═══════════════════════════════════════════════════════════════
 class PatchEmbed(nn.Module):
     """Conv3d patch embedding: pixel_values → patch features.
 
@@ -155,10 +151,6 @@ class PatchEmbed(nn.Module):
         return x
 
 
-# ═══════════════════════════════════════════════════════════════
-# ViTMLP — Vision Transformer FFN
-# Ref: HF modeling_qwen3_vl.py:46-56
-# ═══════════════════════════════════════════════════════════════
 class ViTMLP(nn.Module):
     """ViT FFN: Linear(1152→4304) + GELU-Tanh + Linear(4304→1152).
 
@@ -202,10 +194,6 @@ class VisionRotaryEmbedding(nn.Module):
         return torch.outer(seq, self.inv_freq)
 
 
-# ═══════════════════════════════════════════════════════════════
-# ViTAttention — Vision Transformer Self-Attention (合并 QKV, 16头, 双向)
-# Ref: HF modeling_qwen3_vl.py:168-248
-# ═══════════════════════════════════════════════════════════════
 class ViTAttention(nn.Module):
     """ViT Self-Attention: 合并 QKV 投影 + 16 头 + 双向注意力.
 
@@ -371,10 +359,6 @@ class ViTAttention(nn.Module):
         return o
 
 
-# ═══════════════════════════════════════════════════════════════
-# ViTBlock — Vision Transformer Block (Pre-Norm + 残差)
-# Ref: HF modeling_qwen3_vl.py:251-275
-# ═══════════════════════════════════════════════════════════════
 class ViTBlock(nn.Module):
     """ViT Transformer Block: LayerNorm → Attention → +res → LayerNorm → MLP → +res.
 
@@ -428,10 +412,6 @@ class ViTBlock(nn.Module):
         return x
 
 
-# ═══════════════════════════════════════════════════════════════
-# PatchMerger — 空间合并 (784→196) + 维度映射 (1152→4096)
-# Ref: HF modeling_qwen3_vl.py:93-106
-# ═══════════════════════════════════════════════════════════════
 class PatchMerger(nn.Module):
     """将 ViT patch 特征合并为 LLM 维度的 visual token.
 
@@ -473,9 +453,6 @@ class PatchMerger(nn.Module):
         return x
 
 
-# ═══════════════════════════════════════════════════════════════
-# VisionEncoder — 完整 ViT 编码器 (PatchEmbed → 27 Blocks → 4 Mergers)
-# ═══════════════════════════════════════════════════════════════
 class VisionEncoder(nn.Module):
     """Qwen3-VL Vision Encoder: patch→27层→4路Merger→(main, [ds0,ds1,ds2]).
 

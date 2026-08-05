@@ -1,3 +1,5 @@
+"""Vision encoder API and backend policy types."""
+
 from prism_infer.vision.backends import VisionAttentionBackendName
 
 __all__ = ["VisionAttentionBackendName", "VisionEncoder"]

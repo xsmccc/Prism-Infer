@@ -1,4 +1,6 @@
-import atexit  # atexit.register: 注册进程退出时的清理函数(类似C++ std::atexit)
+"""High-level request lifecycle and execution orchestration for Prism-Infer."""
+
+import atexit
 import gc
 import socket
 from dataclasses import dataclass
@@ -7,9 +9,9 @@ from time import perf_counter, perf_counter_ns
 from typing import Any, cast
 
 import torch
-import torch.multiprocessing as mp  # PyTorch多进程模块(比标准multiprocessing多CUDA tensor共享支持)
-from tqdm.auto import tqdm  # 进度条库, auto版本自动适配终端/Jupyter
-from transformers import AutoTokenizer  # HuggingFace分词器: 文本↔token_ids
+import torch.multiprocessing as mp
+from tqdm.auto import tqdm
+from transformers import AutoTokenizer
 
 from prism_infer.config import Config, PrismConfig
 from prism_infer.engine.contracts import BatchPlan, MetricsSink, StepResult

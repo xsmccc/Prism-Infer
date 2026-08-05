@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from prism_infer.analysis.benchmark_schema import canonical_json_sha256
+from prism_infer.analysis.identity import canonical_json_sha256
 from prism_infer.analysis.quality_metrics import aggregate_quality_predictions
 from prism_infer.analysis.working_set_plan import (
     build_muirbench_labeled_media_first_prompt,

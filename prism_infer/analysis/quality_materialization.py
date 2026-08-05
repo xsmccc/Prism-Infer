@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -19,7 +18,11 @@ from typing import Any
 
 from PIL import Image
 
-from prism_infer.analysis.benchmark_schema import canonical_json_sha256
+from prism_infer.analysis.identity import (
+    canonical_json_sha256,
+    sha256_bytes,
+    sha256_file,
+)
 from prism_infer.analysis.schema_constants import (
     LOWERCASE_HEX_DIGITS,
     SHA256_HEX_LENGTH,
@@ -38,24 +41,6 @@ IMAGE_FORMAT_SUFFIXES = {
     "TIFF": ".tiff",
     "WEBP": ".webp",
 }
-
-
-def sha256_bytes(payload: bytes) -> str:
-    """返回 bytes 的小写 SHA256。"""
-
-    if not isinstance(payload, bytes):
-        raise TypeError("payload must be bytes")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def sha256_file(path: str | Path) -> str:
-    """流式计算文件 SHA256，避免把 parquet 或视频整体读入内存。"""
-
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def canonical_sample_id(value: object) -> str:
@@ -83,7 +68,7 @@ def selection_sha256(
     if isinstance(seed, bool) or not isinstance(seed, int) or seed <= 0:
         raise ValueError("selection seed must be a positive integer")
     preimage = f"{dataset_id}{revision}{sample_id}{seed}".encode()
-    return hashlib.sha256(preimage).hexdigest()
+    return sha256_bytes(preimage)
 
 
 def selected_ids_sha256(sample_ids: Sequence[str]) -> str:

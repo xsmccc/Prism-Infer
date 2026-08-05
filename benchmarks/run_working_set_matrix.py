@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import subprocess
@@ -18,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from benchmarks.harness import collect_git_metadata
+from prism_infer.analysis.identity import sha256_file
 from prism_infer.analysis.quality_materialization import write_json_atomic
 from prism_infer.analysis.working_set_plan import load_working_set_plan
 
@@ -103,10 +103,6 @@ def _absolute_without_resolving_symlinks(path: Path) -> Path:
     return Path(os.path.abspath(path))
 
 
-def _sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def _validate_record_identity(
     record: object,
     *,
@@ -140,7 +136,7 @@ def _validate_completed_cell(record: dict[str, object], *, output: Path, log: Pa
     if not output.is_file() or not log.is_file():
         raise ValueError(f"completed matrix cell is missing output or log: {output}")
     expected_sha256 = record.get("output_sha256")
-    if not isinstance(expected_sha256, str) or _sha256_file(output) != expected_sha256:
+    if not isinstance(expected_sha256, str) or sha256_file(output) != expected_sha256:
         raise ValueError(f"completed matrix cell output SHA256 mismatch: {output}")
     try:
         payload = json.loads(output.read_text(encoding="utf-8"))
@@ -266,7 +262,7 @@ def main() -> None:
     git_record = asdict(git)
     plan_record = {
         "path": str(args.plan.resolve()),
-        "sha256": _sha256_file(args.plan),
+        "sha256": sha256_file(args.plan),
     }
     if args.resume:
         if not progress_path.is_file():
@@ -370,7 +366,7 @@ def main() -> None:
             {
                 "status": "complete",
                 "finished_at_utc": datetime.now(timezone.utc).isoformat(),
-                "output_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+                "output_sha256": sha256_file(output),
             }
         )
         write_json_atomic(progress_path, progress)

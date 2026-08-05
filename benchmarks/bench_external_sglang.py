@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import math
@@ -32,6 +31,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
 from benchmarks.working_set_workload import build_interleaved_image_content
+from prism_infer.analysis.identity import canonical_json_sha256, sha256_bytes, sha256_file
 
 EXTERNAL_SCHEMA_VERSION = 2
 DEFAULT_VIDEO_FPS = 24.0
@@ -55,13 +55,6 @@ def _stats(values: list[float]) -> dict[str, int | float]:
     }
 
 
-def _sha256(value: object) -> str:
-    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
-    return hashlib.sha256(payload).hexdigest()
-
-
 def _image(spec: dict[str, Any]) -> Image.Image:
     if "color" in spec:
         return Image.new(
@@ -71,7 +64,7 @@ def _image(spec: dict[str, Any]) -> Image.Image:
         )
     configured = Path(spec["path"])
     path = configured if configured.is_absolute() else REPO_ROOT / configured
-    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    actual = sha256_file(path)
     if actual != spec["sha256"]:
         raise ValueError(f"image SHA256 mismatch: expected {spec['sha256']}, got {actual}")
     with Image.open(path) as source:
@@ -118,8 +111,8 @@ def _stage_lossless_video(
         "fps": fps,
         "height": height,
         "width": width,
-        "decoded_rgb_sha256": hashlib.sha256(decoded.tobytes()).hexdigest(),
-        "file_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "decoded_rgb_sha256": sha256_bytes(decoded.tobytes()),
+        "file_sha256": sha256_file(path),
         "decoded_exact": True,
     }
 
@@ -402,13 +395,13 @@ def main() -> None:
             },
             "workload": {
                 "manifest_name": manifest["name"],
-                "manifest_sha256": _sha256(manifest),
+                "manifest_sha256": canonical_json_sha256(manifest),
                 "case_id": case["id"],
                 "request_types": [request["type"] for request in case["requests"]],
                 "num_requests": len(requests),
                 "prompt_tokens": sum(prompt_tokens),
                 "prompt_tokens_per_request": prompt_tokens,
-                "prompt_token_ids_sha256": _sha256(audited_prompt_ids),
+                "prompt_token_ids_sha256": canonical_json_sha256(audited_prompt_ids),
                 "media_identity": [
                     request["video_staging"] for request in requests if "video_staging" in request
                 ],
@@ -433,7 +426,7 @@ def main() -> None:
             "correctness": {
                 "outputs_identical_across_repeats": True,
                 "token_ids": token_runs[0],
-                "output_sha256": _sha256(token_runs[0]),
+                "output_sha256": canonical_json_sha256(token_runs[0]),
             },
             "timing_ms": {
                 "end_to_end": _stats(e2e_ms),

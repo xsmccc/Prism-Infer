@@ -9,7 +9,6 @@ continue from the existing page artifact without repeating completed groups.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -31,6 +30,7 @@ from benchmarks.working_set_workload import (
     verify_working_set_processor,
 )
 from prism_infer import LLM, SamplingParams
+from prism_infer.analysis.identity import sha256_bytes, sha256_file
 from prism_infer.analysis.quality_runtime import safe_materialized_path
 from prism_infer.analysis.working_set_plan import (
     DEFAULT_IMAGE_MARKER,
@@ -60,14 +60,6 @@ _MAX_NUM_BATCHED_TOKENS = DEFAULT_MAX_MODEL_LEN
 _MAX_CHUNK_SIZE = DEFAULT_MAX_CHUNK_SIZE
 
 
-def _sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _write_json_atomic(path: str | Path, value: object) -> str:
     payload = (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
         "utf-8"
@@ -88,7 +80,7 @@ def _write_json_atomic(path: str | Path, value: object) -> str:
     except BaseException:
         Path(temporary_name).unlink(missing_ok=True)
         raise
-    return hashlib.sha256(payload).hexdigest()
+    return sha256_bytes(payload)
 
 
 def _measurement_contract(*, model_name: str, model_revision: str) -> dict[str, Any]:
@@ -233,7 +225,7 @@ def _verified_group_media_paths(
             materialized_root,
             str(media["materialized_path"]),
         )
-        actual_sha256 = _sha256_file(path)
+        actual_sha256 = sha256_file(path)
         expected_sha256 = str(group["ordered_media_sha256"][index])
         if actual_sha256 != expected_sha256 or actual_sha256 != media["sha256"]:
             raise ValueError(
@@ -515,7 +507,7 @@ def main() -> None:
         json.dumps(
             {
                 "page_artifact": str(page_artifact_path),
-                "page_artifact_sha256": _sha256_file(page_artifact_path),
+                "page_artifact_sha256": sha256_file(page_artifact_path),
                 "plan": str(plan_path),
                 "plan_sha256": plan_sha256,
                 "measured_groups": len(completed),

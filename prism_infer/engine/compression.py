@@ -80,7 +80,7 @@ class CompressionMetadata:
 
     @property
     def visual_pruning_effective(self) -> bool:
-        """logical pruning mode 是否在当前 batch 真正删除了 visual token。"""
+        """Return whether logical pruning removed visual tokens in this batch."""
 
         return self.visual_pruning_active and any(
             record is not None and int(record.get("dropped_visual_tokens", 0)) > 0

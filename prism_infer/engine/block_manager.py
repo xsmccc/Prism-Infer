@@ -1,15 +1,4 @@
-# ═══════════════════════════════════════════════════════════════
-# block_manager.py —— KV Cache 物理块管理器 (PagedAttention 核心)
-#
-# 核心思想: 把 GPU 显存里的 KV Cache 切成固定大小的 block (如16 tokens/block),
-#           用类似 OS 虚拟内存分页的方式管理:
-#           - 每个 block 有唯一 block_id
-#           - 序列通过 block_table (页表) 间接引用物理 block
-#           - 支持 Prefix Caching: 相同前缀的 block 可以复用 (ref_count > 1)
-#
-# C++ 类比: Block ≈ 内存页, BlockManager ≈ 页帧分配器,
-#           block_table ≈ 页表, hash_to_block_id ≈ TLB/缓存索引
-# ═══════════════════════════════════════════════════════════════
+"""Paged KV-cache allocation, prefix sharing, compaction, and swap management."""
 
 import copy
 import hashlib
@@ -59,10 +48,9 @@ class _MultimodalPrefixCacheEntry:
         return self.benefit_tokens * (1 + self.lifetime_hits) / self.resident_blocks
 
 
-# ─── BlockManager: 物理块分配器 ──────────────────────────────
-# 管理所有 Block 的分配、释放、Prefix Caching
-# C++ 类比: class PageFrameAllocator + prefix hash table
 class BlockManager:
+    """Own physical KV blocks and the prefix-cache residency index."""
+
     def __init__(
         self,
         num_blocks: int,
@@ -415,18 +403,16 @@ class BlockManager:
     def cpu_free_block_ids(self):
         return self._cpu_pool.free_block_ids
 
-    # ── 计算 block 内容的哈希指纹 (类方法，不需要实例) ──
-    # prefix: 前一个 block 的哈希 → 形成链式哈希 (保证相同前缀才能匹配)
-    # C++ 类比: static hash_t compute_hash(vector<int>& tokens, hash_t prefix)
     @classmethod
     def compute_hash(cls, token_ids: list[int], prefix: int = -1) -> int:
+        """Hash one token block and its predecessor for prefix sharing."""
+
         h = xxhash.xxh64()
         if prefix != NO_BLOCK_HASH:
             h.update(prefix.to_bytes(8, "little"))
         h.update(np.asarray(token_ids, dtype=np.int64).tobytes())
         return h.intdigest()
 
-    # ── 分配一个物理块 (内部方法) ──
     def _remove_hash_index_for_block(self, block: Block) -> None:
         """释放/替换 block 前清理仍指向该 block 的 prefix-cache 索引。"""
 
@@ -449,16 +435,9 @@ class BlockManager:
                 f"got sequence={seq.block_size}, manager={self.block_size}"
             )
 
-    # ── 释放一个物理块 (内部方法) ──
     def _deallocate_block(self, block_id: int) -> None:
         self._gpu_pool.deallocate(block_id)
 
-    # ═══════════════════════════════════════════════════════════
-    # 以下四个方法 = 对外接口, 被 scheduler.py 调用
-    # ═══════════════════════════════════════════════════════════
-
-    # ── can_allocate: Prefill 前检查是否有足够空闲块 ──
-    # scheduler._schedule_prefill() 调用
     def can_allocate(self, seq: Sequence) -> bool:
         self._assert_sequence_block_size(seq)
         match = self._matching_multimodal_prefix(seq)
@@ -479,10 +458,6 @@ class BlockManager:
             >= required_blocks
         )
 
-    # ── allocate: 为一条新序列分配所有 KV Cache 块 (Prefill 阶段) ──
-    # 带 Prefix Caching: 如果之前有相同前缀的 block，直接复用，跳过计算
-    #
-    # 流程: 遍历序列的每个 block → 算哈希 → 查缓存 → 命中则复用, 未命中则新分配
     def allocate(self, seq: Sequence) -> tuple[tuple[int, int, int], ...]:
         self._assert_sequence_block_size(seq)
         if seq.block_table or seq.cpu_block_table:
@@ -518,9 +493,6 @@ class BlockManager:
                 self.deallocate(seq)
             raise
 
-    # ── deallocate: 释放一条序列的所有 KV Cache 块 ──
-    # scheduler.preempt() 或 scheduler.postprocess() (序列结束时) 调用
-    # 倒序释放: 最后一个块通常是不满的, 没有缓存价值
     def deallocate(self, seq: Sequence) -> None:
         self._assert_sequence_block_size(seq)
         if seq.cpu_block_table:
@@ -676,9 +648,8 @@ class BlockManager:
         match = self._matching_multimodal_prefix(seq)
         if match is None:
             return None
-        cache_id, entry = match
+        _, entry = match
         return {
-            "cache_id_sha256": hashlib.sha256(cache_id.encode("utf-8")).hexdigest(),
             "logical_prefix_tokens": entry.logical_prefix_len,
             "physical_prefix_tokens": entry.physical_prefix_len,
             "canonical_blocks": len(entry.block_ids),
@@ -754,20 +725,14 @@ class BlockManager:
                 not (cache_owns_tail and self.blocks[seq.block_table[-1]].ref_count == 2)
             )
         return self._gpu_pool.free_count + self._reclaimable_cache_blocks() >= required_blocks
-        # 注意: (len(seq) % block_size == 1) 是 bool, 转成 int 就是 0 或 1
-        # >= 1 → 需要 1 个空闲块
-        # >= 0 → 永远 True (不需要新块)
 
-    # ── may_append: Decode 阶段实际追加 token 后更新 block 状态 ──
-    # scheduler.postprocess() 在 append_token 之后调用
-    # 三种情况, 取决于追加后序列长度对 block_size 的余数:
     def may_append(self, seq: Sequence) -> None:
         self._assert_sequence_block_size(seq)
         block_table = seq.block_table
         last_block = self.blocks[block_table[-1]]  # 取当前最后一个 block
         physical_remainder = seq.physical_kv_len % self.block_size
         if physical_remainder == 1:
-            # ---- 情况1: 余数=1 → 刚好溢出到新 block ----
+            # The appended token starts a new physical block.
             # 上一个 block 刚填满(hash 已算好), 需要分配新块
             if (
                 not seq.has_compact_kv_layout
@@ -780,7 +745,7 @@ class BlockManager:
             block = self._allocate_free_block()
             block_table.append(block.block_id)
         elif physical_remainder == 0:
-            # ---- 情况2: 余数=0 → 当前 block 刚好填满 ----
+            # The appended token completes the current block.
             # 计算这个 block 的哈希, 注册到缓存索引
             if last_block.hash != NO_BLOCK_HASH:
                 raise RuntimeError("mutable KV block unexpectedly has a prefix hash")
@@ -800,26 +765,19 @@ class BlockManager:
                     token_ids,
                 )
         else:
-            # ---- 情况3: 余数>1且!=0 → block 还没满, 什么都不用做 ----
+            # A partially filled private block needs no metadata update.
             if last_block.hash != NO_BLOCK_HASH:
                 raise RuntimeError("partial KV block unexpectedly has a prefix hash")
 
-    # ════════════════════════════════════════════════════════════
-    # Swap 相关方法: GPU ↔ CPU KV Cache 块搬运
-    # C++ 类比: OS 的 swap 分区管理
-    #   swap_out = 页面换出 (GPU→CPU, 释放 GPU 物理页)
-    #   swap_in  = 页面换入 (CPU→GPU, 占用 GPU 物理页)
-    # ════════════════════════════════════════════════════════════
-
     def can_swap_out(self, seq: Sequence) -> bool:
-        """是否有足够的 CPU block 来换出这个序列"""
+        """Return whether the CPU pool can hold this sequence's KV blocks."""
+
         self._assert_sequence_block_size(seq)
         return bool(seq.block_table) and self._cpu_pool.can_allocate(len(seq.block_table))
 
     def swap_out(self, seq: Sequence) -> list[tuple[int, int]]:
-        """GPU → CPU: 把序列的 KV Cache 从 GPU 显存搬到 CPU 内存
-        返回: [(gpu_block_id, cpu_block_id), ...] 需要在 GPU 上执行的搬运对
-        """
+        """Move sequence ownership to CPU blocks and return payload copy pairs."""
+
         self._assert_sequence_block_size(seq)
         if seq.cpu_block_table:
             raise RuntimeError(f"seq {seq.seq_id} already has CPU block table")
@@ -929,21 +887,9 @@ class BlockManager:
             )
         return swap_map
 
-        # ── copy_on_write: 写时复制 (CoW) ──
-
-    # 当某个 block 被多个序列共享 (ref_count > 1) 时,
-    # 写入前必须先复制一份独立的 block, 避免污染其他序列的 KV Cache
-    #
-    # C++ 类比: Linux fork() 后的 Copy-on-Write 页面
-    #   - 多进程共享同一物理页 (ref_count > 1)
-    #   - 进程写入 → page fault → 复制新页 → 各自独立
-    # 这里:
-    #   - 多序列共享同一 KV Cache block (ref_count > 1)
-    #   - 序列要写 KV → CoW → 复制新 block → 更新 block_table
-    #
-    # 返回: (old_block_id, new_block_id) 如果发生了复制, 否则 None
-    #        调用者需要用这个信息在 GPU 上复制 KV 数据
     def copy_on_write(self, seq: Sequence) -> tuple[int, int] | None:
+        """Make the writable tail block private and return its GPU copy pair."""
+
         self._assert_sequence_block_size(seq)
         if not seq.block_table:
             return None
@@ -951,9 +897,8 @@ class BlockManager:
         last_block = self.blocks[last_block_id]
 
         if last_block.ref_count <= 1:
-            return None  # 独占, 不需要复制
+            return None
 
-        # 需要 CoW: 分配新 block, 旧 block 引用计数 -1
         match = self._matching_multimodal_prefix(seq)
         protected_cache_id = None if match is None else match[0]
         try:

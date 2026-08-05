@@ -55,7 +55,7 @@ def _module_version(name: str) -> dict[str, Any]:
 
 
 def _sha256(path: Path) -> str:
-    """流式计算小型身份文件的 SHA256。"""
+    """Stream a file digest without importing the package being inspected."""
 
     digest = hashlib.sha256()
     with path.open("rb") as handle:

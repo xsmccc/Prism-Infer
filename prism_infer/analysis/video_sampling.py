@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import math
 from collections.abc import Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
@@ -11,7 +10,7 @@ from typing import Any
 
 from PIL import Image
 
-from prism_infer.analysis.benchmark_schema import canonical_json_sha256
+from prism_infer.analysis.identity import canonical_json_sha256, sha256_bytes
 
 VIDEO_DECODER_DISTRIBUTION = "opencv-python-headless"
 VIDEO_COLOR_CONVERSION = "BGR_to_RGB"
@@ -109,7 +108,7 @@ def _rgb_frame_identity(image: Image.Image, *, index: int) -> dict[str, Any]:
         "index": index,
         "width": rgb.width,
         "height": rgb.height,
-        "rgb_sha256": hashlib.sha256(rgb.tobytes()).hexdigest(),
+        "rgb_sha256": sha256_bytes(rgb.tobytes()),
     }
 
 

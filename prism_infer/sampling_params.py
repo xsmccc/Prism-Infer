@@ -1,15 +1,17 @@
-from dataclasses import dataclass  # @dataclass: 自动生成__init__
+"""Request-level generation parameters."""
+
+from dataclasses import dataclass
 
 
 @dataclass
 class SamplingParams:
-    """请求级采样参数: 每条请求可以不同"""
+    """Generation settings attached to one request."""
 
-    temperature: float = 1.0  # 采样温度: logits/temperature后softmax, 越大越随机, 越小越确定
-    max_tokens: int = 64  # 最多生成多少个token
-    ignore_eos: bool = False  # True=遇到EOS也不停, 继续生成到max_tokens(benchmark用)
+    temperature: float = 1.0
+    max_tokens: int = 64
+    ignore_eos: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.temperature < 0:
             raise ValueError("temperature must be non-negative")
         if self.max_tokens <= 0:

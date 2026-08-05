@@ -27,10 +27,9 @@ from benchmarks.bench_system import MODE_SPECS
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
 from benchmarks.working_set_workload import verify_working_set_model
 from prism_infer import LLM, SamplingParams
-from prism_infer.analysis.benchmark_schema import canonical_json_sha256
+from prism_infer.analysis.identity import canonical_json_sha256, sha256_file
 from prism_infer.analysis.quality_materialization import (
     selected_ids_sha256,
-    sha256_file,
     write_json_atomic,
 )
 from prism_infer.analysis.quality_metrics import (
@@ -454,7 +453,6 @@ def _stage_run_contract(
         "evaluator_sha256": canonical_json_sha256(evaluator),
         "materialization_manifest_sha256": sha256_file(manifest_path),
         "selected_sample_ids_sha256": selected_ids_sha256(sample_ids),
-        "selected_media_group_ids_sha256": canonical_json_sha256(group_ids),
         "selected_samples": len(sample_ids),
         "selected_media_groups": len(group_ids),
         "selection_order": "media_group_sha256_then_materialized_source_order",
@@ -922,9 +920,7 @@ def run_stage(args: argparse.Namespace) -> None:
             "run_contract": run_contract,
             "selection": {
                 "selected_contract_samples": len(selected_contract_ids),
-                "selected_contract_ids_sha256": selected_ids_sha256(selected_contract_ids),
                 "multi_question_samples": len(expected_ids),
-                "multi_question_ids_sha256": selected_ids_sha256(expected_ids),
                 "protocol_exclusions": exclusions,
             },
             "materialization_verification": verification,

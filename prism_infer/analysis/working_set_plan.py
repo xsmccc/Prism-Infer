@@ -7,7 +7,6 @@ SGLang consume the same media groups, questions, and arrival schedule.
 from __future__ import annotations
 
 import bisect
-import hashlib
 import json
 import math
 import os
@@ -17,6 +16,12 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from prism_infer.analysis.identity import (
+    canonical_json_sha256,
+    sha256_bytes,
+    sha256_file,
+)
+from prism_infer.analysis.quality_materialization import selected_ids_sha256
 from prism_infer.analysis.quality_metrics import build_muirbench_prompt
 
 WORKING_SET_PLAN_SCHEMA_VERSION = 3
@@ -78,7 +83,7 @@ def load_muirbench_records(
     if not isinstance(relative_records_path, str) or not relative_records_path:
         raise ValueError("MuirBench selected_records.path is invalid")
     records_path = _safe_materialized_path(root, relative_records_path)
-    records_sha256 = _sha256_file(records_path)
+    records_sha256 = sha256_file(records_path)
     if records_sha256 != selected.get("sha256"):
         raise ValueError("materialized MuirBench records SHA256 mismatch")
 
@@ -106,9 +111,9 @@ def load_muirbench_records(
     record_ids = [str(record["sample_id"]) for record in records]
 
     source_identity: dict[str, Any] = {
-        "materialization_manifest_sha256": _sha256_file(manifest_path),
+        "materialization_manifest_sha256": sha256_file(manifest_path),
         "selected_records_sha256": records_sha256,
-        "selected_sample_ids_sha256": _selected_ids_sha256(record_ids),
+        "selected_sample_ids_sha256": selected_ids_sha256(record_ids),
         "subset": subset,
     }
     if selection_path is not None:
@@ -124,7 +129,7 @@ def load_muirbench_records(
         external_ids = selection_subset.get("sample_ids")
         if external_ids != selected_ids:
             raise ValueError("selection manifest IDs differ from materialized records")
-        source_identity["selection_manifest_sha256"] = _sha256_file(source)
+        source_identity["selection_manifest_sha256"] = sha256_file(source)
     return records, source_identity
 
 
@@ -151,7 +156,10 @@ def build_media_first_groups(
         if not isinstance(media, list) or not media:
             raise ValueError(f"MuirBench sample {sample_id!r} has no media")
         ordered_digests = tuple(
-            _sha256(item.get("sha256"), f"sample {sample_id!r} media[{index}].sha256")
+            _require_sha256(
+                item.get("sha256"),
+                f"sample {sample_id!r} media[{index}].sha256",
+            )
             if isinstance(item, Mapping)
             else _raise_invalid_media(sample_id, index)
             for index, item in enumerate(media)
@@ -160,7 +168,7 @@ def build_media_first_groups(
 
     groups = []
     for ordered_digests, group_records in grouped.items():
-        group_id = _canonical_json_sha256(list(ordered_digests))
+        group_id = canonical_json_sha256(list(ordered_digests))
         first_media = group_records[0]["media"]
         samples = []
         for sample_offset, record in enumerate(group_records):
@@ -170,7 +178,7 @@ def build_media_first_groups(
                     "sample_id": record["sample_id"],
                     "sample_offset": sample_offset,
                     "source_prompt": prompt,
-                    "source_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                    "source_prompt_sha256": sha256_bytes(prompt.encode("utf-8")),
                 }
             )
         groups.append(
@@ -208,7 +216,7 @@ def load_dense_prefix_pages(path: str | Path) -> dict[str, int]:
     for index, group in enumerate(raw_groups):
         if not isinstance(group, Mapping):
             raise ValueError(f"groups[{index}] must be an object")
-        group_id = _sha256(group.get("group_id"), f"groups[{index}].group_id")
+        group_id = _require_sha256(group.get("group_id"), f"groups[{index}].group_id")
         dense_pages = _positive_int(
             group.get("dense_prefix_pages"),
             f"groups[{index}].dense_prefix_pages",
@@ -287,7 +295,7 @@ def build_working_set_plan(
         "media_groups": len(groups),
         "repeated_media_groups": len(repeated_groups),
         "repeated_media_questions": sum(len(group["samples"]) for group in repeated_groups),
-        "selected_sample_ids_sha256": _selected_ids_sha256(
+        "selected_sample_ids_sha256": selected_ids_sha256(
             [str(record["sample_id"]) for record in records]
         ),
     }
@@ -448,7 +456,10 @@ def validate_working_set_plan(plan: Mapping[str, Any]) -> None:
         raise ValueError("working-set traffic must contain repeated-media question groups")
     # Group sorting intentionally changes the source sample order. The
     # dataset identity binds the source order, so only validate its digest form.
-    _sha256(dataset.get("selected_sample_ids_sha256"), "plan.dataset.selected_sample_ids_sha256")
+    _require_sha256(
+        dataset.get("selected_sample_ids_sha256"),
+        "plan.dataset.selected_sample_ids_sha256",
+    )
 
     expected_worksets = _select_worksets(repeated_groups, kv_budget_pages=budget_pages)
     raw_worksets = plan.get("worksets")
@@ -664,22 +675,25 @@ def _validate_group(
     image_marker: str,
 ) -> Mapping[str, Any]:
     group = _mapping(raw_group, f"plan.groups[{index}]")
-    group_id = _sha256(group.get("group_id"), f"plan.groups[{index}].group_id")
+    group_id = _require_sha256(group.get("group_id"), f"plan.groups[{index}].group_id")
     digests = group.get("ordered_media_sha256")
     if not isinstance(digests, list) or not digests:
         raise ValueError(f"plan.groups[{index}].ordered_media_sha256 must be non-empty")
     ordered_digests = [
-        _sha256(digest, f"plan.groups[{index}].ordered_media_sha256[{media_index}]")
+        _require_sha256(
+            digest,
+            f"plan.groups[{index}].ordered_media_sha256[{media_index}]",
+        )
         for media_index, digest in enumerate(digests)
     ]
-    if group_id != _canonical_json_sha256(ordered_digests):
+    if group_id != canonical_json_sha256(ordered_digests):
         raise ValueError(f"plan.groups[{index}].group_id does not match ordered media")
     media = group.get("media")
     if not isinstance(media, list) or len(media) != len(ordered_digests):
         raise ValueError(f"plan.groups[{index}].media does not match ordered media")
     for media_index, (item, digest) in enumerate(zip(media, ordered_digests, strict=True)):
         media_item = _mapping(item, f"plan.groups[{index}].media[{media_index}]")
-        if _sha256(media_item.get("sha256"), "media.sha256") != digest:
+        if _require_sha256(media_item.get("sha256"), "media.sha256") != digest:
             raise ValueError(f"plan.groups[{index}].media[{media_index}] SHA256 mismatch")
         _nonempty_string(media_item.get("materialized_path"), "media.materialized_path")
     samples = group.get("samples")
@@ -699,8 +713,11 @@ def _validate_group(
             raise ValueError("media-first source prompt has no labeled media prefix")
         if prompt.count(image_marker) != len(media):
             raise ValueError("media-first source prompt marker count differs from media")
-        digest = _sha256(sample.get("source_prompt_sha256"), "sample.source_prompt_sha256")
-        if digest != hashlib.sha256(prompt.encode("utf-8")).hexdigest():
+        digest = _require_sha256(
+            sample.get("source_prompt_sha256"),
+            "sample.source_prompt_sha256",
+        )
+        if digest != sha256_bytes(prompt.encode("utf-8")):
             raise ValueError("sample source prompt SHA256 mismatch")
         sample_ids.append(sample_id)
     if group.get("sample_ids") != sample_ids:
@@ -814,7 +831,7 @@ def _rng_stream_contract(seed: int) -> dict[str, int | str]:
 def _portable_media_record(item: object, *, path: str) -> dict[str, Any]:
     media = _mapping(item, path)
     result = {
-        "sha256": _sha256(media.get("sha256"), f"{path}.sha256"),
+        "sha256": _require_sha256(media.get("sha256"), f"{path}.sha256"),
         "materialized_path": _nonempty_string(
             media.get("materialized_path"), f"{path}.materialized_path"
         ),
@@ -855,7 +872,7 @@ def _nonempty_string(value: object, path: str) -> str:
     return value
 
 
-def _sha256(value: object, path: str) -> str:
+def _require_sha256(value: object, path: str) -> str:
     digest = _nonempty_string(value, path)
     if len(digest) != _SHA256_LENGTH or any(character not in _HEX_DIGITS for character in digest):
         raise ValueError(f"{path} must be a lowercase SHA256 digest")
@@ -879,31 +896,6 @@ def _positive_number(value: object, path: str) -> float:
 
 def _raise_invalid_media(sample_id: str, index: int) -> str:
     raise ValueError(f"MuirBench sample {sample_id!r} media[{index}] must be an object")
-
-
-def _canonical_json_sha256(value: object) -> str:
-    payload = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _selected_ids_sha256(sample_ids: Sequence[str]) -> str:
-    normalized = [_nonempty_string(sample_id, "sample_id") for sample_id in sample_ids]
-    if len(normalized) != len(set(normalized)):
-        raise ValueError("selected sample IDs must be unique")
-    return _canonical_json_sha256(normalized)
-
-
-def _sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _read_json_object(path: str | Path) -> dict[str, Any]:
@@ -952,4 +944,4 @@ def _write_json_atomic(path: str | Path, value: object) -> str:
     except BaseException:
         Path(temporary_name).unlink(missing_ok=True)
         raise
-    return hashlib.sha256(payload).hexdigest()
+    return sha256_bytes(payload)

@@ -8,7 +8,6 @@ offline closed-loop 结果表述为 online serving 吞吐。
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import math
@@ -32,6 +31,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from benchmarks.harness import collect_git_metadata, collect_gpu_metadata
 from benchmarks.working_set_workload import build_interleaved_image_content
+from prism_infer.analysis.identity import canonical_json_sha256, sha256_file
 
 EXTERNAL_SCHEMA_VERSION = 2
 COMPARISON_PROFILES = ("diagnostic_matched", "best_stable")
@@ -88,16 +88,6 @@ def _stats(values: list[float]) -> dict[str, int | float]:
     }
 
 
-def _canonical_sha256(value: object) -> str:
-    payload = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
 def _enum_name(value: Any) -> str:
     return str(getattr(value, "name", value))
 
@@ -139,7 +129,7 @@ def _file_image(spec: dict[str, Any]) -> Image.Image:
     path = configured if configured.is_absolute() else REPO_ROOT / configured
     if not path.is_file():
         raise FileNotFoundError(f"benchmark image is missing: {path}")
-    actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+    actual_sha256 = sha256_file(path)
     if actual_sha256 != spec["sha256"]:
         raise ValueError(
             f"benchmark image SHA256 mismatch: expected {spec['sha256']}, got {actual_sha256}"
@@ -431,9 +421,7 @@ def main() -> None:
         "model": {
             "path": str(Path(args.model).resolve()),
             "config_sha256": (
-                hashlib.sha256(model_config_path.read_bytes()).hexdigest()
-                if model_config_path.is_file()
-                else "unknown"
+                sha256_file(model_config_path) if model_config_path.is_file() else "unknown"
             ),
             "dtype": "torch.bfloat16",
             "tensor_parallel_size": args.tensor_parallel_size,
@@ -460,13 +448,13 @@ def main() -> None:
         },
         "workload": {
             "manifest_name": manifest["name"],
-            "manifest_sha256": _canonical_sha256(manifest),
+            "manifest_sha256": canonical_json_sha256(manifest),
             "case_id": case["id"],
             "request_types": [request["type"] for request in case["requests"]],
             "num_requests": len(requests),
             "prompt_tokens": sum(prompt_token_counts),
             "prompt_tokens_per_request": prompt_token_counts,
-            "prompt_token_ids_sha256": _canonical_sha256(audited_prompt_ids),
+            "prompt_token_ids_sha256": canonical_json_sha256(audited_prompt_ids),
             "prompt_adapters": {
                 modality: VLLM_PROMPT_ADAPTERS[modality]
                 for modality in ("image", "video")
@@ -494,7 +482,7 @@ def main() -> None:
         "correctness": {
             "outputs_identical_across_repeats": True,
             "token_ids": token_runs[0],
-            "output_sha256": _canonical_sha256(token_runs[0]),
+            "output_sha256": canonical_json_sha256(token_runs[0]),
         },
         "timing_ms": {
             "end_to_end": _stats(e2e_ms),

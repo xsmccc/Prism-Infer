@@ -23,8 +23,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from prism_infer.analysis.benchmark_schema import canonical_json_sha256
 from prism_infer.analysis.http_range_reader import HTTPRangeReader
+from prism_infer.analysis.identity import canonical_json_sha256
 from prism_infer.analysis.quality_materialization import (
     evaluation_subset_record,
     media_identity_record,

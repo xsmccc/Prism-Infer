@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import random
@@ -49,6 +48,7 @@ from benchmarks.working_set_workload import (
 )
 from prism_infer import LLM, SamplingParams
 from prism_infer.analysis.benchmark_schema import load_workload_manifest
+from prism_infer.analysis.identity import canonical_json_sha256, sha256_file
 from prism_infer.analysis.online_serving import (
     ONLINE_BENCHMARK_SCHEMA_VERSION,
     summarize_online_run,
@@ -246,16 +246,6 @@ def _planned_online_requests(
     )
 
 
-def _canonical_sha256(value: object) -> str:
-    payload = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
 def _prompt_audit(
     llm,
     run,
@@ -273,9 +263,9 @@ def _prompt_audit(
     return {
         "prompt_tokens": sum(prompt_counts),
         "prompt_tokens_per_request": prompt_counts,
-        "prompt_token_ids_sha256": _canonical_sha256(prompt_ids),
+        "prompt_token_ids_sha256": canonical_json_sha256(prompt_ids),
         "prompt_token_ids_sha256_by_class": {
-            case_id: _canonical_sha256(rows) for case_id, rows in sorted(by_class.items())
+            case_id: canonical_json_sha256(rows) for case_id, rows in sorted(by_class.items())
         },
     }
 
@@ -358,7 +348,7 @@ def _population_prefix_evidence(
         "sample_id": sample_id,
         "request_id": result.request_key,
         "prompt_tokens": len(prompt_ids),
-        "prompt_token_ids_sha256": _canonical_sha256([prompt_ids]),
+        "prompt_token_ids_sha256": canonical_json_sha256([prompt_ids]),
         "expected_dense_prefix_pages": expected_dense_pages,
         "compact_prefix_tokens": (None if compacted_tokens is None else int(compacted_tokens)),
         "compact_prefix_pages": compacted_pages,
@@ -844,7 +834,7 @@ def main() -> None:
         plan_path = Path(args.working_set_plan)
         working_set_audit = {
             "plan_path": str(plan_path.resolve()),
-            "plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+            "plan_sha256": sha256_file(plan_path),
             "workset_id": args.working_set_id,
             "variant": args.working_set_variant,
             "group_ids": list(working_set.workset["group_ids"]),
@@ -1006,7 +996,7 @@ def main() -> None:
                 offsets_s=working_set.measured_offsets_s,
                 sampling=sampling,
             )
-        trace_sha256 = _canonical_sha256(
+        trace_sha256 = canonical_json_sha256(
             {
                 "classes": request_classes,
                 "offsets_s": [request.arrival_offset_s for request in requests],
@@ -1061,11 +1051,7 @@ def main() -> None:
             "hardware": collect_gpu_metadata().environment_dict(),
             "model": {
                 "path": str(Path(args.model).resolve()),
-                "config_sha256": (
-                    hashlib.sha256(config_path.read_bytes()).hexdigest()
-                    if config_path.is_file()
-                    else None
-                ),
+                "config_sha256": (sha256_file(config_path) if config_path.is_file() else None),
             },
             "workload": {
                 "manifest": manifest["name"],
@@ -1190,7 +1176,7 @@ def main() -> None:
                         request["state"] == "finished" for request in run_record["requests"]
                     ),
                     "terminal_failure_count": record["terminal_failures"]["count"],
-                    "output_token_ids_sha256": _canonical_sha256(
+                    "output_token_ids_sha256": canonical_json_sha256(
                         [request["token_ids"] for request in run_record["requests"]]
                     ),
                 }

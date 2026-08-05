@@ -1,18 +1,4 @@
-# ═══════════════════════════════════════════════════════════════
-# model_runner.py —— 模型执行器 (engine 层最核心的文件)
-#
-# 职责: 把 scheduler 的调度结果 (一批序列) 转换成 GPU tensor,
-#       喂给模型前向推理, 采样出下一个 token
-#
-# 关键概念:
-#   - Prefill 准备: 拼接多条序列的 token, 计算位置和 slot_mapping
-#   - Decode 准备: 每条序列只取最后一个 token
-#   - KV Cache 分配: 一次性预分配 GPU 显存, 分配给各 attention 层
-#   - CUDA Graph: 预录制 Decode 的 GPU 操作, 消除 CPU launch 开销
-#   - Tensor Parallel: 多 GPU 通过变长 IPC 控制通道同步调用
-#
-# C++ 类比: 整个文件 ≈ inference engine 的 execute() 函数
-# ═══════════════════════════════════════════════════════════════
+"""Prepare scheduled batches and run eager, compiled, or CUDA Graph execution."""
 
 import traceback
 from collections import OrderedDict
@@ -190,9 +176,8 @@ def _model_initialization_defaults(dtype: torch.dtype) -> Iterator[None]:
 
 
 class ModelRunner:
-    # ─────────────────────────────────────────────────────────
-    # __init__: 初始化模型、KV Cache、CUDA Graph
-    # ─────────────────────────────────────────────────────────
+    """Prepare batches and own model, KV-cache, and execution backends."""
+
     def __init__(
         self,
         config: Config,
@@ -336,9 +321,6 @@ class ModelRunner:
         if self.rank > 0:
             self.loop()
 
-    # ─────────────────────────────────────────────────────────
-    # exit: 清理资源
-    # ─────────────────────────────────────────────────────────
     def _tp_barrier(self) -> None:
         """Synchronize NCCL ranks on each process's explicitly bound GPU."""
 
@@ -492,10 +474,6 @@ class ModelRunner:
         if local_error is not None:
             raise local_error
         return local_result
-
-    # ═══════════════════════════════════════════════════════════
-    # 初始化阶段: warmup + allocate_kv_cache
-    # ═══════════════════════════════════════════════════════════
 
     @staticmethod
     def _resolve_kv_cache_dtype(config: Config) -> torch.dtype:
@@ -911,16 +889,6 @@ class ModelRunner:
             self.cpu_kv_cache = None
             self.cpu_kv_scale_cache = None
 
-    # ═══════════════════════════════════════════════════════════
-    # 准备阶段: 把 Sequence 列表转成 GPU tensor
-    # ═══════════════════════════════════════════════════════════
-
-    # ── copy_kv_blocks: CoW (Copy-on-Write) GPU 端 KV 数据复制 ──
-    # 当多个序列共享同一个 KV Cache block 时,
-    # 写入前需要先复制一份, 避免污染其他序列的数据
-    #
-    # C++ 类比: memcpy(new_page, old_page, PAGE_SIZE)
-    # CUDA 类比: cudaMemcpyDeviceToDevice
     def _bound_gpu_scale_cache(self) -> torch.Tensor | None:
         """Return the optional scale cache after checking runner ownership."""
 
@@ -1030,15 +998,9 @@ class ModelRunner:
         if self.world_size > 1:
             self._tp_barrier()
 
-    # ── swap_blocks: GPU ↔ CPU KV Cache 数据搬运 ──
-    # C++ 类比: cudaMemcpyAsync(dst, src, size, direction, stream)
-    #   swap_out: DeviceToHost (GPU→CPU)
-    #   swap_in:  HostToDevice (CPU→GPU)
     def swap_blocks(self, swap_map: list[tuple[int, int]], direction: str):
-        """搬运 KV Cache blocks
-        direction='out': GPU→CPU (swap_map = [(gpu_id, cpu_id), ...])
-        direction='in':  CPU→GPU (swap_map = [(cpu_id, gpu_id), ...])
-        """
+        """Copy KV blocks between GPU and CPU storage in ``direction``."""
+
         if not swap_map:
             return
         if direction not in ("out", "in"):
@@ -1051,7 +1013,6 @@ class ModelRunner:
             raise RuntimeError("GPU/CPU scale caches must either both exist or both be absent")
         for src_id, dst_id in swap_map:
             if direction == "out":
-                # GPU → CPU (异步, non_blocking=True)
                 self.cpu_kv_cache[:, :, dst_id].copy_(
                     self.kv_cache[:, :, src_id], non_blocking=True
                 )
@@ -1060,7 +1021,6 @@ class ModelRunner:
                         scale_cache[:, :, src_id], non_blocking=True
                     )
             else:
-                # CPU → GPU (异步)
                 self.kv_cache[:, :, dst_id].copy_(
                     self.cpu_kv_cache[:, :, src_id], non_blocking=True
                 )
@@ -1068,7 +1028,6 @@ class ModelRunner:
                     scale_cache[:, :, dst_id].copy_(
                         cpu_scale_cache[:, :, src_id], non_blocking=True
                     )
-        # 确保搬运完成后再继续 (类似 cudaStreamSynchronize)
         torch.cuda.synchronize()
 
     def _get_input_preparer(self) -> ModelInputPreparer:
@@ -1225,10 +1184,6 @@ class ModelRunner:
             "selected_batch_size": selected_batch_size,
             "batch_padding": selected_batch_size - requested_batch_size,
         }
-
-    # ═══════════════════════════════════════════════════════════
-    # 执行阶段: run_model + run (对外入口)
-    # ═══════════════════════════════════════════════════════════
 
     @torch.inference_mode()
     def run_model_eager(
@@ -1883,8 +1838,6 @@ class ModelRunner:
         return ExecutionResult(token_ids=token_ids)
 
     def _validate_execution_plan(self, plan: BatchPlan) -> None:
-        if not isinstance(plan, BatchPlan):
-            raise TypeError(f"run_plan requires BatchPlan, got {type(plan).__name__}")
         if not plan.is_prefill or not self.config.enable_chunked_prefill:
             return
         if any(not seq.block_table for seq in plan.sequences):
@@ -1973,208 +1926,202 @@ class ModelRunner:
         )
         return list(self.run_plan(plan).token_ids)
 
-    # ═══════════════════════════════════════════════════════════
-    # CUDA Graph: 预录制 Decode 操作, 消除 CPU 开销
-    # ═══════════════════════════════════════════════════════════
+    def _build_cudagraph_buffers(self, batch_size: int, max_num_blocks: int):
+        """Allocate stable device and pinned-host buffers for one Graph bucket."""
+
+        packed_model_inputs = torch.zeros(batch_size * (1 + MROPE_AXIS_COUNT), dtype=torch.int64)
+        input_ids = packed_model_inputs[:batch_size]
+        positions = packed_model_inputs[batch_size:].view(MROPE_AXIS_COUNT, batch_size)
+        metadata_prefix_size = 3 * batch_size + 1
+        packed_decode_metadata = torch.full(
+            (metadata_prefix_size + batch_size * max_num_blocks,),
+            -1,
+            dtype=torch.int32,
+        )
+        host_packed_model_inputs = torch.zeros(
+            packed_model_inputs.numel(),
+            dtype=torch.int64,
+            device="cpu",
+            pin_memory=True,
+        )
+        host_packed_decode_metadata = torch.full(
+            (packed_decode_metadata.numel(),),
+            -1,
+            dtype=torch.int32,
+            device="cpu",
+            pin_memory=True,
+        )
+        slot_mapping = packed_decode_metadata[:batch_size]
+        context_lens = packed_decode_metadata[batch_size : 2 * batch_size]
+        decode_max_context_len = packed_decode_metadata[3 * batch_size]
+        block_tables = packed_decode_metadata[metadata_prefix_size:].view(
+            batch_size,
+            max_num_blocks,
+        )
+        host_slot_mapping = host_packed_decode_metadata[:batch_size]
+        host_context_lens = host_packed_decode_metadata[batch_size : 2 * batch_size]
+        host_decode_max_context_len = host_packed_decode_metadata[3 * batch_size]
+        host_block_tables = host_packed_decode_metadata[metadata_prefix_size:].view(
+            batch_size,
+            max_num_blocks,
+        )
+
+        slot_mapping.copy_(torch.arange(batch_size, dtype=torch.int32, device=slot_mapping.device))
+        context_lens.fill_(1)
+        decode_max_context_len.fill_(1)
+        block_tables.zero_()
+        host_slot_mapping.copy_(torch.arange(batch_size, dtype=torch.int32, device="cpu"))
+        host_context_lens.fill_(1)
+        host_decode_max_context_len.fill_(1)
+        host_block_tables.zero_()
+
+        buffers = {
+            "packed_model_inputs": packed_model_inputs,
+            "packed_decode_metadata": packed_decode_metadata,
+            "host_packed_model_inputs": host_packed_model_inputs,
+            "host_packed_decode_metadata": host_packed_decode_metadata,
+            "host_packed_model_inputs_numpy": host_packed_model_inputs.numpy(),
+            "host_packed_decode_metadata_numpy": host_packed_decode_metadata.numpy(),
+            "input_ids": input_ids,
+            "positions": positions,
+            "slot_mapping": slot_mapping,
+            "context_lens": context_lens,
+            "decode_max_context_len": decode_max_context_len,
+            "block_tables": block_tables,
+            "host_input_ids": host_packed_model_inputs[:batch_size],
+            "host_positions": host_packed_model_inputs[batch_size:].view(
+                MROPE_AXIS_COUNT,
+                batch_size,
+            ),
+            "host_slot_mapping": host_slot_mapping,
+            "host_context_lens": host_context_lens,
+            "host_decode_max_context_len": host_decode_max_context_len,
+            "host_block_tables": host_block_tables,
+        }
+        capture_context = Context(
+            is_prefill=False,
+            slot_mapping=slot_mapping,
+            context_lens=context_lens,
+            decode_max_context_len=decode_max_context_len,
+            block_tables=block_tables,
+            paged_decode_block_n=self.config.paged_decode_block_n,
+        )
+        return buffers, capture_context
+
+    @staticmethod
+    def _stage_cudagraph_inputs(buffers) -> None:
+        buffers["packed_model_inputs"].copy_(
+            buffers["host_packed_model_inputs"],
+            non_blocking=True,
+        )
+        buffers["packed_decode_metadata"].copy_(
+            buffers["host_packed_decode_metadata"],
+            non_blocking=True,
+        )
+
+    @staticmethod
+    def _cudagraph_model_inputs(buffers) -> DeviceModelInputs:
+        return DeviceModelInputs(buffers["input_ids"], buffers["positions"])
+
+    def _capture_greedy_cudagraph(
+        self,
+        outputs: torch.Tensor,
+        buffers,
+        capture_context: Context,
+    ) -> tuple[torch.cuda.CUDAGraph, torch.Tensor]:
+        """Capture model forward and deterministic greedy token selection."""
+
+        batch_size = buffers["input_ids"].numel()
+        graph = torch.cuda.CUDAGraph()
+        compute_greedy_tokens = getattr(self.model, "compute_greedy_tokens", None)
+        with use_context(capture_context):
+            self._stage_cudagraph_inputs(buffers)
+            capture_inputs = self._cudagraph_model_inputs(buffers)
+            if self.decode_compile_first_call_pending:
+                torch.cuda.synchronize()
+                compile_start = perf_counter()
+                outputs[:batch_size] = self._forward_model(capture_inputs)
+                torch.cuda.synchronize()
+                self.decode_compile_first_call_ms = (perf_counter() - compile_start) * 1000.0
+                self.decode_compile_first_call_pending = False
+            else:
+                outputs[:batch_size] = self._forward_model(capture_inputs)
+            if compute_greedy_tokens is None:
+                self.model.compute_logits(outputs[:batch_size]).argmax(dim=-1)
+            else:
+                compute_greedy_tokens(outputs[:batch_size])
+            with torch.cuda.graph(graph, self.graph_pool):
+                self._stage_cudagraph_inputs(buffers)
+                outputs[:batch_size] = self._forward_model(self._cudagraph_model_inputs(buffers))
+                if compute_greedy_tokens is None:
+                    captured_tokens = self.model.compute_logits(outputs[:batch_size]).argmax(dim=-1)
+                else:
+                    captured_tokens = compute_greedy_tokens(outputs[:batch_size])
+        return graph, captured_tokens
+
+    def _capture_logits_cudagraph(
+        self,
+        outputs: torch.Tensor,
+        buffers,
+        capture_context: Context,
+    ) -> tuple[torch.cuda.CUDAGraph, torch.Tensor]:
+        """Capture the full-logits path used by non-greedy sampling."""
+
+        batch_size = buffers["input_ids"].numel()
+        graph = torch.cuda.CUDAGraph()
+        with use_context(capture_context):
+            self._stage_cudagraph_inputs(buffers)
+            outputs[:batch_size] = self._forward_model(self._cudagraph_model_inputs(buffers))
+            self.model.compute_logits(outputs[:batch_size])
+            with torch.cuda.graph(graph, self.graph_pool):
+                self._stage_cudagraph_inputs(buffers)
+                outputs[:batch_size] = self._forward_model(self._cudagraph_model_inputs(buffers))
+                captured_logits = self.model.compute_logits(outputs[:batch_size])
+        return graph, captured_logits
 
     @torch.inference_mode()
-    def capture_cudagraph(self):
-        """录制不同 batch size 的 CUDA Graph"""
+    def capture_cudagraph(self) -> None:
+        """Capture greedy and full-logits decode Graphs for configured buckets."""
+
         torch.cuda.synchronize()
         capture_start = perf_counter()
         config = self.config
-        hf_config = config.hf_config
-        text_config = _text_hf_config(hf_config)
-        max_bs = min(
-            self.config.max_num_seqs,
-            MAX_CUDA_GRAPH_BATCH_SIZE,
-        )
+        text_config = _text_hf_config(config.hf_config)
+        max_bs = min(config.max_num_seqs, MAX_CUDA_GRAPH_BATCH_SIZE)
         max_num_blocks = (config.max_model_len + self.block_size - 1) // self.block_size
-        # 最多需要多少个 block (向上取整)
-
-        # ── 创建"占位"tensor (graph 录制时绑定这些 tensor 的地址) ──
         outputs = torch.zeros(max_bs, text_config.hidden_size)
-
-        # ── 要录制的 batch size 列表 ──
         self.graph_bs = self._cudagraph_batch_sizes(max_bs)
-        # [1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 48, 64, ...]
-        # 不是每个 bs 都录, 只录这些 "档位"
-        # 大 batch 不在列表里时, 向上找最近的 (如 bs=9 → 用 bs=16 的 graph)
-
         self.graphs = {}
         self.greedy_graphs = {}
         self.graph_vars = {}
         self.graph_logits = {}
         self.graph_greedy_tokens = {}
-        self.graph_pool = None  # 共享 GPU 内存池
+        self.graph_pool = None
 
-        for bs in reversed(self.graph_bs):  # 从大到小录
-            greedy_graph = torch.cuda.CUDAGraph()
-
-            packed_model_inputs = torch.zeros(
-                bs * (1 + MROPE_AXIS_COUNT),
-                dtype=torch.int64,
-            )
-            input_ids = packed_model_inputs[:bs]
-            positions = packed_model_inputs[bs:].view(MROPE_AXIS_COUNT, bs)
-            metadata_prefix_size = 3 * bs + 1
-            packed_decode_metadata = torch.full(
-                (metadata_prefix_size + bs * max_num_blocks,),
-                -1,
-                dtype=torch.int32,
-            )
-            host_packed_model_inputs = torch.zeros(
-                packed_model_inputs.numel(),
-                dtype=torch.int64,
-                device="cpu",
-                pin_memory=True,
-            )
-            host_packed_decode_metadata = torch.full(
-                (packed_decode_metadata.numel(),),
-                -1,
-                dtype=torch.int32,
-                device="cpu",
-                pin_memory=True,
-            )
-            host_packed_model_inputs_numpy = host_packed_model_inputs.numpy()
-            host_packed_decode_metadata_numpy = host_packed_decode_metadata.numpy()
-            slot_mapping = packed_decode_metadata[:bs]
-            context_lens = packed_decode_metadata[bs : 2 * bs]
-            decode_max_context_len = packed_decode_metadata[3 * bs]
-            block_tables = packed_decode_metadata[metadata_prefix_size:].view(
-                bs,
+        for batch_size in reversed(self.graph_bs):
+            buffers, capture_context = self._build_cudagraph_buffers(
+                batch_size,
                 max_num_blocks,
             )
-            host_input_ids = host_packed_model_inputs[:bs]
-            host_positions = host_packed_model_inputs[bs:].view(MROPE_AXIS_COUNT, bs)
-            host_slot_mapping = host_packed_decode_metadata[:bs]
-            host_context_lens = host_packed_decode_metadata[bs : 2 * bs]
-            host_decode_max_context_len = host_packed_decode_metadata[3 * bs]
-            host_block_tables = host_packed_decode_metadata[metadata_prefix_size:].view(
-                bs, max_num_blocks
+            greedy_graph, captured_greedy_tokens = self._capture_greedy_cudagraph(
+                outputs,
+                buffers,
+                capture_context,
             )
-
-            # warmup: 先跑一次, 让 CUDA 编译 kernel
-            slot_mapping.copy_(torch.arange(bs, dtype=torch.int32, device=slot_mapping.device))
-            context_lens.fill_(1)
-            decode_max_context_len.fill_(1)
-            block_tables.zero_()
-            host_slot_mapping.copy_(torch.arange(bs, dtype=torch.int32, device="cpu"))
-            host_context_lens.fill_(1)
-            host_decode_max_context_len.fill_(1)
-            host_block_tables.zero_()
-            capture_context = Context(
-                is_prefill=False,
-                slot_mapping=slot_mapping,
-                context_lens=context_lens,
-                decode_max_context_len=decode_max_context_len,
-                block_tables=block_tables,
-                paged_decode_block_n=config.paged_decode_block_n,
-            )
-            compute_greedy_tokens = getattr(
-                self.model,
-                "compute_greedy_tokens",
-                None,
-            )
-            with use_context(capture_context):
-                packed_model_inputs.copy_(host_packed_model_inputs, non_blocking=True)
-                packed_decode_metadata.copy_(
-                    host_packed_decode_metadata,
-                    non_blocking=True,
-                )
-                capture_inputs = DeviceModelInputs(input_ids[:bs], positions[:, :bs])
-                if self.decode_compile_first_call_pending:
-                    torch.cuda.synchronize()
-                    compile_start = perf_counter()
-                    outputs[:bs] = self._forward_model(capture_inputs)
-                    torch.cuda.synchronize()
-                    self.decode_compile_first_call_ms = (perf_counter() - compile_start) * 1000.0
-                    self.decode_compile_first_call_pending = False
-                else:
-                    outputs[:bs] = self._forward_model(capture_inputs)
-                if compute_greedy_tokens is None:
-                    self.model.compute_logits(outputs[:bs]).argmax(dim=-1)
-                else:
-                    compute_greedy_tokens(outputs[:bs])
-                with torch.cuda.graph(greedy_graph, self.graph_pool):
-                    packed_model_inputs.copy_(
-                        host_packed_model_inputs,
-                        non_blocking=True,
-                    )
-                    packed_decode_metadata.copy_(
-                        host_packed_decode_metadata,
-                        non_blocking=True,
-                    )
-                    outputs[:bs] = self._forward_model(
-                        DeviceModelInputs(input_ids[:bs], positions[:, :bs])
-                    )
-                    if compute_greedy_tokens is None:
-                        captured_greedy_tokens = self.model.compute_logits(outputs[:bs]).argmax(
-                            dim=-1
-                        )
-                    else:
-                        captured_greedy_tokens = compute_greedy_tokens(outputs[:bs])
-            # torch.cuda.graph(graph, pool):
-            #   pool: 共享内存池, 不同 bs 的 graph 共享 GPU workspace
-            #   with 块内的所有 GPU 操作被录制到 graph 里
-            #   不会真正执行, 只是记录 "要执行哪些 kernel"
-
             if self.graph_pool is None:
-                self.graph_pool = greedy_graph.pool()  # 第一个 graph 创建池
-
-            logits_graph = torch.cuda.CUDAGraph()
-            with use_context(capture_context):
-                packed_model_inputs.copy_(host_packed_model_inputs, non_blocking=True)
-                packed_decode_metadata.copy_(
-                    host_packed_decode_metadata,
-                    non_blocking=True,
-                )
-                outputs[:bs] = self._forward_model(
-                    DeviceModelInputs(input_ids[:bs], positions[:, :bs])
-                )
-                self.model.compute_logits(outputs[:bs])
-                with torch.cuda.graph(logits_graph, self.graph_pool):
-                    packed_model_inputs.copy_(
-                        host_packed_model_inputs,
-                        non_blocking=True,
-                    )
-                    packed_decode_metadata.copy_(
-                        host_packed_decode_metadata,
-                        non_blocking=True,
-                    )
-                    outputs[:bs] = self._forward_model(
-                        DeviceModelInputs(input_ids[:bs], positions[:, :bs])
-                    )
-                    captured_logits = self.model.compute_logits(outputs[:bs])
-
-            self.graphs[bs] = logits_graph  # 存起来, 按 bs 索引
-            self.greedy_graphs[bs] = greedy_graph
-            self.graph_vars[bs] = dict(
-                packed_model_inputs=packed_model_inputs,
-                packed_decode_metadata=packed_decode_metadata,
-                host_packed_model_inputs=host_packed_model_inputs,
-                host_packed_decode_metadata=host_packed_decode_metadata,
-                host_packed_model_inputs_numpy=host_packed_model_inputs_numpy,
-                host_packed_decode_metadata_numpy=host_packed_decode_metadata_numpy,
-                input_ids=input_ids,
-                positions=positions,
-                slot_mapping=slot_mapping,
-                context_lens=context_lens,
-                decode_max_context_len=decode_max_context_len,
-                block_tables=block_tables,
-                host_input_ids=host_input_ids,
-                host_positions=host_positions,
-                host_slot_mapping=host_slot_mapping,
-                host_context_lens=host_context_lens,
-                host_decode_max_context_len=host_decode_max_context_len,
-                host_block_tables=host_block_tables,
-                outputs=outputs,
+                self.graph_pool = greedy_graph.pool()
+            logits_graph, captured_logits = self._capture_logits_cudagraph(
+                outputs,
+                buffers,
+                capture_context,
             )
-            self.graph_logits[bs] = captured_logits
-            self.graph_greedy_tokens[bs] = captured_greedy_tokens
+            buffers["outputs"] = outputs
+            self.graphs[batch_size] = logits_graph
+            self.greedy_graphs[batch_size] = greedy_graph
+            self.graph_vars[batch_size] = buffers
+            self.graph_logits[batch_size] = captured_logits
+            self.graph_greedy_tokens[batch_size] = captured_greedy_tokens
             torch.cuda.synchronize()
 
         torch.cuda.synchronize()
         self.cudagraph_capture_ms = (perf_counter() - capture_start) * 1000.0
-        # 回放时: 把实际数据拷到这些 tensor 里 → replay → 读 outputs
-        # 这些 tensor 的 GPU 地址在整个生命周期内不变 (CUDA Graph 的要求)

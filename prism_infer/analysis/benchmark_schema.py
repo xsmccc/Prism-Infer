@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import statistics
@@ -15,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from prism_infer.analysis.identity import canonical_json_sha256
 from prism_infer.analysis.reference_quality import normalize_reference_text
 from prism_infer.analysis.schema_constants import (
     DECODE_COMPILE_KV_BOUNDARY,
@@ -85,18 +85,6 @@ def summarize_values(values: Sequence[float]) -> dict[str, int | float]:
         "min": min(numeric),
         "max": max(numeric),
     }
-
-
-def canonical_json_sha256(value: object) -> str:
-    """通过稳定 JSON 序列化计算结构化数据的 SHA256。"""
-
-    payload = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
 
 
 def _tensor_bytes_from_metadata(

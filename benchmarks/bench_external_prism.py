@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import os
@@ -37,6 +36,7 @@ from benchmarks.harness import (
     materialize_requests,
 )
 from prism_infer import LLM, SamplingParams
+from prism_infer.analysis.identity import canonical_json_sha256
 from prism_infer.analysis.performance_profile import (
     performance_profile,
     validate_performance_profile_record,
@@ -61,16 +61,6 @@ def _stats(values: list[float]) -> dict[str, int | float]:
         "min": min(values),
         "max": max(values),
     }
-
-
-def _sha256(value: object) -> str:
-    payload = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
 
 
 def _add_request(llm: LLM, request: dict[str, Any], sampling: SamplingParams) -> int:
@@ -554,12 +544,12 @@ def main() -> None:
             "prompt_kv": prompt_kv_runs[0],
             "workload": {
                 "manifest_name": manifest["name"],
-                "manifest_sha256": _sha256(manifest),
+                "manifest_sha256": canonical_json_sha256(manifest),
                 "case_id": case["id"],
                 "request_types": [request["type"] for request in case["requests"]],
                 "num_requests": 1,
                 "prompt_tokens": len(audited_prompt_ids),
-                "prompt_token_ids_sha256": _sha256([audited_prompt_ids]),
+                "prompt_token_ids_sha256": canonical_json_sha256([audited_prompt_ids]),
                 "max_tokens": args.max_tokens,
                 "traffic": "offline_closed_loop",
             },
@@ -588,7 +578,7 @@ def main() -> None:
             "correctness": {
                 "outputs_identical_across_repeats": True,
                 "token_ids": token_runs[0],
-                "output_sha256": _sha256(token_runs[0]),
+                "output_sha256": canonical_json_sha256(token_runs[0]),
             },
             "timing_ms": {
                 "end_to_end": _stats(e2e_ms),
@@ -617,8 +607,8 @@ def main() -> None:
                 raise RuntimeError("semantic profile session was not created")
             profile_session.metadata["correctness"] = {
                 "outputs_identical_across_profiled_repeats": True,
-                "output_sha256": _sha256(token_runs[0]),
-                "prompt_token_ids_sha256": _sha256([audited_prompt_ids]),
+                "output_sha256": canonical_json_sha256(token_runs[0]),
+                "prompt_token_ids_sha256": canonical_json_sha256([audited_prompt_ids]),
             }
             profile_record = profile_session.to_record()
             validate_performance_profile_record(profile_record)

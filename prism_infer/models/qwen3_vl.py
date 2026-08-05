@@ -1,8 +1,4 @@
-"""
-Qwen3-VL-8B 完整模型定义 (Vision + LLM + DeepStack).
-
-参照 HF Qwen3VLForConditionalGeneration 结构。
-"""
+"""Qwen3-VL model with Vision Encoder, DeepStack injection, and text decode."""
 
 import math
 from dataclasses import dataclass
@@ -254,9 +250,6 @@ class _LinearWeightView(nn.Module):
         )
 
 
-# ═══════════════════════════════════════════════════════════════
-# Qwen3VLTextRMSNorm
-# ═══════════════════════════════════════════════════════════════
 class Qwen3VLTextRMSNorm(nn.Module):
     """LLM 端的 RMSNorm (与 ViT 的 LayerNorm 不同)."""
 
@@ -274,9 +267,6 @@ class Qwen3VLTextRMSNorm(nn.Module):
         return self.weight * x.to(dtype=input_dtype)
 
 
-# ═══════════════════════════════════════════════════════════════
-# Qwen3VLTextAttention — LLM Self-Attention
-# ═══════════════════════════════════════════════════════════════
 class Qwen3VLTextAttention(nn.Module):
     """LLM Attention: 分开 QKV + QK-Norm + M-RoPE + GQA."""
 
@@ -664,9 +654,6 @@ class Qwen3VLTextAttention(nn.Module):
         return q, k
 
 
-# ═══════════════════════════════════════════════════════════════
-# Qwen3VLTextMLP — LLM FFN (SwiGLU)
-# ═══════════════════════════════════════════════════════════════
 class Qwen3VLTextMLP(nn.Module):
     """LLM MLP: Gate-Up-Down (SwiGLU)."""
 
@@ -747,9 +734,6 @@ class Qwen3VLTextMLP(nn.Module):
         return self
 
 
-# ═══════════════════════════════════════════════════════════════
-# Qwen3VLTextDecoderLayer
-# ═══════════════════════════════════════════════════════════════
 class Qwen3VLTextDecoderLayer(nn.Module):
     """LLM Decoder Layer: RMSNorm→Attn→+res→RMSNorm→MLP→+res."""
 
@@ -845,10 +829,6 @@ class Qwen3VLTextDecoderLayer(nn.Module):
         return self.mlp(hidden_states), residual
 
 
-# ═══════════════════════════════════════════════════════════════
-# Qwen3VLTextModel — LLM Backbone (36 layers)
-# Ref: HF Qwen3VLTextModel, modeling_qwen3_vl.py L741-L857
-# ═══════════════════════════════════════════════════════════════
 class Qwen3VLTextModel(nn.Module):
     """LLM backbone: embed_tokens → 36 layers → final norm + DeepStack injection.
 
@@ -1182,10 +1162,6 @@ class Qwen3VLTextModel(nn.Module):
         return hidden_states
 
 
-# ═══════════════════════════════════════════════════════════════
-# Qwen3VLModel — Vision + LLM + DeepStack 注入
-# Ref: HF Qwen3VLModel, modeling_qwen3_vl.py L1162-L1264
-# ═══════════════════════════════════════════════════════════════
 class Qwen3VLModel(nn.Module):
     """Qwen3-VL 模型主体: Vision Encoder + LLM Backbone + DeepStack 注入.
 
@@ -1552,9 +1528,6 @@ class Qwen3VLModel(nn.Module):
         return hidden_states
 
 
-# ═══════════════════════════════════════════════════════════════
-# Qwen3VLForCausalLM — 最外层
-# ═══════════════════════════════════════════════════════════════
 class Qwen3VLForCausalLM(nn.Module):
     """Qwen3-VL-8B 完整模型."""
 

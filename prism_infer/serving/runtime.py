@@ -280,7 +280,7 @@ class ServingRuntime:
         return handle
 
     def cancel(self, request_id: str) -> None:
-        """异步请求取消；真正的 KV 释放由引擎所有者线程执行。"""
+        """Queue cancellation; the engine-owner thread releases KV state."""
 
         if not isinstance(request_id, str) or not request_id:
             raise ValueError("request_id must be a non-empty string")

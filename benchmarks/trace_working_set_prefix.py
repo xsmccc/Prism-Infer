@@ -10,7 +10,6 @@ different-question multimodal prefix hit.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from collections.abc import Mapping, Sequence
@@ -21,6 +20,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from prism_infer.analysis.identity import sha256_bytes, sha256_file
 
 TRACE_SCHEMA_VERSION = 1
 TRACE_RECORD_TYPE = "working_set_prefix_trace"
@@ -158,7 +159,7 @@ def select_knee_trace_contract(plan: Mapping[str, Any]) -> dict[str, Any]:
         prompt = _nonempty_string(sample.get("source_prompt"), "sample.source_prompt")
         return {
             "sample_id": _nonempty_string(sample.get("sample_id"), "sample.sample_id"),
-            "source_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            "source_prompt_sha256": sha256_bytes(prompt.encode("utf-8")),
         }
 
     return {
@@ -386,7 +387,7 @@ def _run_trace(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("CUDA is required for the working-set prefix trace")
     torch.set_num_threads(args.online_cpu_intraop_threads)
     plan_path = Path(args.working_set_plan).resolve()
-    plan_sha256 = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    plan_sha256 = sha256_file(plan_path)
     working_set = materialize_working_set(
         plan_path,
         workset_id=WORKSET_ID,

@@ -9,7 +9,6 @@ from the Prism evaluator at these non-framework boundaries.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -18,10 +17,9 @@ from typing import Any
 
 from PIL import Image
 
-from prism_infer.analysis.benchmark_schema import canonical_json_sha256
+from prism_infer.analysis.identity import canonical_json_sha256, sha256_bytes, sha256_file
 from prism_infer.analysis.quality_materialization import (
     selected_ids_sha256,
-    sha256_file,
 )
 from prism_infer.engine.vl_inputs import ImageInputs, VideoInputs
 
@@ -150,8 +148,8 @@ def quality_input_identity(
     """Build the framework-neutral semantic identity of one visual request."""
 
     record = {
-        "source_prompt_sha256": hashlib.sha256(source_prompt.encode("utf-8")).hexdigest(),
-        "chat_prompt_sha256": hashlib.sha256(inputs.prompt_text.encode("utf-8")).hexdigest(),
+        "source_prompt_sha256": sha256_bytes(source_prompt.encode("utf-8")),
+        "chat_prompt_sha256": sha256_bytes(inputs.prompt_text.encode("utf-8")),
         "prompt_token_count": len(inputs.token_ids),
         "prompt_token_ids_sha256": canonical_json_sha256(inputs.token_ids),
         "media_sha256": list(media_sha256),

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
@@ -19,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
+
+from prism_infer.analysis.identity import sha256_bytes
 
 UNAVAILABLE = "unavailable"
 WORKSET_ORDER = ("fit", "knee", "pressure")
@@ -914,7 +915,7 @@ def _load_inputs(paths: Sequence[Path]) -> tuple[list[dict[str, Any]], list[str]
             raise ValueError(f"expected JSON object: {path}")
         records.append(value)
         sources.append(path.name)
-        digests.append(hashlib.sha256(payload).hexdigest())
+        digests.append(sha256_bytes(payload))
     return records, sources, digests
 
 

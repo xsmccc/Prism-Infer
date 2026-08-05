@@ -612,22 +612,13 @@ class OnlineServingSession:
                 ),
             )
 
-    def _prepare_media_sequence(
+    def _media_content_fingerprint(
         self,
-        request: OnlineRequest,
-        request_id: int,
-    ) -> Any:
-        """Prepare one media request without touching scheduler state."""
+        request_type: str,
+        media_objects: tuple[Any, ...],
+    ) -> str | None:
+        """Return an exact media identity, using object identity only as a memo key."""
 
-        payload = request.payload
-        request_type = payload.get("type", "text")
-        media_field = _ONLINE_MEDIA_FIELD_BY_TYPE.get(request_type)
-        if media_field is None:
-            raise RuntimeError(
-                f"background preprocessing received unsupported type {request_type!r}"
-            )
-        media = payload[media_field]
-        media_objects = tuple(media) if isinstance(media, list | tuple) else (media,)
         fingerprint_memo_key = (
             request_type,
             tuple(id(item) for item in media_objects),
@@ -661,6 +652,37 @@ class OnlineServingSession:
                 self._media_fingerprint_memo.move_to_end(fingerprint_memo_key)
                 while len(self._media_fingerprint_memo) > _ONLINE_MEDIA_CACHE_MAX_ENTRIES:
                     self._media_fingerprint_memo.popitem(last=False)
+        return media_fingerprint
+
+    def _process_media_inputs(
+        self,
+        request_type: str,
+        payload: dict[str, Any],
+        media: Any,
+    ) -> Any:
+        """Run the processor for a cache miss."""
+
+        if request_type in ("image", "images"):
+            return self.engine._process_image_inputs(payload["prompt"], media)
+        if request_type == "interleaved_images":
+            return self.engine._process_interleaved_image_inputs(
+                payload["prompt"],
+                media,
+                image_marker=payload.get("image_marker", "<image>"),
+            )
+        if request_type == "video":
+            return self.engine._process_video_inputs(payload["prompt"], media)
+        raise RuntimeError(f"background preprocessing received unsupported type {request_type!r}")
+
+    def _load_media_inputs(
+        self,
+        request_type: str,
+        payload: dict[str, Any],
+        media: Any,
+        media_fingerprint: str | None,
+    ) -> tuple[Any, str]:
+        """Reuse compatible processor output or build and retain a new entry."""
+
         cache_key = (
             self._cache_namespace,
             request_type,
@@ -706,26 +728,7 @@ class OnlineServingSession:
                     self._media_prompt_rebind_misses += 1
                 if media_fingerprint is None:
                     self._media_preprocess_cache_uncacheable += 1
-                if request_type in ("image", "images"):
-                    inputs = self.engine._process_image_inputs(
-                        payload["prompt"],
-                        media,
-                    )
-                elif request_type == "interleaved_images":
-                    inputs = self.engine._process_interleaved_image_inputs(
-                        payload["prompt"],
-                        media,
-                        image_marker=payload.get("image_marker", "<image>"),
-                    )
-                elif request_type == "video":
-                    inputs = self.engine._process_video_inputs(
-                        payload["prompt"],
-                        media,
-                    )
-                else:
-                    raise RuntimeError(
-                        f"background preprocessing received unsupported type {request_type!r}"
-                    )
+                inputs = self._process_media_inputs(request_type, payload, media)
                 visual_embedding_fingerprint = _visual_embedding_fingerprint(
                     self._cache_namespace,
                     request_type,
@@ -745,6 +748,17 @@ class OnlineServingSession:
                 self._media_layout_cache.move_to_end(layout_key)
                 while len(self._media_layout_cache) > _ONLINE_MEDIA_CACHE_MAX_ENTRIES:
                     self._media_layout_cache.popitem(last=False)
+        return inputs, visual_embedding_fingerprint
+
+    def _build_media_sequence(
+        self,
+        request_type: str,
+        request: OnlineRequest,
+        request_id: int,
+        inputs: Any,
+        visual_embedding_fingerprint: str,
+    ) -> Any:
+        """Convert prepared processor output into scheduler-owned request state."""
 
         if request_type in ("image", "images", "interleaved_images"):
             sequence = self.engine._prepare_image_sequence(
@@ -769,6 +783,37 @@ class OnlineServingSession:
             sequence.visual_embedding_cache_key = visual_embedding_fingerprint
         sequence.multimodal_prefix_cache_key = visual_embedding_fingerprint
         return sequence
+
+    def _prepare_media_sequence(
+        self,
+        request: OnlineRequest,
+        request_id: int,
+    ) -> Any:
+        """Prepare one media request without touching scheduler state."""
+
+        payload = request.payload
+        request_type = payload.get("type", "text")
+        media_field = _ONLINE_MEDIA_FIELD_BY_TYPE.get(request_type)
+        if media_field is None:
+            raise RuntimeError(
+                f"background preprocessing received unsupported type {request_type!r}"
+            )
+        media = payload[media_field]
+        media_objects = tuple(media) if isinstance(media, list | tuple) else (media,)
+        media_fingerprint = self._media_content_fingerprint(request_type, media_objects)
+        inputs, visual_embedding_fingerprint = self._load_media_inputs(
+            request_type,
+            payload,
+            media,
+            media_fingerprint,
+        )
+        return self._build_media_sequence(
+            request_type,
+            request,
+            request_id,
+            inputs,
+            visual_embedding_fingerprint,
+        )
 
     def _admit_ready_preprocessing(self, state: _OnlineRunState) -> None:
         """Publish completed preprocessing results from the engine thread."""

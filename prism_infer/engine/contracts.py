@@ -24,39 +24,21 @@ BLOCK_PAIR_ARITY = 2
 BLOCK_PREFIX_COPY_ARITY = 3
 
 
-def _positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+def _positive_int(value: int, *, name: str) -> int:
+    if value <= 0:
+        raise ValueError(f"{name} must be positive, got {value}")
     return value
 
 
-def _validate_block_pairs(pairs: object, *, name: str) -> None:
-    if not isinstance(pairs, tuple):
-        raise TypeError(f"{name} must be an immutable tuple")
+def _validate_block_pairs(pairs: tuple[BlockPair, ...], *, name: str) -> None:
     for pair in pairs:
-        if (
-            not isinstance(pair, tuple)
-            or len(pair) != BLOCK_PAIR_ARITY
-            or any(
-                isinstance(block_id, bool) or not isinstance(block_id, int) or block_id < 0
-                for block_id in pair
-            )
-        ):
-            raise ValueError(f"{name} must contain non-negative integer block pairs")
+        if len(pair) != BLOCK_PAIR_ARITY or any(block_id < 0 for block_id in pair):
+            raise ValueError(f"{name} must contain non-negative block pairs")
 
 
-def _validate_block_prefix_copies(copies: object) -> None:
-    if not isinstance(copies, tuple):
-        raise TypeError("copy_prefix must be an immutable tuple")
+def _validate_block_prefix_copies(copies: tuple[BlockPrefixCopy, ...]) -> None:
     for copy in copies:
-        if (
-            not isinstance(copy, tuple)
-            or len(copy) != BLOCK_PREFIX_COPY_ARITY
-            or any(isinstance(value, bool) or not isinstance(value, int) for value in copy)
-            or copy[0] < 0
-            or copy[1] < 0
-            or copy[2] <= 0
-        ):
+        if len(copy) != BLOCK_PREFIX_COPY_ARITY or copy[0] < 0 or copy[1] < 0 or copy[2] <= 0:
             raise ValueError(
                 "copy_prefix must contain "
                 "(non-negative source, non-negative destination, positive rows)"
@@ -82,10 +64,8 @@ class PrefillSlice:
             ("token_start", self.token_start),
             ("token_end", self.token_end),
         ):
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(
-                    f"PrefillSlice.{name} must be a non-negative integer, got {value!r}"
-                )
+            if value < 0:
+                raise ValueError(f"PrefillSlice.{name} must be non-negative, got {value}")
         if self.token_end <= self.token_start:
             raise ValueError(
                 "PrefillSlice must contain at least one token: "
@@ -143,10 +123,6 @@ class BatchPlan:
         self._validate_metadata()
 
     def _validate_sequences(self) -> tuple[int, ...]:
-        if not isinstance(self.phase, BatchPhase):
-            raise TypeError(f"BatchPlan.phase must be BatchPhase, got {type(self.phase).__name__}")
-        if not isinstance(self.sequences, tuple):
-            raise TypeError("BatchPlan.sequences must be an immutable tuple")
         if not self.sequences:
             raise ValueError("BatchPlan requires at least one sequence")
         return tuple(
@@ -158,8 +134,6 @@ class BatchPlan:
         )
 
     def _validate_scheduled_counts(self) -> None:
-        if not isinstance(self.scheduled_token_counts, tuple):
-            raise TypeError("BatchPlan.scheduled_token_counts must be an immutable tuple")
         if len(self.scheduled_token_counts) != len(self.sequences):
             raise ValueError(
                 "scheduled_token_counts must match sequences: "
@@ -186,8 +160,6 @@ class BatchPlan:
         )
         if not self.prefill_slices:
             object.__setattr__(self, "prefill_slices", slices)
-        if not isinstance(slices, tuple):
-            raise TypeError("BatchPlan.prefill_slices must be an immutable tuple")
         if len(slices) != len(self.sequences):
             raise ValueError("prefill_slices must match BatchPlan sequences")
         for seq, count, prefill_slice in zip(
@@ -222,8 +194,6 @@ class BatchPlan:
         count: int,
         prefill_slice: PrefillSlice,
     ) -> None:
-        if not isinstance(prefill_slice, PrefillSlice):
-            raise TypeError("BatchPlan.prefill_slices must contain PrefillSlice values")
         if prefill_slice.sequence_id != seq.seq_id:
             raise ValueError(
                 f"prefill slice sequence id mismatch: {prefill_slice.sequence_id} != {seq.seq_id}"
@@ -242,16 +212,10 @@ class BatchPlan:
             )
 
     def _validate_metadata(self) -> None:
-        if not isinstance(self.kv_transfers, KVTransferPlan):
-            raise TypeError("BatchPlan.kv_transfers must be KVTransferPlan")
-        if not isinstance(self.policy_name, str) or not self.policy_name:
+        if not self.policy_name:
             raise ValueError("BatchPlan.policy_name must be a non-empty string")
-        if (
-            isinstance(self.created_ns, bool)
-            or not isinstance(self.created_ns, int)
-            or self.created_ns < 0
-        ):
-            raise ValueError("BatchPlan.created_ns must be a non-negative integer")
+        if self.created_ns < 0:
+            raise ValueError("BatchPlan.created_ns must be non-negative")
 
     @property
     def is_prefill(self) -> bool:
@@ -325,17 +289,14 @@ class SingleGreedyDecodeState:
             ("logical_position", self.logical_position),
             ("kv_slot", self.kv_slot),
         ):
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(f"{name} must be a non-negative integer, got {value!r}")
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative, got {value}")
         _positive_int(self.physical_context_len, name="physical context length")
         _positive_int(self.logical_context_len, name="logical context length")
-        if not isinstance(self.block_table, tuple) or not self.block_table:
-            raise ValueError("block_table must be a non-empty immutable tuple")
-        if any(
-            isinstance(block_id, bool) or not isinstance(block_id, int) or block_id < 0
-            for block_id in self.block_table
-        ):
-            raise ValueError("block_table must contain non-negative integer block ids")
+        if not self.block_table:
+            raise ValueError("block_table must not be empty")
+        if any(block_id < 0 for block_id in self.block_table):
+            raise ValueError("block_table must contain non-negative block ids")
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,29 +314,10 @@ class DeviceModelInputs:
     deepstack_visual_embeds: tuple[torch.Tensor, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.input_ids, torch.Tensor):
-            raise TypeError("DeviceModelInputs.input_ids must be a tensor")
-        if not isinstance(self.position_ids, torch.Tensor):
-            raise TypeError("DeviceModelInputs.position_ids must be a tensor")
         if self.input_ids.numel() == 0:
             raise ValueError("DeviceModelInputs.input_ids must not be empty")
         if self.position_ids.numel() == 0:
             raise ValueError("DeviceModelInputs.position_ids must not be empty")
-        for name in (
-            "packed_decode_inputs",
-            "pixel_values",
-            "image_grid_thw",
-            "pixel_values_videos",
-            "video_grid_thw",
-            "visual_embeds",
-        ):
-            value = getattr(self, name)
-            if value is not None and not isinstance(value, torch.Tensor):
-                raise TypeError(f"DeviceModelInputs.{name} must be a tensor or None")
-        if not isinstance(self.deepstack_visual_embeds, tuple):
-            raise TypeError("DeviceModelInputs.deepstack_visual_embeds must be an immutable tuple")
-        if any(not isinstance(value, torch.Tensor) for value in self.deepstack_visual_embeds):
-            raise TypeError("DeviceModelInputs.deepstack_visual_embeds must contain tensors")
         if self.visual_embeds is None and self.deepstack_visual_embeds:
             raise ValueError("DeepStack visual embeddings require main visual embeddings")
 
@@ -386,12 +328,6 @@ class PreparedModelInputs:
 
     model_inputs: DeviceModelInputs
     attention_context: Context
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.model_inputs, DeviceModelInputs):
-            raise TypeError("PreparedModelInputs.model_inputs must be DeviceModelInputs")
-        if not isinstance(self.attention_context, Context):
-            raise TypeError("PreparedModelInputs.attention_context must be Context")
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,12 +356,6 @@ class DeviceBatch:
         self._validate_execution_bucket(batch_size)
 
     def _validate_request_identity(self) -> int:
-        if not isinstance(self.phase, BatchPhase):
-            raise TypeError(
-                f"DeviceBatch.phase must be BatchPhase, got {type(self.phase).__name__}"
-            )
-        if not isinstance(self.sequence_ids, tuple):
-            raise TypeError("DeviceBatch.sequence_ids must be an immutable tuple")
         for sequence_id in self.sequence_ids:
             validate_request_id(sequence_id, name="DeviceBatch sequence id")
         batch_size = len(self.sequence_ids)
@@ -436,8 +366,6 @@ class DeviceBatch:
         return batch_size
 
     def _validate_scheduled_counts(self, batch_size: int) -> None:
-        if not isinstance(self.scheduled_token_counts, tuple):
-            raise TypeError("DeviceBatch.scheduled_token_counts must be an immutable tuple")
         if len(self.scheduled_token_counts) != batch_size:
             raise ValueError("DeviceBatch scheduled_token_counts must match sequence_ids")
         for count in self.scheduled_token_counts:
@@ -448,21 +376,12 @@ class DeviceBatch:
             raise ValueError("decode DeviceBatch must schedule one token per request")
 
     def _validate_model_context(self) -> None:
-        if not isinstance(self.model_inputs, DeviceModelInputs):
-            raise TypeError("DeviceBatch.model_inputs must be DeviceModelInputs")
-        if not isinstance(self.attention_context, Context):
-            raise TypeError("DeviceBatch.attention_context must be Context")
         if self.attention_context.is_prefill != (self.phase is BatchPhase.PREFILL):
             raise ValueError("DeviceBatch phase/context mismatch")
 
     def _validate_sampling(self, batch_size: int) -> None:
         if self.sampling_mode not in (None, "greedy", "random", "mixed"):
             raise ValueError(f"unsupported DeviceBatch sampling_mode: {self.sampling_mode!r}")
-        if self.temperatures is not None and not isinstance(
-            self.temperatures,
-            torch.Tensor,
-        ):
-            raise TypeError("DeviceBatch.temperatures must be a tensor or None")
         if self.temperatures is not None and self.temperatures.numel() != batch_size:
             raise ValueError("DeviceBatch temperatures must contain one value per request")
 
@@ -470,10 +389,6 @@ class DeviceBatch:
         _positive_int(self.execution_bucket, name="DeviceBatch execution_bucket")
         if self.execution_bucket < batch_size:
             raise ValueError("DeviceBatch execution_bucket must cover the request batch")
-        if not isinstance(self.kv_scale_views, tuple) or any(
-            not isinstance(view, torch.Tensor) for view in self.kv_scale_views
-        ):
-            raise TypeError("DeviceBatch.kv_scale_views must be a tuple of tensors")
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,20 +397,10 @@ class ExecutionResult:
     compaction_count: int = 0
 
     def __post_init__(self) -> None:
-        if not isinstance(self.token_ids, tuple):
-            raise TypeError("ExecutionResult.token_ids must be an immutable tuple")
-        if any(
-            token_id is not None
-            and (isinstance(token_id, bool) or not isinstance(token_id, int) or token_id < 0)
-            for token_id in self.token_ids
-        ):
-            raise ValueError("ExecutionResult token ids must be non-negative integers or None")
-        if (
-            isinstance(self.compaction_count, bool)
-            or not isinstance(self.compaction_count, int)
-            or self.compaction_count < 0
-        ):
-            raise ValueError("ExecutionResult.compaction_count must be a non-negative integer")
+        if any(token_id is not None and token_id < 0 for token_id in self.token_ids):
+            raise ValueError("ExecutionResult token ids must be non-negative or None")
+        if self.compaction_count < 0:
+            raise ValueError("ExecutionResult.compaction_count must be non-negative")
 
 
 @runtime_checkable
