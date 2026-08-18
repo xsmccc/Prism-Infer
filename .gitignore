@@ -19,3 +19,4 @@ trace_*.py
 .agents/
 .claude/
 .pytest_cache/
+slurm-*.out
