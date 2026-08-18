@@ -128,13 +128,15 @@ class BlockManager:
 
         if not seq.is_multimodal:
             return True
-        return bool(
+        if not (
             self.block_level_mm_prefix
             and seq.multimodal_media_token_hashes is not None
-            and seq.pixel_values_videos is None
-            and seq.video_grid_thw is None
-            and len(seq.image_pad_runs()) == len(seq.multimodal_media_token_hashes)
-        )
+        ):
+            return False
+        if seq.pixel_values_videos is not None or seq.video_grid_thw is not None:
+            return False
+        spans = seq.image_token_spans()
+        return spans is not None and len(spans) == len(seq.multimodal_media_token_hashes)
 
     def _block_hash_and_mm(
         self,
@@ -186,13 +188,16 @@ class BlockManager:
 
     @staticmethod
     def _snap_to_image_boundary(seq: Sequence, candidate: int) -> int:
-        """Snap a cached-prefix length down to the nearest image-run start."""
+        """Snap a cached-prefix length down to the nearest image-span start."""
 
         if not seq.is_multimodal or seq.image_token_id is None or candidate <= 0:
             return candidate
-        for run_start, run_end in seq.image_pad_runs():
-            if run_start < candidate < run_end:
-                return run_start
+        spans = seq.image_token_spans()
+        if spans is None:
+            return candidate
+        for span_start, span_end in spans:
+            if span_start < candidate < span_end:
+                return span_start
         return candidate
 
     def _privatize_block(

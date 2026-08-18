@@ -185,6 +185,8 @@ class ModelInputPreparer:
         current_tokens: list[int],
         *,
         merge_size: int,
+        token_start: int,
+        token_end: int,
     ) -> None:
         if seq.precomputed_visual_embeds is not None:
             # 缓存视觉 embedding: 允许整图子集（block 级前缀复用从任意图边界开始）
@@ -208,17 +210,15 @@ class ModelInputPreparer:
             if observed_tokens == 0:
                 return
             if observed_tokens != expected_tokens:
-                if seq.image_token_id is None or seq.image_grid_thw is None:
-                    raise ValueError(
-                        "chunk boundary splits cached visual embeddings: "
-                        f"seq={seq.seq_id} chunk_tokens={observed_tokens} "
-                        f"expected={expected_tokens}"
+                spans = seq.image_token_spans()
+                coverage = (
+                    None
+                    if spans is None
+                    else image_range_coverage(
+                        image_spans=spans,
+                        range_start=token_start,
+                        range_end=token_end,
                     )
-                coverage = image_range_coverage(
-                    token_ids=current_tokens,
-                    image_token_id=seq.image_token_id,
-                    range_start=0,
-                    range_end=len(current_tokens),
                 )
                 if coverage is None:
                     raise ValueError(
@@ -319,34 +319,40 @@ class ModelInputPreparer:
                     payload_chunks.append(payload)
                     grid_chunks.append(grid)
                 continue
-            # 图像: 允许整图子集, 切片 payload/grid 到范围覆盖的图
+            # 图像: 允许整图子集, 按全局 span + 绝对区间切片 payload/grid
             if observed_tokens == 0:
                 continue
-            if observed_tokens != expected_tokens:
-                sliced_payload, sliced_grid, covered_pads = split_image_payloads_for_range(
-                    pixel_values=payload,
-                    grid=grid,
-                    merge_size=merge_size,
-                    token_ids=current_tokens,
-                    image_token_id=token_id,
-                    range_start=0,
-                    range_end=len(current_tokens),
-                )
-                if covered_pads != observed_tokens:
-                    raise ValueError(
-                        f"chunk boundary splits {modality} token payload: "
-                        f"seq={seq.seq_id} chunk_tokens={observed_tokens} "
-                        f"covered={covered_pads}"
-                    )
-                if sliced_payload is None or sliced_grid is None:
-                    raise ValueError(
-                        f"image payload slice failed for seq={seq.seq_id}"
-                    )
-                payload_chunks.append(sliced_payload)
-                grid_chunks.append(sliced_grid)
-            else:
+            if observed_tokens == expected_tokens:
                 payload_chunks.append(payload)
                 grid_chunks.append(grid)
+                continue
+            spans = seq.image_token_spans()
+            if spans is None:
+                raise ValueError(
+                    f"chunk boundary splits {modality} token payload: "
+                    f"seq={seq.seq_id} chunk_tokens={observed_tokens} "
+                    f"expected={expected_tokens}"
+                )
+            sliced_payload, sliced_grid, covered_pads = split_image_payloads_for_range(
+                pixel_values=payload,
+                grid=grid,
+                merge_size=merge_size,
+                image_spans=spans,
+                range_start=token_start,
+                range_end=token_end,
+            )
+            if covered_pads != observed_tokens:
+                raise ValueError(
+                    f"chunk boundary splits {modality} token payload: "
+                    f"seq={seq.seq_id} chunk_tokens={observed_tokens} "
+                    f"covered={covered_pads}"
+                )
+            if sliced_payload is None or sliced_grid is None:
+                raise ValueError(
+                    f"image payload slice failed for seq={seq.seq_id}"
+                )
+            payload_chunks.append(sliced_payload)
+            grid_chunks.append(sliced_grid)
 
     def _append_prefill_sequence(
         self,
@@ -530,6 +536,8 @@ class ModelInputPreparer:
                     seq,
                     list(seq[prefill_slice.token_start : prefill_slice.token_end]),
                     merge_size=merge_size,
+                    token_start=prefill_slice.token_start,
+                    token_end=prefill_slice.token_end,
                 )
 
         input_ids = self._to_cuda_tensor(host.input_ids, dtype=torch.int64)

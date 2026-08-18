@@ -37,12 +37,34 @@ def make_mm_seq(
     token_ids: list[int],
     media_hashes: tuple[bytes, ...] | None,
     request_id: int,
+    *,
+    pads_per_image: int = 4,
 ) -> Sequence:
-    """Build a multimodal sequence with per-image media identity."""
+    """Build a multimodal sequence with per-image media identity.
+
+    merge=1 且每图 pads_per_image 个 pad，使 grid 行与 pad 数一一对应
+    （真实模板中每图 pad 数由 grid×merge 决定，测试用均匀布局）。
+    """
+
+    pad_count = token_ids.count(PAD)
+    n_images = len(media_hashes) if media_hashes else 0
+    if media_hashes and pad_count != pads_per_image * n_images:
+        raise ValueError(
+            f"test pad layout mismatch: pads={pad_count} images={n_images} "
+            f"per_image={pads_per_image}"
+        )
+    grid = (
+        torch.tensor([[1, pads_per_image, 1]] * n_images, dtype=torch.long)
+        if n_images
+        else None
+    )
+    pixel = torch.zeros(pad_count, 3) if n_images else None
     return Sequence(
         token_ids,
         block_size=manager.block_size,
         request_id=request_id,
+        pixel_values=pixel,
+        image_grid_thw=grid,
         position_ids=(
             torch.arange(len(token_ids), dtype=torch.long)
             .view(1, 1, -1)
@@ -50,8 +72,9 @@ def make_mm_seq(
         ),
         rope_delta=torch.zeros(1, 1),
         image_token_id=PAD,
-        image_token_count=token_ids.count(PAD),
+        image_token_count=pad_count,
         multimodal_media_token_hashes=media_hashes,
+        image_merge_size=1,
     )
 
 
@@ -196,10 +219,10 @@ def test_layout_change_cascades_miss() -> None:
     """标签变化使前缀块 hash 变化, 后续块链式失效, 不错误复用。"""
 
     manager = dense_manager(num_blocks=16)
-    layout_a = make_mm_seq(manager, [10, PAD, PAD, PAD, 11, 12], (H_A,), 0)
+    layout_a = make_mm_seq(manager, [10, PAD, PAD, PAD, PAD, 11, 12], (H_A,), 0)
     manager.allocate(layout_a)
 
-    layout_b = make_mm_seq(manager, [20, PAD, PAD, PAD, 11, 12], (H_A,), 1)
+    layout_b = make_mm_seq(manager, [20, PAD, PAD, PAD, PAD, 11, 12], (H_A,), 1)
     manager.allocate(layout_b)
 
     print(f"layout_a table: {layout_a.block_table}")
@@ -274,11 +297,11 @@ def test_probe_block_level_partial_and_full_hits() -> None:
     """probe 返回块级最长缓存前缀; hydration skip 只统计整段视觉命中。"""
 
     manager = dense_manager(num_blocks=16)
-    full = make_mm_seq(manager, [PAD] * 8 + [11, 12, 13], (H_A,), 0)
+    full = make_mm_seq(manager, [PAD] * 8 + [11, 12, 13], (H_A,), 0, pads_per_image=8)
     manager.allocate(full)
 
     # 整段命中: 同图不同问 -> probe == boundary(8), hydration skip +1
-    same = make_mm_seq(manager, [PAD] * 8 + [21, 22, 23], (H_A,), 1)
+    same = make_mm_seq(manager, [PAD] * 8 + [21, 22, 23], (H_A,), 1, pads_per_image=8)
     candidate = manager.probe_multimodal_prefix(same, would_hydrate_visual=True)
     assert candidate == 8
     assert same.multimodal_prefix_pre_admission_hit is True
@@ -301,11 +324,11 @@ def test_snap_to_image_boundary_prevents_mid_image_split() -> None:
     """命中停在图片 span 内部时必须 snap 到图边界并私有化共享块。"""
 
     manager = dense_manager(num_blocks=16)
-    first = make_mm_seq(manager, [PAD] * 6 + [11, 12], (H_A,), 0)  # run [0, 6), 2 满块
+    first = make_mm_seq(manager, [PAD] * 6 + [11, 12], (H_A,), 0, pads_per_image=6)  # span [0, 6)
     manager.allocate(first)
 
-    # 走查命中 block 0 (candidate=4) 但 4 落在 run [0,6) 内部 -> snap 到 0
-    other = make_mm_seq(manager, [PAD] * 6 + [13, 14, 15, 16], (H_A,), 1)
+    # 走查命中 block 0 (candidate=4) 但 4 落在 span [0,6) 内部 -> snap 到 0
+    other = make_mm_seq(manager, [PAD] * 6 + [13, 14, 15, 16], (H_A,), 1, pads_per_image=6)
     pairs = manager.allocate(other)
 
     print(f"first table: {first.block_table}")
@@ -388,8 +411,7 @@ def test_image_payload_split_for_range_pure_math() -> None:
     pixel_values = torch.arange(320 * 3, dtype=torch.float32).view(320, 3)
     grid = torch.tensor([[1, 8, 8], [1, 16, 16]])  # 图1: 64 patches / 16 tokens; 图2: 256 / 64
     merge_size = 2
-    token_ids = [PAD] * 16 + [SEP] + [PAD] * 64 + [1, 2, 3]
-    image_token_id = PAD
+    image_spans = ((0, 16), (17, 81))  # 全局逐图 span（含分隔 token 空隙）
 
     from prism_infer.engine.sequence import split_image_payloads_for_range
 
@@ -398,8 +420,7 @@ def test_image_payload_split_for_range_pure_math() -> None:
         pixel_values=pixel_values,
         grid=grid,
         merge_size=merge_size,
-        token_ids=token_ids,
-        image_token_id=image_token_id,
+        image_spans=image_spans,
         range_start=0,
         range_end=16,
     )
@@ -412,8 +433,7 @@ def test_image_payload_split_for_range_pure_math() -> None:
         pixel_values=pixel_values,
         grid=grid,
         merge_size=merge_size,
-        token_ids=token_ids,
-        image_token_id=image_token_id,
+        image_spans=image_spans,
         range_start=17,
         range_end=81,
     )
@@ -426,8 +446,7 @@ def test_image_payload_split_for_range_pure_math() -> None:
         pixel_values=pixel_values,
         grid=grid,
         merge_size=merge_size,
-        token_ids=token_ids,
-        image_token_id=image_token_id,
+        image_spans=image_spans,
         range_start=0,
         range_end=81,
     )
@@ -441,7 +460,7 @@ def test_image_payload_split_rejects_mid_image_range() -> None:
 
     pixel_values = torch.zeros(320, 3)
     grid = torch.tensor([[1, 8, 8], [1, 16, 16]])
-    token_ids = [PAD] * 16 + [SEP] + [PAD] * 64 + [1, 2, 3]
+    image_spans = ((0, 16), (17, 81))
     from prism_infer.engine.sequence import split_image_payloads_for_range
 
     with pytest.raises(ValueError, match="splits image"):
@@ -449,8 +468,7 @@ def test_image_payload_split_rejects_mid_image_range() -> None:
             pixel_values=pixel_values,
             grid=grid,
             merge_size=2,
-            token_ids=token_ids,
-            image_token_id=PAD,
+            image_spans=image_spans,
             range_start=8,  # 图1 内部
             range_end=81,
         )

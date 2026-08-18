@@ -1,0 +1,65 @@
+=== node: gj-5090-1 ===
+index, name, memory.total [MiB]
+0, NVIDIA GeForce RTX 5090, 32607 MiB
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[A_cold] 3.37s {"pre_admission_hits": 0, "visual_hydration_skips": 0, "block_level_probe_hits": 0, "block_level_reused_blocks": 0, "block_level_miss_blocks": 3, "pool_cached_blocks": 3, "pool_cached_evictions": 0, "entries": 0, "hits": 0, "misses": 0, "admissions": 0}
+[A_cold] output: None
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/lcpu/87120912/jobs/integration_block_mm_prefix.py", line 133, in <module>
+[rank0]:     main()
+[rank0]:   File "/home/lcpu/87120912/jobs/integration_block_mm_prefix.py", line 80, in main
+[rank0]:     report["B_same_imgs_new_q"] = generate(
+[rank0]:                                   ^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/jobs/integration_block_mm_prefix.py", line 58, in generate
+[rank0]:     result = llm.generate_images(prompt, images, sampling, use_tqdm=False)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/llm_engine.py", line 1387, in generate_images
+[rank0]:     return self.generate_vl(prompt, images, sampling_params, use_tqdm=use_tqdm)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/llm_engine.py", line 1376, in generate_vl
+[rank0]:     return self._finish_single_generation(seq_id, pbar)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/llm_engine.py", line 1356, in _finish_single_generation
+[rank0]:     return self._run_generation(
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/llm_engine.py", line 1279, in _run_generation
+[rank0]:     step_outputs, signed_tokens = self.step()
+[rank0]:                                   ^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/llm_engine.py", line 1146, in step
+[rank0]:     return self.step_result().as_legacy_tuple()
+[rank0]:            ^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/llm_engine.py", line 1136, in step_result
+[rank0]:     result = self._next_step_result(profile_session)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/llm_engine.py", line 1126, in _next_step_result
+[rank0]:     return self._execute_planned_step(plan, profile_session)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/llm_engine.py", line 841, in _execute_planned_step
+[rank0]:     execution = self.executor.execute(plan)
+[rank0]:                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/executor.py", line 144, in execute
+[rank0]:     runner_result = self.runner.call("run_plan", plan)
+[rank0]:                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/model_runner.py", line 456, in call
+[rank0]:     return method(*args)
+[rank0]:            ^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/model_runner.py", line 1333, in run_plan
+[rank0]:     return self._run_plan(plan)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/model_runner.py", line 1339, in _run_plan
+[rank0]:     device_batch = backend.prepare(plan)
+[rank0]:                    ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/execution_backend.py", line 70, in prepare
+[rank0]:     runner._prepare_prefill_batch(
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/model_runner.py", line 1059, in _prepare_prefill_batch
+[rank0]:     return self._get_input_preparer().prepare_prefill(
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/input_preparation.py", line 528, in prepare_prefill
+[rank0]:     self._append_sequence_media(
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/input_preparation.py", line 326, in _append_sequence_media
+[rank0]:     sliced_payload, sliced_grid, covered_pads = split_image_payloads_for_range(
+[rank0]:                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer/prism_infer/engine/sequence.py", line 758, in split_image_payloads_for_range
+[rank0]:     raise ValueError(
+[rank0]: ValueError: image pad runs do not match grid rows: runs=1 grid=4
+=== exit=1 ===

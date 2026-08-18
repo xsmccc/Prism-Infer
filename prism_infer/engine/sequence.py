@@ -36,6 +36,7 @@ class Sequence:
         video_token_id: int | None = None,
         video_token_count: int = 0,
         multimodal_media_token_hashes: tuple[bytes, ...] | None = None,
+        image_merge_size: int = 2,
     ):
         if not token_ids:
             raise ValueError("token_ids must not be empty")
@@ -81,6 +82,9 @@ class Sequence:
         self.image_token_count = image_token_count
         self.video_token_id = video_token_id
         self.video_token_count = video_token_count
+        if isinstance(image_merge_size, bool) or not isinstance(image_merge_size, int) or image_merge_size <= 0:
+            raise ValueError(f"image_merge_size must be a positive integer, got {image_merge_size!r}")
+        self.image_merge_size = image_merge_size
         # Runtime-only content fingerprint for the exact visual-output cache.
         # It is intentionally excluded from request serialization.
         self.visual_embedding_cache_key: str | None = None
@@ -341,36 +345,36 @@ class Sequence:
                 continue
             if grid is None:
                 raise RuntimeError(f"{modality} payload is missing grid metadata")
-            runs = self.image_pad_runs()
-            covered: list[int] = []
-            for run_index, (run_start, run_end) in enumerate(runs):
-                if run_start >= end or run_end <= start:
-                    continue
-                if run_start < start or run_end > end:
+            spans = self.image_token_spans()
+            if spans is None:
+                # 兼容旧语义: span 与 grid 不一致（合成数据/异常输入）时按
+                # 全量 payload 保守计数, 只保留全有或全无的完整性检查。
+                if observed_tokens not in (0, expected_tokens):
                     raise ValueError(
                         f"prefill range splits {modality} token payload: "
                         f"seq={self.seq_id} range=[{start}, {end}) "
-                        f"run={run_index} span=[{run_start}, {run_end})"
+                        f"tokens={observed_tokens} expected={expected_tokens}"
                     )
-                covered.append(run_index)
-            if not covered:
+                patches += int(payload.shape[0])
+                continue
+            coverage = image_range_coverage(
+                image_spans=spans,
+                range_start=start,
+                range_end=end,
+            )
+            if coverage is None:
                 raise ValueError(
-                    f"prefill range observes {modality} tokens without a covered run: "
+                    f"prefill range observes {modality} tokens without a covered span: "
                     f"seq={self.seq_id} range=[{start}, {end})"
                 )
-            first, last = covered[0], covered[-1]
-            if covered != list(range(first, last + 1)):
-                raise ValueError(
-                    f"prefill range covers non-contiguous {modality} runs: "
-                    f"seq={self.seq_id} range=[{start}, {end}) covered={covered}"
-                )
+            covered, _ = coverage
             rows_per_image = [int(row.prod().item()) for row in grid]
-            if len(rows_per_image) != len(runs):
+            if len(rows_per_image) != len(spans):
                 raise ValueError(
-                    f"{modality} grid rows do not match pad runs: "
-                    f"seq={self.seq_id} grid={len(rows_per_image)} runs={len(runs)}"
+                    f"{modality} grid rows do not match image spans: "
+                    f"seq={self.seq_id} grid={len(rows_per_image)} spans={len(spans)}"
                 )
-            patches += sum(rows_per_image[first : last + 1])
+            patches += sum(rows_per_image[covered[0] : covered[-1] + 1])
         return patches
 
     def image_pad_runs(self) -> tuple[tuple[int, int], ...]:
@@ -388,6 +392,39 @@ class Sequence:
             self._image_pad_runs_cache = cached
         return cached
 
+    def image_token_spans(self) -> tuple[tuple[int, int], ...] | None:
+        """Per-image (start, end) token spans derived from grid + merge size.
+
+        每个 pad block 内按 grid 逐图 token 数切分（多张图的 pad 与分隔
+        token 交错出现）。spans 与 pad 总数、grid 行数不一致时返回 None。
+        """
+
+        if self.image_token_id is None or self.image_grid_thw is None:
+            return None
+        grid_rows = int(self.image_grid_thw.shape[0])
+        tokens_per_image = [
+            int(row.prod().item()) // (self.image_merge_size * self.image_merge_size)
+            for row in self.image_grid_thw
+        ]
+        if sum(tokens_per_image) != self.image_token_count:
+            return None
+        spans: list[tuple[int, int]] = []
+        image_index = 0
+        for block_start, block_end in self.image_pad_runs():
+            cursor = block_start
+            while cursor < block_end:
+                if image_index >= grid_rows:
+                    return None
+                span_end = cursor + tokens_per_image[image_index]
+                if span_end > block_end:
+                    return None
+                spans.append((cursor, span_end))
+                cursor = span_end
+                image_index += 1
+        if image_index != grid_rows:
+            return None
+        return tuple(spans)
+
     def mm_token_hashes_for_block(
         self,
         block_index: int,
@@ -395,26 +432,26 @@ class Sequence:
     ) -> dict[int, int] | None:
         """Map in-block pad positions to per-image surrogate hashes.
 
-        返回 dict[block 内偏移, surrogate int64]。媒体身份缺失、pad run 数与
-        逐图 hash 数不一致、或 block 不含 pad 时返回 None（不可安全哈希）。
+        返回 dict[block 内偏移, surrogate int64]。媒体身份缺失、spans 与逐图
+        hash 数不一致、或 block 不含 pad 时返回 None（不可安全哈希）。
         """
 
         hashes = self.multimodal_media_token_hashes
         if not hashes or self.image_token_id is None:
             return None
-        runs = self.image_pad_runs()
-        if len(runs) != len(hashes):
+        spans = self.image_token_spans()
+        if spans is None or len(spans) != len(hashes):
             return None
         start = block_index * block_size
         end = start + block_size
         mapping: dict[int, int] = {}
-        for run_index, (run_start, run_end) in enumerate(runs):
-            overlap_start = max(start, run_start)
-            overlap_end = min(end, run_end)
+        for image_index, (span_start, span_end) in enumerate(spans):
+            overlap_start = max(start, span_start)
+            overlap_end = min(end, span_end)
             if overlap_start >= overlap_end:
                 continue
             surrogate = int.from_bytes(
-                hashlib.sha256(hashes[run_index]).digest()[:8],
+                hashlib.sha256(hashes[image_index]).digest()[:8],
                 "little",
             )
             for position in range(overlap_start, overlap_end):
@@ -694,38 +731,38 @@ def _contiguous_image_pad_runs(
 
 def image_range_coverage(
     *,
-    token_ids: list[int] | tuple[int, ...],
-    image_token_id: int,
+    image_spans: tuple[tuple[int, int], ...],
     range_start: int,
     range_end: int,
 ) -> tuple[tuple[int, ...], int] | None:
-    """Which pad runs (payload-order indices) fall inside [start, end).
+    """Which image spans (payload-order indices) fall inside [start, end).
 
     返回 (covered_indices, pads_in_range)；范围内无 pad 返回 None。
     范围切进单张图内部、或覆盖不连续图集时报 ValueError。
     """
 
-    runs = _contiguous_image_pad_runs(token_ids, image_token_id)
     covered: list[int] = []
-    for run_index, (run_start, run_end) in enumerate(runs):
-        if run_start >= range_end or run_end <= range_start:
+    for image_index, (span_start, span_end) in enumerate(image_spans):
+        if span_start >= range_end or span_end <= range_start:
             continue
-        if run_start < range_start or run_end > range_end:
+        if span_start < range_start or span_end > range_end:
             raise ValueError(
                 "prefill range splits image token payload: "
-                f"range=[{range_start}, {range_end}) run={run_index} "
-                f"span=[{run_start}, {run_end})"
+                f"range=[{range_start}, {range_end}) image={image_index} "
+                f"span=[{span_start}, {span_end})"
             )
-        covered.append(run_index)
+        covered.append(image_index)
     if not covered:
         return None
     first, last = covered[0], covered[-1]
     if covered != list(range(first, last + 1)):
         raise ValueError(
-            "prefill range covers non-contiguous image runs: "
+            "prefill range covers non-contiguous image spans: "
             f"range=[{range_start}, {range_end}) covered={covered}"
         )
-    pads_in_range = sum(runs[index][1] - runs[index][0] for index in covered)
+    pads_in_range = sum(
+        image_spans[index][1] - image_spans[index][0] for index in covered
+    )
     return tuple(covered), pads_in_range
 
 
@@ -734,15 +771,14 @@ def split_image_payloads_for_range(
     pixel_values: torch.Tensor,
     grid: torch.Tensor,
     merge_size: int,
-    token_ids: list[int] | tuple[int, ...],
-    image_token_id: int,
+    image_spans: tuple[tuple[int, int], ...],
     range_start: int,
     range_end: int,
 ) -> tuple[torch.Tensor | None, torch.Tensor | None, int]:
     """Slice the stacked image payload to the images covered by [start, end).
 
     返回 (payload_slice, grid_slice, pads_in_range)。范围只允许覆盖整图；
-    切进单张图内部、覆盖不连续图集、或 pad run 数与 grid 行数不一致时报错。
+    切进单张图内部、覆盖不连续图集、或 span 数与 grid 行数不一致时报错。
     范围内没有任何 pad 时返回 (None, None, 0)。
     """
 
@@ -753,21 +789,19 @@ def split_image_payloads_for_range(
     n_images = int(grid.shape[0])
     rows_per_image = [int(row.prod().item()) for row in grid]
     tokens_per_image = [rows // (merge_size * merge_size) for rows in rows_per_image]
-    runs = _contiguous_image_pad_runs(token_ids, image_token_id)
-    if len(runs) != n_images:
+    if len(image_spans) != n_images:
         raise ValueError(
-            f"image pad runs do not match grid rows: runs={len(runs)} grid={n_images}"
+            f"image spans do not match grid rows: spans={len(image_spans)} grid={n_images}"
         )
-    for run_index, (run_start, run_end) in enumerate(runs):
-        if run_end - run_start != tokens_per_image[run_index]:
+    for image_index, (span_start, span_end) in enumerate(image_spans):
+        if span_end - span_start != tokens_per_image[image_index]:
             raise ValueError(
-                f"image pad run length does not match grid token count: "
-                f"run={run_index} tokens={run_end - run_start} "
-                f"expected={tokens_per_image[run_index]}"
+                f"image span length does not match grid token count: "
+                f"image={image_index} tokens={span_end - span_start} "
+                f"expected={tokens_per_image[image_index]}"
             )
     coverage = image_range_coverage(
-        token_ids=token_ids,
-        image_token_id=image_token_id,
+        image_spans=image_spans,
         range_start=range_start,
         range_end=range_end,
     )
