@@ -297,6 +297,28 @@ def test_probe_block_level_partial_and_full_hits() -> None:
     assert manager.multimodal_prefix_cache_metadata()["visual_hydration_skips"] == 1
 
 
+def test_snap_to_image_boundary_prevents_mid_image_split() -> None:
+    """命中停在图片 span 内部时必须 snap 到图边界并私有化共享块。"""
+
+    manager = dense_manager(num_blocks=16)
+    first = make_mm_seq(manager, [PAD] * 6 + [11, 12], (H_A,), 0)  # run [0, 6), 2 满块
+    manager.allocate(first)
+
+    # 走查命中 block 0 (candidate=4) 但 4 落在 run [0,6) 内部 -> snap 到 0
+    other = make_mm_seq(manager, [PAD] * 6 + [13, 14, 15, 16], (H_A,), 1)
+    pairs = manager.allocate(other)
+
+    print(f"first table: {first.block_table}")
+    print(f"other table: {other.block_table}")
+    print(f"other cached tokens: {other.num_cached_tokens}")
+    print(f"copy pairs: {pairs}")
+
+    assert other.num_cached_tokens == 0  # 不能切开图片 span, 整段重算
+    assert len(pairs) == 1  # 共享块已私有化 (CoW)
+    assert other.block_table[0] != first.block_table[0]
+    assert manager.blocks[first.block_table[0]].ref_count == 1  # 缓存未被污染
+
+
 # ---------------------------------------------------------------------------
 # 7. Decode boundary-aligned 修复
 # ---------------------------------------------------------------------------

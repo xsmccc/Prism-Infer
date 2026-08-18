@@ -154,7 +154,11 @@ class BlockManager:
         return self.compute_hash(token_ids, prefix_hash, mm_token_hashes), mm_token_hashes
 
     def _cached_prefix_length(self, seq: Sequence) -> int:
-        """Walk full prompt blocks through the hash index; return cached tokens."""
+        """Walk full prompt blocks through the hash index; return cached tokens.
+
+        多模态序列的结果向下对齐到图片边界：block 边界可能切进某张图的
+        pad span 内部，而 prefill 范围不允许切开单张图。
+        """
 
         if not self.enable_prefix_caching or not self._hashable_sequence(seq):
             return 0
@@ -178,7 +182,43 @@ class BlockManager:
                 break
             cached += self.block_size
             prefix_hash = block_hash
-        return cached
+        return self._snap_to_image_boundary(seq, cached)
+
+    @staticmethod
+    def _snap_to_image_boundary(seq: Sequence, candidate: int) -> int:
+        """Snap a cached-prefix length down to the nearest image-run start."""
+
+        if not seq.is_multimodal or seq.image_token_id is None or candidate <= 0:
+            return candidate
+        for run_start, run_end in seq.image_pad_runs():
+            if run_start < candidate < run_end:
+                return run_start
+        return candidate
+
+    def _privatize_block(
+        self,
+        seq: Sequence,
+        block_index: int,
+    ) -> tuple[int, int] | None:
+        """Give the sequence a private copy of a shared block (row-aligned CoW)."""
+
+        block_id = seq.block_table[block_index]
+        block = self.blocks[block_id]
+        if block.ref_count <= 1:
+            return None
+        self._ensure_free_blocks(1)
+        new_block = self._allocate_free_block()
+        new_block_id = new_block.block_id
+        if block.hash != NO_BLOCK_HASH:
+            self._gpu_pool.register_hash(
+                new_block_id,
+                block.hash,
+                block.token_ids,
+                block.mm_token_hashes,
+            )
+        self._gpu_pool.release_reference(block_id)
+        seq.block_table[block_index] = new_block_id
+        return (block_id, new_block_id)
 
     def _matching_multimodal_prefix(
         self,
@@ -341,7 +381,7 @@ class BlockManager:
                 f"required={required_blocks}, available={self._gpu_pool.free_count}"
             )
 
-    def _allocate_dense(self, seq: Sequence) -> tuple[tuple[int, int], ...]:
+    def _allocate_dense(self, seq: Sequence) -> tuple[tuple[int, int, int], ...]:
         self._ensure_free_blocks(seq.num_blocks)
         block_hash = NO_BLOCK_HASH
         cache_miss = False
@@ -380,7 +420,17 @@ class BlockManager:
                     mm_token_hashes,
                 )
             seq.block_table.append(block.block_id)
-        return ()
+        copy_prefix: list[tuple[int, int, int]] = []
+        if seq.is_multimodal:
+            # block 边界可能切进图片 span 内部: 缓存前缀向下对齐到图片边界,
+            # 尾部重算落在共享块上时先私有化 (CoW) 再交给 executor 复制。
+            snapped = self._snap_to_image_boundary(seq, seq.num_cached_tokens)
+            if snapped != seq.num_cached_tokens:
+                pair = self._privatize_block(seq, snapped // self.block_size)
+                if pair is not None:
+                    copy_prefix.append((*pair, self.block_size))
+                seq.num_cached_tokens = snapped
+        return tuple(copy_prefix)
 
     def _allocate_multimodal_prefix_hit(
         self,

@@ -822,12 +822,8 @@ class OnlineServingSession:
         ):
             sequence.visual_embedding_cache_key = visual_embedding_fingerprint
         sequence.multimodal_prefix_cache_key = visual_embedding_fingerprint
-        if request_type in ("image", "images", "interleaved_images"):
-            sequence.multimodal_media_token_hashes = _per_image_media_hashes(
-                self._cache_namespace,
-                request_type,
-                inputs,
-            )
+        # 逐图媒体 hash 已由 LLMEngine._prepare_image_sequence 注入，
+        # 与 online 路径共用同一缓存命名空间。
         return sequence
 
     def _prepare_media_sequence(

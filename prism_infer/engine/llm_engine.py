@@ -539,7 +539,7 @@ class LLMEngine:
                 image_grid_thw=inputs.image_grid_thw,
                 attention_mask=inputs.attention_mask,
             )
-        return Sequence.from_image_inputs(
+        seq = Sequence.from_image_inputs(
             inputs,
             sampling_params,
             block_size=self.config.kvcache_block_size,
@@ -551,6 +551,29 @@ class LLMEngine:
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
+        seq.multimodal_media_token_hashes = self._per_image_media_hashes(inputs)
+        return seq
+
+    def _per_image_media_hashes(
+        self,
+        inputs: ImageInputs,
+    ) -> tuple[bytes, ...] | None:
+        """逐图媒体 SHA256（payload 顺序），供 block 级 mm-aware 前缀哈希。
+
+        与 online 会话共用同一缓存命名空间，保证两条提交路径的媒体身份
+        落在同一哈希空间（同一张图在任一入口都产生相同 hash）。
+        """
+
+        from prism_infer.engine.online import (
+            _cache_namespace,
+            _per_image_media_hashes,
+        )
+
+        namespace = getattr(self, "_media_cache_namespace", None)
+        if namespace is None:
+            namespace = _cache_namespace(self)
+            self._media_cache_namespace = namespace
+        return _per_image_media_hashes(namespace, "images", inputs)
 
     def _prepare_image_request(
         self,
