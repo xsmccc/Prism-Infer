@@ -551,14 +551,16 @@ class LLMEngine:
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
-        seq.multimodal_media_token_hashes = self._per_image_media_hashes(inputs)
+        fingerprint, per_image_hashes = self._image_media_identity(inputs)
+        seq.multimodal_prefix_cache_key = fingerprint
+        seq.multimodal_media_token_hashes = per_image_hashes
         return seq
 
-    def _per_image_media_hashes(
+    def _image_media_identity(
         self,
         inputs: ImageInputs,
-    ) -> tuple[bytes, ...] | None:
-        """逐图媒体 SHA256（payload 顺序），供 block 级 mm-aware 前缀哈希。
+    ) -> tuple[str | None, tuple[bytes, ...] | None]:
+        """整组媒体指纹 + 逐图 SHA256（payload 顺序）。
 
         与 online 会话共用同一缓存命名空间，保证两条提交路径的媒体身份
         落在同一哈希空间（同一张图在任一入口都产生相同 hash）。
@@ -567,13 +569,17 @@ class LLMEngine:
         from prism_infer.engine.online import (
             _cache_namespace,
             _per_image_media_hashes,
+            _visual_embedding_fingerprint,
         )
 
         namespace = getattr(self, "_media_cache_namespace", None)
         if namespace is None:
             namespace = _cache_namespace(self)
             self._media_cache_namespace = namespace
-        return _per_image_media_hashes(namespace, "images", inputs)
+        return (
+            _visual_embedding_fingerprint(namespace, "images", inputs),
+            _per_image_media_hashes(namespace, "images", inputs),
+        )
 
     def _prepare_image_request(
         self,
