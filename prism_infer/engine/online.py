@@ -169,6 +169,46 @@ def _cache_namespace(engine: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _per_image_media_hashes(
+    namespace: str,
+    request_type: str,
+    inputs: Any,
+) -> tuple[bytes, ...] | None:
+    """Compute one content SHA256 per image (payload order) from processor output.
+
+    与整组 ``_visual_embedding_fingerprint`` 同域：像素张量分片 + grid 行 +
+    token 身份。逐图 hash 供 block 级 mm-aware 前缀哈希把 pad 位置绑定到
+    具体图片内容。视频或身份不可得时返回 None。
+    """
+
+    pixel_values = getattr(inputs, "pixel_values", None)
+    grid = getattr(inputs, "image_grid_thw", None)
+    token_id = getattr(inputs, "image_token_id", None)
+    if pixel_values is None or grid is None or token_id is None:
+        return None
+    if grid.ndim != 2 or grid.shape[1] != 3:
+        return None
+    rows_per_image = [int(row.prod().item()) for row in grid]
+    if sum(rows_per_image) != int(pixel_values.shape[0]):
+        raise TypeError("per-image media hashing requires grid-aligned pixel payload")
+    hashes: list[bytes] = []
+    offset = 0
+    for index, rows in enumerate(rows_per_image):
+        slice_tensor = pixel_values[offset : offset + rows]
+        fingerprint = _content_fingerprint(
+            namespace.encode("ascii"),
+            request_type.encode("ascii"),
+            slice_tensor,
+            grid[index : index + 1],
+            str(token_id).encode("ascii"),
+        )
+        if fingerprint is None:
+            return None
+        hashes.append(bytes.fromhex(fingerprint))
+        offset += rows
+    return tuple(hashes)
+
+
 def _visual_embedding_fingerprint(
     namespace: str,
     request_type: str,
@@ -782,6 +822,12 @@ class OnlineServingSession:
         ):
             sequence.visual_embedding_cache_key = visual_embedding_fingerprint
         sequence.multimodal_prefix_cache_key = visual_embedding_fingerprint
+        if request_type in ("image", "images", "interleaved_images"):
+            sequence.multimodal_media_token_hashes = _per_image_media_hashes(
+                self._cache_namespace,
+                request_type,
+                inputs,
+            )
         return sequence
 
     def _prepare_media_sequence(

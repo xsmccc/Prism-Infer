@@ -58,14 +58,21 @@ class BlockManager:
         num_cpu_blocks: int = 0,
         *,
         enable_prefix_caching: bool = True,
+        block_level_mm_prefix: bool = False,
     ):
         if isinstance(block_size, bool) or not isinstance(block_size, int) or block_size <= 0:
             raise ValueError(f"block_size must be a positive integer, got {block_size!r}")
         if not isinstance(enable_prefix_caching, bool):
             raise TypeError("enable_prefix_caching must be bool")
+        if not isinstance(block_level_mm_prefix, bool):
+            raise TypeError("block_level_mm_prefix must be bool")
         self.block_size = block_size
         self.enable_prefix_caching = enable_prefix_caching
-        self._gpu_pool = GpuBlockPool(num_blocks)
+        self.block_level_mm_prefix = block_level_mm_prefix
+        self._gpu_pool = GpuBlockPool(
+            num_blocks,
+            retain_hashes_on_free=block_level_mm_prefix,
+        )
         self._cpu_pool = CpuBlockPool(num_cpu_blocks)
         self._compaction = KVCompactionCoordinator(
             block_size=block_size,
@@ -91,6 +98,9 @@ class BlockManager:
         self._multimodal_prefix_cache_tail_clone_admissions = 0
         self._multimodal_prefix_cache_tail_clone_evictions = 0
         self._multimodal_prefix_cache_tail_clone_reused_rows = 0
+        self._block_level_probe_hits = 0
+        self._block_level_reused_blocks = 0
+        self._block_level_miss_blocks = 0
 
     @staticmethod
     def _multimodal_prefix_boundary(seq: Sequence) -> int | None:
@@ -106,6 +116,69 @@ class BlockManager:
         token_bytes = np.asarray(prompt_prefix_token_ids, dtype=np.int64).tobytes()
         token_digest = hashlib.sha256(token_bytes).hexdigest()
         return f"{media_key}:{len(prompt_prefix_token_ids)}:{token_digest}"
+
+    def _hashable_sequence(self, seq: Sequence) -> bool:
+        """Whether this sequence's blocks may join the prefix-hash index.
+
+        纯文本序列恒可哈希。多模态序列只有在 block 级 mm 模式开启、逐图媒体
+        身份可用（无视频）、且 pad run 数与逐图 hash 数一致时才可哈希——
+        纯 pad token 序列对任何图片相同，没有媒体身份的哈希会把不同图片
+        错误匹配；run/hash 数不一致说明身份映射不可靠，整体回退不哈希。
+        """
+
+        if not seq.is_multimodal:
+            return True
+        return bool(
+            self.block_level_mm_prefix
+            and seq.multimodal_media_token_hashes is not None
+            and seq.pixel_values_videos is None
+            and seq.video_grid_thw is None
+            and len(seq.image_pad_runs()) == len(seq.multimodal_media_token_hashes)
+        )
+
+    def _block_hash_and_mm(
+        self,
+        seq: Sequence,
+        block_index: int,
+        prefix_hash: int,
+    ) -> tuple[int, dict[int, int] | None]:
+        """Compute the mm-aware hash of one full block chained to its prefix."""
+
+        token_ids = seq.block(block_index)
+        mm_token_hashes = None
+        if seq.is_multimodal:
+            if not self._hashable_sequence(seq):
+                return NO_BLOCK_HASH, None
+            # 不含 pad 的块返回 None, 按纯文本块哈希 (多轮追问的文本增长部分)
+            mm_token_hashes = seq.mm_token_hashes_for_block(block_index, self.block_size)
+        return self.compute_hash(token_ids, prefix_hash, mm_token_hashes), mm_token_hashes
+
+    def _cached_prefix_length(self, seq: Sequence) -> int:
+        """Walk full prompt blocks through the hash index; return cached tokens."""
+
+        if not self.enable_prefix_caching or not self._hashable_sequence(seq):
+            return 0
+        prefix_hash = NO_BLOCK_HASH
+        cached = 0
+        full_blocks = seq.num_prompt_tokens // self.block_size
+        for block_index in range(full_blocks):
+            block_hash, mm_token_hashes = self._block_hash_and_mm(
+                seq,
+                block_index,
+                prefix_hash,
+            )
+            if block_hash == NO_BLOCK_HASH:
+                break
+            cached_block = self._gpu_pool.lookup(
+                block_hash,
+                seq.block(block_index),
+                mm_token_hashes,
+            )
+            if cached_block is None:
+                break
+            cached += self.block_size
+            prefix_hash = block_hash
+        return cached
 
     def _matching_multimodal_prefix(
         self,
@@ -136,17 +209,30 @@ class BlockManager:
         *,
         would_hydrate_visual: bool = False,
     ) -> int:
-        """Probe before admission so a prefix hit can bypass Vision hydration."""
+        """Probe before admission so a prefix hit can bypass Vision hydration.
+
+        block 级 mm 模式下走 hash 链 walk（部分命中返回部分长度）；
+        其余保持 entry 级整段语义。hydration skip 只在候选覆盖整个视觉
+        边界时计数（部分命中仍需视觉编码）。
+        """
 
         self._assert_sequence_block_size(seq)
         seq.multimodal_prefix_cache_enabled = self.enable_prefix_caching
-        match = self._matching_multimodal_prefix(seq)
-        candidate_tokens = 0 if match is None else match[1].logical_prefix_len
+        if self.block_level_mm_prefix and self._hashable_sequence(seq):
+            candidate_tokens = self._cached_prefix_length(seq)
+            if candidate_tokens:
+                self._block_level_probe_hits += 1
+        else:
+            match = self._matching_multimodal_prefix(seq)
+            candidate_tokens = 0 if match is None else match[1].logical_prefix_len
         seq.prefix_cache_candidate_tokens = candidate_tokens
         if candidate_tokens:
             seq.multimodal_prefix_pre_admission_hit = True
             self._multimodal_prefix_pre_admission_hits += 1
-            if would_hydrate_visual:
+            boundary = self._multimodal_prefix_boundary(seq)
+            if would_hydrate_visual and (
+                boundary is None or candidate_tokens >= boundary
+            ):
                 self._multimodal_prefix_visual_hydration_skips += 1
         return candidate_tokens
 
@@ -155,8 +241,11 @@ class BlockManager:
 
         self._assert_sequence_block_size(seq)
         seq.multimodal_prefix_cache_enabled = self.enable_prefix_caching
-        match = self._matching_multimodal_prefix(seq)
-        candidate_tokens = 0 if match is None else match[1].logical_prefix_len
+        if self.block_level_mm_prefix and self._hashable_sequence(seq):
+            candidate_tokens = self._cached_prefix_length(seq)
+        else:
+            match = self._matching_multimodal_prefix(seq)
+            candidate_tokens = 0 if match is None else match[1].logical_prefix_len
         seq.prefix_cache_candidate_tokens = candidate_tokens
         return candidate_tokens
 
@@ -258,16 +347,26 @@ class BlockManager:
         cache_miss = False
         for i in range(seq.num_blocks):
             token_ids = seq.block(i)
-            block_hash = (
-                self.compute_hash(token_ids, block_hash)
-                if self.enable_prefix_caching
-                and not seq.is_multimodal
+            mm_token_hashes = None
+            if (
+                self.enable_prefix_caching
                 and len(token_ids) == self.block_size
-                else NO_BLOCK_HASH
-            )
-            cached_block = self._gpu_pool.lookup(block_hash, token_ids)
+                and self._hashable_sequence(seq)
+            ):
+                block_hash, mm_token_hashes = self._block_hash_and_mm(
+                    seq,
+                    i,
+                    block_hash,
+                )
+            else:
+                block_hash = NO_BLOCK_HASH
+            cached_block = self._gpu_pool.lookup(block_hash, token_ids, mm_token_hashes)
             if cached_block is None:
                 cache_miss = True
+                if block_hash != NO_BLOCK_HASH:
+                    self._block_level_miss_blocks += 1
+            else:
+                self._block_level_reused_blocks += 1
             if cache_miss:
                 block = self._allocate_free_block()
             else:
@@ -278,6 +377,7 @@ class BlockManager:
                     block.block_id,
                     block_hash,
                     token_ids,
+                    mm_token_hashes,
                 )
             seq.block_table.append(block.block_id)
         return ()
@@ -404,13 +504,28 @@ class BlockManager:
         return self._cpu_pool.free_block_ids
 
     @classmethod
-    def compute_hash(cls, token_ids: list[int], prefix: int = -1) -> int:
-        """Hash one token block and its predecessor for prefix sharing."""
+    def compute_hash(
+        cls,
+        token_ids: list[int],
+        prefix: int = -1,
+        mm_token_hashes: dict[int, int] | None = None,
+    ) -> int:
+        """Hash one token block and its predecessor for prefix sharing.
+
+        ``mm_token_hashes`` 把 block 内 pad 位置映射到逐图 surrogate int64，
+        使 pad token 序列相同但媒体不同的 block 产生不同 hash。
+        位置编码 (m-rope) 有意不参与 hash——同一媒体在不同布局下位置不同，
+        复用后 attention 重新计算位置。
+        """
 
         h = xxhash.xxh64()
         if prefix != NO_BLOCK_HASH:
             h.update(prefix.to_bytes(8, "little"))
         h.update(np.asarray(token_ids, dtype=np.int64).tobytes())
+        if mm_token_hashes:
+            for position in sorted(mm_token_hashes):
+                h.update(position.to_bytes(4, "little"))
+                h.update(mm_token_hashes[position].to_bytes(8, "little"))
         return h.intdigest()
 
     def _remove_hash_index_for_block(self, block: Block) -> None:
@@ -473,6 +588,16 @@ class BlockManager:
                 "insufficient GPU KV-cache capacity for atomic allocation: "
                 f"required={required_blocks}, available={self._gpu_pool.free_count}"
             )
+        if self.block_level_mm_prefix and self._hashable_sequence(seq):
+            # block 级模式: 恒走 hash 链 walk。entry 命中在 dense 下安装 compact
+            # layout 会破坏 decode 期 hash 链, 因此 entry 只作 probe fast path。
+            if (
+                self.enable_prefix_caching
+                and seq.multimodal_prefix_cache_key is not None
+                and self._cached_prefix_length(seq) == 0
+            ):
+                self._multimodal_prefix_cache_misses += 1
+            return self._allocate_dense(seq)
         match = self._matching_multimodal_prefix(seq)
         if match is None:
             if seq.multimodal_prefix_pre_admission_hit and not seq.multimodal_prefix_stale_fallback:
@@ -505,32 +630,46 @@ class BlockManager:
         seq.cpu_block_table.clear()
         seq.cpu_block_hashes.clear()
         seq.cpu_block_token_ids.clear()
+        seq.cpu_block_mm_hashes.clear()
         seq.kv_layout = None
         seq.prefix_cache_candidate_tokens = 0
         seq.multimodal_prefix_cache_hit = False
 
     def store_multimodal_prefix(self, seq: Sequence) -> bool:
-        """Retain compacted multimodal prefix pages after a cold prefill."""
+        """Retain multimodal prefix pages after a cold prefill.
+
+        compact 模式按压缩后 retained positions 存储；dense 模式（block 级）
+        按整段视觉前缀的物理满块存储——entry 仅作 O(1) 探测 fast path 与
+        benefit-gated 保护，真正的跨请求存活由池层 lazy retention 保证。
+        """
 
         self._assert_sequence_block_size(seq)
         media_key = seq.multimodal_prefix_cache_key
         layout = seq.kv_layout
         boundary = self._multimodal_prefix_boundary(seq)
-        if (
-            not self.enable_prefix_caching
-            or media_key is None
-            or layout is None
-            or boundary is None
-        ):
+        if not self.enable_prefix_caching or media_key is None or boundary is None:
             return False
         if seq.multimodal_prefix_cache_hit:
             return False
         if not seq.is_prefill_finished or seq.num_tokens != seq.num_prompt_tokens:
             raise RuntimeError("multimodal prefix admission requires completed prompt prefill")
-        retained_positions = tuple(
-            position for position in layout.retained_original_positions if position < boundary
-        )
-        physical_prefix_len = len(retained_positions)
+        if layout is not None:
+            retained_positions = tuple(
+                position for position in layout.retained_original_positions if position < boundary
+            )
+            physical_prefix_len = len(retained_positions)
+            kv_dtype = layout.kv_dtype
+            compression_record = dict(layout.compression_record)
+        elif self.block_level_mm_prefix:
+            retained_positions = tuple(range(boundary))
+            physical_prefix_len = boundary
+            kv_dtype = "dense"
+            compression_record = {
+                "multimodal_prefix_cache_hit": False,
+                "compression_mode": "dense_block_level",
+            }
+        else:
+            return False
         if physical_prefix_len <= 0:
             self._multimodal_prefix_cache_rejections += 1
             return False
@@ -580,8 +719,8 @@ class BlockManager:
             physical_prefix_len=physical_prefix_len,
             retained_original_positions=retained_positions,
             block_ids=block_ids,
-            kv_dtype=layout.kv_dtype,
-            compression_record=dict(layout.compression_record),
+            kv_dtype=kv_dtype,
+            compression_record=compression_record,
             benefit_tokens=boundary,
         )
         self._multimodal_prefix_cache_blocks += prefix_blocks
@@ -636,6 +775,12 @@ class BlockManager:
             "resident_lifetime_hits": sum(
                 entry.lifetime_hits for entry in self._multimodal_prefix_cache.values()
             ),
+            "block_level_matching": self.block_level_mm_prefix,
+            "block_level_probe_hits": self._block_level_probe_hits,
+            "block_level_reused_blocks": self._block_level_reused_blocks,
+            "block_level_miss_blocks": self._block_level_miss_blocks,
+            "pool_cached_blocks": len(self._gpu_pool.cached_block_ids),
+            "pool_cached_evictions": self._gpu_pool.cached_evictions,
         }
 
     def multimodal_prefix_entry_metadata(
@@ -687,6 +832,9 @@ class BlockManager:
         self._multimodal_prefix_cache_tail_clone_admissions = 0
         self._multimodal_prefix_cache_tail_clone_evictions = 0
         self._multimodal_prefix_cache_tail_clone_reused_rows = 0
+        self._block_level_probe_hits = 0
+        self._block_level_reused_blocks = 0
+        self._block_level_miss_blocks = 0
 
     def build_compaction_plan(
         self,
@@ -737,7 +885,7 @@ class BlockManager:
             if (
                 not seq.has_compact_kv_layout
                 and self.enable_prefix_caching
-                and not seq.is_multimodal
+                and self._hashable_sequence(seq)
             ):
                 if last_block.hash == NO_BLOCK_HASH:
                     raise RuntimeError("completed dense KV block is missing its hash")
@@ -747,23 +895,36 @@ class BlockManager:
         elif physical_remainder == 0:
             # The appended token completes the current block.
             # 计算这个 block 的哈希, 注册到缓存索引
-            if last_block.hash != NO_BLOCK_HASH:
-                raise RuntimeError("mutable KV block unexpectedly has a prefix hash")
             if (
                 not seq.has_compact_kv_layout
                 and self.enable_prefix_caching
-                and not seq.is_multimodal
+                and self._hashable_sequence(seq)
             ):
                 token_ids = seq.block(seq.num_blocks - 1)
-                prefix = (
-                    self.blocks[block_table[-2]].hash if len(block_table) > 1 else NO_BLOCK_HASH
-                )
-                block_hash = self.compute_hash(token_ids, prefix)
-                self._gpu_pool.register_hash(
-                    last_block.block_id,
-                    block_hash,
-                    token_ids,
-                )
+                if last_block.hash == NO_BLOCK_HASH:
+                    prefix = (
+                        self.blocks[block_table[-2]].hash
+                        if len(block_table) > 1
+                        else NO_BLOCK_HASH
+                    )
+                    block_hash, mm_token_hashes = self._block_hash_and_mm(
+                        seq,
+                        seq.num_blocks - 1,
+                        prefix,
+                    )
+                    if block_hash != NO_BLOCK_HASH:
+                        self._gpu_pool.register_hash(
+                            last_block.block_id,
+                            block_hash,
+                            token_ids,
+                            mm_token_hashes,
+                        )
+                elif last_block.token_ids != token_ids:
+                    # prompt 整除 block_size 时, 分配期已注册满块 hash;
+                    # decode 首 token 再次"完成"该块, 内容一致则跳过注册。
+                    raise RuntimeError("mutable KV block unexpectedly has a prefix hash")
+                else:
+                    pass  # 边界对齐的已注册满块: 内容一致, 无操作
         else:
             # A partially filled private block needs no metadata update.
             if last_block.hash != NO_BLOCK_HASH:
@@ -793,15 +954,20 @@ class BlockManager:
         swap_map = list(zip(gpu_block_table, cpu_block_table, strict=False))
         cpu_block_hashes: list[int] = []
         cpu_block_token_ids: list[list[int]] = []
+        cpu_block_mm_hashes: list[dict[int, int] | None] = []
         for gpu_id in gpu_block_table:
             block = self.blocks[gpu_id]
             cpu_block_hashes.append(block.hash)
             cpu_block_token_ids.append(list(block.token_ids))
+            cpu_block_mm_hashes.append(
+                None if block.mm_token_hashes is None else dict(block.mm_token_hashes)
+            )
         for gpu_id in gpu_block_table:
             self._gpu_pool.release_reference(gpu_id)
         seq.cpu_block_table = list(cpu_block_table)
         seq.cpu_block_hashes = cpu_block_hashes
         seq.cpu_block_token_ids = cpu_block_token_ids
+        seq.cpu_block_mm_hashes = cpu_block_mm_hashes
         seq.block_table.clear()
         if seq.kv_layout is not None:
             seq.kv_layout.validate(
@@ -821,9 +987,10 @@ class BlockManager:
         self,
         seq: Sequence,
         cpu_block_table: tuple[int, ...],
-    ) -> tuple[list[int], list[list[int]]]:
+    ) -> tuple[list[int], list[list[int]], list[dict[int, int] | None]]:
         block_hashes = seq.cpu_block_hashes
         block_token_ids = seq.cpu_block_token_ids
+        block_mm_hashes = getattr(seq, "cpu_block_mm_hashes", [])
         if len(block_hashes) != len(cpu_block_table) or len(block_token_ids) != len(
             cpu_block_table
         ):
@@ -831,7 +998,17 @@ class BlockManager:
                 "swapped sequence is missing CPU block hash metadata; "
                 "cannot restore prefix-cache index safely"
             )
-        for block_hash, token_ids in zip(block_hashes, block_token_ids, strict=False):
+        if len(block_mm_hashes) != len(cpu_block_table):
+            raise RuntimeError(
+                "swapped sequence is missing CPU block mm metadata; "
+                "cannot restore prefix-cache index safely"
+            )
+        for block_hash, token_ids, mm_hashes in zip(
+            block_hashes,
+            block_token_ids,
+            block_mm_hashes,
+            strict=False,
+        ):
             if block_hash == NO_BLOCK_HASH:
                 if token_ids:
                     raise RuntimeError("unhashed swapped block contains stale token metadata")
@@ -842,7 +1019,13 @@ class BlockManager:
                     f"hash={block_hash}, token_count={len(token_ids)}, "
                     f"block_size={self.block_size}"
                 )
-        return block_hashes, block_token_ids
+            if mm_hashes is not None and len(mm_hashes) > self.block_size:
+                raise RuntimeError(
+                    "swapped block mm metadata exceeds block size: "
+                    f"hash={block_hash}, mm_positions={len(mm_hashes)}, "
+                    f"block_size={self.block_size}"
+                )
+        return block_hashes, block_token_ids, block_mm_hashes
 
     def swap_in(self, seq: Sequence) -> list[tuple[int, int]]:
         """CPU → GPU: 把序列的 KV Cache 从 CPU 内存搬回 GPU 显存
@@ -860,26 +1043,30 @@ class BlockManager:
             )
         cpu_block_table = self._cpu_pool.validate_owned(seq.cpu_block_table)
         self._ensure_free_blocks(len(cpu_block_table))
-        cpu_block_hashes, cpu_block_token_ids = self._validate_swap_in_metadata(
-            seq,
-            cpu_block_table,
+        cpu_block_hashes, cpu_block_token_ids, cpu_block_mm_hashes = (
+            self._validate_swap_in_metadata(
+                seq,
+                cpu_block_table,
+            )
         )
         new_blocks = self._gpu_pool.allocate_many(len(cpu_block_table))
         new_block_table = [block.block_id for block in new_blocks]
-        for block_id, block_hash, token_ids in zip(
+        for block_id, block_hash, token_ids, mm_hashes in zip(
             new_block_table,
             cpu_block_hashes,
             cpu_block_token_ids,
+            cpu_block_mm_hashes,
             strict=False,
         ):
             if block_hash != NO_BLOCK_HASH:
-                self._gpu_pool.register_hash(block_id, block_hash, token_ids)
+                self._gpu_pool.register_hash(block_id, block_hash, token_ids, mm_hashes)
         swap_map = list(zip(cpu_block_table, new_block_table, strict=False))
         self._cpu_pool.release_many(cpu_block_table)
         seq.block_table = new_block_table
         seq.cpu_block_table.clear()
         seq.cpu_block_hashes.clear()
         seq.cpu_block_token_ids.clear()
+        seq.cpu_block_mm_hashes.clear()
         if seq.kv_layout is not None:
             seq.kv_layout.validate(
                 block_size=self.block_size,
@@ -922,13 +1109,14 @@ class BlockManager:
             return None
         new_block = self._allocate_free_block()
         new_block_id = new_block.block_id
-        # 复制旧 block 的元数据 (hash, token_ids) 到新 block
+        # 复制旧 block 的元数据 (hash, token_ids, mm 身份) 到新 block
         # CoW 只是逻辑分离, GPU 上的 KV 数据由调用者 (model_runner.copy_kv_blocks) 复制
         if last_block.hash != NO_BLOCK_HASH:
             self._gpu_pool.register_hash(
                 new_block_id,
                 last_block.hash,
                 last_block.token_ids,
+                last_block.mm_token_hashes,
             )
         self._gpu_pool.release_reference(last_block_id)
 

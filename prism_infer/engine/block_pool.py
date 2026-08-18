@@ -7,7 +7,7 @@ prefix-hash indexing, and CPU swap-page ownership.
 
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -22,10 +22,19 @@ class Block:
     ref_count: int = 0
     hash: int = NO_BLOCK_HASH
     token_ids: list[int] = field(default_factory=list)
+    # block 内位置 -> 逐图 surrogate int64（mm-aware 前缀哈希的媒体身份）。
+    # None 表示纯文本 block 或不可哈希的视觉 block。
+    mm_token_hashes: dict[int, int] | None = None
 
-    def update(self, block_hash: int, token_ids: list[int]) -> None:
+    def update(
+        self,
+        block_hash: int,
+        token_ids: list[int],
+        mm_token_hashes: dict[int, int] | None = None,
+    ) -> None:
         self.hash = block_hash
         self.token_ids = list(token_ids)
+        self.mm_token_hashes = None if mm_token_hashes is None else dict(mm_token_hashes)
 
     def activate(self) -> None:
         if self.ref_count != 0:
@@ -35,6 +44,7 @@ class Block:
         self.ref_count = 1
         self.hash = NO_BLOCK_HASH
         self.token_ids.clear()
+        self.mm_token_hashes = None
 
     def mark_free(self) -> None:
         if self.ref_count != 0:
@@ -43,24 +53,35 @@ class Block:
             )
         self.hash = NO_BLOCK_HASH
         self.token_ids.clear()
+        self.mm_token_hashes = None
 
     # Historical compatibility for internal callers.
     reset = activate
 
 
 class GpuBlockPool:
-    """Reference-counted GPU block allocator with a prefix-hash index."""
+    """Reference-counted GPU block allocator with a prefix-hash index.
 
-    def __init__(self, num_blocks: int):
+    ``retain_hashes_on_free`` 开启 vLLM 式 lazy retention：最后一个引用释放后，
+    带 hash 的满块不立即归还，而是进入 cached 集（可回收容量的一部分），
+    新请求可通过 hash 索引复活复用；分配压力下按 FIFO 淘汰 cached 块。
+    """
+
+    def __init__(self, num_blocks: int, retain_hashes_on_free: bool = False):
         if isinstance(num_blocks, bool) or not isinstance(num_blocks, int):
             raise TypeError("num_blocks must be an integer")
         if num_blocks <= 0:
             raise ValueError(f"num_blocks must be positive, got {num_blocks}")
+        if not isinstance(retain_hashes_on_free, bool):
+            raise TypeError("retain_hashes_on_free must be bool")
         self.blocks = [Block(block_id) for block_id in range(num_blocks)]
         self.hash_to_block_id: dict[int, int] = {}
         self.free_block_ids: deque[int] = deque(range(num_blocks))
         self.free_block_id_set = set(range(num_blocks))
         self.used_block_ids: set[int] = set()
+        self.retain_hashes_on_free = retain_hashes_on_free
+        self.cached_block_ids: OrderedDict[int, None] = OrderedDict()
+        self.cached_evictions = 0
 
     @property
     def capacity(self) -> int:
@@ -68,7 +89,26 @@ class GpuBlockPool:
 
     @property
     def free_count(self) -> int:
+        if self.retain_hashes_on_free:
+            return len(self.free_block_id_set) + len(self.cached_block_ids)
         return len(self.free_block_id_set)
+
+    def _evict_oldest_cached(self) -> Block | None:
+        while self.cached_block_ids:
+            block_id, _ = self.cached_block_ids.popitem(last=False)
+            block = self._block(block_id)
+            if block.ref_count != 0:
+                raise RuntimeError(
+                    f"cached GPU block {block_id} has ref_count={block.ref_count}"
+                )
+            self.remove_hash_index(block)
+            block.mark_free()
+            self.used_block_ids.remove(block_id)
+            self.free_block_id_set.add(block_id)
+            self.free_block_ids.append(block_id)
+            self.cached_evictions += 1
+            return block
+        return None
 
     def _block(self, block_id: int) -> Block:
         if isinstance(block_id, bool) or not isinstance(block_id, int):
@@ -100,6 +140,10 @@ class GpuBlockPool:
             block_id = self.free_block_ids.popleft()
             if block_id in self.free_block_id_set:
                 return self.allocate(block_id)
+        if self.retain_hashes_on_free:
+            cached = self._evict_oldest_cached()
+            if cached is not None:
+                return self.allocate(cached.block_id)
         raise RuntimeError("no free GPU KV-cache block available")
 
     def allocate_many(self, count: int) -> list[Block]:
@@ -122,8 +166,17 @@ class GpuBlockPool:
 
     def retain(self, block_id: int) -> Block:
         block = self._block(block_id)
-        if block_id not in self.used_block_ids or block.ref_count <= 0:
+        if block_id not in self.used_block_ids:
             raise RuntimeError(f"cannot retain unowned GPU block {block_id}")
+        if block.ref_count < 0:
+            raise RuntimeError(f"GPU block {block_id} has negative ref_count")
+        if block.ref_count == 0:
+            # 复活 cached 块: 必须处于 retain 模式且带 hash
+            if not self.retain_hashes_on_free or block_id not in self.cached_block_ids:
+                raise RuntimeError(
+                    f"cannot revive non-cached unreferenced GPU block {block_id}"
+                )
+            del self.cached_block_ids[block_id]
         block.ref_count += 1
         return block
 
@@ -149,6 +202,10 @@ class GpuBlockPool:
         block.ref_count -= 1
         if block.ref_count:
             return False
+        if self.retain_hashes_on_free and block.hash != NO_BLOCK_HASH:
+            # lazy retention: 带 hash 的满块暂留, 等待新请求复活或压力淘汰
+            self.cached_block_ids[block_id] = None
+            return False
         self.deallocate(block_id)
         return True
 
@@ -158,6 +215,8 @@ class GpuBlockPool:
             raise RuntimeError(f"GPU block {block_id} still has ref_count={block.ref_count}")
         if block_id not in self.used_block_ids:
             raise RuntimeError(f"GPU block {block_id} is not allocated")
+        if self.retain_hashes_on_free and block_id in self.cached_block_ids:
+            del self.cached_block_ids[block_id]
         self.remove_hash_index(block)
         block.mark_free()
         self.used_block_ids.remove(block_id)
@@ -169,12 +228,13 @@ class GpuBlockPool:
         block_id: int,
         block_hash: int,
         token_ids: list[int],
+        mm_token_hashes: dict[int, int] | None = None,
     ) -> None:
         block = self._block(block_id)
         if block_id not in self.used_block_ids or block.ref_count <= 0:
             raise RuntimeError(f"cannot hash unowned GPU block {block_id}")
         self.remove_hash_index(block)
-        block.update(block_hash, token_ids)
+        block.update(block_hash, token_ids, mm_token_hashes)
         if block_hash != NO_BLOCK_HASH:
             self.hash_to_block_id[block_hash] = block_id
 
@@ -183,17 +243,29 @@ class GpuBlockPool:
         self.remove_hash_index(block)
         block.hash = NO_BLOCK_HASH
         block.token_ids.clear()
+        block.mm_token_hashes = None
 
-    def lookup(self, block_hash: int, token_ids: list[int]) -> Block | None:
+    def lookup(
+        self,
+        block_hash: int,
+        token_ids: list[int],
+        mm_token_hashes: dict[int, int] | None = None,
+    ) -> Block | None:
         if block_hash == NO_BLOCK_HASH:
             return None
         block_id = self.hash_to_block_id.get(block_hash)
         if block_id is None:
             return None
         block = self._block(block_id)
-        if block_id not in self.used_block_ids or block.ref_count <= 0:
+        if block_id not in self.used_block_ids:
             raise RuntimeError(f"prefix hash points to unowned GPU block {block_id}")
-        return block if block.token_ids == token_ids else None
+        if block.ref_count < 0:
+            raise RuntimeError(f"prefix hash points to corrupted GPU block {block_id}")
+        if block.token_ids != token_ids:
+            return None
+        if block.mm_token_hashes != mm_token_hashes:
+            return None
+        return block
 
 
 class CpuBlockPool:

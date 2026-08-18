@@ -15,7 +15,11 @@ import torch
 from prism_infer.config import DEFAULT_PAGED_DECODE_BLOCK_N, Config
 from prism_infer.engine.compression import build_compression_metadata
 from prism_infer.engine.contracts import DeviceModelInputs, PrefillSlice, PreparedModelInputs
-from prism_infer.engine.sequence import Sequence
+from prism_infer.engine.sequence import (
+    Sequence,
+    image_range_coverage,
+    split_image_payloads_for_range,
+)
 from prism_infer.engine.visual_pruning import (
     build_retained_slot_mapping,
     build_runtime_visual_token_scorer,
@@ -179,47 +183,89 @@ class ModelInputPreparer:
         host: _PrefillHostBatch,
         seq: Sequence,
         current_tokens: list[int],
+        *,
+        merge_size: int,
     ) -> None:
         if seq.precomputed_visual_embeds is not None:
+            # 缓存视觉 embedding: 允许整图子集（block 级前缀复用从任意图边界开始）
+            video_observed = (
+                current_tokens.count(seq.video_token_id)
+                if seq.video_token_id is not None
+                else 0
+            )
             expected_tokens = seq.image_token_count + seq.video_token_count
+            if seq.video_token_id is not None and video_observed not in (0, seq.video_token_count):
+                raise ValueError(
+                    "chunk boundary splits cached video embeddings: "
+                    f"seq={seq.seq_id} chunk_tokens={video_observed} "
+                    f"expected={seq.video_token_count}"
+                )
             observed_tokens = sum(
                 current_tokens.count(token_id)
                 for token_id in (seq.image_token_id, seq.video_token_id)
                 if token_id is not None
             )
-            if observed_tokens not in (0, expected_tokens):
-                raise ValueError(
-                    "chunk boundary splits cached visual embeddings: "
-                    f"seq={seq.seq_id} chunk_tokens={observed_tokens} "
-                    f"expected={expected_tokens}"
-                )
-            if observed_tokens:
-                if int(seq.precomputed_visual_embeds.shape[0]) != expected_tokens:
+            if observed_tokens == 0:
+                return
+            if observed_tokens != expected_tokens:
+                if seq.image_token_id is None or seq.image_grid_thw is None:
                     raise ValueError(
-                        "cached visual embedding rows do not match placeholders: "
-                        f"seq={seq.seq_id} "
-                        f"embeddings={seq.precomputed_visual_embeds.shape[0]} "
+                        "chunk boundary splits cached visual embeddings: "
+                        f"seq={seq.seq_id} chunk_tokens={observed_tokens} "
                         f"expected={expected_tokens}"
                     )
+                coverage = image_range_coverage(
+                    token_ids=current_tokens,
+                    image_token_id=seq.image_token_id,
+                    range_start=0,
+                    range_end=len(current_tokens),
+                )
+                if coverage is None:
+                    raise ValueError(
+                        "chunk boundary splits cached visual embeddings: "
+                        f"seq={seq.seq_id} chunk_tokens={observed_tokens} "
+                        f"expected={expected_tokens}"
+                    )
+                covered, _ = coverage
+                tokens_per_image = [
+                    int(row.prod().item()) // (merge_size * merge_size)
+                    for row in seq.image_grid_thw
+                ]
+                first, last = covered[0], covered[-1]
+                row_start = sum(tokens_per_image[:first])
+                row_end = sum(tokens_per_image[: last + 1])
+                embeds = seq.precomputed_visual_embeds[row_start:row_end]
+                deepstack = tuple(
+                    value[row_start:row_end]
+                    for value in seq.precomputed_deepstack_visual_embeds
+                )
+            else:
+                embeds = seq.precomputed_visual_embeds
                 deepstack = seq.precomputed_deepstack_visual_embeds
-                if not deepstack:
-                    raise RuntimeError("cached visual embeddings are missing DeepStack outputs")
-                if not host.deepstack_visual_embed_chunks:
-                    host.deepstack_visual_embed_chunks = [[] for _ in deepstack]
-                if len(host.deepstack_visual_embed_chunks) != len(deepstack):
-                    raise RuntimeError("cached visual requests have inconsistent DeepStack depth")
-                host.visual_embed_chunks.append(seq.precomputed_visual_embeds)
-                for chunks, value in zip(
-                    host.deepstack_visual_embed_chunks,
-                    deepstack,
-                    strict=True,
-                ):
-                    if value.shape != seq.precomputed_visual_embeds.shape:
-                        raise ValueError(
-                            "cached DeepStack output shape does not match "
-                            f"main visual embeddings for seq={seq.seq_id}"
-                        )
-                    chunks.append(value)
+            if int(embeds.shape[0]) != observed_tokens:
+                raise ValueError(
+                    "cached visual embedding rows do not match placeholders: "
+                    f"seq={seq.seq_id} embeddings={embeds.shape[0]} "
+                    f"expected={observed_tokens}"
+                )
+            if not deepstack:
+                raise RuntimeError("cached visual embeddings are missing DeepStack outputs")
+            if not host.deepstack_visual_embed_chunks:
+                host.deepstack_visual_embed_chunks = [[] for _ in deepstack]
+            if len(host.deepstack_visual_embed_chunks) != len(deepstack):
+                raise RuntimeError("cached visual requests have inconsistent DeepStack depth")
+            host.visual_embed_chunks.append(embeds)
+            for chunks, value in zip(
+                host.deepstack_visual_embed_chunks,
+                deepstack,
+                strict=True,
+            ):
+                if value.shape != embeds.shape:
+                    raise ValueError(
+                        "cached DeepStack output shape does not match "
+                        f"main visual embeddings for seq={seq.seq_id}"
+                    )
+                chunks.append(value)
             return
 
         media = (
@@ -262,13 +308,43 @@ class ModelInputPreparer:
                     f"{modality} payload is missing token identity metadata for seq={seq.seq_id}"
                 )
             observed_tokens = current_tokens.count(token_id)
-            if observed_tokens not in (0, expected_tokens):
-                raise ValueError(
-                    f"chunk boundary splits {modality} token payload: "
-                    f"seq={seq.seq_id} chunk_tokens={observed_tokens} "
-                    f"expected={expected_tokens}"
+            if modality == "video":
+                if observed_tokens not in (0, expected_tokens):
+                    raise ValueError(
+                        f"chunk boundary splits {modality} token payload: "
+                        f"seq={seq.seq_id} chunk_tokens={observed_tokens} "
+                        f"expected={expected_tokens}"
+                    )
+                if observed_tokens:
+                    payload_chunks.append(payload)
+                    grid_chunks.append(grid)
+                continue
+            # 图像: 允许整图子集, 切片 payload/grid 到范围覆盖的图
+            if observed_tokens == 0:
+                continue
+            if observed_tokens != expected_tokens:
+                sliced_payload, sliced_grid, covered_pads = split_image_payloads_for_range(
+                    pixel_values=payload,
+                    grid=grid,
+                    merge_size=merge_size,
+                    token_ids=current_tokens,
+                    image_token_id=token_id,
+                    range_start=0,
+                    range_end=len(current_tokens),
                 )
-            if observed_tokens:
+                if covered_pads != observed_tokens:
+                    raise ValueError(
+                        f"chunk boundary splits {modality} token payload: "
+                        f"seq={seq.seq_id} chunk_tokens={observed_tokens} "
+                        f"covered={covered_pads}"
+                    )
+                if sliced_payload is None or sliced_grid is None:
+                    raise ValueError(
+                        f"image payload slice failed for seq={seq.seq_id}"
+                    )
+                payload_chunks.append(sliced_payload)
+                grid_chunks.append(sliced_grid)
+            else:
                 payload_chunks.append(payload)
                 grid_chunks.append(grid)
 
@@ -294,7 +370,6 @@ class ModelInputPreparer:
                 )
             else:
                 host.mrope_position_chunks.append(seq.position_ids[:, 0, query_start:token_end])
-            self._append_sequence_media(host, seq, current_tokens)
         else:
             host.text_positions.extend(range(query_start, token_end))
 
@@ -438,6 +513,9 @@ class ModelInputPreparer:
                 f"sequences={missing_positions}"
             )
 
+        vision_config = getattr(getattr(self.config, "hf_config", None), "vision_config", None)
+        merge_size = int(getattr(vision_config, "spatial_merge_size", 2))
+
         host = _PrefillHostBatch()
         for seq, prefill_slice in zip(seqs, slices, strict=False):
             self._append_prefill_sequence(
@@ -446,6 +524,13 @@ class ModelInputPreparer:
                 prefill_slice,
                 uses_mrope=uses_mrope,
             )
+            if uses_mrope:
+                self._append_sequence_media(
+                    host,
+                    seq,
+                    list(seq[prefill_slice.token_start : prefill_slice.token_end]),
+                    merge_size=merge_size,
+                )
 
         input_ids = self._to_cuda_tensor(host.input_ids, dtype=torch.int64)
         positions = self._position_tensor(

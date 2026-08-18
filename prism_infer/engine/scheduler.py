@@ -13,6 +13,7 @@ from time import perf_counter_ns
 
 from prism_infer.config import DEFAULT_MAX_VISION_PATCHES_PER_BATCH, Config
 from prism_infer.engine.block_manager import BlockManager
+from prism_infer.engine.compression import COMPRESSION_OFF
 from prism_infer.engine.contracts import (
     BatchPhase,
     BatchPlan,
@@ -123,6 +124,11 @@ class Scheduler:
             config.kvcache_block_size,
             config.num_cpu_blocks,
             enable_prefix_caching=config.enable_prefix_caching,
+            # 仅当配置显式声明 compression_mode 时启用 block 级 mm 前缀匹配
+            # (测试等轻量 config 保持旧语义)
+            block_level_mm_prefix=(
+                getattr(config, "compression_mode", None) == COMPRESSION_OFF
+            ),
         )
         scheduler_policy_name = getattr(config, "scheduler_policy", "fcfs")
         heavy_prefill_threshold = getattr(
