@@ -72,6 +72,6 @@ def test_scheduler_empty_decode_raises_runtime_error() -> None:
     )
     scheduler = Scheduler(config)
 
-    with pytest.raises(RuntimeError, match="no runnable sequences"):
+    with pytest.raises(RuntimeError, match="scheduler has no decode work"):
         scheduler.schedule()
     print("Scheduler empty decode explicit error: PASS")

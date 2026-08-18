@@ -138,6 +138,31 @@ def test_engine_flatten_vl_forward_builds_deepstack_inputs():
             deepstack = [main + 100, main + 200, main + 300]
             return main, deepstack
 
+        def prepare_language_inputs(
+            self,
+            *,
+            input_ids,
+            pixel_values=None,
+            image_grid_thw=None,
+            pixel_values_videos=None,
+            video_grid_thw=None,
+            visual_embeds=None,
+            deepstack_visual_embeds=(),
+        ):
+            if visual_embeds is None and pixel_values is not None:
+                visual_embeds, deepstack_visual_embeds = self._encode_visual_payload(
+                    pixel_values, image_grid_thw
+                )
+            inputs_embeds = self.language_model.embed_tokens(input_ids)
+            visual_pos_masks = None
+            if visual_embeds is not None:
+                visual_pos_masks = input_ids == self.image_token_id
+                inputs_embeds = inputs_embeds.masked_scatter(
+                    visual_pos_masks.unsqueeze(-1), visual_embeds
+                )
+            resolved = list(deepstack_visual_embeds) if deepstack_visual_embeds else None
+            return inputs_embeds, visual_pos_masks, resolved
+
     model = FakeVLModel()
     input_ids = torch.tensor([1, image_token_id, image_token_id, 2], dtype=torch.long)
     pixel_values = torch.zeros(8, 4)
