@@ -12,9 +12,13 @@ Prompt 不变，问题文本位于其后。
 Prism-Infer 的处理方式是：
 
 1. 用 media-first Prompt 构造与问题无关的公共视觉前缀；
-2. 将公共前缀的 K/V 量化为 Scaled-FP8，并物理删除一部分视觉 token；
-3. 把压实后的 Paged KV 作为可跨问题复用的缓存对象；
-4. 让缓存借用整个空闲 KV Pool，活跃请求需要空间时再回收；
+2. 将公共前缀的 K/V 量化为 Scaled-FP8（per-token、per-KV-head scale），并保持
+   Dense 布局——视觉 token 物理删除/压实已因质量损失被否定，见
+   REJECTED_EXPERIMENTS.md；
+3. 把量化后的 Paged KV 作为可跨问题复用的缓存对象：entry 级整段复用 +
+   block 级 mm-aware 匹配（子集/多轮/布局变化）；
+4. 让缓存借用整个空闲 KV Pool，活跃请求需要空间时再回收（池层 lazy retention
+   与 benefit-gated entry 淘汰两级）；
 5. 用请求级记录和 Nsight Trace 同时验证容量、延迟、质量和真实执行路径。
 
 这里没有提出新的视觉 token 选择算法。图片主路径使用 query-agnostic Uniform 作为明确的

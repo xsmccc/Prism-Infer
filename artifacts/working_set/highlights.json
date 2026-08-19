@@ -162,5 +162,47 @@
     "Fixed arrival rate limits output throughput to about 64.2 tokens/s for all three engines.",
     "TP2 improves the measured Decode TPOT but not end-to-end multimodal latency.",
     "Prefix Cache is process-local; PP, multi-node TP and MoE expert parallelism are not implemented."
-  ]
+  ],
+  "dense_block_prefix_results": {
+    "fit": {
+      "ttft_p50_ms": 328.598,
+      "ttft_p99_ms": 1487.323,
+      "e2e_p50_ms": 666.494,
+      "e2e_p99_ms": 2302.408,
+      "pre_admission_hits": 600,
+      "cache_hits": 600,
+      "cache_misses": 0,
+      "reused_blocks": 2878,
+      "tail_clone_hits": 560,
+      "cow_copies": 40,
+      "process_peak_mib": 21797.666015625
+    },
+    "knee": {
+      "ttft_p50_ms": 355.486,
+      "ttft_p99_ms": 1452.826,
+      "e2e_p50_ms": 699.255,
+      "e2e_p99_ms": 2285.323,
+      "pre_admission_hits": 580,
+      "cache_hits": 575,
+      "cache_misses": 23,
+      "reused_blocks": 2823,
+      "tail_clone_hits": 288,
+      "cow_copies": 287,
+      "process_peak_mib": 22361.1748046875
+    },
+    "pressure": {
+      "ttft_p50_ms": 380.263,
+      "ttft_p99_ms": 1606.425,
+      "e2e_p50_ms": 769.787,
+      "e2e_p99_ms": 2244.747,
+      "pre_admission_hits": 500,
+      "cache_hits": 492,
+      "cache_misses": 99,
+      "reused_blocks": 2492,
+      "tail_clone_hits": 168,
+      "cow_copies": 324,
+      "process_peak_mib": 22263.017578125
+    }
+  },
+  "note_dense_block_prefix": "2026-08-19 dense block-level mm-aware prefix matching rerun (branch feat/block-level-mm-prefix-cache). Suffix-prefill reference path is the known TTFT bottleneck; optimized kernel is planned next."
 }

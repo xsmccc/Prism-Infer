@@ -38,32 +38,45 @@ SHA256 共同构成。请求在 Scheduler admission 前直接查询 Prefix Cache
 
 | 引擎 | TTFT p50 / p99 | E2E p50 / p99 | 进程显存峰值 | 重算 prompt tokens |
 |---|---:|---:|---:|---:|
-| **Prism Compact Prefix** | **101.692 / 497.899 ms** | 334.834 / **832.635 ms** | **24,002 MiB** | **75,951** |
+| **Prism Dense Prefix（block 级 mm-aware）** | 380.3 / 1,606.4 ms | 769.8 / 2,244.7 ms | **22,263 MiB** | 181,191 |
 | vLLM 0.25.1 | 134.719 / 709.764 ms | **325.141** / 1,026.414 ms | 24,440 MiB | 165,678 |
 | SGLang 0.5.15.post1 | 305.770 / 1,165.342 ms | 523.622 / 1,909.157 ms | 26,598 MiB | 181,294 |
 
-在该场景下，Prism 相对 vLLM 的 TTFT p50/p99 分别低 24.52%/29.85%，E2E p99 低
-18.88%，重算 prompt tokens 少 54.16%，进程峰值低 438 MiB；E2E p50 仍慢 2.98%。
-固定 4 req/s、output 16 的请求流把三套引擎的输出吞吐限制在约 64.2 tok/s，因此这里不把
-吞吐写成领先指标。`fit` 和 `knee` 上 Prism 的 TTFT p50 较低，但 tail latency 与 E2E
-仍落后 vLLM，优势只在工作集超过 KV 容量后形成。
+> Dense 是唯一推荐路径（无损；视觉剪枝因质量损失被否定，见
+> [docs/REJECTED_EXPERIMENTS.md](docs/REJECTED_EXPERIMENTS.md)）。pressure 下
+> 600 个测量请求中 **492 次命中前缀缓存**、复用 2,492 个 KV block；TTFT 仍落后
+> vLLM，瓶颈已定位为命中路径的 suffix-prefill 参考实现（Python 逐 block gather），
+> 优化 kernel 为下一步计划工作。历史 Compact 数字（TTFT 101.692/497.899 ms）保留在
+> rejected 文档中作为被否定对照。
 
-### 为什么压实会改善工作集
+该表中的 Prism 数字来自 Dense Scaled-FP8 + block 级 mm-aware 前缀匹配的当前
+实现：命中率（pressure 492/600）与复用块数（2,492）是缓存能力的直接证据，复算 prompt
+tokens 与 vLLM 同量级；TTFT 落后于 vLLM 的差距已定位在命中路径的 suffix-prefill
+参考实现（`_forward_prefill_paged` 的 Python 逐 block gather）与每命中一次的全块
+CoW——suffix-prefill 优化 kernel 是已计划的下一步（见
+[docs/REPEATED_VISUAL_CONTEXT.md](docs/REPEATED_VISUAL_CONTEXT.md) 的性能一节）。
+历史 Compact 配置在 TTFT 上曾领先 vLLM（101.692 ms vs 134.719 ms），但视觉剪枝的
+质量损失使其被否定。
 
-同一 `pressure` 请求流上的 Prism 内部对照：
+### 命中路径与匹配能力
 
-| 路径 | Prefix 实际页 / Dense 等价页 | 驻留媒体 | Prefix 淘汰 | 重算 tokens | TTFT p50 / p99 |
+同一 `pressure` 请求流上，Dense block 级实现（2026-08 重跑）：
+
+| 工作集 | 命中 / 请求 | 复用 block | tail-clone 命中 | CoW 次数 | 复算 prefill tokens |
 |---|---:|---:|---:|---:|---:|
-| Dense Scaled-FP8 Prefix | 3,413 / 3,413 | 27 | 96 | 188,169 | 124.994 / 695.924 ms |
-| **Compact Scaled-FP8 Prefix** | **2,762 / 3,941** | **40** | **15** | **75,951** | **101.692 / 497.899 ms** |
+| fit | 600 / 600 | 2,878 | 560 | 40 | 70,206 |
+| knee | 575 / 600 | 2,823 | 288 | 287 | 118,330 |
+| pressure | 492 / 600 | 2,492 | 168 | 324 | 181,191 |
 
-Compact 路径将运行中 Prefix 页数减少 29.92%，可驻留媒体增加 48.15%，淘汰减少
-84.38%，重算 token 减少 59.64%；对应 TTFT p50/p99 分别降低 18.64%/28.46%。
+匹配分两层：同组同布局请求走 entry 级整段复用（O(1) 探测 + 命中后跳过 ViT 与公共
+前缀 prefill）；block 级 mm-aware 哈希（逐图 SHA 注入 block hash）覆盖子集复用
+（图 1-8 → 图 1-4）、多轮追问文本增长与布局变化的局部复用，碰撞安全由测试钉死
+（`tests/test_mm_block_prefix_cache.py`，16 例）。端到端集成验证：4 图冷请求 1.36s →
+同图新问 0.40s（3.4×）→ 子集请求 0.29s，重复请求输出逐 token 一致（无损）。
 
-压实并非无损。MuirBench 的 85 个跨问题样本中，官方交错 Prompt 的 Dense 结果为
-49/85，media-first Dense 为 46/85；在确实删除了视觉 token 的 49 个样本上，Dense 为
-27/49，Uniform Compact 为 20/49。DocVQA 样本受 768-token 最低保留量限制，没有发生
-删除；MVBench 视频压实从 183/252 降至 113/252，因此视频 token 删除默认关闭。
+视觉剪枝/压实（Compact）因质量损失被否定：MuirBench 49 个实际删除样本上 27/49 →
+20/49，MVBench 视频 183/252 → 113/252。完整动机、实现与放弃依据见
+[docs/REJECTED_EXPERIMENTS.md](docs/REJECTED_EXPERIMENTS.md)。
 
 完整工作集、质量对照和 Trace 见
 [重复视觉上下文技术记录](docs/REPEATED_VISUAL_CONTEXT.md)。

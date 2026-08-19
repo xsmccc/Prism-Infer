@@ -52,6 +52,9 @@ query-agnostic Uniform 作为清晰对照。实验中，每题 Attention Top-k �
 4. 压实后的完整页只读共享，未满尾页 clone，活跃请求缺页时从同一 KV Pool 回收缓存；
 5. 相同的媒体、prompt token、请求顺序和 KV 字节预算用于 Prism、vLLM 和 SGLang。
 
-因此，合适的项目表述是“压缩感知的多模态 Prefix Cache 运行时”，而不是新的 token
-剪枝算法，也不是通用场景下全面优于 vLLM 或 SGLang。性能比较必须与实际发生 token
-删除的质量结果一起阅读。
+因此，合适的项目表述是“带入队前探测与 block 级 mm-aware 匹配的多模态 Prefix
+Cache 运行时”：同组同布局请求由 entry 级整段复用覆盖（命中跳过 ViT 与公共前缀
+prefill），子集、多轮追问与布局变化由 block 级逐图媒体哈希匹配覆盖；视觉剪枝/
+压实是已实测否定的方向（见 REJECTED_EXPERIMENTS.md）。不是通用场景下全面优于
+vLLM 或 SGLang：命中路径的 suffix-prefill 参考实现是当前 TTFT 瓶颈，优化 kernel
+为计划工作；性能比较与命中率、复用块数一起阅读。
