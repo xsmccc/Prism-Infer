@@ -53,6 +53,7 @@ DEFAULT_VISION_ENCODER_MICROBATCH_PATCHES = 4096
 DEFAULT_MAX_VISION_PATCHES_PER_BATCH = 2 * DEFAULT_VISION_ENCODER_MICROBATCH_PATCHES
 DEFAULT_PAGED_DECODE_BLOCK_N = 32
 SUPPORTED_PAGED_DECODE_BLOCK_N = frozenset({16, 32, 64, 128, 256})
+DEFAULT_VISUAL_EMBEDDING_CACHE_HOST_MAX_BYTES = 4 * 1024 * 1024 * 1024
 
 
 class ExecutionBackendName(str, Enum):
@@ -287,6 +288,9 @@ class MultimodalConfig:
     vision_attention_backend: VisionAttentionBackendName | str = VisionAttentionBackendName.SDPA
     enable_vision_tensor_cudagraph: bool = False
     enable_visual_embedding_cache: bool = False
+    visual_embedding_cache_host_max_bytes: int = (
+        DEFAULT_VISUAL_EMBEDDING_CACHE_HOST_MAX_BYTES
+    )
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -314,6 +318,10 @@ class MultimodalConfig:
         _boolean(
             self.enable_visual_embedding_cache,
             name="enable_visual_embedding_cache",
+        )
+        _positive_int(
+            self.visual_embedding_cache_host_max_bytes,
+            name="visual_embedding_cache_host_max_bytes",
         )
         object.__setattr__(
             self,
@@ -595,6 +603,9 @@ class PrismConfig:
             "vision_attention_backend": "vision_attention_backend",
             "enable_vision_tensor_cudagraph": ("enable_vision_tensor_cudagraph"),
             "enable_visual_embedding_cache": "enable_visual_embedding_cache",
+            "visual_embedding_cache_host_max_bytes": (
+                "visual_embedding_cache_host_max_bytes"
+            ),
         }
         cache_fields = {
             "gpu_memory_utilization": "gpu_memory_utilization",
@@ -923,6 +934,10 @@ class Config:
     @property
     def enable_visual_embedding_cache(self) -> bool:
         return self.multimodal_config.enable_visual_embedding_cache
+
+    @property
+    def visual_embedding_cache_host_max_bytes(self) -> int:
+        return self.multimodal_config.visual_embedding_cache_host_max_bytes
 
     @property
     def max_num_batched_tokens(self) -> int:

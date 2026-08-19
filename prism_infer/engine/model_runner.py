@@ -136,6 +136,131 @@ class _VisualEmbeddingCacheEntry:
     storage_bytes: int
 
 
+class _PerImageVisualEmbeddingHostCache:
+    """Pinned host-memory LRU of per-image Vision Encoder outputs.
+
+    Keyed by the per-image media SHA256 already computed for mm-aware block
+    hashing, so one identity space serves both KV-block reuse and encoder
+    skip. GPU residency stays bounded by the L1 whole-set cache; this tier
+    trades host RAM for ViT recompute.
+    """
+
+    def __init__(self, max_bytes: int) -> None:
+        if (
+            isinstance(max_bytes, bool)
+            or not isinstance(max_bytes, int)
+            or max_bytes <= 0
+        ):
+            raise ValueError(
+                f"host cache max_bytes must be a positive int, got {max_bytes!r}"
+            )
+        self.max_bytes = int(max_bytes)
+        self._entries: OrderedDict[bytes, _VisualEmbeddingCacheEntry] = OrderedDict()
+        self.resident_bytes = 0
+        self.hits = 0
+        self.misses = 0
+        self.evictions = 0
+        self.oversize_skips = 0
+
+    def lookup(self, key: bytes) -> _VisualEmbeddingCacheEntry | None:
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        self._entries.move_to_end(key)
+        self.hits += 1
+        return entry
+
+    def store(
+        self,
+        key: bytes,
+        visual_embeds: torch.Tensor,
+        deepstack_visual_embeds: tuple[torch.Tensor, ...],
+    ) -> None:
+        """Keep pinned host copies; evict LRU-first under the byte budget."""
+
+        host_embeds = (
+            visual_embeds
+            if not visual_embeds.is_cuda
+            else visual_embeds.detach().cpu()
+        )
+        host_deepstack = tuple(
+            value if not value.is_cuda else value.detach().cpu()
+            for value in deepstack_visual_embeds
+        )
+        if torch.cuda.is_available() and not host_embeds.is_pinned():
+            host_embeds = host_embeds.pin_memory()
+            host_deepstack = tuple(value.pin_memory() for value in host_deepstack)
+        storage_bytes = sum(
+            value.numel() * value.element_size()
+            for value in (host_embeds, *host_deepstack)
+        )
+        self.misses += 1
+        if storage_bytes > self.max_bytes:
+            self.oversize_skips += 1
+            return
+        while self._entries and self.resident_bytes + storage_bytes > self.max_bytes:
+            _, evicted = self._entries.popitem(last=False)
+            self.resident_bytes -= evicted.storage_bytes
+            self.evictions += 1
+        self._entries[key] = _VisualEmbeddingCacheEntry(
+            visual_embeds=host_embeds,
+            deepstack_visual_embeds=host_deepstack,
+            storage_bytes=storage_bytes,
+        )
+        self.resident_bytes += storage_bytes
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self.resident_bytes = 0
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "scope": "per_image_pinned_lru",
+            "max_bytes": self.max_bytes,
+            "resident_bytes": self.resident_bytes,
+            "entries": len(self._entries),
+            "hits": self.hits,
+            "misses": self.misses,
+            "evictions": self.evictions,
+            "oversize_skips": self.oversize_skips,
+        }
+
+    def reset_metrics(self) -> None:
+        self.hits = 0
+        self.misses = 0
+        self.evictions = 0
+        self.oversize_skips = 0
+
+
+def _image_row_ranges(grid: torch.Tensor) -> list[tuple[int, int]]:
+    """Per-image [start, end) patch row ranges implied by the 2D grid."""
+
+    if grid.ndim != 2 or grid.shape[1] != 3:
+        raise ValueError(f"image grid must be [num_images, 3], got {list(grid.shape)}")
+    ranges: list[tuple[int, int]] = []
+    offset = 0
+    for row in grid:
+        rows = int(row.prod().item())
+        ranges.append((offset, offset + rows))
+        offset += rows
+    return ranges
+
+
+def _assemble_per_image_visual_outputs(
+    parts: list[tuple[torch.Tensor, tuple[torch.Tensor, ...]]],
+) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+    """Concatenate per-image Vision Encoder outputs in payload order."""
+
+    if not parts:
+        return torch.empty((0, 0)), ()
+    visual_embeds = torch.cat([part[0] for part in parts], dim=0)
+    depth = len(parts[0][1])
+    deepstack = tuple(
+        torch.cat([part[1][level] for part in parts], dim=0) for level in range(depth)
+    )
+    return visual_embeds, deepstack
+
+
 def _resolve_model_dtype(hf_config) -> torch.dtype:
     """从 HF config 或 text_config 中解析模型权重 dtype。"""
 
@@ -221,6 +346,15 @@ class ModelRunner:
         self._visual_embedding_cache_misses = 0
         self._visual_embedding_cache_evictions = 0
         self._visual_embedding_cache_oversize_skips = 0
+        self._visual_embedding_host_cache = _PerImageVisualEmbeddingHostCache(
+            int(
+                getattr(
+                    config,
+                    "visual_embedding_cache_host_max_bytes",
+                    4 * 1024**3,
+                )
+            )
+        )
         register_model_config(config)
         self._initialize_distributed(distributed_init_method)
         self._initialize_model_runtime(hf_config)
@@ -347,6 +481,7 @@ class ModelRunner:
         if visual_embedding_cache is not None:
             visual_embedding_cache.clear()
         self._visual_embedding_cache_resident_bytes = 0
+        self._visual_embedding_host_cache.clear()
         self._release_execution_backend()
         reset_context()
         dist.destroy_process_group()
@@ -504,7 +639,7 @@ class ModelRunner:
 
     @staticmethod
     def _visual_cache_device_tensor(value: torch.Tensor) -> torch.Tensor:
-        if value.is_cuda:
+        if value.is_cuda or not torch.cuda.is_available():
             return value
         return value.pin_memory().cuda(non_blocking=True)
 
@@ -543,6 +678,20 @@ class ModelRunner:
             self._visual_embedding_cache.move_to_end(key)
             self._visual_embedding_cache_hits += 1
             self._attach_visual_embedding_cache_entry(seq, cached)
+            return
+
+        per_image_hashes = seq.multimodal_media_token_hashes
+        if (
+            per_image_hashes is not None
+            and seq.pixel_values is not None
+            and seq.image_grid_thw is not None
+            and seq.pixel_values_videos is None
+            and len(per_image_hashes) == int(seq.image_grid_thw.shape[0])
+            and self._hydrate_visual_embedding_cache_per_image(
+                seq,
+                per_image_hashes,
+            )
+        ):
             return
 
         payloads = [
@@ -608,6 +757,108 @@ class ModelRunner:
         self._visual_embedding_cache[key] = entry
         self._visual_embedding_cache_resident_bytes += storage_bytes
 
+
+    @torch.inference_mode()
+    def _hydrate_visual_embedding_cache_per_image(
+        self,
+        seq: Sequence,
+        per_image_hashes: tuple[bytes, ...],
+    ) -> bool:
+        """Per-image host tier: hits skip ViT, misses are batch-encoded.
+
+        Returns False on any structural mismatch so the caller falls back to
+        the whole-payload path safely.
+        """
+
+        grid = seq.image_grid_thw
+        payload = seq.pixel_values
+        try:
+            ranges = _image_row_ranges(grid)
+        except (TypeError, ValueError):
+            return False
+        if sum(end - start for start, end in ranges) != int(payload.shape[0]):
+            return False
+        device_payload = self._visual_cache_device_tensor(payload)
+        parts: list[tuple[torch.Tensor, tuple[torch.Tensor, ...]] | None] = [
+            None for _ in per_image_hashes
+        ]
+        missing: list[int] = []
+        for index, image_hash in enumerate(per_image_hashes):
+            entry = self._visual_embedding_host_cache.lookup(image_hash)
+            if entry is None:
+                missing.append(index)
+                continue
+            parts[index] = (
+                self._visual_cache_device_tensor(entry.visual_embeds),
+                tuple(
+                    self._visual_cache_device_tensor(value)
+                    for value in entry.deepstack_visual_embeds
+                ),
+            )
+        if missing:
+            device = device_payload.device
+            selected_rows = torch.cat(
+                [
+                    torch.arange(ranges[index][0], ranges[index][1], device=device)
+                    for index in missing
+                ]
+            )
+            device_grid = self._visual_cache_device_tensor(grid)
+            missing_grid = device_grid[
+                torch.tensor(missing, device=device_grid.device)
+            ]
+            with profile_region(
+                "model.vision.embedding_cache_per_image_encode",
+                metadata={
+                    "images": len(missing),
+                    "patch_tokens": int(selected_rows.shape[0]),
+                    "seq_id": seq.seq_id,
+                },
+            ):
+                visual_embeds, deepstack = self.model.model._encode_visual_payload(
+                    device_payload[selected_rows],
+                    missing_grid,
+                )
+            visual_embeds = visual_embeds.detach()
+            deepstack = tuple(value.detach() for value in deepstack)
+            offset = 0
+            for index in missing:
+                start, end = ranges[index]
+                length = end - start
+                image_embeds = visual_embeds[offset : offset + length]
+                image_deepstack = tuple(
+                    value[offset : offset + length] for value in deepstack
+                )
+                offset += length
+                self._visual_embedding_host_cache.store(
+                    per_image_hashes[index],
+                    image_embeds,
+                    image_deepstack,
+                )
+                parts[index] = (image_embeds, image_deepstack)
+        assembled = _assemble_per_image_visual_outputs(
+            [part for part in parts if part is not None]
+        )
+        visual_embeds, deepstack_visual_embeds = assembled
+        if int(visual_embeds.shape[0]) == 0:
+            return False
+        expected_rows = seq.image_token_count + seq.video_token_count
+        if (
+            int(visual_embeds.shape[0]) != expected_rows
+            or not deepstack_visual_embeds
+            or any(
+                value.shape != visual_embeds.shape for value in deepstack_visual_embeds
+            )
+        ):
+            raise RuntimeError(
+                "Per-image Vision Encoder cache output does not match visual "
+                f"placeholders: seq={seq.seq_id} rows={visual_embeds.shape[0]} "
+                f"expected={expected_rows}"
+            )
+        seq.precomputed_visual_embeds = visual_embeds
+        seq.precomputed_deepstack_visual_embeds = deepstack_visual_embeds
+        return True
+
     def visual_embedding_cache_metadata(self) -> dict[str, object]:
         """Return bounded cache state and measured-run counters."""
 
@@ -622,6 +873,7 @@ class ModelRunner:
             "misses": self._visual_embedding_cache_misses,
             "evictions": self._visual_embedding_cache_evictions,
             "oversize_skips": (self._visual_embedding_cache_oversize_skips),
+            "host_cache": self._visual_embedding_host_cache.metadata(),
         }
 
     def reset_visual_embedding_cache_metrics(self) -> None:
@@ -631,6 +883,7 @@ class ModelRunner:
         self._visual_embedding_cache_misses = 0
         self._visual_embedding_cache_evictions = 0
         self._visual_embedding_cache_oversize_skips = 0
+        self._visual_embedding_host_cache.reset_metrics()
 
     def _configure_decode_compile(self) -> None:
         """Enable exactly one explicitly configured decode compile region."""

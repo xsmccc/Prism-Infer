@@ -301,6 +301,7 @@ def _population_prefix_evidence(
     sample_id: str,
     expected_dense_pages: int,
     page_size_tokens: int,
+    plan_page_tokens: int,
     variant: str,
     metadata_before: dict[str, object],
     metadata_after: dict[str, object],
@@ -338,11 +339,23 @@ def _population_prefix_evidence(
                 f"entry_pages={entry_pages}, decision_tokens={compacted_tokens}, "
                 f"entry_tokens={entry_tokens}"
             )
-    if variant in ("dense_prefix", "dense_block_prefix") and compacted_pages != expected_dense_pages:
-        raise RuntimeError(
-            "dense-prefix population differs from the measured working-set plan: "
-            f"group={group_id}, expected={expected_dense_pages}, actual={compacted_pages}"
-        )
+    if variant in ("dense_prefix", "dense_block_prefix"):
+        if page_size_tokens == plan_page_tokens:
+            pages_match = compacted_pages == expected_dense_pages
+        else:
+            # The plan certifies tokens at plan-page granularity only: check
+            # the exact compacted token count inside that page's token range.
+            upper = expected_dense_pages * plan_page_tokens
+            lower = (expected_dense_pages - 1) * plan_page_tokens + 1
+            pages_match = bool(
+                compacted_tokens is not None and lower <= int(compacted_tokens) <= upper
+            )
+        if not pages_match:
+            raise RuntimeError(
+                "dense-prefix population differs from the measured working-set plan: "
+                f"group={group_id}, expected_pages={expected_dense_pages}, "
+                f"actual_pages={compacted_pages}, actual_tokens={compacted_tokens}"
+            )
     return {
         "group_id": group_id,
         "sample_id": sample_id,
@@ -938,18 +951,11 @@ def main() -> None:
             population_runs = []
             population_evidence = []
             population_initial_metadata = llm.multimodal_prefix_cache_metadata()
-            plan_page_tokens = int(kv_budget["page_size_tokens"])
-            actual_page_tokens = args.kvcache_block_size
-
-            def _scale_dense_pages(pages: int) -> int:
-                if actual_page_tokens == plan_page_tokens:
-                    return pages
-                return (pages * plan_page_tokens + actual_page_tokens - 1) // actual_page_tokens
-
             dense_pages_by_group = {
-                str(group["group_id"]): _scale_dense_pages(int(group["dense_prefix_pages"]))
+                str(group["group_id"]): int(group["dense_prefix_pages"])
                 for group in working_set.plan["groups"]
             }
+            dense_plan_page_tokens = int(kv_budget["page_size_tokens"])
             for population_request, group_id, sample_id in zip(
                 population_requests,
                 working_set.population_group_ids,
@@ -969,6 +975,7 @@ def main() -> None:
                         sample_id=sample_id,
                         expected_dense_pages=dense_pages_by_group[group_id],
                         page_size_tokens=args.kvcache_block_size,
+                        plan_page_tokens=dense_plan_page_tokens,
                         variant=args.working_set_variant,
                         metadata_before=metadata_before,
                         metadata_after=metadata_after,
