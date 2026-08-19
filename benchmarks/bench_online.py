@@ -598,7 +598,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--working-set-variant",
-        choices=("vision_only", "dense_prefix", "compact_prefix"),
+        choices=("vision_only", "dense_prefix", "compact_prefix", "dense_block_prefix"),
         help="Prism ablation used with --working-set-plan",
     )
     parser.add_argument(
@@ -816,7 +816,11 @@ def main() -> None:
         args.visual_pruning_strategy = "uniform"
         args.visual_pruning_min_keep_tokens = 768
         args.visual_pruning_video_min_keep_tokens = 256
-        if args.working_set_variant == "vision_only":
+        if args.working_set_variant == "dense_block_prefix":
+            # 真正的 Dense: compression=off + block 级 mm-aware 前缀匹配
+            args.mode = "scaled_fp8_kv_compile_graph"
+            args.enable_prefix_caching = True
+        elif args.working_set_variant == "vision_only":
             args.mode = "scaled_fp8_kv_compile_graph"
             args.enable_prefix_caching = False
         else:
