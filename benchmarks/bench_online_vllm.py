@@ -646,15 +646,19 @@ def _run(resources: _RunResources) -> None:
 
     def _prefix_stats() -> dict[str, object]:
         try:
-            stats = llm.get_metrics().prefix_cache_stats
+            metrics_list = llm.get_metrics()
+            if isinstance(metrics_list, (list, tuple)):
+                stats = [m.prefix_cache_stats for m in metrics_list]
+            else:
+                stats = [metrics_list.prefix_cache_stats]
         except Exception as exc:  # noqa: BLE001
             return {"error": repr(exc)}
         return {
-            "requests": int(stats.requests),
-            "queries": int(stats.queries),
-            "hits": int(stats.hits),
-            "preempted_requests": int(stats.preempted_requests),
-            "preempted_queries": int(stats.preempted_queries),
+            "requests": int(sum(s.requests for s in stats)),
+            "queries": int(sum(s.queries for s in stats)),
+            "hits": int(sum(s.hits for s in stats)),
+            "preempted_requests": int(sum(s.preempted_requests for s in stats)),
+            "preempted_queries": int(sum(s.preempted_queries for s in stats)),
         }
 
     prefix_stats_after_population = _prefix_stats()
