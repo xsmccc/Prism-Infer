@@ -49,7 +49,6 @@ class FlashInferPagedPrefill:
         self._wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
             self._workspace,
             kv_layout="NHD",
-            use_tensor_cores=True,
         )
 
     def plan(
