@@ -187,8 +187,9 @@ class ModelInputPreparer:
         merge_size: int,
         token_start: int,
         token_end: int,
+        force_raw: bool,
     ) -> None:
-        if seq.precomputed_visual_embeds is not None:
+        if seq.precomputed_visual_embeds is not None and not force_raw:
             # 缓存视觉 embedding: 允许整图子集（block 级前缀复用从任意图边界开始）
             video_observed = (
                 current_tokens.count(seq.video_token_id)
@@ -522,6 +523,15 @@ class ModelInputPreparer:
         vision_config = getattr(getattr(self.config, "hf_config", None), "vision_config", None)
         merge_size = int(getattr(vision_config, "spatial_merge_size", 2))
 
+        # 模型执行层不支持同一 prefill 批次混用 raw 像素与缓存视觉 embedding：
+        # 任一视觉序列只能走 raw 时, 全批强制 raw（丢弃可降级的缓存 embedding）。
+        visual_seqs = [
+            seq
+            for seq in seqs
+            if seq.pixel_values is not None or seq.pixel_values_videos is not None
+        ]
+        force_raw = any(seq.precomputed_visual_embeds is None for seq in visual_seqs)
+
         host = _PrefillHostBatch()
         for seq, prefill_slice in zip(seqs, slices, strict=False):
             self._append_prefill_sequence(
@@ -538,6 +548,7 @@ class ModelInputPreparer:
                     merge_size=merge_size,
                     token_start=prefill_slice.token_start,
                     token_end=prefill_slice.token_end,
+                    force_raw=force_raw,
                 )
 
         input_ids = self._to_cuda_tensor(host.input_ids, dtype=torch.int64)
