@@ -870,7 +870,7 @@ def main() -> None:
             # 真正的 Dense: block 级 mm-aware 前缀匹配。FlashInfer 步骤 1
             # 只支持无 scale 的 bf16 KV, 启用时用 compression off 模式。
             args.mode = (
-                "off_eager" if args.enable_flashinfer_paged else "scaled_fp8_kv_compile_graph"
+                "off_graph" if args.enable_flashinfer_paged else "scaled_fp8_kv_compile_graph"
             )
             args.enable_prefix_caching = True
         elif args.working_set_variant == "vision_only":
