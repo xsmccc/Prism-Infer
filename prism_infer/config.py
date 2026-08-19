@@ -345,6 +345,7 @@ class ExecutionConfig:
     fused_add_rmsnorm: bool = False
     packed_kv_projection: bool = False
     enable_flashinfer_paged: bool = False
+    enable_flashinfer_decode: bool = False
     cooperative_prefill: bool = False
     cooperative_prefill_layer_quantum: int = 1
     cooperative_prefill_vision_block_quantum: int | None = None
@@ -389,6 +390,10 @@ class ExecutionConfig:
         _boolean(
             self.enable_flashinfer_paged,
             name="enable_flashinfer_paged",
+        )
+        _boolean(
+            self.enable_flashinfer_decode,
+            name="enable_flashinfer_decode",
         )
         _boolean(
             self.cooperative_prefill,
@@ -653,6 +658,7 @@ class PrismConfig:
             "enable_fused_add_rmsnorm": "fused_add_rmsnorm",
             "enable_packed_kv_projection": "packed_kv_projection",
             "enable_flashinfer_paged": "enable_flashinfer_paged",
+            "enable_flashinfer_decode": "enable_flashinfer_decode",
             "enable_cooperative_prefill": "cooperative_prefill",
             "cooperative_prefill_layer_quantum": ("cooperative_prefill_layer_quantum"),
             "cooperative_prefill_vision_block_quantum": (
@@ -1071,6 +1077,10 @@ class Config:
     @property
     def enable_flashinfer_paged(self) -> bool:
         return self.execution_config.enable_flashinfer_paged
+
+    @property
+    def enable_flashinfer_decode(self) -> bool:
+        return self.execution_config.enable_flashinfer_decode
 
     @property
     def enable_cooperative_prefill(self) -> bool:

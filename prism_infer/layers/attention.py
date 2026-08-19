@@ -98,6 +98,7 @@ class Attention(nn.Module):
         self.layer_idx: int | None = None
         self._paged_flash_cu_seqlens_q: dict[int, torch.Tensor] = {}
         self.flashinfer_paged_enabled = False
+        self.flashinfer_decode_enabled = False
         self._flashinfer_prefill_wrapper = None
         self._flashinfer_decode_wrapper = None
         self._flashinfer_decode_wrappers: dict[int, object] = {}
@@ -316,7 +317,7 @@ class Attention(nn.Module):
 
     def _forward_decode_paged(self, q: torch.Tensor, context: Context) -> torch.Tensor:
         if (
-            self.flashinfer_paged_enabled
+            self.flashinfer_decode_enabled
             and HAS_FLASHINFER
             and q.is_cuda
             and self.k_cache.dtype in (torch.float16, torch.bfloat16)
@@ -394,7 +395,7 @@ class Attention(nn.Module):
     def stage_flashinfer_decode_metadata(self, context: Context) -> None:
         """Graph 重放前把当前元数据写进静态 buffer (graph 外调用)。"""
 
-        if not self.flashinfer_paged_enabled or not self._flashinfer_decode_wrappers:
+        if not self.flashinfer_decode_enabled or not self._flashinfer_decode_wrappers:
             return
         if context.block_tables is None or context.context_lens is None:
             return

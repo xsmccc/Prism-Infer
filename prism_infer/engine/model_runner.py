@@ -900,8 +900,10 @@ class ModelRunner:
         """Bind the FlashInfer paged-prefill gate onto every engine attention."""
 
         enabled = bool(getattr(self.config, "enable_flashinfer_paged", False))
+        decode_enabled = bool(getattr(self.config, "enable_flashinfer_decode", False))
         for attention in self._attention_layers():
             attention.engine_attn.flashinfer_paged_enabled = enabled
+            attention.engine_attn.flashinfer_decode_enabled = decode_enabled
 
     def _attention_layers(self):
         return [
@@ -1571,7 +1573,7 @@ class ModelRunner:
                     :block_table_width,
                 ] = context.block_tables
 
-        if getattr(self.config, "enable_flashinfer_paged", False):
+        if getattr(self.config, "enable_flashinfer_decode", False):
             for attention in self._attention_layers():
                 attention.engine_attn.stage_flashinfer_decode_metadata(context)
         with profile_region(
