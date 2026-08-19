@@ -170,6 +170,12 @@ def main() -> None:
     parser.add_argument("--max-num-seqs", type=int, default=4)
     parser.add_argument("--num-kvcache-blocks", type=int, default=113)
     parser.add_argument("--kvcache-block-size", type=int, default=256)
+    parser.add_argument(
+        "--paged-decode-num-splits",
+        type=int,
+        default=None,
+        help="paged decode split-K count override (1/2/4/8)",
+    )
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     parser.add_argument(
         "--execution-backend",
@@ -259,6 +265,7 @@ def main() -> None:
         logits_precision="selective_fp32",
         mlp_projection_mode="packed",
         paged_decode_block_n=256,
+        paged_decode_num_splits=args.paged_decode_num_splits or 1,
         enable_fused_qk_rmsnorm=True,
         enable_fused_qk_mrope=True,
         enable_fused_add_rmsnorm=True,

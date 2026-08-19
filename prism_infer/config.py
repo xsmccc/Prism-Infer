@@ -625,6 +625,7 @@ class PrismConfig:
             "decode_compile_force_same_precision": ("compile_force_same_precision"),
             "allow_unsafe_decode_compile": "allow_unsafe_compile",
             "paged_decode_block_n": "paged_decode_block_n",
+            "paged_decode_num_splits": "paged_decode_num_splits",
             "enable_fused_qk_rmsnorm": "fused_qk_rmsnorm",
             "enable_fused_qk_mrope": "fused_qk_mrope",
             "enable_fused_add_rmsnorm": "fused_add_rmsnorm",
