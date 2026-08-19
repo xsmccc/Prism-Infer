@@ -264,7 +264,10 @@ class BlockManager:
         self._assert_sequence_block_size(seq)
         seq.multimodal_prefix_cache_enabled = self.enable_prefix_caching
         if self.block_level_mm_prefix and self._hashable_sequence(seq):
-            candidate_tokens = self._cached_prefix_length(seq)
+            walk_candidate = self._cached_prefix_length(seq)
+            match = self._matching_multimodal_prefix(seq)
+            entry_candidate = 0 if match is None else match[1].logical_prefix_len
+            candidate_tokens = max(walk_candidate, entry_candidate)
             if candidate_tokens:
                 self._block_level_probe_hits += 1
         else:
@@ -287,7 +290,10 @@ class BlockManager:
         self._assert_sequence_block_size(seq)
         seq.multimodal_prefix_cache_enabled = self.enable_prefix_caching
         if self.block_level_mm_prefix and self._hashable_sequence(seq):
-            candidate_tokens = self._cached_prefix_length(seq)
+            walk_candidate = self._cached_prefix_length(seq)
+            match = self._matching_multimodal_prefix(seq)
+            entry_candidate = 0 if match is None else match[1].logical_prefix_len
+            candidate_tokens = max(walk_candidate, entry_candidate)
         else:
             match = self._matching_multimodal_prefix(seq)
             candidate_tokens = 0 if match is None else match[1].logical_prefix_len
@@ -528,6 +534,78 @@ class BlockManager:
         self._multimodal_prefix_cache_hits += 1
         return tuple(copy_prefix)
 
+    def _allocate_dense_entry_hit(
+        self,
+        seq: Sequence,
+        cache_id: str,
+        entry: _MultimodalPrefixCacheEntry,
+    ) -> tuple[tuple[int, int, int], ...]:
+        """Dense block 级模式下的 entry 整段复用 (不安装 compact layout)。
+
+        复用 entry 的不可变前缀块, 尾部不满块无条件私有化 (entry 块必须
+        保持不可变), 后缀分配新块。kv_layout 保持 None, decode 期 hash 链
+        与 block 级 walk 语义不受影响。
+        """
+
+        required_free_blocks = self._required_free_blocks_for_prefix_hit(
+            seq,
+            entry,
+        )
+        self._ensure_free_blocks(
+            required_free_blocks,
+            protected_cache_id=cache_id,
+        )
+        tail_rows = entry.physical_prefix_len % self.block_size
+        immutable_block_ids = entry.block_ids[:-1] if tail_rows else entry.block_ids
+        for block_id in immutable_block_ids:
+            self._gpu_pool.retain(block_id)
+            seq.block_table.append(block_id)
+        self._block_level_reused_blocks += len(immutable_block_ids)
+
+        copy_prefix: list[tuple[int, int, int]] = []
+        if tail_rows:
+            canonical_tail = entry.block_ids[-1]
+            block = self.blocks[canonical_tail]
+            new_block = self._allocate_free_block()
+            new_block_id = new_block.block_id
+            if block.hash != NO_BLOCK_HASH:
+                self._gpu_pool.register_hash(
+                    new_block_id,
+                    block.hash,
+                    block.token_ids,
+                    block.mm_token_hashes,
+                )
+            seq.block_table.append(new_block_id)
+            copy_prefix.append((canonical_tail, new_block_id, self.block_size))
+            self._multimodal_prefix_cache_cow_copies += 1
+            self._multimodal_prefix_cache_cow_rows += tail_rows
+
+        suffix_tokens = seq.num_prompt_tokens - entry.logical_prefix_len
+        final_physical_tokens = entry.physical_prefix_len + suffix_tokens
+        final_blocks = (final_physical_tokens + self.block_size - 1) // self.block_size
+        while len(seq.block_table) < final_blocks:
+            seq.block_table.append(self._allocate_free_block().block_id)
+
+        compression_record = dict(entry.compression_record)
+        compression_record.update(
+            {
+                "multimodal_prefix_cache_hit": True,
+                "cached_logical_prefix_tokens": entry.logical_prefix_len,
+                "cached_physical_prefix_tokens": entry.physical_prefix_len,
+                "logical_prompt_tokens": seq.num_prompt_tokens,
+                "physical_prompt_kv_tokens": final_physical_tokens,
+            }
+        )
+        seq.num_cached_tokens = entry.logical_prefix_len
+        seq.num_computed_tokens = entry.logical_prefix_len
+        seq.prefix_cache_candidate_tokens = entry.logical_prefix_len
+        seq.multimodal_prefix_cache_hit = True
+        seq.visual_pruning_decision_record = compression_record
+        self._multimodal_prefix_cache.move_to_end(cache_id)
+        entry.lifetime_hits += 1
+        self._multimodal_prefix_cache_hits += 1
+        return tuple(copy_prefix)
+
     # Compatibility views for existing diagnostics/tests. Allocator mutations
     # remain centralized in GpuBlockPool and CpuBlockPool.
     @property
@@ -644,8 +722,17 @@ class BlockManager:
                 f"required={required_blocks}, available={self._gpu_pool.free_count}"
             )
         if self.block_level_mm_prefix and self._hashable_sequence(seq):
-            # block 级模式: 恒走 hash 链 walk。entry 命中在 dense 下安装 compact
-            # layout 会破坏 decode 期 hash 链, 因此 entry 只作 probe fast path。
+            # block 级模式: entry 命中优先 (同组同布局整段复用, 不装 compact
+            # layout, 保持 decode 期 hash 链), block walk 兜底 (子集/多轮/部分)。
+            entry_match = self._matching_multimodal_prefix(seq)
+            if entry_match is not None:
+                cache_id, entry = entry_match
+                try:
+                    return self._allocate_dense_entry_hit(seq, cache_id, entry)
+                except BaseException:
+                    if seq.block_table:
+                        self.deallocate(seq)
+                    raise
             if (
                 self.enable_prefix_caching
                 and seq.multimodal_prefix_cache_key is not None
