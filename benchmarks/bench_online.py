@@ -568,7 +568,7 @@ def _build_engine(args: argparse.Namespace):
         visual_pruning_attention_last_n_layers=(args.visual_pruning_attention_last_n_layers),
         logits_precision=mode.logits_precision or args.logits_precision,
         mlp_projection_mode=args.mlp_projection_mode,
-        paged_decode_block_n=mode.paged_decode_block_n or 32,
+        paged_decode_block_n=args.paged_decode_block_n or mode.paged_decode_block_n or 32,
         enable_fused_qk_rmsnorm=mode.fused_qk_rmsnorm,
         enable_fused_qk_mrope=mode.fused_qk_mrope,
         enable_fused_add_rmsnorm=mode.fused_add_rmsnorm,
@@ -586,6 +586,12 @@ def _build_engine(args: argparse.Namespace):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
+    parser.add_argument(
+        "--paged-decode-block-n",
+        type=int,
+        default=None,
+        help="override the mode's paged decode tile size (16/32/64/128/256)",
+    )
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     parser.add_argument(
         "--working-set-plan",
