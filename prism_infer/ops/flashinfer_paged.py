@@ -20,6 +20,20 @@ except Exception:  # noqa: BLE001
     flashinfer = None
     HAS_FLASHINFER = False
 
+_WORKSPACE_BYTES = 256 * 1024 * 1024
+_SHARED_WORKSPACE: torch.Tensor | None = None
+
+
+def _get_shared_workspace() -> torch.Tensor:
+    """Per-process shared scratch buffer (每层复用, vLLM 同款做法)。"""
+
+    global _SHARED_WORKSPACE
+    if _SHARED_WORKSPACE is None:
+        _SHARED_WORKSPACE = torch.empty(
+            _WORKSPACE_BYTES, dtype=torch.uint8, device="cuda"
+        )
+    return _SHARED_WORKSPACE
+
 
 class FlashInferPagedPrefill:
     """One persistent wrapper per (layer, shape) for batch paged prefill.
@@ -45,7 +59,7 @@ class FlashInferPagedPrefill:
         self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
         self.dtype = dtype
-        self._workspace = torch.empty(workspace_bytes, dtype=torch.uint8, device="cuda")
+        self._workspace = _get_shared_workspace()
         self._wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
             self._workspace,
             kv_layout="NHD",
@@ -116,7 +130,7 @@ class FlashInferPagedDecode:
         self.use_cuda_graph = use_cuda_graph
         self.max_batch = max_batch
         self.max_blocks = max_blocks
-        self._workspace = torch.empty(workspace_bytes, dtype=torch.uint8, device="cuda")
+        self._workspace = _get_shared_workspace()
         self._planned_key: tuple[int, int] | None = None
         if max_batch <= 0 or max_blocks <= 0:
             raise ValueError(
