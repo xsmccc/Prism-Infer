@@ -823,8 +823,14 @@ def main() -> None:
         args.max_num_seqs = int(serving_contract["max_num_seqs"])
         args.max_chunk_size = int(serving_contract["max_chunk_size"])
         args.image_max_pixels = int(processor_contract["image_max_pixels"])
-        args.num_kvcache_blocks = int(kv_budget["pages"])
-        args.kvcache_block_size = int(kv_budget["page_size_tokens"])
+        plan_page_tokens = int(kv_budget["page_size_tokens"])
+        plan_pages = int(kv_budget["pages"])
+        if args.kvcache_block_size != plan_page_tokens:
+            # Decoupled matrix: CLI kvcache-block-size overrides the plan's
+            # page size; page count scales to keep token capacity constant.
+            plan_pages = plan_pages * plan_page_tokens // args.kvcache_block_size
+        args.num_kvcache_blocks = plan_pages
+        args.kvcache_block_size = args.kvcache_block_size
         args.enable_visual_embedding_cache = True
         args.visual_pruning_strategy = "uniform"
         args.visual_pruning_min_keep_tokens = 768
