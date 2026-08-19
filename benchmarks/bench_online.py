@@ -879,8 +879,6 @@ def main() -> None:
             args.mode = (
                 "off_graph" if args.enable_flashinfer_paged else "scaled_fp8_kv_compile_graph"
             )
-            if args.enable_flashinfer_paged:
-                args.enable_packed_kv_projection = True
             args.enable_prefix_caching = True
         elif args.working_set_variant == "vision_only":
             args.mode = "scaled_fp8_kv_compile_graph"

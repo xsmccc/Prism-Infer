@@ -510,10 +510,8 @@ class Qwen3VLTextAttention(nn.Module):
         if is_prefill is None:
             is_prefill = get_context().is_prefill
         num_tokens = hidden_states.shape[0]
-        use_packed_qkv = self.packed_kv_projection_enabled and (
-            num_tokens == 1 or is_prefill
-        )
-        if use_packed_qkv and self.engine_attn.k_cache.numel():
+        packed_decode = self.packed_kv_projection_enabled and num_tokens == 1
+        if packed_decode and self.engine_attn.k_cache.numel():
             packed_qkv = self.qkv_proj(hidden_states)
             q, k, v = packed_qkv.split(
                 (self.q_size, self.kv_size, self.kv_size),
@@ -521,7 +519,7 @@ class Qwen3VLTextAttention(nn.Module):
             )
         else:
             q = self.q_proj(hidden_states)
-            if use_packed_qkv:
+            if packed_decode:
                 kv_weight = self.qkv_proj.weight.narrow(0, self.q_size, 2 * self.kv_size)
                 k, v = F.linear(hidden_states, kv_weight).chunk(2, dim=-1)
             else:
