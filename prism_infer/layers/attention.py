@@ -23,6 +23,7 @@ from prism_infer.ops.kv_cache_store import (
     is_fp8_cache_tensor as _is_fp8_cache_tensor,
 )
 from prism_infer.ops.paged_attention_reference import (
+    gather_paged_kv_vectorized,
     paged_decode_attention_reference,
     paged_prefill_attention_reference,
     visual_pruned_decode_attention_reference,
@@ -446,8 +447,20 @@ class Attention(nn.Module):
             )
 
     def _forward_prefill_paged(self, q: torch.Tensor, context: Context) -> torch.Tensor:
-        """Dispatch the explicit correctness path for paged prefill."""
+        """Paged prefill: vectorized-gather fast path with reference fallback."""
 
+        if (
+            q.is_cuda
+            and q.dtype in (torch.float16, torch.bfloat16)
+            and context.cu_seqlens_q is not None
+            and context.cu_seqlens_k is not None
+            and context.block_tables is not None
+        ):
+            try:
+                return self._forward_prefill_paged_fast(q, context)
+            except Exception:
+                # 任何形状/能力不匹配都回退参考路径（正确性优先）
+                pass
         return paged_prefill_attention_reference(
             q,
             self.k_cache,
@@ -459,6 +472,71 @@ class Attention(nn.Module):
             k_scale_cache=self.k_scale_cache,
             v_scale_cache=self.v_scale_cache,
         )
+
+    def _forward_prefill_paged_fast(
+        self,
+        q: torch.Tensor,
+        context: Context,
+    ) -> torch.Tensor:
+        """Vectorized gather + dequant to dense scratch, then masked SDPA.
+
+        cu_seqlens_k 反映前缀 + 后缀的完整上下文；附加掩码把每个后缀 query
+        的因果上限对齐到 prefix + i。无 Python 逐块循环、无逐层 GPU→CPU
+        同步（仅每批一次取 cu_seqlens 长度）。数值与参考路径同序
+        （先转 dtype 再乘 scale），输出允许 flash/mem-efficient 级误差。
+        """
+
+        num_seqs = context.cu_seqlens_q.numel() - 1
+        # 一次小同步取长度（cu_seqlens 元素数与 batch 同阶）
+        q_lens = (context.cu_seqlens_q[1:] - context.cu_seqlens_q[:-1]).cpu()
+        k_lens = (context.cu_seqlens_k[1:] - context.cu_seqlens_k[:-1]).cpu()
+        if bool((q_lens <= 0).any()) or bool((k_lens < q_lens).any()):
+            raise RuntimeError("invalid paged prefill lengths for fast path")
+        expand_gqa = self.num_heads != self.num_kv_heads
+        groups = self.num_heads // self.num_kv_heads if expand_gqa else 1
+        block_tables = context.block_tables
+        outputs: list[torch.Tensor] = []
+        for seq in range(num_seqs):
+            q_len = int(q_lens[seq].item())
+            k_len = int(k_lens[seq].item())
+            q_start = int(context.cu_seqlens_q[seq].item())
+            q_end = q_start + q_len
+            prefix_len = k_len - q_len
+            keys, values = gather_paged_kv_vectorized(
+                self.k_cache,
+                self.v_cache,
+                block_tables[seq],
+                k_len,
+                k_scale_cache=self.k_scale_cache,
+                v_scale_cache=self.v_scale_cache,
+                target_dtype=q.dtype,
+            )
+            if expand_gqa:
+                keys = keys.repeat_interleave(groups, dim=1)
+                values = values.repeat_interleave(groups, dim=1)
+            query = q[q_start:q_end].transpose(0, 1).unsqueeze(0)  # [1, H, S, D]
+            keys_b = keys.transpose(0, 1).unsqueeze(0)  # [1, H, C, D]
+            values_b = values.transpose(0, 1).unsqueeze(0)
+            q_positions = torch.arange(prefix_len, k_len, device=q.device)
+            k_positions = torch.arange(k_len, device=q.device)
+            # float 附加掩码: 允许 mem-efficient 后端 (bool 掩码会退回 math 后端);
+            # mem-efficient 要求 bias dtype 与 query 一致
+            bias = torch.where(
+                (k_positions.unsqueeze(0) <= q_positions.unsqueeze(1)),
+                torch.zeros((), device=q.device, dtype=q.dtype),
+                torch.full((), float("-inf"), device=q.device, dtype=q.dtype),
+            ).unsqueeze(0).unsqueeze(0)
+            with profile_region("attention.prefill.paged_vectorized_sdpa"):
+                output = F.scaled_dot_product_attention(
+                    query,
+                    keys_b,
+                    values_b,
+                    attn_mask=bias,
+                    scale=self.scale,
+                    enable_gqa=(not expand_gqa),
+                )
+            outputs.append(output.squeeze(0).transpose(0, 1))
+        return torch.cat(outputs, dim=0)
 
     def _forward_decode_eager(
         self,
