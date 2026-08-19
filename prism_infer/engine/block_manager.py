@@ -564,21 +564,43 @@ class BlockManager:
 
         copy_prefix: list[tuple[int, int, int]] = []
         if tail_rows:
-            canonical_tail = entry.block_ids[-1]
-            block = self.blocks[canonical_tail]
-            new_block = self._allocate_free_block()
-            new_block_id = new_block.block_id
-            if block.hash != NO_BLOCK_HASH:
-                self._gpu_pool.register_hash(
-                    new_block_id,
-                    block.hash,
-                    block.token_ids,
-                    block.mm_token_hashes,
-                )
-            seq.block_table.append(new_block_id)
-            copy_prefix.append((canonical_tail, new_block_id, self.block_size))
-            self._multimodal_prefix_cache_cow_copies += 1
-            self._multimodal_prefix_cache_cow_rows += tail_rows
+            idle_tail_clone = next(
+                (
+                    block_id
+                    for block_id in entry.tail_clone_block_ids
+                    if self.blocks[block_id].ref_count == 1
+                ),
+                None,
+            )
+            if idle_tail_clone is not None:
+                # 复用空闲 tail clone (内容为上次请求写过的尾块, 前缀行未变)
+                self._gpu_pool.retain(idle_tail_clone)
+                seq.block_table.append(idle_tail_clone)
+                self._multimodal_prefix_cache_tail_clone_hits += 1
+            else:
+                canonical_tail = entry.block_ids[-1]
+                block = self.blocks[canonical_tail]
+                new_block = self._allocate_free_block()
+                new_block_id = new_block.block_id
+                if block.hash != NO_BLOCK_HASH:
+                    self._gpu_pool.register_hash(
+                        new_block_id,
+                        block.hash,
+                        block.token_ids,
+                        block.mm_token_hashes,
+                    )
+                seq.block_table.append(new_block_id)
+                copy_prefix.append((canonical_tail, new_block_id, self.block_size))
+                self._multimodal_prefix_cache_cow_copies += 1
+                self._multimodal_prefix_cache_cow_rows += tail_rows
+                if (
+                    self._multimodal_prefix_cache_blocks
+                    < self._multimodal_prefix_cache_max_blocks
+                ):
+                    self._gpu_pool.retain(new_block_id)
+                    entry.tail_clone_block_ids.append(new_block_id)
+                    self._multimodal_prefix_cache_blocks += 1
+                    self._multimodal_prefix_cache_tail_clone_admissions += 1
 
         suffix_tokens = seq.num_prompt_tokens - entry.logical_prefix_len
         final_physical_tokens = entry.physical_prefix_len + suffix_tokens
