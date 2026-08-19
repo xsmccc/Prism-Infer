@@ -264,11 +264,33 @@ def test_pool_lazy_retention_survives_deallocate_and_revives() -> None:
     assert manager.blocks[first_block].hash == first_hash
     assert manager.hash_to_block_id[first_hash] == first_block
 
-    second = Sequence([1, 2, 3, 4], block_size=4, request_id=1)
+    # 完整 prompt 全命中会失去可计算尾巴 (调度器不变量), 用 5-token
+    # prompt 验证复活语义: 块 0 命中, 尾部 1 token 可计算
+    second = Sequence([1, 2, 3, 4, 5], block_size=4, request_id=1)
     manager.allocate(second)
     print(f"first block: {first_block}, second table: {second.block_table}")
     assert second.block_table[0] == first_block
     assert second.num_cached_tokens == 4
+
+
+def test_fully_cached_aligned_prompt_leaves_computable_tail() -> None:
+    """Block 对齐 prompt 的末块不做链式复用: 调度器需要 >=1 可计算 token。"""
+
+    manager = dense_manager(num_blocks=8)
+    first = Sequence([1, 2, 3, 4], block_size=4, request_id=0)
+    manager.allocate(first)
+    first_block = first.block_table[0]
+    manager.deallocate(first)
+
+    second = Sequence([1, 2, 3, 4], block_size=4, request_id=1)
+    manager.allocate(second)
+    assert second.num_cached_tokens == 0  # 完整 prompt 不留全缓存
+    assert second.block_table[0] != first_block  # 末块强制 miss (新块)
+    assert manager.blocks[second.block_table[0]].hash != -1  # 新块仍登记 hash
+
+    third = Sequence([1, 2, 3, 4], block_size=4, request_id=2)
+    candidate = manager.probe_multimodal_prefix(third, would_hydrate_visual=False)
+    assert candidate == 0  # probe 与 allocate 一致
 
 
 def test_pool_cached_blocks_evict_under_pressure() -> None:
@@ -359,17 +381,19 @@ def test_decode_after_boundary_aligned_prompt() -> None:
 
 
 def test_decode_after_boundary_aligned_shared_prefix() -> None:
-    """boundary-aligned + 共享尾块: CoW 后 decode 不得 raise。"""
+    """boundary-aligned + 共享前缀: 末块强制 miss (可计算尾巴), decode 不得 raise。"""
 
     manager = dense_manager(num_blocks=8)
     first = Sequence([1, 2, 3, 4, 5, 6, 7, 8], block_size=4, request_id=0)
     manager.allocate(first)
     second = Sequence([1, 2, 3, 4, 5, 6, 7, 8], block_size=4, request_id=1)
     manager.allocate(second)
-    assert second.block_table == first.block_table  # 整段共享
+    assert second.block_table[0] == first.block_table[0]  # 前缀块共享
+    assert second.block_table[1] != first.block_table[1]  # 末块不复用
+    assert manager.blocks[second.block_table[1]].hash != NO_BLOCK_HASH
     decode_tokens(manager, second, [9, 10, 11])
     print(f"second table: {second.block_table}")
-    # 尾块 CoW 分离, 且 first 的缓存不受污染
+    # first 的缓存不受污染
     assert second.block_table[1] != first.block_table[1]
 
 
