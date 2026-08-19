@@ -25,8 +25,9 @@ class Block:
     # block 内位置 -> 逐图 surrogate int64（mm-aware 前缀哈希的媒体身份）。
     # None 表示纯文本 block 或不可哈希的视觉 block。
     mm_token_hashes: dict[int, int] | None = None
-    # 整块属于单张图时记录该图 surrogate（逐图块索引的键）
-    image_owner: int | None = None
+    # 整块属于单张图时记录 (图 surrogate, 图内块序号)——mrope 位置
+    # 是图内 2D 坐标, 只有同一张图的同一图内切片才可跨布局互换
+    image_owner: tuple[int, int] | None = None
 
     def update(
         self,
@@ -86,7 +87,7 @@ class GpuBlockPool:
         self.retain_hashes_on_free = retain_hashes_on_free
         self.cached_block_ids: OrderedDict[int, None] = OrderedDict()
         self.cached_evictions = 0
-        self.image_to_block_ids: dict[int, deque[int]] = {}
+        self.image_to_block_ids: dict[tuple[int, int], deque[int]] = {}
 
     @property
     def capacity(self) -> int:
@@ -288,8 +289,10 @@ class GpuBlockPool:
                 del self.image_to_block_ids[block.image_owner]
         block.image_owner = None
 
-    def register_image_owner(self, block_id: int, image_owner: int) -> None:
-        """Index one full block as owned by a single image surrogate."""
+    def register_image_owner(
+        self, block_id: int, image_owner: tuple[int, int]
+    ) -> None:
+        """Index one full block by (image surrogate, in-image block index)."""
 
         block = self._block(block_id)
         if block_id not in self.used_block_ids or block.ref_count <= 0:
@@ -300,7 +303,7 @@ class GpuBlockPool:
 
     def peek_image_block(
         self,
-        image_owner: int,
+        image_owner: tuple[int, int],
         token_ids: list[int],
         mm_token_hashes: dict[int, int] | None,
     ) -> Block | None:
@@ -321,7 +324,7 @@ class GpuBlockPool:
 
     def claim_image_block(
         self,
-        image_owner: int,
+        image_owner: tuple[int, int],
         token_ids: list[int],
         mm_token_hashes: dict[int, int] | None,
     ) -> Block | None:

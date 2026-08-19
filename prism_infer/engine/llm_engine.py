@@ -553,6 +553,7 @@ class LLMEngine:
         )
         fingerprint, per_image_hashes = self._image_media_identity(inputs)
         seq.multimodal_prefix_cache_key = fingerprint
+        seq.visual_embedding_cache_key = fingerprint
         seq.multimodal_media_token_hashes = per_image_hashes
         return seq
 

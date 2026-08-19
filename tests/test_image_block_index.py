@@ -88,25 +88,28 @@ def dense_manager(num_blocks: int, block_size: int = 4) -> BlockManager:
 # ---------------------------------------------------------------------------
 
 class TestPoolImageIndex:
+    KEY = (7, 0)
+
     def _setup(self):
         pool = GpuBlockPool(num_blocks=4, retain_hashes_on_free=True)
         block = pool.allocate_free()
         pool.register_hash(block.block_id, 111, [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7})
-        pool.register_image_owner(block.block_id, 7)
+        pool.register_image_owner(block.block_id, self.KEY)
         return pool, block
 
     def test_register_and_peek(self):
         pool, block = self._setup()
-        found = pool.peek_image_block(7, [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7})
+        found = pool.peek_image_block((7, 0), [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7})
         assert found is block
-        assert pool.peek_image_block(8, [PAD] * 4, {0: 8, 1: 8, 2: 8, 3: 8}) is None
+        assert pool.peek_image_block((7, 1), [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7}) is None
+        assert pool.peek_image_block((8, 0), [PAD] * 4, {0: 8, 1: 8, 2: 8, 3: 8}) is None
 
     def test_claim_then_retain_revives_cached_block(self):
         pool, block = self._setup()
         pool.release_reference(block.block_id)
         assert block.ref_count == 0
         assert block.block_id in pool.cached_block_ids
-        claimed = pool.claim_image_block(7, [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7})
+        claimed = pool.claim_image_block((7, 0), [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7})
         assert claimed is block
         assert block.ref_count == 0  # claim 不动引用计数
         revived = pool.retain(claimed.block_id)  # 调用方 retain 复活
@@ -117,27 +120,27 @@ class TestPoolImageIndex:
     def test_claim_skips_stale_entries(self):
         pool = GpuBlockPool(num_blocks=4, retain_hashes_on_free=True)
         stale = pool.allocate_free()  # 先入队: 无内容
-        pool.register_image_owner(stale.block_id, 7)
+        pool.register_image_owner(stale.block_id, (7, 0))
         good = pool.allocate_free()
         pool.register_hash(good.block_id, 111, [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7})
-        pool.register_image_owner(good.block_id, 7)
-        claimed = pool.claim_image_block(7, [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7})
+        pool.register_image_owner(good.block_id, (7, 0))
+        claimed = pool.claim_image_block((7, 0), [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7})
         assert claimed is good
         # 残留条目被逐出索引
-        assert stale.block_id not in pool.image_to_block_ids.get(7, ())
+        assert stale.block_id not in pool.image_to_block_ids.get((7, 0), ())
 
     def test_eviction_removes_index(self):
         pool, block = self._setup()
         pool.release_reference(block.block_id)
         evicted = pool._evict_oldest_cached()
         assert evicted is block
-        assert pool.peek_image_block(7, [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7}) is None
+        assert pool.peek_image_block((7, 0), [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7}) is None
         assert block.image_owner is None
 
     def test_clear_hash_removes_index(self):
         pool, block = self._setup()
         pool.clear_hash(block.block_id)
-        assert pool.peek_image_block(7, [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7}) is None
+        assert pool.peek_image_block((7, 0), [PAD] * 4, {0: 7, 1: 7, 2: 7, 3: 7}) is None
 
 
 # ---------------------------------------------------------------------------
@@ -272,4 +275,32 @@ class TestImageIndexReuse:
         repeat = Sequence([1, 2, 3, 4, 6], block_size=4, request_id=1)
         manager.allocate(repeat)
         assert repeat.num_cached_tokens == 4
+        assert manager._block_level_image_index_reused_blocks == 0
+
+    def test_same_image_different_in_image_offset_not_reused(self):
+        """同一张图的不同图内切片不能互换 (mrope 位置是图内 2D 坐标)。"""
+
+        manager = dense_manager(num_blocks=16)
+        # 图 A 独占块 0,1 (图内块序 0,1)
+        first = make_vl_seq(manager, [PAD] * 8 + [11], [8], (H_A,), 0)
+        manager.allocate(first)
+        # 图 A 前移一格: 块 0 混合, 块 1 (tokens 4-7) 图内 offset 3, 不对齐
+        second = make_vl_seq(manager, [1, PAD, PAD, PAD, PAD, PAD, PAD, PAD, PAD, 22], [8], (H_A,), 1)
+        manager.allocate(second)
+        assert second.block_table[1] != first.block_table[1]
+        assert manager._block_level_image_index_reused_blocks == 0
+
+    def test_block_zero_aligned_reuse_prefers_chain(self):
+        """块 0 对齐复用: content-only 链 hash 直接命中, 不经过索引。"""
+
+        manager = dense_manager(num_blocks=16)
+        first = make_vl_seq(manager, [PAD] * 8 + [11], [8], (H_A,), 0)
+        manager.allocate(first)
+        second = make_vl_seq(manager, [PAD] * 4 + [21, 22], [4], (H_A,), 1)
+        candidate = manager.probe_multimodal_prefix(second, would_hydrate_visual=False)
+        assert candidate == 4
+        manager.allocate(second)
+        assert second.num_cached_tokens == 4
+        assert second.block_table[0] == first.block_table[0]  # 图内块序 0
+        assert manager._block_level_reused_blocks == 1
         assert manager._block_level_image_index_reused_blocks == 0
