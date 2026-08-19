@@ -103,20 +103,17 @@ def build_flashinfer_plan_inputs(
     q_lens = cu_seqlens_q[1:] - cu_seqlens_q[:-1]
     k_lens = cu_seqlens_k[1:] - cu_seqlens_k[:-1]
 
+    # paged_kv_indptr 是每请求页数的累加 (不是 token 数)
+    pages_per_seq = (k_lens + block_size - 1) // block_size
     kv_indptr = torch.empty(num_seqs + 1, dtype=torch.int32, device=block_tables.device)
     kv_indptr[0] = 0
-    torch.cumsum(k_lens.to(torch.int32), dim=0, out=kv_indptr[1:])
+    torch.cumsum(pages_per_seq.to(torch.int32), dim=0, out=kv_indptr[1:])
 
-    num_pages = (kv_indptr[-1].item() + block_size - 1) // block_size
-    max_blocks = int(block_tables.shape[1])
-    flat = block_tables.flatten()
-    valid = flat >= 0
-    # 每 seq 页数 = ceil(k_len / block_size); 逐 seq 收集非负页 id
     indices_list: list[torch.Tensor] = []
     last_page_lens: list[int] = []
     for seq in range(num_seqs):
         k_len = int(k_lens[seq].item())
-        pages = (k_len + block_size - 1) // block_size
+        pages = int(pages_per_seq[seq].item())
         seq_blocks = block_tables[seq, :pages]
         if bool((seq_blocks < 0).any()):
             raise RuntimeError("paged prefill block table has holes")
