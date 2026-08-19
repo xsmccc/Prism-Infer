@@ -782,6 +782,10 @@ class ModelRunner:
             return False
         if sum(end - start for start, end in ranges) != int(payload.shape[0]):
             return False
+        token_spans = seq.image_token_spans()
+        if token_spans is None or len(token_spans) != len(per_image_hashes):
+            return False
+        output_rows = [end - start for start, end in token_spans]
         device_payload = self._visual_cache_device_tensor(payload)
         parts: list[tuple[torch.Tensor, tuple[torch.Tensor, ...]] | None] = [
             None for _ in per_image_hashes
@@ -827,8 +831,7 @@ class ModelRunner:
             deepstack = tuple(value.detach() for value in deepstack)
             offset = 0
             for index in missing:
-                start, end = ranges[index]
-                length = end - start
+                length = output_rows[index]
                 image_embeds = visual_embeds[offset : offset + length]
                 image_deepstack = tuple(
                     value[offset : offset + length] for value in deepstack
