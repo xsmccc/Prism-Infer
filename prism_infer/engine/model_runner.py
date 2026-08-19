@@ -896,12 +896,14 @@ class ModelRunner:
     def _configure_flashinfer_paged(self) -> None:
         """Bind the FlashInfer paged-prefill gate onto every engine attention."""
 
-        attention_layers = [
+        enabled = bool(getattr(self.config, "enable_flashinfer_paged", False))
+        for attention in self._attention_layers():
+            attention.engine_attn.flashinfer_paged_enabled = enabled
+
+    def _attention_layers(self):
+        return [
             layer.self_attn for layer in self.model.model.language_model.layers
         ]
-        enabled = bool(getattr(self.config, "enable_flashinfer_paged", False))
-        for attention in attention_layers:
-            attention.engine_attn.flashinfer_paged_enabled = enabled
 
     def _configure_decode_compile(self) -> None:
         """Enable exactly one explicitly configured decode compile region."""
@@ -1566,6 +1568,9 @@ class ModelRunner:
                     :block_table_width,
                 ] = context.block_tables
 
+        if getattr(self.config, "enable_flashinfer_paged", False):
+            for attention in self._attention_layers():
+                attention.engine_attn.stage_flashinfer_decode_metadata(context)
         with profile_region(
             "runner.cudagraph.replay",
             metadata={

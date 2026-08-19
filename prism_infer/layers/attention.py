@@ -100,6 +100,7 @@ class Attention(nn.Module):
         self.flashinfer_paged_enabled = False
         self._flashinfer_prefill_wrapper = None
         self._flashinfer_decode_wrapper = None
+        self._flashinfer_decode_wrappers: dict[int, object] = {}
 
     def forward(
         self,
@@ -352,32 +353,58 @@ class Attention(nn.Module):
         q: torch.Tensor,
         context: Context,
     ) -> torch.Tensor:
-        """FlashInfer 批量 paged decode (bf16/fp16, 无 scale)。"""
+        """FlashInfer 批量 paged decode (bf16/fp16, 无 scale)。
+
+        CUDA Graph 捕获期只 run(); 非捕获期 (warmup/eager) stage+plan
+        后 run。重放期 Python 不再进入, runner 在 graph 外 stage 元数据。
+        """
 
         if context.block_tables is None or context.context_lens is None:
             raise RuntimeError("flashinfer decode requires block tables and context lengths")
         k_cache = self.k_cache
         v_cache = self.v_cache
-        if self._flashinfer_decode_wrapper is None:
-            self._flashinfer_decode_wrapper = FlashInferPagedDecode(
+        batch_size = int(q.shape[0])
+        capturing = torch.cuda.is_current_stream_capturing()
+        wrapper = self._flashinfer_decode_wrappers.get(batch_size)
+        if wrapper is None:
+            if capturing:
+                raise RuntimeError(
+                    "flashinfer decode wrapper missing for capture batch "
+                    f"{batch_size} (warmup must create it)"
+                )
+            wrapper = FlashInferPagedDecode(
                 block_size=int(k_cache.shape[1]),
                 num_qo_heads=self.num_heads,
                 num_kv_heads=self.num_kv_heads,
                 head_dim=self.head_dim,
                 dtype=k_cache.dtype,
+                use_cuda_graph=True,
+                max_batch=batch_size,
+                max_blocks=int(context.block_tables.shape[1]),
             )
-        indptr, indices, last_page_len = build_flashinfer_decode_plan_inputs(
-            context_lens=context.context_lens,
-            block_tables=context.block_tables,
-            block_size=int(k_cache.shape[1]),
-        )
-        self._flashinfer_decode_wrapper.plan(
-            indptr=indptr,
-            indices=indices,
-            last_page_len=last_page_len,
-        )
+            self._flashinfer_decode_wrappers[batch_size] = wrapper
+        if not capturing:
+            wrapper.stage_plan_inputs(
+                context.context_lens,
+                context.block_tables,
+            )
         with profile_region("attention.decode.flashinfer_paged"):
-            return self._flashinfer_decode_wrapper.run(q, k_cache, v_cache)
+            return wrapper.run(q, k_cache, v_cache)
+
+    def stage_flashinfer_decode_metadata(self, context: Context) -> None:
+        """Graph 重放前把当前元数据写进静态 buffer (graph 外调用)。"""
+
+        if not self.flashinfer_paged_enabled or not self._flashinfer_decode_wrappers:
+            return
+        if context.block_tables is None or context.context_lens is None:
+            return
+        batch_size = int(context.context_lens.numel())
+        wrapper = self._flashinfer_decode_wrappers.get(batch_size)
+        if wrapper is not None:
+            wrapper.stage_plan_inputs(
+                context.context_lens,
+                context.block_tables,
+            )
 
     def _forward_decode_paged_flash(
         self,

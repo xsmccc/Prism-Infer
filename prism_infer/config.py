@@ -1069,6 +1069,10 @@ class Config:
         return self.execution_config.packed_kv_projection
 
     @property
+    def enable_flashinfer_paged(self) -> bool:
+        return self.execution_config.enable_flashinfer_paged
+
+    @property
     def enable_cooperative_prefill(self) -> bool:
         return self.execution_config.cooperative_prefill
 

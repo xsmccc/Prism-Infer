@@ -87,7 +87,11 @@ class FlashInferPagedPrefill:
 
 
 class FlashInferPagedDecode:
-    """One persistent wrapper per layer for batch paged decode."""
+    """One persistent wrapper per layer for batch paged decode.
+
+    ``use_cuda_graph`` 模式下元数据走静态 buffer: stage 由调用方在 graph
+    外执行, 捕获期只 run()。
+    """
 
     def __init__(
         self,
@@ -98,6 +102,9 @@ class FlashInferPagedDecode:
         head_dim: int,
         dtype: torch.dtype,
         workspace_bytes: int = 256 * 1024 * 1024,
+        use_cuda_graph: bool = False,
+        max_batch: int = 0,
+        max_blocks: int = 0,
     ) -> None:
         if not HAS_FLASHINFER:
             raise RuntimeError("flashinfer is not available in this environment")
@@ -106,10 +113,30 @@ class FlashInferPagedDecode:
         self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
         self.dtype = dtype
+        self.use_cuda_graph = use_cuda_graph
+        self.max_batch = max_batch
+        self.max_blocks = max_blocks
         self._workspace = torch.empty(workspace_bytes, dtype=torch.uint8, device="cuda")
+        self._planned_key: tuple[int, int] | None = None
+        if max_batch <= 0 or max_blocks <= 0:
+            raise ValueError(
+                "FlashInferPagedDecode requires max_batch and max_blocks"
+            )
+        self.indptr_buf = torch.zeros(max_batch + 1, dtype=torch.int32, device="cuda")
+        self.indices_buf = torch.full(
+            (max_batch * max_blocks,), -1, dtype=torch.int32, device="cuda"
+        )
+        self.last_page_len_buf = torch.zeros(max_batch, dtype=torch.int32, device="cuda")
+        # 0.6.13 父类签名 (vLLM 同款调用): (workspace, kv_layout,
+        # use_cuda_graph, paged_kv_*_buffer, use_tensor_cores)
         self._wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
             self._workspace,
             kv_layout="NHD",
+            use_cuda_graph=True,
+            paged_kv_indptr_buffer=self.indptr_buf,
+            paged_kv_indices_buffer=self.indices_buf,
+            paged_kv_last_page_len_buffer=self.last_page_len_buf,
+            use_tensor_cores=True,
         )
 
     def plan(
@@ -130,6 +157,47 @@ class FlashInferPagedDecode:
             q_data_type=self.dtype,
             kv_data_type=self.dtype,
         )
+
+    def stage_plan_inputs(
+        self,
+        context_lens: torch.Tensor,
+        block_tables: torch.Tensor,
+    ) -> None:
+        """Fill static buffers with current metadata, then plan (graph 外调用)。"""
+
+        batch = int(context_lens.numel())
+        if batch > self.max_batch:
+            raise RuntimeError(
+                f"flashinfer decode batch {batch} exceeds static capacity {self.max_batch}"
+            )
+        width = int(block_tables.shape[1])
+        if width > self.max_blocks:
+            raise RuntimeError(
+                f"flashinfer decode block width {width} exceeds static capacity {self.max_blocks}"
+            )
+        pages_per_seq = (context_lens + self.block_size - 1) // self.block_size
+        self.indptr_buf[0] = 0
+        torch.cumsum(
+            pages_per_seq.to(torch.int32),
+            dim=0,
+            out=self.indptr_buf[1 : batch + 1],
+        )
+        self.indices_buf.fill_(-1)
+        self.indices_buf[: batch * width] = block_tables.flatten()[: batch * width]
+        self.last_page_len_buf[:batch] = torch.where(
+            context_lens % self.block_size == 0,
+            torch.full_like(context_lens, self.block_size),
+            context_lens % self.block_size,
+        ).to(torch.int32)
+        key = (batch, width)
+        if key != self._planned_key:
+            # 形状不变时跳过 replan (重放期 staging 是热路径)
+            self.plan(
+                indptr=self.indptr_buf,
+                indices=self.indices_buf,
+                last_page_len=self.last_page_len_buf,
+            )
+            self._planned_key = key
 
     def run(
         self,
