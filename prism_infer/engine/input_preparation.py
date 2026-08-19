@@ -762,6 +762,11 @@ class ModelInputPreparer:
                     "paged_decode_block_n",
                     DEFAULT_PAGED_DECODE_BLOCK_N,
                 ),
+                paged_decode_num_splits=getattr(
+                    self.config,
+                    "paged_decode_num_splits",
+                    1,
+                ),
                 trace_metadata=trace_metadata,
                 compression_metadata=compression_metadata,
                 visual_pruning_slot_mappings=visual_pruning_slot_mappings,

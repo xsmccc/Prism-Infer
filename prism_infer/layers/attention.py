@@ -369,6 +369,7 @@ class Attention(nn.Module):
                 v_scale_cache=self.v_scale_cache,
                 max_context_len=context.decode_max_context_len,
                 block_n=context.paged_decode_block_n,
+                num_splits=context.paged_decode_num_splits,
             )
 
     def _record_observability(

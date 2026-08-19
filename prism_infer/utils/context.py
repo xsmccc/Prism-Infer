@@ -25,6 +25,7 @@ class Context:
     decode_max_context_len: torch.Tensor | None = None
     packed_decode_metadata: torch.Tensor | None = None
     paged_decode_block_n: int = 32
+    paged_decode_num_splits: int = 1
     trace_metadata: Any | None = None
     compression_metadata: Any | None = None
     visual_pruning_slot_mappings: tuple[torch.Tensor, ...] = ()
@@ -89,6 +90,7 @@ def set_context(
     decode_max_context_len: torch.Tensor | None = None,
     packed_decode_metadata: torch.Tensor | None = None,
     paged_decode_block_n: int = 32,
+    paged_decode_num_splits: int = 1,
     trace_metadata: Any | None = None,
     compression_metadata: Any | None = None,
     visual_pruning_slot_mappings: tuple[torch.Tensor, ...] = (),
@@ -111,6 +113,7 @@ def set_context(
             decode_max_context_len=decode_max_context_len,
             packed_decode_metadata=packed_decode_metadata,
             paged_decode_block_n=paged_decode_block_n,
+            paged_decode_num_splits=paged_decode_num_splits,
             trace_metadata=trace_metadata,
             compression_metadata=compression_metadata,
             visual_pruning_slot_mappings=visual_pruning_slot_mappings,

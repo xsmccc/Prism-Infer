@@ -569,6 +569,7 @@ def _build_engine(args: argparse.Namespace):
         logits_precision=mode.logits_precision or args.logits_precision,
         mlp_projection_mode=args.mlp_projection_mode,
         paged_decode_block_n=args.paged_decode_block_n or mode.paged_decode_block_n or 32,
+        paged_decode_num_splits=args.paged_decode_num_splits or 1,
         enable_fused_qk_rmsnorm=mode.fused_qk_rmsnorm,
         enable_fused_qk_mrope=mode.fused_qk_mrope,
         enable_fused_add_rmsnorm=mode.fused_add_rmsnorm,
@@ -586,6 +587,12 @@ def _build_engine(args: argparse.Namespace):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
+    parser.add_argument(
+        "--paged-decode-num-splits",
+        type=int,
+        default=None,
+        help="override the paged decode split-K count (1/2/4/8)",
+    )
     parser.add_argument(
         "--paged-decode-block-n",
         type=int,

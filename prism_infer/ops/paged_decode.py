@@ -372,6 +372,226 @@ def _validate_paged_geometry(
         )
 
 
+
+
+if HAS_TRITON:
+
+    @triton.jit
+    def _paged_decode_attention_split_kernel(
+        q_ptr,
+        k_cache_ptr,
+        v_cache_ptr,
+        k_scale_cache_ptr,
+        v_scale_cache_ptr,
+        block_tables_ptr,
+        context_lens_ptr,
+        max_context_len_ptr,
+        partials_ptr,
+        q_stride_b: tl.constexpr,
+        q_stride_h: tl.constexpr,
+        q_stride_d: tl.constexpr,
+        k_stride_block: tl.constexpr,
+        k_stride_token: tl.constexpr,
+        k_stride_head: tl.constexpr,
+        k_stride_d: tl.constexpr,
+        v_stride_block: tl.constexpr,
+        v_stride_token: tl.constexpr,
+        v_stride_head: tl.constexpr,
+        v_stride_d: tl.constexpr,
+        k_scale_stride_block: tl.constexpr,
+        k_scale_stride_token: tl.constexpr,
+        k_scale_stride_head: tl.constexpr,
+        v_scale_stride_block: tl.constexpr,
+        v_scale_stride_token: tl.constexpr,
+        v_scale_stride_head: tl.constexpr,
+        block_tables_stride_b: tl.constexpr,
+        block_tables_stride_n: tl.constexpr,
+        partials_stride_b: tl.constexpr,
+        partials_stride_h: tl.constexpr,
+        partials_stride_s: tl.constexpr,
+        scale: tl.constexpr,
+        HEAD_DIM: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        PAGE_BLOCK_SIZE: tl.constexpr,
+        KV_GROUPS: tl.constexpr,
+        MAX_CONTEXT_CAPACITY: tl.constexpr,
+        NUM_SPLITS: tl.constexpr,
+        SPLIT_CHUNK: tl.constexpr,
+        SCALED_KV: tl.constexpr,
+    ):
+        """One context split: partial online-softmax (acc, l, m) for one head."""
+
+        seq_idx = tl.program_id(0)
+        q_head = tl.program_id(1)
+        split = tl.program_id(2)
+        kv_head = q_head // KV_GROUPS
+
+        offs_d = tl.arange(0, BLOCK_D)
+        d_mask = offs_d < HEAD_DIM
+        q = tl.load(
+            q_ptr + seq_idx * q_stride_b + q_head * q_stride_h + offs_d * q_stride_d,
+            mask=d_mask,
+            other=0.0,
+        ).to(tl.float32)
+
+        context_len = tl.load(context_lens_ptr + seq_idx)
+        max_context_len = tl.load(max_context_len_ptr)
+        max_context_len = tl.minimum(max_context_len, MAX_CONTEXT_CAPACITY)
+        split_start = split * SPLIT_CHUNK
+        split_end = tl.minimum(split_start + SPLIT_CHUNK, max_context_len)
+        offs_n = tl.arange(0, BLOCK_N)
+
+        m_i = tl.full((), -float("inf"), tl.float32)
+        l_i = tl.full((), 0.0, tl.float32)
+        acc = tl.zeros((BLOCK_D,), tl.float32)
+
+        for start in tl.range(split_start, split_end, BLOCK_N):
+            token_idx = start + offs_n
+            valid_n = (token_idx < context_len) & (token_idx < split_end) & (token_idx < MAX_CONTEXT_CAPACITY)
+            page_idx = token_idx // PAGE_BLOCK_SIZE
+            page_offset = token_idx - page_idx * PAGE_BLOCK_SIZE
+            block_id = tl.load(
+                block_tables_ptr
+                + seq_idx * block_tables_stride_b
+                + page_idx * block_tables_stride_n,
+                mask=valid_n,
+                other=-1,
+            )
+            valid = valid_n & (block_id >= 0)
+
+            k = tl.load(
+                k_cache_ptr
+                + block_id[:, None] * k_stride_block
+                + page_offset[:, None] * k_stride_token
+                + kv_head * k_stride_head
+                + offs_d[None, :] * k_stride_d,
+                mask=valid[:, None] & d_mask[None, :],
+                other=0.0,
+            ).to(tl.float32)
+            if SCALED_KV:
+                k_scale = tl.load(
+                    k_scale_cache_ptr
+                    + block_id * k_scale_stride_block
+                    + page_offset * k_scale_stride_token
+                    + kv_head * k_scale_stride_head,
+                    mask=valid,
+                    other=1.0,
+                ).to(tl.float32)
+                k *= k_scale[:, None]
+            scores = tl.sum(k * q[None, :], axis=1) * scale
+            scores = tl.where(valid, scores, -float("inf"))
+
+            block_m = tl.max(scores, axis=0)
+            m_new = tl.maximum(m_i, block_m)
+            m_new_for_exp = tl.where(m_new == -float("inf"), 0.0, m_new)
+            alpha = tl.where(m_i == -float("inf"), 0.0, tl.exp(m_i - m_new_for_exp))
+            p = tl.exp(scores - m_new_for_exp)
+            p = tl.where(valid, p, 0.0)
+
+            v = tl.load(
+                v_cache_ptr
+                + block_id[:, None] * v_stride_block
+                + page_offset[:, None] * v_stride_token
+                + kv_head * v_stride_head
+                + offs_d[None, :] * v_stride_d,
+                mask=valid[:, None] & d_mask[None, :],
+                other=0.0,
+            ).to(tl.float32)
+            if SCALED_KV:
+                v_scale = tl.load(
+                    v_scale_cache_ptr
+                    + block_id * v_scale_stride_block
+                    + page_offset * v_scale_stride_token
+                    + kv_head * v_scale_stride_head,
+                    mask=valid,
+                    other=1.0,
+                ).to(tl.float32)
+                v *= v_scale[:, None]
+            acc = acc * alpha + tl.sum(v * p[:, None], axis=0)
+            l_i = l_i * alpha + tl.sum(p, axis=0)
+            m_i = m_new
+
+        partials_base = (
+            partials_ptr
+            + seq_idx * partials_stride_b
+            + q_head * partials_stride_h
+            + split * partials_stride_s
+        )
+        tl.store(partials_base + offs_d, acc, mask=d_mask)
+        tl.store(partials_base + BLOCK_D, l_i)
+        tl.store(partials_base + BLOCK_D + 1, m_i)
+
+
+    @triton.jit
+    def _paged_decode_attention_reduce_kernel(
+        partials_ptr,
+        out_ptr,
+        out_stride_b: tl.constexpr,
+        out_stride_h: tl.constexpr,
+        out_stride_d: tl.constexpr,
+        partials_stride_b: tl.constexpr,
+        partials_stride_h: tl.constexpr,
+        partials_stride_s: tl.constexpr,
+        HEAD_DIM: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+        NUM_SPLITS: tl.constexpr,
+    ):
+        """Reduce split partials into the final attention output."""
+
+        seq_idx = tl.program_id(0)
+        q_head = tl.program_id(1)
+        offs_d = tl.arange(0, BLOCK_D)
+        d_mask = offs_d < HEAD_DIM
+
+        m_global = tl.full((), -float("inf"), tl.float32)
+        for split in tl.static_range(NUM_SPLITS):
+            l_s = tl.load(
+                partials_ptr
+                + seq_idx * partials_stride_b
+                + q_head * partials_stride_h
+                + split * partials_stride_s
+                + BLOCK_D
+            )
+            m_s = tl.load(
+                partials_ptr
+                + seq_idx * partials_stride_b
+                + q_head * partials_stride_h
+                + split * partials_stride_s
+                + BLOCK_D
+                + 1
+            )
+            m_global = tl.where((l_s > 0.0) & (m_s > m_global), m_s, m_global)
+
+        acc = tl.zeros((BLOCK_D,), tl.float32)
+        l_total = tl.zeros((), tl.float32)
+        for split in tl.static_range(NUM_SPLITS):
+            base = (
+                partials_ptr
+                + seq_idx * partials_stride_b
+                + q_head * partials_stride_h
+                + split * partials_stride_s
+            )
+            m_s = tl.load(base + BLOCK_D + 1)
+            l_s = tl.load(base + BLOCK_D)
+            w = tl.where(l_s > 0.0, tl.exp(m_s - m_global), 0.0)
+            acc_s = tl.load(base + offs_d, mask=d_mask, other=0.0)
+            acc += acc_s * w
+            l_total += l_s * w
+
+        denom = tl.where(l_total > 0.0, l_total, 1.0)
+        out = acc / denom
+        out = tl.where(l_total > 0.0, out, 0.0)
+        tl.store(
+            out_ptr
+            + seq_idx * out_stride_b
+            + q_head * out_stride_h
+            + offs_d * out_stride_d,
+            out,
+            mask=d_mask,
+        )
+
+
 def _launch_paged_decode_attention(
     q: torch.Tensor,
     k_cache: torch.Tensor,
@@ -385,8 +605,15 @@ def _launch_paged_decode_attention(
     v_scale_cache: torch.Tensor | None,
     scaled_kv: bool,
     block_n: int,
+    num_splits: int = 1,
 ) -> torch.Tensor:
-    """Launch the Triton kernel after the caller has validated all inputs."""
+    """Launch the Triton kernel after the caller has validated all inputs.
+
+    ``num_splits > 1`` 走 flash-decoding split-K: 每个 split 独立在线 softmax
+    出 (acc, l, m) 部分和, 第二个 kernel 归约。split 范围由 constexpr
+    SPLIT_CHUNK 确定 (仅依赖 MAX_CONTEXT_CAPACITY), grid 形状固定,
+    CUDA Graph 捕获安全; 上下文较短的 split 空转 (l=0) 由归约跳过。
+    """
 
     batch, num_heads, head_dim = q.shape
     _, page_block_size, num_kv_heads, _ = k_cache.shape
@@ -394,8 +621,61 @@ def _launch_paged_decode_attention(
     output = torch.empty_like(q)
     max_context_capacity = block_tables.shape[1] * page_block_size
     kv_groups = num_heads // num_kv_heads
-    grid = (batch, num_heads)
-    _paged_decode_attention_kernel[grid](
+    if num_splits <= 1:
+        grid = (batch, num_heads)
+        _paged_decode_attention_kernel[grid](
+            q,
+            k_cache,
+            v_cache,
+            k_scale_cache if scaled_kv else k_cache,
+            v_scale_cache if scaled_kv else v_cache,
+            block_tables,
+            context_lens,
+            max_context_len,
+            output,
+            q.stride(0),
+            q.stride(1),
+            q.stride(2),
+            k_cache.stride(0),
+            k_cache.stride(1),
+            k_cache.stride(2),
+            k_cache.stride(3),
+            v_cache.stride(0),
+            v_cache.stride(1),
+            v_cache.stride(2),
+            v_cache.stride(3),
+            k_scale_cache.stride(0) if scaled_kv else 0,
+            k_scale_cache.stride(1) if scaled_kv else 0,
+            k_scale_cache.stride(2) if scaled_kv else 0,
+            v_scale_cache.stride(0) if scaled_kv else 0,
+            v_scale_cache.stride(1) if scaled_kv else 0,
+            v_scale_cache.stride(2) if scaled_kv else 0,
+            block_tables.stride(0),
+            block_tables.stride(1),
+            output.stride(0),
+            output.stride(1),
+            output.stride(2),
+            float(scale),
+            HEAD_DIM=head_dim,
+            BLOCK_D=block_d,
+            BLOCK_N=block_n,
+            PAGE_BLOCK_SIZE=page_block_size,
+            KV_GROUPS=kv_groups,
+            MAX_CONTEXT_CAPACITY=max_context_capacity,
+            SCALED_KV=scaled_kv,
+            num_warps=TRITON_PAGED_DECODE_NUM_WARPS,
+        )
+        return output
+
+    partials_row = block_d + 2
+    # 分配顺序固定 (partials 在 output 前), 依赖缓存分配器确定性以兼容 graph replay
+    partials = torch.empty(
+        (batch, num_heads, num_splits, partials_row),
+        dtype=torch.float32,
+        device=q.device,
+    )
+    split_chunk = (max_context_capacity + num_splits - 1) // num_splits
+    _paged_decode_attention_split_kernel[(batch, num_heads, num_splits)](
         q,
         k_cache,
         v_cache,
@@ -404,7 +684,7 @@ def _launch_paged_decode_attention(
         block_tables,
         context_lens,
         max_context_len,
-        output,
+        partials,
         q.stride(0),
         q.stride(1),
         q.stride(2),
@@ -424,9 +704,9 @@ def _launch_paged_decode_attention(
         v_scale_cache.stride(2) if scaled_kv else 0,
         block_tables.stride(0),
         block_tables.stride(1),
-        output.stride(0),
-        output.stride(1),
-        output.stride(2),
+        partials.stride(0),
+        partials.stride(1),
+        partials.stride(2),
         float(scale),
         HEAD_DIM=head_dim,
         BLOCK_D=block_d,
@@ -434,11 +714,26 @@ def _launch_paged_decode_attention(
         PAGE_BLOCK_SIZE=page_block_size,
         KV_GROUPS=kv_groups,
         MAX_CONTEXT_CAPACITY=max_context_capacity,
+        NUM_SPLITS=num_splits,
+        SPLIT_CHUNK=split_chunk,
         SCALED_KV=scaled_kv,
         num_warps=TRITON_PAGED_DECODE_NUM_WARPS,
     )
+    _paged_decode_attention_reduce_kernel[(batch, num_heads)](
+        partials,
+        output,
+        output.stride(0),
+        output.stride(1),
+        output.stride(2),
+        partials.stride(0),
+        partials.stride(1),
+        partials.stride(2),
+        HEAD_DIM=head_dim,
+        BLOCK_D=block_d,
+        NUM_SPLITS=num_splits,
+        num_warps=TRITON_PAGED_DECODE_NUM_WARPS,
+    )
     return output
-
 
 def paged_decode_attention(
     q: torch.Tensor,
@@ -452,9 +747,15 @@ def paged_decode_attention(
     v_scale_cache: torch.Tensor | None = None,
     max_context_len: torch.Tensor | None = None,
     block_n: int = DEFAULT_PAGED_DECODE_BLOCK_N,
+    num_splits: int = 1,
 ) -> torch.Tensor:
-    """Execute Prism's validated Triton paged-decode attention kernel."""
+    """Execute Prism's validated Triton paged-decode attention kernel.
 
+    ``num_splits > 1`` 启用 flash-decoding split-K (grid 形状固定,
+    CUDA Graph 捕获安全)。"""
+
+    if isinstance(num_splits, bool) or not isinstance(num_splits, int) or num_splits <= 0:
+        raise ValueError(f"num_splits must be a positive integer, got {num_splits!r}")
     if max_context_len is None:
         # Standalone callers do not own ModelRunner's graph-stable scalar.
         # Derive one on device without synchronizing through Tensor.item().
@@ -482,6 +783,7 @@ def paged_decode_attention(
         v_scale_cache=v_scale_cache,
         scaled_kv=scaled_kv,
         block_n=block_n,
+        num_splits=num_splits,
     )
 
 
