@@ -644,6 +644,21 @@ def _run(resources: _RunResources) -> None:
         "runs": population_runs,
     }
 
+    def _prefix_stats() -> dict[str, object]:
+        try:
+            stats = llm.get_metrics().prefix_cache_stats
+        except Exception as exc:  # noqa: BLE001
+            return {"error": repr(exc)}
+        return {
+            "requests": int(stats.requests),
+            "queries": int(stats.queries),
+            "hits": int(stats.hits),
+            "preempted_requests": int(stats.preempted_requests),
+            "preempted_queries": int(stats.preempted_queries),
+        }
+
+    prefix_stats_after_population = _prefix_stats()
+
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
     run = _run_arrivals(
@@ -657,6 +672,7 @@ def _run(resources: _RunResources) -> None:
         request_ids=working_set.measured_request_ids,
     )
     torch.cuda.synchronize()
+    prefix_stats_after_measured = _prefix_stats()
     process_device_memory = process_memory_sampler.stop()
     if any(record["finish_reason"] not in TERMINAL_FINISH_REASONS for record in run["requests"]):
         raise RuntimeError("vLLM online run contains a non-completed request")
@@ -714,6 +730,11 @@ def _run(resources: _RunResources) -> None:
             "trace_sha256": canonical_json_sha256(
                 {"classes": request_classes, "offsets_s": offsets_s}
             ),
+        },
+        "prefix_cache": {
+            "scope": "measured_phase_minus_population",
+            "after_population": prefix_stats_after_population,
+            "after_measured": prefix_stats_after_measured,
         },
         "backend": {
             **effective_backend,
