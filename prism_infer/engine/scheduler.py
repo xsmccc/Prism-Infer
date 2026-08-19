@@ -370,6 +370,23 @@ class Scheduler:
         batch: _PrefillBatchBuilder,
     ) -> _PrefillCandidate:
         copy_prefix = self.block_manager.allocate(seq)
+        if (
+            seq.num_cached_tokens >= seq.num_prompt_tokens
+            and seq.num_prompt_tokens % self.block_manager.block_size == 0
+        ):
+            # 完整 prompt 全命中: 私有化共享末块, 留出末 token 作可计算
+            # 尾巴 (调度器不允许零 prefill 候选; 复用语义保持不变)。
+            tail_start = seq.num_prompt_tokens - 1
+            seq.num_cached_tokens = tail_start
+            pair = self.block_manager._privatize_block(
+                seq,
+                tail_start // self.block_manager.block_size,
+            )
+            if pair is not None:
+                copy_prefix = (
+                    *copy_prefix,
+                    (*pair, tail_start % self.block_manager.block_size),
+                )
         # Prefix-cache hits are already materialized. Chunk progress begins
         # after that prefix rather than recomputing it.
         seq.num_computed_tokens = max(seq.num_computed_tokens, seq.num_cached_tokens)
