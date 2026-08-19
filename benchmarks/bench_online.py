@@ -377,12 +377,19 @@ def _verify_prism_working_set_runtime(
     plan = working_set.plan
     budget = plan["kv_budget"]
     serving = plan["serving"]
+    plan_page_tokens = int(budget["page_size_tokens"])
+    plan_pages = int(budget["pages"])
+    actual_page_tokens = int(llm.config.kvcache_block_size)
+    if actual_page_tokens != plan_page_tokens:
+        # Decoupled matrix: CLI page-size override scales pages so token
+        # capacity and the byte budget stay equal to the plan.
+        plan_pages = plan_pages * plan_page_tokens // actual_page_tokens
     expected = {
         "image_max_pixels": int(plan["processor"]["image_max_pixels"]),
         "max_num_seqs": int(serving["max_num_seqs"]),
         "max_chunk_size": int(serving["max_chunk_size"]),
-        "kv_budget_pages": int(budget["pages"]),
-        "page_size_tokens": int(budget["page_size_tokens"]),
+        "kv_budget_pages": plan_pages,
+        "page_size_tokens": actual_page_tokens,
         "kv_budget_bytes": int(budget["bytes"]),
     }
     actual = {
