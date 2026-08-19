@@ -159,8 +159,9 @@ def build_flashinfer_decode_plan_inputs(
     indptr = torch.empty(batch + 1, dtype=torch.int32, device=context_lens.device)
     indptr[0] = 0
     torch.cumsum(pages_per_seq.to(torch.int32), dim=0, out=indptr[1:])
-    total_pages = int(indptr[-1].item())
-    indices = block_tables[:, : total_pages].flatten().to(torch.int32)
+    # 全宽展平: 有效页数由 indptr 界定, 免逐步 GPU->CPU 同步
+    # (CUDA Graph 捕获期不允许 .item())
+    indices = block_tables.flatten().to(torch.int32)
     last_page_len = torch.where(
         context_lens % block_size == 0,
         torch.full_like(context_lens, block_size),
@@ -192,11 +193,14 @@ def build_flashinfer_plan_inputs(
     kv_indptr[0] = 0
     torch.cumsum(pages_per_seq.to(torch.int32), dim=0, out=kv_indptr[1:])
 
+    # 一次小同步取整批长度 (与 cu_seqlens 元素数同阶, 不逐 seq sync)
+    pages_cpu = pages_per_seq.cpu().tolist()
+    k_lens_cpu = k_lens.cpu().tolist()
     indices_list: list[torch.Tensor] = []
     last_page_lens: list[int] = []
     for seq in range(num_seqs):
-        k_len = int(k_lens[seq].item())
-        pages = int(pages_per_seq[seq].item())
+        k_len = k_lens_cpu[seq]
+        pages = pages_cpu[seq]
         seq_blocks = block_tables[seq, :pages]
         if bool((seq_blocks < 0).any()):
             raise RuntimeError("paged prefill block table has holes")
