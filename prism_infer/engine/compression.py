@@ -49,6 +49,22 @@ CUDA_GRAPH_SAFE_COMPRESSION_MODES = frozenset(
     }
 )
 
+# 不做视觉 KV 物理压实的 dense 布局模式（KV 量化与视觉压缩正交）。
+# block 级 mm-aware 前缀匹配只在这些布局下启用。
+DENSE_COMPRESSION_MODES = frozenset(
+    {
+        COMPRESSION_OFF,
+        COMPRESSION_FP8_KV,
+        COMPRESSION_SCALED_FP8_KV,
+    }
+)
+
+
+def compression_mode_is_dense(mode: str | None) -> bool:
+    """视觉前缀保持 dense 布局（可安全启用 block 级 mm-aware 匹配）。"""
+
+    return mode in DENSE_COMPRESSION_MODES
+
 
 @dataclass(frozen=True)
 class CompressionMetadata:

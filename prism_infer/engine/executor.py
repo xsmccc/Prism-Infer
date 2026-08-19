@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Protocol
 
 from prism_infer.engine.compression import (
-    COMPRESSION_OFF,
     COMPRESSION_VISUAL_COMPACT,
     COMPRESSION_VISUAL_COMPACT_FP8,
     COMPRESSION_VISUAL_COMPACT_SCALED_FP8,
+    compression_mode_is_dense,
 )
 from prism_infer.engine.contracts import (
     BatchPhase,
@@ -203,7 +203,7 @@ class ModelExecutor:
                         and not seq.multimodal_prefix_cache_hit
                     ):
                         self.kv_manager.store_multimodal_prefix(seq)
-        elif plan.is_prefill and self.config.compression_mode == COMPRESSION_OFF:
+        elif plan.is_prefill and compression_mode_is_dense(self.config.compression_mode):
             # dense 模式: 冷 prefill 完成后把视觉前缀存进 entry (O(1) 探测 fast path)。
             # 跨请求存活由 block 级 hash 索引 + 池层 lazy retention 保证。
             for seq in plan.sequences:

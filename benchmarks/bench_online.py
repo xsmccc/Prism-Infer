@@ -338,7 +338,7 @@ def _population_prefix_evidence(
                 f"entry_pages={entry_pages}, decision_tokens={compacted_tokens}, "
                 f"entry_tokens={entry_tokens}"
             )
-    if variant == "dense_prefix" and compacted_pages != expected_dense_pages:
+    if variant in ("dense_prefix", "dense_block_prefix") and compacted_pages != expected_dense_pages:
         raise RuntimeError(
             "dense-prefix population differs from the measured working-set plan: "
             f"group={group_id}, expected={expected_dense_pages}, actual={compacted_pages}"
