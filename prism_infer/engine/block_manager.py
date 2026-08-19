@@ -666,8 +666,45 @@ class BlockManager:
         suffix_tokens = seq.num_prompt_tokens - entry.logical_prefix_len
         final_physical_tokens = entry.physical_prefix_len + suffix_tokens
         final_blocks = (final_physical_tokens + self.block_size - 1) // self.block_size
+        suffix_start_block = len(seq.block_table)
         while len(seq.block_table) < final_blocks:
             seq.block_table.append(self._allocate_free_block().block_id)
+        # 后缀块按 dense 链式纪律补注册: 入口整段复用不得破坏 decode 期
+        # hash 链 (may_append 假定每个完成的 dense 块都带 hash)。
+        if self._hashable_sequence(seq):
+            chain = (
+                self.blocks[seq.block_table[suffix_start_block - 1]].hash
+                if suffix_start_block > 0
+                else NO_BLOCK_HASH
+            )
+            for block_index in range(suffix_start_block, final_blocks):
+                token_ids = seq.block(block_index)
+                if len(token_ids) != self.block_size:
+                    break
+                block_hash, mm_token_hashes = self._block_hash_and_mm(
+                    seq,
+                    block_index,
+                    chain,
+                )
+                if block_hash == NO_BLOCK_HASH:
+                    break
+                self._gpu_pool.register_hash(
+                    seq.block_table[block_index],
+                    block_hash,
+                    token_ids,
+                    mm_token_hashes,
+                )
+                owner_key = self._block_image_owner(
+                    seq,
+                    block_index,
+                    mm_token_hashes,
+                )
+                if owner_key is not None:
+                    self._gpu_pool.register_image_owner(
+                        seq.block_table[block_index],
+                        owner_key,
+                    )
+                chain = block_hash
 
         compression_record = dict(entry.compression_record)
         compression_record.update(

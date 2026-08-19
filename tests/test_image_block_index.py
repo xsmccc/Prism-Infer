@@ -277,6 +277,68 @@ class TestImageIndexReuse:
         assert repeat.num_cached_tokens == 4
         assert manager._block_level_image_index_reused_blocks == 0
 
+
+class TestEntryHitSuffixHashing:
+    def _store_entry(self, manager, first, key="test-media-key"):
+        first.multimodal_prefix_cache_key = key
+        first.num_computed_tokens = first.num_prompt_tokens  # 模拟 prefill 完成
+        assert manager.store_multimodal_prefix(first)
+
+    def test_entry_hit_suffix_blocks_carry_hashes(self):
+        """入口整段复用分配的 suffix 满块必须带 hash (may_append 不变量)。"""
+
+        manager = dense_manager(num_blocks=32)
+        first = make_vl_seq(
+            manager, [PAD] * 3 + [SEP] + [PAD] * 4 + [11], [3, 4], (H_A, H_B), 0
+        )
+        manager.allocate(first)
+        self._store_entry(manager, first)
+
+        # 同图同布局 + 不同问题 -> entry 命中
+        second = make_vl_seq(
+            manager, [PAD] * 3 + [SEP] + [PAD] * 4 + [12], [3, 4], (H_A, H_B), 1
+        )
+        second.multimodal_prefix_cache_key = "test-media-key"
+        manager.allocate(second)
+        assert second.num_cached_tokens > 0
+        assert second.multimodal_prefix_cache_hit
+        # 所有满块 (含 suffix) 都有 hash
+        for block_index, block_id in enumerate(second.block_table):
+            tokens = second.block(block_index)
+            if len(tokens) == manager.block_size:
+                assert manager.blocks[block_id].hash != -1
+
+    def test_entry_hit_boundary_aligned_decode(self):
+        """boundary-aligned prompt + entry 命中 + decode 首 token 不崩。"""
+
+        manager = dense_manager(num_blocks=32)
+        # 12 tokens = 3 满块 (boundary-aligned)
+        first = make_vl_seq(
+            manager, [PAD] * 3 + [SEP] + [PAD] * 4 + [11, 12, 13], [3, 4], (H_A, H_B), 0
+        )
+        manager.allocate(first)
+        self._store_entry(manager, first)
+
+        second = make_vl_seq(
+            manager,
+            [PAD] * 3 + [SEP] + [PAD] * 4 + [21, 22, 23, 24],
+            [3, 4],
+            (H_A, H_B),
+            1,
+        )
+        second.multimodal_prefix_cache_key = "test-media-key"
+        manager.allocate(second)
+        assert second.num_cached_tokens > 0
+        # 生产路径: 首 token 在 prefill 收尾时采样, 不经过 may_append ->
+        # 后续第一次 may_append 直接是 rem==1 (boundary-aligned 崩溃现场)
+        second.append_token(299)
+        for token in (300, 301, 302, 303, 304, 305):
+            if second.physical_kv_len % manager.block_size != 1:
+                manager.copy_on_write(second)
+            manager.may_append(second)
+            second.append_token(token)
+        assert second.physical_kv_len == 12 + 7
+
     def test_same_image_different_in_image_offset_not_reused(self):
         """同一张图的不同图内切片不能互换 (mrope 位置是图内 2D 坐标)。"""
 
