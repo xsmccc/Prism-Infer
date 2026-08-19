@@ -429,7 +429,12 @@ def _verify_prism_working_set_runtime(
     )
     if int(prefix_metadata["total_pool_blocks"]) != expected["kv_budget_pages"]:
         raise RuntimeError("Prism KV pool page count differs from the working-set plan")
-    if actual_pool_bytes != expected["kv_budget_bytes"]:
+    if (
+        actual_pool_bytes != expected["kv_budget_bytes"]
+        and llm.config.compression_mode != "off"
+    ):
+        # compression off (bf16) 每块字节数与计划的 fp8 预算不同, 字节
+        # 预算校验仅在压缩路径强制 (块数校验仍生效)。
         raise RuntimeError(
             "Prism KV pool byte size differs from the working-set plan: "
             f"{actual_pool_bytes} != {expected['kv_budget_bytes']}"
