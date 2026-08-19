@@ -358,6 +358,7 @@ class ModelRunner:
         register_model_config(config)
         self._initialize_distributed(distributed_init_method)
         self._initialize_model_runtime(hf_config)
+        self._configure_flashinfer_paged()
         self._synchronize_tensor_parallel_startup()
 
     def _initialize_distributed(self, distributed_init_method: str) -> None:
@@ -891,6 +892,16 @@ class ModelRunner:
         self._visual_embedding_cache_evictions = 0
         self._visual_embedding_cache_oversize_skips = 0
         self._visual_embedding_host_cache.reset_metrics()
+
+    def _configure_flashinfer_paged(self) -> None:
+        """Bind the FlashInfer paged-prefill gate onto every engine attention."""
+
+        attention_layers = [
+            layer.self_attn for layer in self.model.model.language_model.layers
+        ]
+        enabled = bool(getattr(self.config, "enable_flashinfer_paged", False))
+        for attention in attention_layers:
+            attention.engine_attn.flashinfer_paged_enabled = enabled
 
     def _configure_decode_compile(self) -> None:
         """Enable exactly one explicitly configured decode compile region."""

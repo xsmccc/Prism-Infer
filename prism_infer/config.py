@@ -344,6 +344,7 @@ class ExecutionConfig:
     fused_qk_mrope: bool = False
     fused_add_rmsnorm: bool = False
     packed_kv_projection: bool = False
+    enable_flashinfer_paged: bool = False
     cooperative_prefill: bool = False
     cooperative_prefill_layer_quantum: int = 1
     cooperative_prefill_vision_block_quantum: int | None = None
@@ -384,6 +385,10 @@ class ExecutionConfig:
         _boolean(
             self.packed_kv_projection,
             name="enable_packed_kv_projection",
+        )
+        _boolean(
+            self.enable_flashinfer_paged,
+            name="enable_flashinfer_paged",
         )
         _boolean(
             self.cooperative_prefill,
@@ -647,6 +652,7 @@ class PrismConfig:
             "enable_fused_qk_mrope": "fused_qk_mrope",
             "enable_fused_add_rmsnorm": "fused_add_rmsnorm",
             "enable_packed_kv_projection": "packed_kv_projection",
+            "enable_flashinfer_paged": "enable_flashinfer_paged",
             "enable_cooperative_prefill": "cooperative_prefill",
             "cooperative_prefill_layer_quantum": ("cooperative_prefill_layer_quantum"),
             "cooperative_prefill_vision_block_quantum": (

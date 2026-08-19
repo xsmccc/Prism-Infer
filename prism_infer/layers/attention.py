@@ -53,6 +53,17 @@ try:
 except (ImportError, RuntimeError):
     HAS_VLLM_PAGED_FLASH_ATTN = False
 
+try:
+    from prism_infer.ops.flashinfer_paged import (
+        HAS_FLASHINFER,
+        FlashInferPagedPrefill,
+        build_flashinfer_plan_inputs,
+    )
+except Exception:  # noqa: BLE001
+    HAS_FLASHINFER = False
+    FlashInferPagedPrefill = None  # type: ignore[assignment]
+    build_flashinfer_plan_inputs = None  # type: ignore[assignment]
+
 
 # Compatibility exports: existing callers historically imported the storage
 # implementation from this module. New code should use ops.kv_cache_store.
@@ -82,6 +93,8 @@ class Attention(nn.Module):
         self.v_scale_cache: torch.Tensor | None = None
         self.layer_idx: int | None = None
         self._paged_flash_cu_seqlens_q: dict[int, torch.Tensor] = {}
+        self.flashinfer_paged_enabled = False
+        self._flashinfer_prefill_wrapper = None
 
     def forward(
         self,
@@ -457,6 +470,12 @@ class Attention(nn.Module):
             and context.cu_seqlens_k is not None
             and context.block_tables is not None
         ):
+            if self.flashinfer_paged_enabled:
+                try:
+                    return self._forward_prefill_paged_flashinfer(q, context)
+                except Exception:
+                    # flashinfer 失败回退现有快路径（正确性优先）
+                    pass
             try:
                 return self._forward_prefill_paged_fast(q, context)
             except Exception:
@@ -473,6 +492,52 @@ class Attention(nn.Module):
             k_scale_cache=self.k_scale_cache,
             v_scale_cache=self.v_scale_cache,
         )
+
+    def _forward_prefill_paged_flashinfer(
+        self,
+        q: torch.Tensor,
+        context: Context,
+    ) -> torch.Tensor:
+        """FlashInfer 批量 paged prefill: 直接消费 paged cache, 无 gather。
+
+        步骤 1 仅支持无 scale 的 bf16/fp16 KV (NHD 布局与 flashinfer
+        一致, 零搬移); fp8 per-token-per-head scale 待步骤 2。
+        """
+
+        if not HAS_FLASHINFER:
+            raise RuntimeError("flashinfer paged prefill is not available")
+        k_cache = self.k_cache
+        v_cache = self.v_cache
+        if self.k_scale_cache is not None or self.v_scale_cache is not None:
+            raise RuntimeError("flashinfer paged prefill requires unscaled KV")
+        if k_cache.dtype not in (torch.float16, torch.bfloat16):
+            raise RuntimeError("flashinfer paged prefill requires fp16/bf16 KV")
+        if k_cache.ndim != 4:
+            raise RuntimeError("flashinfer paged prefill requires NHD cache layout")
+        if self._flashinfer_prefill_wrapper is None:
+            self._flashinfer_prefill_wrapper = FlashInferPagedPrefill(
+                block_size=int(k_cache.shape[1]),
+                num_qo_heads=self.num_heads,
+                num_kv_heads=self.num_kv_heads,
+                head_dim=self.head_dim,
+                dtype=k_cache.dtype,
+            )
+        qo_indptr, kv_indptr, paged_kv_indices, last_page_len = (
+            build_flashinfer_plan_inputs(
+                cu_seqlens_q=context.cu_seqlens_q,
+                cu_seqlens_k=context.cu_seqlens_k,
+                block_tables=context.block_tables,
+                block_size=int(k_cache.shape[1]),
+            )
+        )
+        self._flashinfer_prefill_wrapper.plan(
+            qo_indptr=qo_indptr,
+            kv_indptr=kv_indptr,
+            paged_kv_indices=paged_kv_indices,
+            paged_kv_last_page_len=last_page_len,
+        )
+        with profile_region("attention.prefill.flashinfer_paged"):
+            return self._flashinfer_prefill_wrapper.run(q, k_cache, v_cache)
 
     def _forward_prefill_paged_fast(
         self,
