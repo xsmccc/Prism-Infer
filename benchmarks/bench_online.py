@@ -938,8 +938,16 @@ def main() -> None:
             population_runs = []
             population_evidence = []
             population_initial_metadata = llm.multimodal_prefix_cache_metadata()
+            plan_page_tokens = int(kv_budget["page_size_tokens"])
+            actual_page_tokens = args.kvcache_block_size
+
+            def _scale_dense_pages(pages: int) -> int:
+                if actual_page_tokens == plan_page_tokens:
+                    return pages
+                return (pages * plan_page_tokens + actual_page_tokens - 1) // actual_page_tokens
+
             dense_pages_by_group = {
-                str(group["group_id"]): int(group["dense_prefix_pages"])
+                str(group["group_id"]): _scale_dense_pages(int(group["dense_prefix_pages"]))
                 for group in working_set.plan["groups"]
             }
             for population_request, group_id, sample_id in zip(
