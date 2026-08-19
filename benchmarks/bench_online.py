@@ -599,7 +599,9 @@ def _build_engine(args: argparse.Namespace):
         enable_fused_qk_rmsnorm=mode.fused_qk_rmsnorm,
         enable_fused_qk_mrope=mode.fused_qk_mrope,
         enable_fused_add_rmsnorm=mode.fused_add_rmsnorm,
-        enable_packed_kv_projection=mode.packed_kv_projection,
+        enable_packed_kv_projection=(
+            args.enable_packed_kv_projection or mode.packed_kv_projection
+        ),
         enable_cooperative_prefill=args.enable_cooperative_prefill,
         cooperative_prefill_layer_quantum=(args.cooperative_prefill_layer_quantum),
         cooperative_prefill_vision_block_quantum=(args.cooperative_prefill_vision_block_quantum),
@@ -623,6 +625,11 @@ def main() -> None:
         "--enable-flashinfer-paged",
         action="store_true",
         help="use FlashInfer paged prefill (bf16 step 1, config-gated)",
+    )
+    parser.add_argument(
+        "--enable-packed-kv-projection",
+        action="store_true",
+        help="packed qkv projection for prefill (one GEMM instead of three)",
     )
     parser.add_argument(
         "--paged-decode-block-n",
@@ -872,6 +879,8 @@ def main() -> None:
             args.mode = (
                 "off_graph" if args.enable_flashinfer_paged else "scaled_fp8_kv_compile_graph"
             )
+            if args.enable_flashinfer_paged:
+                args.enable_packed_kv_projection = True
             args.enable_prefix_caching = True
         elif args.working_set_variant == "vision_only":
             args.mode = "scaled_fp8_kv_compile_graph"
