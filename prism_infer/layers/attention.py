@@ -56,13 +56,17 @@ except (ImportError, RuntimeError):
 try:
     from prism_infer.ops.flashinfer_paged import (
         HAS_FLASHINFER,
+        FlashInferPagedDecode,
         FlashInferPagedPrefill,
+        build_flashinfer_decode_plan_inputs,
         build_flashinfer_plan_inputs,
     )
 except Exception:  # noqa: BLE001
     HAS_FLASHINFER = False
     FlashInferPagedPrefill = None  # type: ignore[assignment]
+    FlashInferPagedDecode = None  # type: ignore[assignment]
     build_flashinfer_plan_inputs = None  # type: ignore[assignment]
+    build_flashinfer_decode_plan_inputs = None  # type: ignore[assignment]
 
 
 # Compatibility exports: existing callers historically imported the storage
@@ -95,6 +99,7 @@ class Attention(nn.Module):
         self._paged_flash_cu_seqlens_q: dict[int, torch.Tensor] = {}
         self.flashinfer_paged_enabled = False
         self._flashinfer_prefill_wrapper = None
+        self._flashinfer_decode_wrapper = None
 
     def forward(
         self,
@@ -310,6 +315,19 @@ class Attention(nn.Module):
 
     def _forward_decode_paged(self, q: torch.Tensor, context: Context) -> torch.Tensor:
         if (
+            self.flashinfer_paged_enabled
+            and HAS_FLASHINFER
+            and q.is_cuda
+            and self.k_cache.dtype in (torch.float16, torch.bfloat16)
+            and self.k_scale_cache is None
+            and self.v_scale_cache is None
+        ):
+            try:
+                return self._forward_decode_paged_flashinfer(q, context)
+            except Exception:
+                # flashinfer 失败回退现有路径（正确性优先）
+                pass
+        if (
             HAS_VLLM_PAGED_FLASH_ATTN
             and q.is_cuda
             and q.dtype == torch.bfloat16
@@ -328,6 +346,38 @@ class Attention(nn.Module):
             context,
             profile_prefix="attention.decode.bf16_eager",
         )
+
+    def _forward_decode_paged_flashinfer(
+        self,
+        q: torch.Tensor,
+        context: Context,
+    ) -> torch.Tensor:
+        """FlashInfer 批量 paged decode (bf16/fp16, 无 scale)。"""
+
+        if context.block_tables is None or context.context_lens is None:
+            raise RuntimeError("flashinfer decode requires block tables and context lengths")
+        k_cache = self.k_cache
+        v_cache = self.v_cache
+        if self._flashinfer_decode_wrapper is None:
+            self._flashinfer_decode_wrapper = FlashInferPagedDecode(
+                block_size=int(k_cache.shape[1]),
+                num_qo_heads=self.num_heads,
+                num_kv_heads=self.num_kv_heads,
+                head_dim=self.head_dim,
+                dtype=k_cache.dtype,
+            )
+        indptr, indices, last_page_len = build_flashinfer_decode_plan_inputs(
+            context_lens=context.context_lens,
+            block_tables=context.block_tables,
+            block_size=int(k_cache.shape[1]),
+        )
+        self._flashinfer_decode_wrapper.plan(
+            indptr=indptr,
+            indices=indices,
+            last_page_len=last_page_len,
+        )
+        with profile_region("attention.decode.flashinfer_paged"):
+            return self._flashinfer_decode_wrapper.run(q, k_cache, v_cache)
 
     def _forward_decode_paged_flash(
         self,

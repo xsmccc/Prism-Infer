@@ -86,6 +86,89 @@ class FlashInferPagedPrefill:
         return self._wrapper.run(q, (k_cache, v_cache))
 
 
+class FlashInferPagedDecode:
+    """One persistent wrapper per layer for batch paged decode."""
+
+    def __init__(
+        self,
+        *,
+        block_size: int,
+        num_qo_heads: int,
+        num_kv_heads: int,
+        head_dim: int,
+        dtype: torch.dtype,
+        workspace_bytes: int = 256 * 1024 * 1024,
+    ) -> None:
+        if not HAS_FLASHINFER:
+            raise RuntimeError("flashinfer is not available in this environment")
+        self.block_size = block_size
+        self.num_qo_heads = num_qo_heads
+        self.num_kv_heads = num_kv_heads
+        self.head_dim = head_dim
+        self.dtype = dtype
+        self._workspace = torch.empty(workspace_bytes, dtype=torch.uint8, device="cuda")
+        self._wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
+            self._workspace,
+            kv_layout="NHD",
+        )
+
+    def plan(
+        self,
+        *,
+        indptr: torch.Tensor,
+        indices: torch.Tensor,
+        last_page_len: torch.Tensor,
+    ) -> None:
+        self._wrapper.plan(
+            indptr=indptr,
+            indices=indices,
+            last_page_len=last_page_len,
+            num_qo_heads=self.num_qo_heads,
+            num_kv_heads=self.num_kv_heads,
+            head_dim=self.head_dim,
+            page_size=self.block_size,
+            q_data_type=self.dtype,
+            kv_data_type=self.dtype,
+        )
+
+    def run(
+        self,
+        q: torch.Tensor,
+        k_cache: torch.Tensor,
+        v_cache: torch.Tensor,
+    ) -> torch.Tensor:
+        """q: [batch, num_qo_heads, head_dim]; 输出同形。"""
+
+        return self._wrapper.run(q, (k_cache, v_cache))
+
+
+def build_flashinfer_decode_plan_inputs(
+    *,
+    context_lens: torch.Tensor,
+    block_tables: torch.Tensor,
+    block_size: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Convert decode scheduling metadata to flashinfer decode-plan inputs.
+
+    context_lens: [batch] int32 GPU; block_tables: [batch, max_blocks] int32。
+    返回 (indptr=页数累加, indices=扁平页表, last_page_len)。
+    """
+
+    batch = int(context_lens.numel())
+    pages_per_seq = (context_lens + block_size - 1) // block_size
+    indptr = torch.empty(batch + 1, dtype=torch.int32, device=context_lens.device)
+    indptr[0] = 0
+    torch.cumsum(pages_per_seq.to(torch.int32), dim=0, out=indptr[1:])
+    total_pages = int(indptr[-1].item())
+    indices = block_tables[:, : total_pages].flatten().to(torch.int32)
+    last_page_len = torch.where(
+        context_lens % block_size == 0,
+        torch.full_like(context_lens, block_size),
+        context_lens % block_size,
+    ).to(torch.int32)
+    return indptr, indices, last_page_len
+
+
 def build_flashinfer_plan_inputs(
     *,
     cu_seqlens_q: torch.Tensor,
