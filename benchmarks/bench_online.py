@@ -590,6 +590,7 @@ def _build_engine(args: argparse.Namespace):
         mlp_projection_mode=args.mlp_projection_mode,
         paged_decode_block_n=args.paged_decode_block_n or mode.paged_decode_block_n or 32,
         paged_decode_num_splits=args.paged_decode_num_splits or 1,
+        enable_flashinfer_paged=args.enable_flashinfer_paged,
         enable_fused_qk_rmsnorm=mode.fused_qk_rmsnorm,
         enable_fused_qk_mrope=mode.fused_qk_mrope,
         enable_fused_add_rmsnorm=mode.fused_add_rmsnorm,
@@ -612,6 +613,11 @@ def main() -> None:
         type=int,
         default=None,
         help="override the paged decode split-K count (1/2/4/8)",
+    )
+    parser.add_argument(
+        "--enable-flashinfer-paged",
+        action="store_true",
+        help="use FlashInfer paged prefill (bf16 step 1, config-gated)",
     )
     parser.add_argument(
         "--paged-decode-block-n",
@@ -856,8 +862,11 @@ def main() -> None:
         args.visual_pruning_min_keep_tokens = 768
         args.visual_pruning_video_min_keep_tokens = 256
         if args.working_set_variant == "dense_block_prefix":
-            # 真正的 Dense: compression=off + block 级 mm-aware 前缀匹配
-            args.mode = "scaled_fp8_kv_compile_graph"
+            # 真正的 Dense: block 级 mm-aware 前缀匹配。FlashInfer 步骤 1
+            # 只支持无 scale 的 bf16 KV, 启用时用 compression off 模式。
+            args.mode = (
+                "off_eager" if args.enable_flashinfer_paged else "scaled_fp8_kv_compile_graph"
+            )
             args.enable_prefix_caching = True
         elif args.working_set_variant == "vision_only":
             args.mode = "scaled_fp8_kv_compile_graph"
