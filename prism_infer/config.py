@@ -331,6 +331,7 @@ class ExecutionConfig:
     compile_force_same_precision: bool = True
     allow_unsafe_compile: bool = False
     paged_decode_block_n: int = DEFAULT_PAGED_DECODE_BLOCK_N
+    paged_decode_num_splits: int = 1
     fused_qk_rmsnorm: bool = False
     fused_qk_mrope: bool = False
     fused_add_rmsnorm: bool = False
@@ -391,6 +392,11 @@ class ExecutionConfig:
             )
         if self.fused_qk_mrope and not self.fused_qk_rmsnorm:
             raise ValueError("enable_fused_qk_mrope requires enable_fused_qk_rmsnorm")
+        if self.paged_decode_num_splits <= 0:
+            raise ValueError(
+                f"paged_decode_num_splits must be positive; "
+                f"got {self.paged_decode_num_splits!r}"
+            )
         if self.paged_decode_block_n not in SUPPORTED_PAGED_DECODE_BLOCK_N:
             supported = ", ".join(str(value) for value in sorted(SUPPORTED_PAGED_DECODE_BLOCK_N))
             raise ValueError(
