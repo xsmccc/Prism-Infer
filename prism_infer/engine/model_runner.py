@@ -358,7 +358,6 @@ class ModelRunner:
         register_model_config(config)
         self._initialize_distributed(distributed_init_method)
         self._initialize_model_runtime(hf_config)
-        self._configure_flashinfer_paged()
         self._synchronize_tensor_parallel_startup()
 
     def _initialize_distributed(self, distributed_init_method: str) -> None:
@@ -435,6 +434,10 @@ class ModelRunner:
                 self.execution_backend.warmup()
                 self.allocate_kv_cache()
                 self._configure_decode_compile()
+                # flashinfer gate 必须在 CUDA Graph 捕获之前绑定:
+                # 捕获期会执行 decode warmup forward, 晚于捕获的绑定
+                # 不会进入已录制的图。
+                self._configure_flashinfer_paged()
                 if not self.enforce_eager:
                     self.execution_backend.capture()
         except BaseException:

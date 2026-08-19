@@ -177,10 +177,9 @@ class FlashInferPagedDecode:
             )
         pages_per_seq = (context_lens + self.block_size - 1) // self.block_size
         self.indptr_buf[0] = 0
-        torch.cumsum(
+        self.indptr_buf[1 : batch + 1] = torch.cumsum(
             pages_per_seq.to(torch.int32),
             dim=0,
-            out=self.indptr_buf[1 : batch + 1],
         )
         self.indices_buf.fill_(-1)
         self.indices_buf[: batch * width] = block_tables.flatten()[: batch * width]
@@ -259,7 +258,7 @@ def build_flashinfer_plan_inputs(
     pages_per_seq = (k_lens + block_size - 1) // block_size
     kv_indptr = torch.empty(num_seqs + 1, dtype=torch.int32, device=block_tables.device)
     kv_indptr[0] = 0
-    torch.cumsum(pages_per_seq.to(torch.int32), dim=0, out=kv_indptr[1:])
+    kv_indptr[1:] = torch.cumsum(pages_per_seq.to(torch.int32), dim=0)
 
     # 一次小同步取整批长度 (与 cu_seqlens 元素数同阶, 不逐 seq sync)
     pages_cpu = pages_per_seq.cpu().tolist()
