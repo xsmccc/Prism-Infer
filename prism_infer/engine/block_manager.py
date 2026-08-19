@@ -460,9 +460,17 @@ class BlockManager:
                 )
             else:
                 block_hash = NO_BLOCK_HASH
-            cached_block = self._gpu_pool.lookup(block_hash, token_ids, mm_token_hashes)
+            aligned_last_block = bool(
+                seq.num_prompt_tokens % self.block_size == 0
+                and i == seq.num_blocks - 1
+            )
+            cached_block = (
+                None
+                if aligned_last_block
+                else self._gpu_pool.lookup(block_hash, token_ids, mm_token_hashes)
+            )
             image_index_hit = False
-            if cached_block is None:
+            if cached_block is None and not aligned_last_block:
                 owner_key = self._block_image_owner(seq, i, mm_token_hashes)
                 if owner_key is not None:
                     cached_block = self._gpu_pool.claim_image_block(

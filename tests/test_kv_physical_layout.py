@@ -334,7 +334,7 @@ def test_decode_append_reclaims_idle_prefix_page() -> None:
 
 
 def test_decode_cow_reclaims_idle_prefix_page() -> None:
-    """A shared decode tail can CoW by reclaiming an idle cached prefix."""
+    """对齐 prompt 末块不复用 (可计算尾巴); 池满时新分配驱逐空闲 prefix 页。"""
 
     manager = BlockManager(num_blocks=3, block_size=4)
     _store_one_page_multimodal_prefix(manager, cache_key="reclaim-for-cow")
@@ -343,14 +343,13 @@ def test_decode_cow_reclaims_idle_prefix_page() -> None:
     filler = Sequence([5, 6, 7, 8], block_size=4, request_id=203)
     manager.allocate(first)
     manager.allocate(second)
+    # 末块强制 miss: 相同对齐 prompt 不复用末块 (调度器需要可计算尾巴)
+    assert first.block_table != second.block_table
+    assert manager.blocks[second.block_table[0]].hash != -1
     manager.allocate(filler)
-    assert first.block_table == second.block_table
     assert not manager.free_block_id_set
 
-    pair = manager.copy_on_write(first)
-
-    assert pair is not None
-    assert first.block_table != second.block_table
+    # filler 的分配驱逐了 entry 持有的空闲 prefix 页
     assert manager.multimodal_prefix_cache_metadata()["evictions"] == 1
     manager.deallocate(first)
     manager.deallocate(second)
