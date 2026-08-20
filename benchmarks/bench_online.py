@@ -325,6 +325,32 @@ def _population_prefix_evidence(
         if entry is not None:
             raise RuntimeError("vision-only population unexpectedly retained prefix KV")
     elif entry is None:
+        if not llm.config.enable_prefix_caching:
+            # Cache-disabled ablations have no retained entry.
+            return {
+                "group_id": group_id,
+                "sample_id": sample_id,
+                "request_id": result.request_key,
+                "prompt_tokens": len(prompt_ids),
+                "prompt_token_ids_sha256": canonical_json_sha256([prompt_ids]),
+                "expected_dense_prefix_pages": expected_dense_pages,
+                "compact_prefix_tokens": None,
+                "compact_prefix_pages": None,
+                "compact_prefix_page_source": None,
+                "retained_prefix_entry": None,
+                "dropped_visual_tokens": int(decision.get("dropped_visual_tokens", 0)),
+                "physical_compaction": bool(decision.get("physical_compaction", False)),
+                "prefix_cache_hit": bool(seq.multimodal_prefix_cache_hit),
+                "prefix_cache_counter_delta": _prefix_metadata_delta(
+                    metadata_before,
+                    metadata_after,
+                ),
+                "resident_prefix_pages_before": int(metadata_before["resident_blocks"]),
+                "resident_prefix_pages_after": int(metadata_after["resident_blocks"]),
+                "resident_prefix_entries_before": int(metadata_before["entries"]),
+                "resident_prefix_entries_after": int(metadata_after["entries"]),
+                "cache_disabled": True,
+            }
         raise RuntimeError(f"prefix population retained no cache entry for group {group_id!r}")
     else:
         entry_pages = int(entry["canonical_blocks"])
@@ -728,7 +754,7 @@ def main() -> None:
         dest="enable_prefix_caching",
         help="explicitly keep online prefix reuse disabled (default)",
     )
-    parser.set_defaults(enable_prefix_caching=False)
+    parser.set_defaults(enable_prefix_caching=None)
     parser.add_argument("--visual-pruning-keep-ratio", type=float, default=0.5)
     parser.add_argument("--visual-pruning-min-keep-tokens", type=int, default=32)
     parser.add_argument("--visual-pruning-video-min-keep-tokens", type=int)
@@ -880,7 +906,8 @@ def main() -> None:
             args.mode = (
                 "off_graph" if args.enable_flashinfer_paged else "scaled_fp8_kv_compile_graph"
             )
-            args.enable_prefix_caching = True
+            if args.enable_prefix_caching is None:
+                args.enable_prefix_caching = True
         elif args.working_set_variant == "vision_only":
             args.mode = "scaled_fp8_kv_compile_graph"
             args.enable_prefix_caching = False
@@ -926,6 +953,8 @@ def main() -> None:
             "measured_requests": len(working_set.measured_payloads),
         }
     else:
+        if args.enable_prefix_caching is None:
+            args.enable_prefix_caching = False
         manifest = load_workload_manifest(args.manifest)
         case = find_workload_case(manifest, args.case)
         payloads = materialize_requests(case, repo_root=REPO_ROOT)
