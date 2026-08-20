@@ -688,7 +688,7 @@ def main() -> None:
         ),
     )
     parser.add_argument("--max-model-len", type=int, default=1280)
-    parser.add_argument("--max-num-batched-tokens", type=int, default=2048)
+    parser.add_argument("--max-num-batched-tokens", type=int, default=None)
     parser.add_argument("--max-num-seqs", type=int, default=16)
     parser.add_argument("--image-max-pixels", type=int)
     parser.add_argument("--max-chunk-size", type=int, default=512)
@@ -857,7 +857,8 @@ def main() -> None:
         args.arrival_process = str(traffic["arrival_process"])
         args.seed = int(traffic["seed"])
         args.max_model_len = int(model_contract["max_model_len"])
-        args.max_num_batched_tokens = args.max_model_len
+        if args.max_num_batched_tokens is None:
+            args.max_num_batched_tokens = args.max_model_len
         args.max_num_seqs = int(serving_contract["max_num_seqs"])
         args.max_chunk_size = int(serving_contract["max_chunk_size"])
         args.image_max_pixels = int(processor_contract["image_max_pixels"])
