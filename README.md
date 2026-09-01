@@ -38,7 +38,7 @@ SHA256 共同构成。请求在 Scheduler admission 前直接查询 Prefix Cache
 
 | 引擎 | TTFT p50 / p99 | E2E p50 / p99 | 进程显存峰值 | 重算 prompt tokens |
 |---|---:|---:|---:|---:|
-| **Prism Dense Prefix（block 级 mm-aware）** | 380.3 / 1,606.4 ms | 769.8 / 2,244.7 ms | **22,263 MiB** | 181,191 |
+| **Prism Dense Prefix（chained block-level APC）** | 380.3 / 1,606.4 ms | 769.8 / 2,244.7 ms | **22,263 MiB** | 181,191 |
 | vLLM 0.25.1 | 134.719 / 709.764 ms | **325.141** / 1,026.414 ms | 24,440 MiB | 165,678 |
 | SGLang 0.5.15.post1 | 305.770 / 1,165.342 ms | 523.622 / 1,909.157 ms | 26,598 MiB | 181,294 |
 
@@ -49,7 +49,7 @@ SHA256 共同构成。请求在 Scheduler admission 前直接查询 Prefix Cache
 > 优化 kernel 为下一步计划工作。历史 Compact 数字（TTFT 101.692/497.899 ms）保留在
 > rejected 文档中作为被否定对照。
 
-该表中的 Prism 数字来自 Dense Scaled-FP8 + block 级 mm-aware 前缀匹配的当前
+该表中的 Prism 数字来自 Dense Scaled-FP8 + 多模态感知的链式 block-level APC 当前
 实现：命中率（pressure 492/600）与复用块数（2,492）是缓存能力的直接证据，复算 prompt
 tokens 与 vLLM 同量级；TTFT 落后于 vLLM 的差距已定位在命中路径的 suffix-prefill
 参考实现（`_forward_prefill_paged` 的 Python 逐 block gather）与每命中一次的全块
@@ -60,7 +60,7 @@ CoW——suffix-prefill 优化 kernel 是已计划的下一步（见
 
 ### 命中路径与匹配能力
 
-同一 `pressure` 请求流上，Dense block 级实现（2026-08 重跑）：
+同一 `pressure` 请求流上，Dense chained block-level APC（2026-08 重跑）：
 
 | 工作集 | 命中 / 请求 | 复用 block | tail-clone 命中 | CoW 次数 | 复算 prefill tokens |
 |---|---:|---:|---:|---:|---:|
@@ -69,10 +69,11 @@ CoW——suffix-prefill 优化 kernel 是已计划的下一步（见
 | pressure | 492 / 600 | 2,492 | 168 | 324 | 181,191 |
 
 匹配分两层：同组同布局请求走 entry 级整段复用（O(1) 探测 + 命中后跳过 ViT 与公共
-前缀 prefill）；block 级 mm-aware 哈希（逐图 SHA 注入 block hash）覆盖子集复用
-（图 1-8 → 图 1-4）、多轮追问文本增长与布局变化的局部复用，碰撞安全由测试钉死
-（`tests/test_mm_block_prefix_cache.py`，16 例）。端到端集成验证：4 图冷请求 1.36s →
-同图新问 0.40s（3.4×）→ 子集请求 0.29s，重复请求输出逐 token 一致（无损）。
+前缀 prefill）；block-level APC 的每个 key 都包含上一块的 hash、当前 token 和对应媒体
+身份，因此只复用从 token 0 开始连续一致的公共前缀。相同有序媒体的新问题可以复用
+视觉公共前缀；图片重排、非前缀子集或前置文本变化会使 hash 链在首个差异处断开，后续
+Transformer KV 重新计算。逐图 Vision Encoder Cache 可以独立复用视觉编码结果，但不会
+脱离因果前缀复用语言模型 KV。相关行为由 `tests/test_mm_block_prefix_cache.py` 覆盖。
 
 视觉剪枝/压实（Compact）因质量损失被否定：MuirBench 49 个实际删除样本上 27/49 →
 20/49，MVBench 视频 183/252 → 113/252。完整动机、实现与放弃依据见

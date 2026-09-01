@@ -25,9 +25,6 @@ class Block:
     # block 内位置 -> 逐图 surrogate int64（mm-aware 前缀哈希的媒体身份）。
     # None 表示纯文本 block 或不可哈希的视觉 block。
     mm_token_hashes: dict[int, int] | None = None
-    # 整块属于单张图时记录 (图 surrogate, 图内块序号)——mrope 位置
-    # 是图内 2D 坐标, 只有同一张图的同一图内切片才可跨布局互换
-    image_owner: tuple[int, int] | None = None
 
     def update(
         self,
@@ -48,8 +45,6 @@ class Block:
         self.hash = NO_BLOCK_HASH
         self.token_ids.clear()
         self.mm_token_hashes = None
-        self.image_owner = None
-        self.image_owner = None
 
     def mark_free(self) -> None:
         if self.ref_count != 0:
@@ -87,7 +82,6 @@ class GpuBlockPool:
         self.retain_hashes_on_free = retain_hashes_on_free
         self.cached_block_ids: OrderedDict[int, None] = OrderedDict()
         self.cached_evictions = 0
-        self.image_to_block_ids: dict[tuple[int, int], deque[int]] = {}
 
     @property
     def capacity(self) -> int:
@@ -108,7 +102,6 @@ class GpuBlockPool:
                     f"cached GPU block {block_id} has ref_count={block.ref_count}"
                 )
             self.remove_hash_index(block)
-            self._remove_image_index(block)
             block.mark_free()
             self.used_block_ids.remove(block_id)
             self.free_block_id_set.add(block_id)
@@ -225,7 +218,6 @@ class GpuBlockPool:
         if self.retain_hashes_on_free and block_id in self.cached_block_ids:
             del self.cached_block_ids[block_id]
         self.remove_hash_index(block)
-        self._remove_image_index(block)
         block.mark_free()
         self.used_block_ids.remove(block_id)
         self.free_block_id_set.add(block_id)
@@ -249,7 +241,6 @@ class GpuBlockPool:
     def clear_hash(self, block_id: int) -> None:
         block = self._block(block_id)
         self.remove_hash_index(block)
-        self._remove_image_index(block)
         block.hash = NO_BLOCK_HASH
         block.token_ids.clear()
         block.mm_token_hashes = None
@@ -275,86 +266,6 @@ class GpuBlockPool:
         if block.mm_token_hashes != mm_token_hashes:
             return None
         return block
-
-    def _remove_image_index(self, block: Block) -> None:
-        if block.image_owner is None:
-            return
-        queue = self.image_to_block_ids.get(block.image_owner)
-        if queue is not None:
-            try:
-                queue.remove(block.block_id)
-            except ValueError:
-                pass
-            if not queue:
-                del self.image_to_block_ids[block.image_owner]
-        block.image_owner = None
-
-    def register_image_owner(
-        self, block_id: int, image_owner: tuple[int, int]
-    ) -> None:
-        """Index one full block by (image surrogate, in-image block index)."""
-
-        block = self._block(block_id)
-        if block_id not in self.used_block_ids or block.ref_count <= 0:
-            raise RuntimeError(f"cannot index unowned GPU block {block_id}")
-        self._remove_image_index(block)
-        block.image_owner = image_owner
-        self.image_to_block_ids.setdefault(image_owner, deque()).append(block_id)
-
-    def peek_image_block(
-        self,
-        image_owner: tuple[int, int],
-        token_ids: list[int],
-        mm_token_hashes: dict[int, int] | None,
-    ) -> Block | None:
-        """Read-only probe of the per-image index (no refcount change)."""
-
-        queue = self.image_to_block_ids.get(image_owner)
-        if not queue:
-            return None
-        for block_id in queue:
-            block = self._block(block_id)
-            if (
-                block_id in self.used_block_ids
-                and block.token_ids == token_ids
-                and block.mm_token_hashes == mm_token_hashes
-            ):
-                return block
-        return None
-
-    def claim_image_block(
-        self,
-        image_owner: tuple[int, int],
-        token_ids: list[int],
-        mm_token_hashes: dict[int, int] | None,
-    ) -> Block | None:
-        """Claim a content-verified block from the per-image index.
-
-        与链式前缀无关: 同一张图的满块在任何前缀布局下都可复用
-        (vision m-rope 只依赖图自身 grid)。ref_count=0 的 cached 块
-        被复活; 内容不匹配的残留条目被逐出索引。
-        """
-
-        queue = self.image_to_block_ids.get(image_owner)
-        if not queue:
-            return None
-        claimed: Block | None = None
-        while queue:
-            block_id = queue.popleft()
-            block = self._block(block_id)
-            if (
-                block_id in self.used_block_ids
-                and block.token_ids == token_ids
-                and block.mm_token_hashes == mm_token_hashes
-            ):
-                queue.append(block_id)
-                claimed = block
-                break
-            # 内容不匹配的残留条目被逐出索引
-        if claimed is None and not queue:
-            del self.image_to_block_ids[image_owner]
-        return claimed
-
 
 class CpuBlockPool:
     """Ownership-tracked fixed-capacity CPU swap-page allocator."""

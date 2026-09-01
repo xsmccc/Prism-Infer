@@ -180,6 +180,12 @@ Prefix ID 由模型与 Processor 布局、按顺序排列的媒体 SHA256、公�
 token 序列；摘要碰撞会直接报错，不会复用错误 KV。文件输入按内容计算身份，不依赖
 路径或 Python 对象地址。
 
+Block-level APC 使用链式 key：当前块的 token 和媒体身份与上一块 hash 一起决定当前
+块身份，因此只复用从 token 0 开始连续一致的公共前缀。逐图媒体身份不是独立的
+Transformer KV key；图片重排、非前缀子集或前置文本变化会在首个差异处结束复用。
+逐图 Vision Encoder Cache 与语言模型 KV Cache 分离，可以复用视觉编码结果，但不会
+绕过因果前缀约束。
+
 早期查询和真正分配 KV 之间可能发生淘汰。因此原始媒体 Tensor 保留到分配完成；若条目
 已经被回收，请求自然回到完整 Vision + Prefill 路径。运行时分别记录
 `pre_admission_hits`、`visual_hydration_skips` 和 `stale_probe_fallbacks`，可以确认命中

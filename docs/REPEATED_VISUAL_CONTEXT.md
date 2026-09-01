@@ -16,7 +16,7 @@ Prism-Infer 的处理方式是：
    Dense 布局——视觉 token 物理删除/压实已因质量损失被否定，见
    REJECTED_EXPERIMENTS.md；
 3. 把量化后的 Paged KV 作为可跨问题复用的缓存对象：entry 级整段复用 +
-   block 级 mm-aware 匹配（子集/多轮/布局变化）；
+   从 token 0 开始连续匹配的 chained block-level APC；
 4. 让缓存借用整个空闲 KV Pool，活跃请求需要空间时再回收（池层 lazy retention
    与 benefit-gated entry 淘汰两级）；
 5. 用请求级记录和 Nsight Trace 同时验证容量、延迟、质量和真实执行路径。

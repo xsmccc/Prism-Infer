@@ -2,7 +2,7 @@
 
 Pins the dense-mode prefix-cache contract added by the block-level upgrade:
 
-- 子集复用: 图1-8 请求缓存的 block 被 图1-4 请求逐块复用
+- 公共前缀复用: 图 A+B 请求与图 A 请求共享从 token 0 开始的首块
 - 同图不同问: 纯图 block 命中, 问题 block miss (部分复用)
 - 多轮追问: 图 + Q1 缓存可被 图 + Q1 + A1 + Q4 复用 (文本 hash 链)
 - 碰撞安全: 相同 pad token 序列但媒体不同 → 绝不复用
@@ -97,27 +97,27 @@ def dense_manager(num_blocks: int, block_size: int = 4) -> BlockManager:
 
 
 # ---------------------------------------------------------------------------
-# 1. 子集复用
+# 1. 连续公共前缀复用
 # ---------------------------------------------------------------------------
 
-def test_subset_reuse_图1_8_then_图1_4() -> None:
-    """图1-8 请求缓存的 block 必须被 图1-4 请求逐块复用。"""
+def test_shorter_media_prompt_reuses_only_leading_common_block() -> None:
+    """图 A+B 与图 A 请求只共享从 token 0 开始的连续公共块。"""
 
     manager = dense_manager(num_blocks=16)
     full = make_mm_seq(manager, [PAD] * 4 + [SEP] + [PAD] * 4 + [11, 12, 13], (H_A, H_B), 0)
     manager.allocate(full)
     assert full.num_cached_tokens == 0  # 冷请求
 
-    subset = make_mm_seq(manager, [PAD] * 4 + [21, 22, 23], (H_A,), 1)
-    manager.allocate(subset)
+    shorter = make_mm_seq(manager, [PAD] * 4 + [21, 22, 23], (H_A,), 1)
+    manager.allocate(shorter)
 
     print(f"full table: {full.block_table}")
-    print(f"subset table: {subset.block_table}")
-    print(f"subset cached tokens: {subset.num_cached_tokens}")
+    print(f"shorter table: {shorter.block_table}")
+    print(f"shorter cached tokens: {shorter.num_cached_tokens}")
 
-    assert subset.block_table[0] == full.block_table[0]  # 图1 的 block 复用
-    assert subset.num_cached_tokens == 4
-    assert subset.block_table[1] != full.block_table[1]  # 问题部分是新块
+    assert shorter.block_table[0] == full.block_table[0]
+    assert shorter.num_cached_tokens == 4
+    assert shorter.block_table[1] != full.block_table[1]
 
 
 def test_same_image_different_question_partial_reuse() -> None:
@@ -230,6 +230,30 @@ def test_layout_change_cascades_miss() -> None:
 
     assert layout_b.num_cached_tokens == 0
     assert layout_b.block_table[0] != layout_a.block_table[0]
+
+
+def test_same_image_block_is_not_reused_after_prefix_chain_mismatch() -> None:
+    """相同图片块不能绕过不同的左侧上下文独立复用。"""
+
+    manager = dense_manager(num_blocks=16)
+    first = make_mm_seq(
+        manager,
+        [10, 11, 12, 13] + [PAD] * 4 + [31, 32, 33],
+        (H_A,),
+        0,
+    )
+    manager.allocate(first)
+
+    changed_prefix = make_mm_seq(
+        manager,
+        [20, 21, 22, 23] + [PAD] * 4 + [41, 42, 43],
+        (H_A,),
+        1,
+    )
+    manager.allocate(changed_prefix)
+
+    assert changed_prefix.num_cached_tokens == 0
+    assert changed_prefix.block_table[1] != first.block_table[1]
 
 
 def test_pure_image_block_reuses_across_different_suffix() -> None:

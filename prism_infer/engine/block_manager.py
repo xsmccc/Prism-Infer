@@ -101,8 +101,6 @@ class BlockManager:
         self._block_level_probe_hits = 0
         self._block_level_reused_blocks = 0
         self._block_level_miss_blocks = 0
-        self._block_level_image_index_reused_blocks = 0
-        self._block_level_image_index_reused_blocks = 0
 
     @staticmethod
     def _multimodal_prefix_boundary(seq: Sequence) -> int | None:
@@ -139,39 +137,6 @@ class BlockManager:
             return False
         spans = seq.image_token_spans()
         return spans is not None and len(spans) == len(seq.multimodal_media_token_hashes)
-
-    def _block_image_owner(
-        self,
-        seq: Sequence,
-        block_index: int,
-        mm_token_hashes: dict[int, int] | None,
-    ) -> tuple[int, int] | None:
-        """Full block inside one image's pad run, block-aligned to the image.
-
-        Returns (image surrogate, in-image block index). 全 pad 满块的内容
-        身份 (token_ids + mm 映射) 在图内每个切片都相同, 必须按图内块序号
-        区分; vision m-rope 位置是图内 2D 坐标, 只有同一张图的同一图内切片
-        才可跨布局复用。
-        """
-
-        if mm_token_hashes is None or len(mm_token_hashes) != self.block_size:
-            return None
-        owners = set(mm_token_hashes.values())
-        if len(owners) != 1:
-            return None
-        spans = seq.image_token_spans()
-        if spans is None:
-            return None
-        start = block_index * self.block_size
-        end = start + self.block_size
-        surrogate = next(iter(owners))
-        for span_start, span_end in spans:
-            if span_start <= start and end <= span_end:
-                offset = start - span_start
-                if offset % self.block_size != 0:
-                    return None
-                return surrogate, offset // self.block_size
-        return None
 
     def _block_hash_and_mm(
         self,
@@ -218,19 +183,7 @@ class BlockManager:
             token_ids = seq.block(block_index)
             cached_block = self._gpu_pool.lookup(block_hash, token_ids, mm_token_hashes)
             if cached_block is None:
-                owner_key = self._block_image_owner(
-                    seq,
-                    block_index,
-                    mm_token_hashes,
-                )
-                if owner_key is not None:
-                    cached_block = self._gpu_pool.peek_image_block(
-                        owner_key,
-                        token_ids,
-                        mm_token_hashes,
-                    )
-                if cached_block is None:
-                    break
+                break
             cached += self.block_size
             prefix_hash = block_hash
         return self._snap_to_image_boundary(seq, cached)
@@ -466,27 +419,15 @@ class BlockManager:
             )
             cached_block = (
                 None
-                if aligned_last_block
+                if cache_miss or aligned_last_block
                 else self._gpu_pool.lookup(block_hash, token_ids, mm_token_hashes)
             )
-            image_index_hit = False
-            if cached_block is None and not aligned_last_block:
-                owner_key = self._block_image_owner(seq, i, mm_token_hashes)
-                if owner_key is not None:
-                    cached_block = self._gpu_pool.claim_image_block(
-                        owner_key,
-                        token_ids,
-                        mm_token_hashes,
-                    )
-                    image_index_hit = cached_block is not None
             if cached_block is None:
                 cache_miss = True
                 if block_hash != NO_BLOCK_HASH:
                     self._block_level_miss_blocks += 1
             else:
                 self._block_level_reused_blocks += 1
-                if image_index_hit:
-                    self._block_level_image_index_reused_blocks += 1
             if cache_miss:
                 block = self._allocate_free_block()
             else:
@@ -494,16 +435,12 @@ class BlockManager:
                 block = self._gpu_pool.retain(cached_block.block_id)
             if block_hash != NO_BLOCK_HASH:
                 if cache_miss or block.ref_count == 1:
-                    # 链式复用同值登记幂等; 索引复用的共享块保留原链映射
                     self._gpu_pool.register_hash(
                         block.block_id,
                         block_hash,
                         token_ids,
                         mm_token_hashes,
                     )
-                owner_key = self._block_image_owner(seq, i, mm_token_hashes)
-                if owner_key is not None:
-                    self._gpu_pool.register_image_owner(block.block_id, owner_key)
             seq.block_table.append(block.block_id)
         copy_prefix: list[tuple[int, int, int]] = []
         if seq.is_multimodal:
@@ -707,16 +644,6 @@ class BlockManager:
                     token_ids,
                     mm_token_hashes,
                 )
-                owner_key = self._block_image_owner(
-                    seq,
-                    block_index,
-                    mm_token_hashes,
-                )
-                if owner_key is not None:
-                    self._gpu_pool.register_image_owner(
-                        seq.block_table[block_index],
-                        owner_key,
-                    )
                 chain = block_hash
 
         compression_record = dict(entry.compression_record)
@@ -1054,9 +981,6 @@ class BlockManager:
             "block_level_probe_hits": self._block_level_probe_hits,
             "block_level_reused_blocks": self._block_level_reused_blocks,
             "block_level_miss_blocks": self._block_level_miss_blocks,
-            "block_level_image_index_reused_blocks": (
-                self._block_level_image_index_reused_blocks
-            ),
             "pool_cached_blocks": len(self._gpu_pool.cached_block_ids),
             "pool_cached_evictions": self._gpu_pool.cached_evictions,
         }
