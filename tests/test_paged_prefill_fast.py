@@ -5,6 +5,8 @@
 (mem-efficient 后端 vs math 后端, 允许 flash 级误差)。
 """
 
+from itertools import accumulate
+
 import pytest
 import torch
 
@@ -51,22 +53,24 @@ def _fill_caches(
         .to(cache_dtype)
     )
     if fp8:
-        k_scale = (
-            torch.rand(num_blocks, BLOCK_SIZE, NUM_KV_HEADS, device=device) * 0.5 + 0.75
-        ).to(KV_SCALE_DTYPE)
-        v_scale = (
-            torch.rand(num_blocks, BLOCK_SIZE, NUM_KV_HEADS, device=device) * 0.5 + 0.75
-        ).to(KV_SCALE_DTYPE)
+        k_scale = (torch.rand(num_blocks, BLOCK_SIZE, NUM_KV_HEADS, device=device) * 0.5 + 0.75).to(
+            KV_SCALE_DTYPE
+        )
+        v_scale = (torch.rand(num_blocks, BLOCK_SIZE, NUM_KV_HEADS, device=device) * 0.5 + 0.75).to(
+            KV_SCALE_DTYPE
+        )
     else:
         k_scale = v_scale = None
     return k_cache, v_cache, k_scale, v_scale
 
 
-def _context(block_tables, cu_q, cu_k, max_q, max_k, k_lens) -> Context:
+def _context(block_tables, cu_q, cu_k, max_q, max_k, q_lens, k_lens) -> Context:
     return Context(
         is_prefill=True,
         cu_seqlens_q=cu_q,
         cu_seqlens_k=cu_k,
+        cu_seqlens_q_host=tuple(accumulate(q_lens, initial=0)),
+        cu_seqlens_k_host=tuple(accumulate(k_lens, initial=0)),
         max_seqlen_q=max_q,
         max_seqlen_k=max_k,
         block_tables=block_tables,
@@ -99,8 +103,12 @@ def _run_case(
     cu_k[1:] = torch.tensor(k_lens, device=device).cumsum(0).to(torch.int32)
 
     # 每序列连续块编号 (顺序分配, 前缀/后缀共享同一 block 表)
-    block_tables = torch.arange(num_blocks, dtype=torch.int32, device=device).reshape(1, -1).repeat(len(q_lens), 1)
-    context = _context(block_tables, cu_q, cu_k, max(q_lens), max(k_lens), k_lens)
+    block_tables = (
+        torch.arange(num_blocks, dtype=torch.int32, device=device)
+        .reshape(1, -1)
+        .repeat(len(q_lens), 1)
+    )
+    context = _context(block_tables, cu_q, cu_k, max(q_lens), max(k_lens), q_lens, k_lens)
     attention = _make_attention()
     attention.k_cache = k_cache
     attention.v_cache = v_cache
@@ -128,10 +136,10 @@ def _run_case(
 @pytest.mark.parametrize(
     "q_lens,k_lens",
     [
-        ([7], [7]),          # 纯 cold (prefix 0)
-        ([7], [39]),         # 前缀命中
-        ([1], [40]),         # q_len=1
-        ([5], [64]),         # 跨页上下文
+        ([7], [7]),  # 纯 cold (prefix 0)
+        ([7], [39]),  # 前缀命中
+        ([1], [40]),  # q_len=1
+        ([5], [64]),  # 跨页上下文
         ([3, 5, 9], [35, 37, 41]),  # 多序列 batch
     ],
 )

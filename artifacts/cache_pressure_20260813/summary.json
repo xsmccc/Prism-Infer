@@ -1,0 +1,169 @@
+{
+  "schema_version": 3,
+  "record_type": "cache_pressure_comparison",
+  "snapshot": {
+    "date": "2026-08-13",
+    "prism_base_commit": "c4c8550cfdc96e1be282e613ec4c0fcdf890f75a",
+    "prism_dirty": true,
+    "model": "Qwen3-VL-8B-Instruct",
+    "model_revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "gpu_uuid": "GPU-53bfdd66-519f-d0de-3fb6-2b65891974db",
+    "driver": "580.105.08",
+    "cuda": "13.0",
+    "torch": "2.11.0+cu130",
+    "vllm": "0.25.1",
+    "sglang": "0.5.15.post1"
+  },
+  "workload": {
+    "dataset": "MuirBench",
+    "workset": "pressure",
+    "media_groups": 42,
+    "questions": 85,
+    "population_requests": 42,
+    "measured_requests_per_cell": 600,
+    "arrival": "Poisson 4 req/s",
+    "output_tokens": 16,
+    "page_size_tokens": 256,
+    "budget_220_bytes": 4282122240,
+    "budget_352_bytes": 6851395584,
+    "startup_scope": "model initialization, graph capture, and population complete before measurement",
+    "primary_timing_origin": "controller starts processing a due request before framework-specific prompt/media preparation",
+    "secondary_timing_origin": "planned arrival; additionally includes controller lateness"
+  },
+  "three_run_protocol": {
+    "paired_runs_per_engine": 3,
+    "orders": ["352_then_220", "352_then_220", "220_then_352"],
+    "aggregation": "compute 220-vs-352 percent change within each paired run, then report the median and range across the three run-level changes"
+  },
+  "controller_start_first_token_pressure_change_220_vs_352_percent": {
+    "prism": {
+      "p50_per_run": [1.673186, 1.630268, 0.777546],
+      "p50_median": 1.630268,
+      "p50_range": [0.777546, 1.673186],
+      "mean_per_run": [-1.035927, 0.500071, -0.017342],
+      "mean_median": -0.017342,
+      "mean_range": [-1.035927, 0.500071]
+    },
+    "vllm": {
+      "p50_per_run": [14.930459, 14.304014, 6.368998],
+      "p50_median": 14.304014,
+      "p50_range": [6.368998, 14.930459],
+      "mean_per_run": [35.336312, 39.105219, 31.963972],
+      "mean_median": 35.336312,
+      "mean_range": [31.963972, 39.105219]
+    },
+    "sglang": {
+      "p50_per_run": [23.968733, 41.961973, 36.977442],
+      "p50_median": 36.977442,
+      "p50_range": [23.968733, 41.961973],
+      "mean_per_run": [28.210806, 37.675165, 38.316654],
+      "mean_median": 37.675165,
+      "mean_range": [28.210806, 38.316654]
+    },
+    "scope": "primary cross-engine comparison; each ratio is formed within one engine and one paired run"
+  },
+  "planned_arrival_first_token_p50_pressure_change_220_vs_352_percent": {
+    "prism": {
+      "per_run": [-1.525091, -1.766557, -2.040142],
+      "median": -1.766557,
+      "range": [-2.040142, -1.525091]
+    },
+    "vllm": {
+      "per_run": [16.769215, 21.628424, 9.127691],
+      "median": 16.769215,
+      "range": [9.127691, 21.628424]
+    },
+    "sglang": {
+      "per_run": [16.862178, 27.317438, 26.899543],
+      "median": 26.899543,
+      "range": [16.862178, 27.317438]
+    },
+    "scope": "secondary open-loop view; includes controller lateness and any wait before the harness begins request-specific processing"
+  },
+  "uncached_logical_prompt_token_proxy_352_vs_220": {
+    "prism": {
+      "at_352": 69176,
+      "at_220": 75951,
+      "increase_percent_median": 9.793859
+    },
+    "vllm": {
+      "at_352": 41518,
+      "at_220_per_run": [165678, 165934, 165934],
+      "increase_percent_median": 299.667614
+    },
+    "sglang": {
+      "at_352": 41518,
+      "at_220_per_run": [185902, 184878, 186670],
+      "increase_percent_median": 347.762416
+    },
+    "definition": "sum(max(prompt_tokens - cached_tokens, 0)); logical cache-signal proxy, not physical GPU Prefill work or Vision recomputation"
+  },
+  "prism_dense_vs_compact_220_controller_start": {
+    "dense": {
+      "resident_media_groups": 27,
+      "prefix_evictions": 96,
+      "uncached_logical_prompt_token_proxy": 188169,
+      "first_token_p50_ms": 101.356463,
+      "first_token_p99_ms": 721.982512,
+      "finished_p50_ms": 379.096329,
+      "finished_p99_ms": 1062.074463
+    },
+    "compact": {
+      "resident_media_groups": 40,
+      "prefix_evictions": 15,
+      "uncached_logical_prompt_token_proxy": 75951,
+      "first_token_p50_ms": 90.263697,
+      "first_token_p99_ms": 523.620642,
+      "finished_p50_ms": 324.389841,
+      "finished_p99_ms": 845.582577
+    },
+    "compact_change_percent": {
+      "resident_media_groups": 48.148148,
+      "prefix_evictions": -84.375,
+      "uncached_logical_prompt_token_proxy": -59.636816,
+      "first_token_p50": -10.944311,
+      "first_token_p99": -27.474609,
+      "finished_p50": -14.430762,
+      "finished_p99": -20.383871
+    }
+  },
+  "prism_compaction_record": {
+    "prefix_hits_carrying_cold_build_record": 587,
+    "hit_weighted_dense_equivalent_prompt_pages": 3941,
+    "hit_weighted_compact_prompt_pages": 2762,
+    "change_percent": -29.92,
+    "scope": "hit-weighted cold-build compaction records, not instantaneous resident pages"
+  },
+  "muirbench_quality_after_fix": {
+    "all_85": {
+      "dense_correct": 46,
+      "uniform_correct": 47,
+      "prediction_differences": 3
+    },
+    "actual_deletion_49": {
+      "dense_correct": 27,
+      "uniform_correct": 28,
+      "dropped_visual_tokens": 52120
+    },
+    "scope": "no observed accuracy loss on this sample set; not an accuracy-improvement or equivalence claim"
+  },
+  "same_engine_first_token_equal_220_vs_352": {
+    "prism_per_run": ["600/600", "600/600", "600/600"],
+    "vllm_per_run": ["598/600", "598/600", "598/600"],
+    "sglang_per_run": ["595/600", "595/600", "594/600"]
+  },
+  "kv_compaction_fix": {
+    "cause": "int32 overflow in Triton pointer offsets after flattening 72 K/V-layer rows",
+    "change": "promote Triton row and token program indices to int64",
+    "before_fix_measured_first_token_equal_220_vs_352": "233/600",
+    "after_fix_initial_pair_measured_first_token_equal_220_vs_352": "600/600"
+  },
+  "limitations": [
+    "The 4 req/s stream is arrival-limited, so approximately 64 tok/s is not a saturation-throughput result.",
+    "Framework-native prompt/media and API implementations differ; absolute latency is not a general engine ranking.",
+    "Cross-engine full output trajectories are not identical, so absolute finish latency is not a strict same-output ranking.",
+    "The result is scoped to the tested engine versions, model revision, request stream, and KV budgets.",
+    "The old Attention Top-k, DocVQA compact, and MVBench compact artifacts predate the copy fix and have not been rerun."
+  ]
+}

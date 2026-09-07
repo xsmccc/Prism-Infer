@@ -1,0 +1,20 @@
+{
+  "date": "2026-09-07",
+  "device": "NVIDIA GeForce RTX 5090",
+  "torch": "2.11.0+cu130",
+  "cuda": "13.0",
+  "calls": 3,
+  "query_shape": [32, 32, 128],
+  "context_tokens": 2048,
+  "kv_heads": 8,
+  "page_size": 256,
+  "operators": {
+    "aten::item": 0,
+    "aten::_local_scalar_dense": 0,
+    "aten::nonzero": 0,
+    "aten::repeat_interleave": 0,
+    "aten::_scaled_dot_product_flash_attention": 3,
+    "aten::_scaled_dot_product_attention_math": 0
+  },
+  "scope": "Three calls to one Scaled-FP8 paged-prefill Attention layer; not an end-to-end latency measurement."
+}

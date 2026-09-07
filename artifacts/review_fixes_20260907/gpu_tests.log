@@ -1,0 +1,12 @@
+gj-5090-1
+name, driver_version, memory.total [MiB], uuid
+NVIDIA GeForce RTX 5090, 580.142, 32607 MiB, GPU-a86a0f98-b11b-6726-5e9a-788e5eee7084
+{'torch': '2.11.0+cu130', 'cuda': '13.0', 'triton': '3.6.0'}
+............................                                             [100%]
+=============================== warnings summary ===============================
+../../home/lcpu/87120912/venvs/prism/lib/python3.12/site-packages/torch/jit/_script.py:365: 14 warnings
+  /home/lcpu/87120912/venvs/prism/lib/python3.12/site-packages/torch/jit/_script.py:365: DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+28 passed, 14 warnings in 10.86s

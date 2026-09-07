@@ -41,8 +41,9 @@ if HAS_TRITON:
         VECTOR_SIZE: tl.constexpr,
         BLOCK_VECTOR: tl.constexpr,
     ):
-        row = tl.program_id(0)
-        token = tl.program_id(1)
+        # Flattened K/V-layer strides exceed int32 for the supported KV pools.
+        row = tl.program_id(0).to(tl.int64)
+        token = tl.program_id(1).to(tl.int64)
         offsets = tl.arange(0, BLOCK_VECTOR)
         mask = offsets < VECTOR_SIZE
         source_slot = tl.load(source_slots_ptr + token)
@@ -69,8 +70,8 @@ if HAS_TRITON:
         VECTOR_SIZE: tl.constexpr,
         BLOCK_VECTOR: tl.constexpr,
     ):
-        row = tl.program_id(0)
-        token = tl.program_id(1)
+        row = tl.program_id(0).to(tl.int64)
+        token = tl.program_id(1).to(tl.int64)
         offsets = tl.arange(0, BLOCK_VECTOR)
         mask = offsets < VECTOR_SIZE
         destination_slot = tl.load(destination_slots_ptr + token)

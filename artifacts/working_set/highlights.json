@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "record_type": "prism_infer_project_highlights",
   "scope": {
     "model": "Qwen3-VL-8B-Instruct",
@@ -10,6 +10,12 @@
     "kv_pages": 220,
     "page_size_tokens": 256,
     "traffic": "Poisson 4 req/s, Zipf-1.0, greedy, output 16"
+  },
+  "runtime_repairs": {
+    "date": "2026-09-07",
+    "notes": "../../docs/RUNTIME_FIXES_20260907.md",
+    "prefill_profile": "../review_fixes_20260907/prefill_profile.json",
+    "end_to_end_rebenchmark": false
   },
   "working_sets": {
     "fit": {
@@ -34,97 +40,123 @@
       "question_switches": 600
     }
   },
-  "pressure_result": {
-    "prism_compact_prefix": {
-      "ttft_p50_ms": 101.692,
-      "ttft_p99_ms": 497.899,
-      "e2e_p50_ms": 334.834,
-      "e2e_p99_ms": 832.635,
-      "process_peak_mib": 24002,
-      "recomputed_prompt_tokens": 75951
+  "historical_results": {
+    "source_date": "2026-08-13",
+    "source": "../cache_pressure_20260813/summary.json",
+    "code": "c4c8550 plus int64 compaction fix and then-uncommitted benchmark changes",
+    "prism_dense_vs_compact_220": {
+      "dense": {
+        "resident_media_groups": 27,
+        "prefix_evictions": 96,
+        "uncached_logical_prompt_token_proxy": 188169,
+        "first_token_p50_ms": 101.356463,
+        "first_token_p99_ms": 721.982512,
+        "finished_p50_ms": 379.096329,
+        "finished_p99_ms": 1062.074463
+      },
+      "compact": {
+        "resident_media_groups": 40,
+        "prefix_evictions": 15,
+        "uncached_logical_prompt_token_proxy": 75951,
+        "first_token_p50_ms": 90.263697,
+        "first_token_p99_ms": 523.620642,
+        "finished_p50_ms": 324.389841,
+        "finished_p99_ms": 845.582577
+      },
+      "compact_change_percent": {
+        "resident_media_groups": 48.148148,
+        "prefix_evictions": -84.375,
+        "uncached_logical_prompt_token_proxy": -59.636816,
+        "first_token_p50": -10.944311,
+        "first_token_p99": -27.474609,
+        "finished_p50": -14.430762,
+        "finished_p99": -20.383871
+      }
     },
-    "vllm_0_25_1": {
-      "ttft_p50_ms": 134.719,
-      "ttft_p99_ms": 709.764,
-      "e2e_p50_ms": 325.141,
-      "e2e_p99_ms": 1026.414,
-      "process_peak_mib": 24440,
-      "recomputed_prompt_tokens": 165678
+    "capacity_sensitivity": {
+      "prism": {
+        "p50_per_run": [
+          1.673186,
+          1.630268,
+          0.777546
+        ],
+        "p50_median": 1.630268,
+        "p50_range": [
+          0.777546,
+          1.673186
+        ],
+        "mean_per_run": [
+          -1.035927,
+          0.500071,
+          -0.017342
+        ],
+        "mean_median": -0.017342,
+        "mean_range": [
+          -1.035927,
+          0.500071
+        ]
+      },
+      "vllm": {
+        "p50_per_run": [
+          14.930459,
+          14.304014,
+          6.368998
+        ],
+        "p50_median": 14.304014,
+        "p50_range": [
+          6.368998,
+          14.930459
+        ],
+        "mean_per_run": [
+          35.336312,
+          39.105219,
+          31.963972
+        ],
+        "mean_median": 35.336312,
+        "mean_range": [
+          31.963972,
+          39.105219
+        ]
+      },
+      "sglang": {
+        "p50_per_run": [
+          23.968733,
+          41.961973,
+          36.977442
+        ],
+        "p50_median": 36.977442,
+        "p50_range": [
+          23.968733,
+          41.961973
+        ],
+        "mean_per_run": [
+          28.210806,
+          37.675165,
+          38.316654
+        ],
+        "mean_median": 37.675165,
+        "mean_range": [
+          28.210806,
+          38.316654
+        ]
+      },
+      "scope": "primary cross-engine comparison; each ratio is formed within one engine and one paired run"
     },
-    "sglang_0_5_15_post1": {
-      "ttft_p50_ms": 305.77,
-      "ttft_p99_ms": 1165.342,
-      "e2e_p50_ms": 523.622,
-      "e2e_p99_ms": 1909.157,
-      "process_peak_mib": 26598,
-      "recomputed_prompt_tokens": 181294
-    },
-    "prism_vs_vllm_percent": {
-      "ttft_p50": -24.52,
-      "ttft_p99": -29.85,
-      "e2e_p50": 2.98,
-      "e2e_p99": -18.88,
-      "recomputed_prompt_tokens": -54.16
-    },
-    "prism_vs_vllm_process_peak_mib": -438
-  },
-  "pressure_prism_ablation": {
-    "dense_prefix": {
-      "actual_prefix_pages": 3413,
-      "resident_media": 27,
-      "prefix_evictions": 96,
-      "recomputed_prompt_tokens": 188169,
-      "ttft_p50_ms": 124.994,
-      "ttft_p99_ms": 695.924,
-      "e2e_p50_ms": 403.902,
-      "e2e_p99_ms": 1112.062
-    },
-    "compact_prefix": {
-      "dense_equivalent_pages": 3941,
-      "actual_prefix_pages": 2762,
-      "resident_media": 40,
-      "prefix_evictions": 15,
-      "recomputed_prompt_tokens": 75951,
-      "ttft_p50_ms": 101.692,
-      "ttft_p99_ms": 497.899,
-      "e2e_p50_ms": 334.834,
-      "e2e_p99_ms": 832.635
-    },
-    "compact_vs_dense_percent": {
-      "actual_pages_vs_dense_equivalent": -29.92,
-      "resident_media": 48.15,
-      "prefix_evictions": -84.38,
-      "recomputed_prompt_tokens": -59.64,
-      "ttft_p50": -18.64,
-      "ttft_p99": -28.46,
-      "e2e_p50": -17.1,
-      "e2e_p99": -25.13
+    "muirbench_quality_after_fix": {
+      "all_85": {
+        "dense_correct": 46,
+        "uniform_correct": 47,
+        "prediction_differences": 3
+      },
+      "actual_deletion_49": {
+        "dense_correct": 27,
+        "uniform_correct": 28,
+        "dropped_visual_tokens": 52120
+      },
+      "scope": "no observed accuracy loss on this sample set; not an accuracy-improvement or equivalence claim"
     }
   },
-  "quality": {
-    "muirbench_all_questions": {
-      "official_interleaved_dense": "49/85",
-      "media_first_dense": "46/85"
-    },
-    "muirbench_actual_deletion_cohort": {
-      "samples": 49,
-      "media_first_dense": "27/49",
-      "uniform_compact": "20/49",
-      "attention_topk_per_question": "20/49",
-      "first_question_attention_topk_reuse": "20/49"
-    },
-    "docvqa": {
-      "dense_anls": 0.93335,
-      "uniform_anls": 0.93335,
-      "samples_with_token_deletion": 0
-    },
-    "mvbench": {
-      "dense": "183/252",
-      "uniform_compact": "113/252",
-      "decision": "video token deletion is disabled by default"
-    }
-  },
-  "supplementary_results": {
+  "supplementary_historical_results": {
     "tp1_batch1_tpot_ms": {
       "eight_image_prism": 9.8821,
       "eight_image_sglang": 10.352,
@@ -150,59 +182,16 @@
       "vllm_e2e_ms": 252.744
     }
   },
-  "evidence": {
-    "working_set_plan_sha256": "74102cb70c6a62cdb62c1c6ed72c92a878d3a11eda4c43da101c2305fabb2739",
-    "working_set_summary_sha256": "4f69954cd84cd1e67e7f10a635aca5ef4f833ca3b6f239157a877efffafb8d38",
-    "quality_summary_sha256": "8cd23e5384fa097a717449c2e4e261ea692216f568954b4da79a557cc176bdaf",
-    "trace_audit_sha256": "3bae8645e29ce17c1f1f9faf354b3d910c9eb5de4248da110c88ee8983b3f29f"
+  "superseded_measurements": {
+    "compact_latency": "The original working_set Compact latency records predate the KV-copy address fix.",
+    "pruning_quality": "The old MuirBench 20/49 and MVBench 113/252 Compact results cannot establish algorithmic quality loss.",
+    "block_level_apc": "The August block-level APC records predate the September computed-page, tail-hash and reclamation repairs."
   },
   "limitations": [
-    "The cross-engine latency result is scoped to the fixed-budget repeated multi-image workload.",
-    "Compact image Prefix reuse is lossy and is not an equal-quality engine ranking.",
-    "Fixed arrival rate limits output throughput to about 64.2 tokens/s for all three engines.",
-    "TP2 improves the measured Decode TPOT but not end-to-end multimodal latency.",
-    "Prefix Cache is process-local; PP, multi-node TP and MoE expert parallelism are not implemented."
-  ],
-  "dense_block_prefix_results": {
-    "fit": {
-      "ttft_p50_ms": 328.598,
-      "ttft_p99_ms": 1487.323,
-      "e2e_p50_ms": 666.494,
-      "e2e_p99_ms": 2302.408,
-      "pre_admission_hits": 600,
-      "cache_hits": 600,
-      "cache_misses": 0,
-      "reused_blocks": 2878,
-      "tail_clone_hits": 560,
-      "cow_copies": 40,
-      "process_peak_mib": 21797.666015625
-    },
-    "knee": {
-      "ttft_p50_ms": 355.486,
-      "ttft_p99_ms": 1452.826,
-      "e2e_p50_ms": 699.255,
-      "e2e_p99_ms": 2285.323,
-      "pre_admission_hits": 580,
-      "cache_hits": 575,
-      "cache_misses": 23,
-      "reused_blocks": 2823,
-      "tail_clone_hits": 288,
-      "cow_copies": 287,
-      "process_peak_mib": 22361.1748046875
-    },
-    "pressure": {
-      "ttft_p50_ms": 380.263,
-      "ttft_p99_ms": 1606.425,
-      "e2e_p50_ms": 769.787,
-      "e2e_p99_ms": 2244.747,
-      "pre_admission_hits": 500,
-      "cache_hits": 492,
-      "cache_misses": 99,
-      "reused_blocks": 2492,
-      "tail_clone_hits": 168,
-      "cow_copies": 324,
-      "process_peak_mib": 22263.017578125
-    }
-  },
-  "note_dense_block_prefix": "2026-08-19 dense block-level mm-aware prefix matching rerun (branch feat/block-level-mm-prefix-cache). Suffix-prefill reference path is the known TTFT bottleneck; optimized kernel is planned next."
+    "No current-main three-engine end-to-end ranking was measured during these repairs.",
+    "The corrected pruning quality data is Dense FP8 versus FP8 plus Uniform pruning, not BF16 versus FP8.",
+    "No accuracy loss was observed on the corrected 85-question subset; this is not a losslessness guarantee.",
+    "The fixed-arrival workload does not measure saturation throughput.",
+    "Scaled-FP8 prefill still gathers KV into dense temporary storage."
+  ]
 }

@@ -706,7 +706,18 @@ class Scheduler:
             plan = None
 
         outputs: list[RequestOutput] = []
-        for seq, token_id in zip(seqs, token_ids, strict=False):
+        for index, (seq, token_id) in enumerate(zip(seqs, token_ids, strict=False)):
+            if plan is not None and plan.is_prefill:
+                prefill_slice = plan.prefill_slices[index]
+                self.block_manager.publish_computed_blocks(
+                    seq, prefill_slice.token_start, prefill_slice.token_end
+                )
+            elif seq.status is RequestState.PREFILLING:
+                self.block_manager.publish_computed_blocks(
+                    seq, seq.num_cached_tokens, seq.num_computed_tokens
+                )
+            else:
+                self.block_manager.publish_computed_blocks(seq, seq.num_tokens - 1, seq.num_tokens)
             if token_id is None:
                 continue
             seq.append_token(token_id)

@@ -1,121 +1,68 @@
 # Prism-Infer
 
-Prism-Infer 是面向 Qwen3-VL 的压缩感知多模态推理引擎。项目聚焦一个具体的在线场景：
-用户上传一组图片后，围绕相同视觉内容连续提出不同问题。
+Prism-Infer 是面向 Qwen3-VL 的多模态推理引擎，支持图片、视频输入和流式服务。
+项目重点是同一组图片被多个独立请求反复查询时的 Prefix KV 复用，以及固定显存预算下的
+FP8 KV 存储。它不是对 vLLM 或 SGLang 的通用替代。
 
-普通 Processor 或 Vision Cache 只能省去视觉编码，语言模型仍要为每个问题重新 Prefill
-长视觉前缀。Prism-Infer 将问题无关的视觉上下文保存为物理压实的 Scaled-FP8 Paged
-Prefix KV；后续问题命中时直接挂接共享页，同时跳过 Vision Encoder、DeepStack 和公共
-语言 Prefill。在固定 KV 显存预算下，压实后的前缀可以扩大可驻留媒体工作集，降低容量
-压力下的淘汰和重算。
+## 多模态 Prefix Cache
 
-## 重复视觉上下文
+将视觉输入置于问题前，形成跨请求一致的公共前缀。只有 Processor/Encoder Cache 时，
+可以复用预处理或视觉编码结果，但不能直接省掉语言模型的公共前缀 Prefill；Prefix KV
+Cache 则保留各 Transformer 层已经计算的 K/V。这里讨论的是独立请求之间的缓存复用，
+不是已有会话 KV 驻留时又把同一段上下文重新计算一遍。
 
-请求使用带编号的 media-first 布局：
+请求入队前按媒体内容、Processor 布局和公共 token 前缀查询缓存。命中覆盖完整视觉输入
+时，跳过 Vision Encoder、DeepStack 和公共前缀 Prefill；部分命中只复用连续一致的前缀，
+继续计算未共享的图片和文本。图片内容相同但左侧上下文不同，不会独立复用其语言模型 KV。
 
-```text
-Image 1: <image>
-Image 2: <image>
-...
-Question: ...
-```
+页管理遵循三个规则：完整页的 KV 计算完成后才加入命中索引；共享尾页只复制公共前缀行，
+不继承旧问题的哈希；空闲缓存可借用整个 KV Pool，但活跃请求引用的页不能回收。多个
+缓存条目共享同一页时，按唯一物理页和实际引用计算可回收容量。
 
-缓存身份由模型与 Processor 配置、有序媒体内容 SHA256、公共前缀长度和完整 token
-SHA256 共同构成。请求在 Scheduler admission 前直接查询 Prefix Cache；命中后挂接只读
-页，未命中才恢复或计算视觉特征并执行 Prefill。缓存可以使用整个暂时空闲的 KV Pool，
-活跃请求需要空间时先回收空闲尾页，再淘汰完整 Prefix Entry。
+## 推理实现
 
-![MuirBench working-set result](artifacts/working_set/performance/working_set_summary.png)
+- 适配 Qwen3-VL Vision Encoder、DeepStack、M-RoPE 和 Language Decoder；支持
+  Continuous Batching、Chunked Prefill、HTTP/SSE 和单机 TP2。
+- FP8 Paged KV Cache：E4M3FN K/V，为每个 token、每个 KV head 分别保存 K/V 的 FP32
+  scale；贯通 KV 写入、Paged Attention、Prefix 共享、CoW、Swap 和页回收。
+- Prefix 命中的 Scaled-FP8 Prefill 从调度元数据读取长度，批量 gather/反量化 KV，再用
+  右下对齐的因果 SDPA 处理问题后缀；支持的 CUDA 后端直接执行 GQA，不手工复制 K/V heads。
+- Decode 按 batch bucket 捕获 CUDA Graph。TP1 的 `torch.compile` 路径编译 Attention
+  输出投影和 FP8 LM-head 候选投影，候选再用原始权重进行 FP32 重排。
 
-图中的 `fit`、`knee`、`pressure` 分别包含 21、28、42 个重复媒体组和 42、56、85 个
-不同问题。每组先建立一次媒体前缀，再运行 600 条 Zipf-1.0 请求；600 条测量请求都切换
-到该媒体组的另一个问题，不是重复完全相同的 prompt。Prism、vLLM 和 SGLang 使用相同
-图片、prompt token、请求顺序、到达时间、生成参数和 4,282,122,240-byte KV 预算。
+2026-09-07 修复了提前发布未计算 KV、尾页旧哈希、共享缓存页回收少算和 FP8 压实地址
+溢出。对应复现、GPU 检查和执行路径记录见[修复说明](docs/RUNTIME_FIXES_20260907.md)。
+本轮没有重跑三引擎端到端排名。
 
-### 容量压力下的三引擎结果
+## 结果与适用范围
 
-`pressure` 工作集需要 312 个 Dense Prefix pages，而可用预算为 220 pages：
+Qwen3-VL-8B、RTX 5090 上的 KV 容量记录如下，scale 开销已计入：
 
-| 引擎 | TTFT p50 / p99 | E2E p50 / p99 | 进程显存峰值 | 重算 prompt tokens |
-|---|---:|---:|---:|---:|
-| **Prism Dense Prefix（chained block-level APC）** | 380.3 / 1,606.4 ms | 769.8 / 2,244.7 ms | **22,263 MiB** | 181,191 |
-| vLLM 0.25.1 | 134.719 / 709.764 ms | **325.141** / 1,026.414 ms | 24,440 MiB | 165,678 |
-| SGLang 0.5.15.post1 | 305.770 / 1,165.342 ms | 523.622 / 1,909.157 ms | 26,598 MiB | 181,294 |
-
-> Dense 是唯一推荐路径（无损；视觉剪枝因质量损失被否定，见
-> [docs/REJECTED_EXPERIMENTS.md](docs/REJECTED_EXPERIMENTS.md)）。pressure 下
-> 600 个测量请求中 **492 次命中前缀缓存**、复用 2,492 个 KV block；TTFT 仍落后
-> vLLM，瓶颈已定位为命中路径的 suffix-prefill 参考实现（Python 逐 block gather），
-> 优化 kernel 为下一步计划工作。历史 Compact 数字（TTFT 101.692/497.899 ms）保留在
-> rejected 文档中作为被否定对照。
-
-该表中的 Prism 数字来自 Dense Scaled-FP8 + 多模态感知的链式 block-level APC 当前
-实现：命中率（pressure 492/600）与复用块数（2,492）是缓存能力的直接证据，复算 prompt
-tokens 与 vLLM 同量级；TTFT 落后于 vLLM 的差距已定位在命中路径的 suffix-prefill
-参考实现（`_forward_prefill_paged` 的 Python 逐 block gather）与每命中一次的全块
-CoW——suffix-prefill 优化 kernel 是已计划的下一步（见
-[docs/REPEATED_VISUAL_CONTEXT.md](docs/REPEATED_VISUAL_CONTEXT.md) 的性能一节）。
-历史 Compact 配置在 TTFT 上曾领先 vLLM（101.692 ms vs 134.719 ms），但视觉剪枝的
-质量损失使其被否定。
-
-### 命中路径与匹配能力
-
-同一 `pressure` 请求流上，Dense chained block-level APC（2026-08 重跑）：
-
-| 工作集 | 命中 / 请求 | 复用 block | tail-clone 命中 | CoW 次数 | 复算 prefill tokens |
-|---|---:|---:|---:|---:|---:|
-| fit | 600 / 600 | 2,878 | 560 | 40 | 70,206 |
-| knee | 575 / 600 | 2,823 | 288 | 287 | 118,330 |
-| pressure | 492 / 600 | 2,492 | 168 | 324 | 181,191 |
-
-匹配分两层：同组同布局请求走 entry 级整段复用（O(1) 探测 + 命中后跳过 ViT 与公共
-前缀 prefill）；block-level APC 的每个 key 都包含上一块的 hash、当前 token 和对应媒体
-身份，因此只复用从 token 0 开始连续一致的公共前缀。相同有序媒体的新问题可以复用
-视觉公共前缀；图片重排、非前缀子集或前置文本变化会使 hash 链在首个差异处断开，后续
-Transformer KV 重新计算。逐图 Vision Encoder Cache 可以独立复用视觉编码结果，但不会
-脱离因果前缀复用语言模型 KV。相关行为由 `tests/test_mm_block_prefix_cache.py` 覆盖。
-
-视觉剪枝/压实（Compact）因质量损失被否定：MuirBench 49 个实际删除样本上 27/49 →
-20/49，MVBench 视频 183/252 → 113/252。完整动机、实现与放弃依据见
-[docs/REJECTED_EXPERIMENTS.md](docs/REJECTED_EXPERIMENTS.md)。
-
-完整工作集、质量对照和 Trace 见
-[重复视觉上下文技术记录](docs/REPEATED_VISUAL_CONTEXT.md)。
-
-## 推理引擎能力
-
-- Qwen3-VL Vision Encoder、DeepStack、3D Position IDs、M-RoPE、Language Decoder 与
-  Sampling；支持单图、多图、视频和混合 batch。
-- Scaled-FP8 Paged KV：E4M3FN K/V 与 per-token、per-KV-head FP32 scale，贯通 KV
-  Store、Paged Attention、Copy-on-Write、Swap、物理压实和 CUDA Graph Replay。
-- `torch.compile` 编译稳定的 QKV、QK-Norm、M-RoPE 等无状态 Decode 子图；外层 CUDA
-  Graph 按 batch bucket 捕获完整 GPU Decode。
-- Continuous Batching、Chunked Prefill、HTTP/SSE Serving，以及单机双卡 Tensor
-  Parallel。
-
-### Decode、KV 容量与 TP2
-
-以下结果属于独立协议，不与上面的在线工作集混为一次实验：
-
-| 测量 | Prism | 对照或变化 |
+| 配置 | Token capacity | KV 存储 |
 |---|---:|---:|
-| TP1，8 张 448×448 图片，batch 1 TPOT | **9.8821 ms** | SGLang 10.3520 ms；vLLM 10.5276 ms |
-| TP1，16 帧 448×448 视频，batch 1 TPOT | **9.8680 ms** | SGLang 10.3689 ms；vLLM 10.5278 ms |
-| Scaled-FP8，同 token capacity 的 KV 存储 | **-48.44%** | 进程显存峰值 -8.24% |
-| 约 4 GiB KV 预算的 token capacity | **56,320** | BF16 28,928；+94.69% |
-| TP2，单图 batch 1 TPOT | **5.9701 ms** | vLLM 6.1612 ms；-3.10% |
+| BF16 | 28,928 | 4,068.000 MiB |
+| Scaled-FP8，同容量 | 28,928 | 2,097.562 MiB |
+| Scaled-FP8，约 4 GiB | 56,320 | 4,083.750 MiB |
 
-TP2 的 TTFT/E2E 仍慢于 vLLM，因为 Vision Encoder 在两个 rank 上重复执行；项目没有
-把局部 Decode TPOT 结果描述成端到端领先。详细协议见[结果汇总](docs/RESULTS.md)。
+同 token capacity 下存储减少 **48.44%**；约 4 GiB 预算下容量增加 **94.69%**。
+这两个数字描述存储，不代表量化在数学上无损。
+
+独立的历史 batch-1 Decode 测量中，八图/视频 TPOT 为 9.8821/9.8680 ms，较当时
+SGLang 低 4.54%–4.83%、较 vLLM 低 6.13%–6.27%。这些不是本轮 APC 修复后的高并发
+结果，也不能代替 Prefill、TTFT 或吞吐评价。完整配置与历史结果见[Results](docs/RESULTS.md)。
+
+视觉 Token Pruning 是可选研究路径，默认保留全部视觉 token。早期剪枝质量和 Compact
+延迟记录受 FP8 压实地址溢出影响，不能继续作为算法取舍或跨引擎领先依据。修复后的
+85 题 MuirBench 记录为 Dense 46/85、Uniform 47/85；实际删除的 49 题为 27/49、28/49，
+仅说明该样本未观察到准确率下降。原始记录见[压实修复后的实验](artifacts/cache_pressure_20260813/README.md)。
 
 ## 快速开始
 
-RTX 5090 实测环境使用 Python 3.12、PyTorch 2.11.0+cu130 和 Transformers 5.14.1。
+RTX 5090 开发环境使用 Python 3.12、PyTorch 2.11.0+cu130 和 Transformers 5.14.1。
 
 ```bash
 git clone https://github.com/xsmccc/Prism-Infer.git
 cd Prism-Infer
-
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -123,45 +70,28 @@ python -m pip install -e ".[blackwell,serving]"
 
 export PRISM_MODEL_PATH=/path/to/Qwen3-VL-8B-Instruct
 python example.py
-```
-
-HTTP/SSE 服务：
-
-```bash
 prism-serve --model "$PRISM_MODEL_PATH" --host 127.0.0.1 --port 8000
 ```
 
-## 代码与证据
+`compression_mode` 默认是 `off`；FP8 KV 和视觉 Token Pruning 需要显式选择相应配置。
+运行参数见[Reproducibility](docs/REPRODUCIBILITY.md)。
 
-```text
-prism_infer/
-  engine/       Scheduler、Paged KV、Prefix Cache、Tensor Parallel
-  models/       Qwen3-VL Language Model、Vision glue、DeepStack
-  vision/       Vision Encoder、Attention、M-RoPE
-  layers/       Linear、Norm、Attention、Sampler
-  ops/          Triton KV Store、Paged Decode、Compaction、Fused Kernels
-  serving/      HTTP/SSE Runtime
-  analysis/     Benchmark 与 Profiler 分析
-benchmarks/     Offline、Online、质量与三引擎工作集入口
-configs/        Serving 与 TP2 配置
-```
+## 文档与代码
 
-- [架构设计](docs/ARCHITECTURE.md)
-- [性能与质量结果](docs/RESULTS.md)
-- [运行与复现](docs/REPRODUCIBILITY.md)
-- [相关工作与项目边界](docs/RELATED_WORK.md)
-- [请求级 JSON、图表与 Trace](artifacts/working_set/README.md)
+- [Architecture](docs/ARCHITECTURE.md)：模型适配、KV 布局、缓存与调度。
+- [重复视觉上下文](docs/REPEATED_VISUAL_CONTEXT.md)：请求路径、历史实验及结果解释。
+- [Results](docs/RESULTS.md)：区分存储、Decode、在线工作集和质量测量。
+- [本轮修复与执行证据](docs/RUNTIME_FIXES_20260907.md)。
+- [历史请求级 JSON 与 Trace](artifacts/working_set/README.md)。
+- [相关工作](docs/RELATED_WORK.md)、[未采用方案与历史实验](docs/REJECTED_EXPERIMENTS.md)。
 
-适合直接查看或截图的机器可读摘要为
-[`artifacts/working_set/highlights.json`](artifacts/working_set/highlights.json)；Prefix 命中路径见
-[`trace_audit.json`](artifacts/working_set/trace/trace_audit.json)。
-
-当前未实现 PP、多机 TP、MoE Expert Parallel、跨进程 Prefix Cache 和 OpenAI-compatible
-API。项目结果限定于文档记录的 Qwen3-VL-8B、RTX 5090、输入、batch、KV 预算和软件
-版本，不主张通用场景全面优于 vLLM 或 SGLang。
+主要实现位于 `prism_infer/engine`、`models`、`vision`、`ops` 和 `serving`。
+Prefix Cache 位于单个 Engine Process 内；当前未实现 PP、多机 TP、MoE Expert Parallel
+或 OpenAI-compatible API。Scaled-FP8 Prefill 仍需要将 paged KV gather 到临时连续张量，
+并非直接读取量化页的融合 Prefill kernel。
 
 ## 致谢与许可
 
 项目早期运行时结构参考了
-[nano-vllm](https://github.com/GeeeekExplorer/nano-vllm)，随后扩展为面向 Qwen3-VL 的
-多模态推理实现。项目使用 [MIT License](LICENSE)。
+[nano-vllm](https://github.com/GeeeekExplorer/nano-vllm)，随后扩展为 Qwen3-VL 多模态推理实现。
+项目使用 [MIT License](LICENSE)。

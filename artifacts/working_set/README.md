@@ -1,6 +1,10 @@
-# Repeated visual-context artifacts
+# Historical repeated visual-context artifacts
 
-This directory contains portable evidence for the fixed-budget, repeated-visual-context study.
+This directory preserves the original fixed-budget study. Its Compact latency and pruning-quality
+records predate the FP8 KV-copy address fix and must not be used for current performance or algorithm
+claims. Corrected historical measurements are in
+[cache_pressure_20260813](../cache_pressure_20260813/README.md); current runtime repairs are described in
+[RUNTIME_FIXES_20260907.md](../../docs/RUNTIME_FIXES_20260907.md).
 Dataset media and model weights are not included.
 
 ## Experiment identity
@@ -26,8 +30,8 @@ within its media group.
 
 ### Overview
 
-- `highlights.json`: compact, screenshot-friendly summary of the main performance result, quality
-  trade-off, decode result, KV capacity and limitations.
+- `highlights.json`: corrected summary with explicit source dates. It does not promote the old
+  Compact comparison or the pre-repair block-level APC measurements as current main results.
 
 ### Protocol
 
@@ -68,5 +72,6 @@ within its media group.
 - `trace/nsys_summary.json`: exported range and kernel summary.
 
 Use `gzip -dk <file>.json.gz` to inspect a compressed raw record. The raw records are authoritative;
-Markdown tables, CSV files, `highlights.json` and the PNG are derived views. `SHA256SUMS` covers every
-portable artifact in this directory except itself.
+Markdown tables, CSV files and the PNG are historical derived views, not corrected reruns.
+`SHA256SUMS` records the original export; later documentation and highlight corrections do not rewrite
+that historical manifest.

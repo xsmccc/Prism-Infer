@@ -56,7 +56,7 @@ query-agnostic Uniform 作为清晰对照。实验中，每题 Attention Top-k �
 Cache 运行时”：同组同布局请求由 entry 级整段复用覆盖（命中跳过 ViT 与公共前缀
 prefill），block-level APC 只复用从 token 0 开始连续一致的公共前缀。逐图媒体身份参与
 链式 block key 的构造，但不作为脱离左侧上下文的 Transformer KV 索引；图片重排、非
-前缀子集和布局变化后的 KV 重新计算。视觉剪枝/压实是已实测否定的方向（见
-REJECTED_EXPERIMENTS.md）。不是通用场景下全面优于
-vLLM 或 SGLang：命中路径的 suffix-prefill 参考实现是当前 TTFT 瓶颈，优化 kernel
-为计划工作；性能比较与命中率、复用块数一起阅读。
+前缀子集和布局变化后的 KV 重新计算。视觉剪枝/压实保留为可选研究配置，旧质量结论受
+压实地址错误影响，已在 [历史实验说明](REJECTED_EXPERIMENTS.md) 中更正。项目不主张
+通用场景全面优于 vLLM 或 SGLang。本轮修复移除了 Scaled-FP8 suffix-prefill 的逐层
+CPU 读回和手工 GQA 复制，但仍有 KV gather/反量化开销，尚无本轮三引擎端到端复测排名。

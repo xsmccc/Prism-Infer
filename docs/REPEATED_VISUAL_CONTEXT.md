@@ -2,7 +2,7 @@
 
 ## 1. 场景与问题
 
-目标负载是“上传一组图片后连续提出不同问题”。对这类请求，视觉内容和图片前面的公共
+目标负载是“同一组图片被多个独立请求以不同问题反复查询”。对这类请求，视觉内容和图片前面的公共
 Prompt 不变，问题文本位于其后。
 
 只缓存 Processor 或 Vision Encoder 输出仍不够：每个新问题都要让语言模型重新 Prefill
@@ -13,17 +13,15 @@ Prism-Infer 的处理方式是：
 
 1. 用 media-first Prompt 构造与问题无关的公共视觉前缀；
 2. 将公共前缀的 K/V 量化为 Scaled-FP8（per-token、per-KV-head scale），并保持
-   Dense 布局——视觉 token 物理删除/压实已因质量损失被否定，见
-   REJECTED_EXPERIMENTS.md；
+   Dense 布局；视觉 Token Pruning 与物理压实是显式选择的研究配置；
 3. 把量化后的 Paged KV 作为可跨问题复用的缓存对象：entry 级整段复用 +
    从 token 0 开始连续匹配的 chained block-level APC；
 4. 让缓存借用整个空闲 KV Pool，活跃请求需要空间时再回收（池层 lazy retention
-   与 benefit-gated entry 淘汰两级）；
+   与按复用收益保留 entry 的两级缓存）；
 5. 用请求级记录和 Nsight Trace 同时验证容量、延迟、质量和真实执行路径。
 
-这里没有提出新的视觉 token 选择算法。图片主路径使用 query-agnostic Uniform 作为明确的
-有损 operating point；项目贡献在于量化、物理压实、页所有权、内容身份和在线请求路径的
-组合实现。
+这里没有提出新的视觉 token 选择算法。主路径不删除视觉 token；Uniform 是可选剪枝
+对照。工程工作在于模型适配、量化、页所有权、内容身份和在线请求路径的组合实现。
 
 ## 2. Prompt 与缓存身份
 
@@ -36,7 +34,8 @@ Image 2: <image>
 Question: ...
 ```
 
-最后一个视觉占位符之前的精确 token 序列构成公共前缀，问题和生成 token 不进入缓存。
+Entry 级公共前缀结束于最后一个视觉占位符。Dense block-level APC 还可索引之后已计算
+完成的文本整块，但只有包括问题在内的全部左侧上下文一致时才能复用。
 编号保留多图之间的对应关系；质量实验单独比较了该布局与数据集官方交错布局的差异。
 
 Prefix Cache ID 由以下内容直接计算：
@@ -165,58 +164,33 @@ Prompt、Dense pages、模型 revision、KV 预算和生成参数。三套引擎
 - `benchmarks/working_set_workload.py`；
 - `benchmarks/summarize_working_set.py`。
 
-## 7. 结果与因果链
+## 7. 结果与解释
 
-### 7.1 Prism 内部对照
+2026-08-13 压实地址修复后的内部对照中，220-page 预算下，Dense/Compact 缓存驻留媒体组
+为 27/40，Prefix 淘汰为 96/15；controller-start TTFT p50/p99 从 101.356/721.983 ms
+变为 90.264/523.621 ms。这是当时 entry 级实现的数据，不能冒充当前 block-level APC
+修复后的测量。
 
-`pressure` 工作集：
-
-| 路径 | 驻留媒体 | Prefix 淘汰 | 重算 tokens | TTFT p50 / p99 | E2E p50 / p99 |
-|---|---:|---:|---:|---:|---:|
-| Vision/DeepStack Cache only | 7 | 0 | 903,982 | 677.832 / 2,698.370 ms | 1,660.992 / 4,280.080 ms |
-| Dense Prefix | 27 | 96 | 188,169 | 124.994 / 695.924 ms | 403.902 / 1,112.062 ms |
-| **Compact Prefix** | **40** | **15** | **75,951** | **101.692 / 497.899 ms** | **334.834 / 832.635 ms** |
-
-Compact 路径相对其 Dense-equivalent pages 减少 29.92%，从而使驻留媒体增加 48.15%、
-淘汰减少 84.38%、重算 token 减少 59.64%，最终降低 TTFT 和 E2E。`fit` 工作集已经完全
-驻留，因此压实不会产生同样收益；这也是容量压力实验必须包含拐点的原因。
-
-### 7.2 外部比较
-
-在 `pressure` 工作集上：
-
-| 引擎 | TTFT p50 / p99 | E2E p50 / p99 | 进程峰值 | 重算 tokens |
-|---|---:|---:|---:|---:|
-| **Prism Compact** | **101.692 / 497.899 ms** | 334.834 / **832.635 ms** | **24,002 MiB** | **75,951** |
-| vLLM 0.25.1 | 134.719 / 709.764 ms | **325.141** / 1,026.414 ms | 24,440 MiB | 165,678 |
-| SGLang 0.5.15.post1 | 305.770 / 1,165.342 ms | 523.622 / 1,909.157 ms | 26,598 MiB | 181,294 |
-
-Prism 相对 vLLM 的 TTFT p50/p99 低 24.52%/29.85%，E2E p99 低 18.88%，但 E2E p50
-慢 2.98%。`fit` 和 `knee` 上 vLLM 的 tail 与 E2E 更好，因此结论限定为固定预算下的
-容量压力场景，不表述成通用引擎排名。
+旧的“较 vLLM 低 24.52%/29.85%”来自压实地址修复前记录，不再用于性能结论。修复后的
+三引擎历史配对实验比较的是 KV 预算收缩时各自的延迟变化；完整表格、计时定义和原始
+JSON 入口集中在 [Results](RESULTS.md#1-重复视觉上下文)。
 
 ## 8. 质量对照
 
-MuirBench 四种配置使用相同 85 个跨问题样本：Dense official layout、Dense media-first、
-每题独立 Attention Top-k、第一题 Attention Top-k 沿用和 Uniform 沿用。压实质量只在
-确实删除过视觉 token 的 49 个配对样本上计算。
+旧压实 kernel 的 int32 地址溢出影响了剪枝结果。MuirBench 的 27/49 → 20/49、MVBench
+的 183/252 → 113/252 不再作为算法质量损失的依据。
 
-- 官方交错 Dense：49/85；media-first Dense：46/85；
-- actual-deletion cohort：Dense 27/49；
-- Attention Top-k per question：20/49；
-- first-question Attention Top-k reuse：20/49；
-- query-agnostic Uniform reuse：20/49。
+修复后 MuirBench 全部 85 题为 Dense 46/85、Uniform 47/85；实际删除的同一组 49 题为
+27/49、28/49，3/85 个答案不同。只能说该小样本未观察到准确率下降。这组对照不能单独
+衡量 FP8 量化损失，也不能证明 Uniform 比 Attention Top-k 更好。
 
-当前 Attention 对照没有得到优于 Uniform 的跨问题结果，但这不代表 Uniform 在算法上
-优于 LOOK-M、VL-Cache、FastV 或 VisionZip。它只说明在当前模型、保留率和数据子集下，
-没有找到质量更好的可复用 Attention 选择。
-
-DocVQA 的 190 条样本均未触发 token 删除，因此相同 ANLS 不能作为无损证据。MVBench
-Uniform 从 183/252 降至 113/252，支持“视频删除默认关闭”的实现选择。
+Attention Top-k 和 MVBench Compact 没有修复后的重跑结果；DocVQA 的 190 条样本没有
+发生视觉 token 删除。默认保留全部视觉 token，相关历史取舍见
+[未采用方案与历史实验](REJECTED_EXPERIMENTS.md)。
 
 ## 9. 执行路径证据
 
-代表性 Nsight Systems capture 包含一次冷请求和一次同媒体不同问题的 Prefix 命中请求。
+历史 Nsight Systems capture 包含一次冷请求和一次同媒体不同问题的 Prefix 命中请求。
 Trace 观察到：
 
 - 冷请求包含 Vision embedding cache miss；
@@ -253,7 +227,8 @@ Prefix 查询如果发生在视觉 hydration 之后，即使 KV 命中也无法�
 ### 尾页写入
 
 共享未满尾页继续写入会污染其他请求。只读共享页、私有 tail clone、引用计数和回收顺序
-共同处理完成、取消、Swap 和异常路径。
+共同处理完成、取消和 Swap。新尾页不能继承包含旧问题的整页哈希；本轮修复在复制时
+只保留公共前缀行，在 KV 写入完成后重新发布完整页。
 
 ### 工作集语义
 
@@ -270,15 +245,15 @@ Plan 升级不再让未变化的 Dense Page 测量失效。
 
 vLLM Automatic Prefix Caching 和 SGLang RadixAttention 都能复用 token Prefix；vLLM 还
 提供 Processor/Encoder Cache。Prism 的差异不是“第一次实现 Prefix Cache”，而是把经过
-Scaled-FP8 量化和物理视觉 token 压实的页作为复用对象，使相同 KV 字节预算容纳更多媒体
-Prefix。代价是明确的视觉质量损失。
+Scaled-FP8 量化的页作为复用对象，并支持可选的视觉 token 压实。量化和剪枝都有数值或
+上下文方面的取舍，不能仅凭容量收益宣称无损。
 
 更完整的框架实现与论文对照见[相关工作与项目边界](RELATED_WORK.md)。
 
 ## 12. 限制
 
 - 结果限定于 Qwen3-VL-8B、RTX 5090、TP1、给定 KV 预算与重复多图提问；
-- 图片 Uniform 压实存在质量损失，当前不适合默认用于所有请求；
+- 图片 Uniform 压实只有有限的修复后质量结果，不默认用于所有请求；
 - 视频 token 删除默认关闭；
 - Prefix Cache 不跨 Engine Process 或机器共享；
 - 未实现自适应质量策略、训练式 selector 或跨节点缓存一致性。

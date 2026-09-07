@@ -88,36 +88,37 @@ def gather_paged_kv_vectorized(
     if context_len <= 0:
         raise ValueError(f"context_len must be positive, got {context_len}")
 
-    valid = block_ids[block_ids >= 0].to(torch.int64)
-    if int(valid.numel()) * k_cache.shape[1] < context_len:
+    num_blocks = (context_len + k_cache.shape[1] - 1) // k_cache.shape[1]
+    if num_blocks > block_ids.numel():
         raise RuntimeError(
             "invalid block table for paged KV vectorized gather: "
-            f"context_len={context_len}, blocks={int(valid.numel())}"
+            f"context_len={context_len}, blocks={block_ids.numel()}"
         )
-    if int(valid.numel()) and int(valid.max().item()) >= k_cache.shape[0]:
-        raise RuntimeError(
-            "paged KV block id exceeds cache capacity: "
-            f"block_id={int(valid.max().item())}, num_blocks={k_cache.shape[0]}"
-        )
+    # The scheduler owns these pages; padding starts after the logical context.
+    # Boolean indexing and max().item() would synchronize on every layer.
+    valid = block_ids[:num_blocks].to(torch.int64)
     kv_heads = k_cache.shape[2]
-    keys = k_cache.index_select(0, valid).reshape(-1, kv_heads, k_cache.shape[3])[
-        :context_len
-    ]
-    values = v_cache.index_select(0, valid).reshape(-1, kv_heads, v_cache.shape[3])[
-        :context_len
-    ]
+    if is_fp8_cache_tensor(k_cache):
+        # Preserve FP8 bits on backends without float8 index_select support.
+        keys = k_cache.view(torch.uint8).index_select(0, valid).view(k_cache.dtype)
+        values = v_cache.view(torch.uint8).index_select(0, valid).view(v_cache.dtype)
+    else:
+        keys = k_cache.index_select(0, valid)
+        values = v_cache.index_select(0, valid)
+    keys = keys.reshape(-1, kv_heads, k_cache.shape[3])[:context_len]
+    values = values.reshape(-1, kv_heads, v_cache.shape[3])[:context_len]
     if k_scale_cache is None:
         if v_scale_cache is not None:
             raise ValueError("K/V scale caches must be provided together")
         return keys.to(target_dtype), values.to(target_dtype)
     if v_scale_cache is None:
         raise ValueError("K/V scale caches must be provided together")
-    k_scales = k_scale_cache.index_select(0, valid).reshape(
-        -1, k_scale_cache.shape[2]
-    )[:context_len]
-    v_scales = v_scale_cache.index_select(0, valid).reshape(
-        -1, v_scale_cache.shape[2]
-    )[:context_len]
+    k_scales = k_scale_cache.index_select(0, valid).reshape(-1, k_scale_cache.shape[2])[
+        :context_len
+    ]
+    v_scales = v_scale_cache.index_select(0, valid).reshape(-1, v_scale_cache.shape[2])[
+        :context_len
+    ]
     keys = keys.to(target_dtype) * k_scales.to(target_dtype).unsqueeze(-1)
     values = values.to(target_dtype) * v_scales.to(target_dtype).unsqueeze(-1)
     return keys, values

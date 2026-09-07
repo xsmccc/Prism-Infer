@@ -1,0 +1,2 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+MODEL_RESULT {"model": "Qwen3-VL-8B-Instruct", "compression_mode": "scaled_fp8_kv", "execution": "eager, TP1, chunk_size=256, 32 KV pages", "duplicate_text_reference": [[12095, 13, 576, 6722], [12095, 13, 576, 6722]], "duplicate_text_cold": [[12095, 13, 576, 6722], [12095, 13, 576, 6722]], "duplicate_text_warm": [[12095, 13, 576, 6722], [12095, 13, 576, 6722]], "image_reference": [1151, 151645], "short_question_after_long_question": [[1151, 151645], [1151, 151645]], "image_prefix_hits": 2}

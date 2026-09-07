@@ -163,7 +163,8 @@ Question: ...
 ```
 
 编号用于保持多图对应关系；最后一个视觉占位符之前的精确 token 序列是可复用公共
-前缀，问题文本及其后续生成 token 不进入缓存。
+前缀，entry 级缓存不含问题文本。Dense block-level APC 还可保留之后已计算完成的文本
+整块，只有它们及其全部左侧上下文一致时才复用。
 
 请求进入 Scheduler 之前先计算媒体与公共 prompt 的身份并查询 Prefix Cache：
 
@@ -176,7 +177,7 @@ processor tokens + media identity
 ```
 
 Prefix ID 由模型与 Processor 布局、按顺序排列的媒体 SHA256、公共 prompt token 数和
-完整 token SHA256 直接得到，字典查找为 O(1)。命中后仍比较媒体 key、公共长度和完整
+完整 token SHA256 直接得到，随后做字典查找；构造身份仍需遍历输入。命中后仍比较媒体 key、公共长度和完整
 token 序列；摘要碰撞会直接报错，不会复用错误 KV。文件输入按内容计算身份，不依赖
 路径或 Python 对象地址。
 
@@ -185,6 +186,10 @@ Block-level APC 使用链式 key：当前块的 token 和媒体身份与上一�
 Transformer KV key；图片重排、非前缀子集或前置文本变化会在首个差异处结束复用。
 逐图 Vision Encoder Cache 与语言模型 KV Cache 分离，可以复用视觉编码结果，但不会
 绕过因果前缀约束。
+
+物理页分配不等于 KV 已计算。完整页在 Prefill chunk 或 Decode 的 KV 写入完成后，由
+Scheduler postprocess 调用 `publish_computed_blocks()` 加入命中索引。取消未完成请求时，
+尚未计算的页没有可命中的 hash；已经完成的整块可按原策略保留。
 
 早期查询和真正分配 KV 之间可能发生淘汰。因此原始媒体 Tensor 保留到分配完成；若条目
 已经被回收，请求自然回到完整 Vision + Prefill 路径。运行时分别记录
@@ -195,7 +200,8 @@ Prefix Cache 持有只读完整页。最后一页未填满时，请求获得自�
 结束使用后回到复用池，避免每次重新申请和复制。缓存不再只占 KV Pool 的八分之一，
 而是可以使用全部暂时空闲页。活跃请求分配、追加、CoW 或 Swap-in 需要空间时，先回收
 空闲 tail page，再按 `benefit_tokens × (1 + hits) / resident_pages` 淘汰完整条目；仍被
-活跃请求引用的共享页不会释放。
+活跃请求引用的共享页不会释放。多个缓存 entry 可能共同引用一个页，回收容量按唯一
+物理页计算：当页的全部引用均来自待淘汰缓存时，该页可回收，不能简单要求引用数等于 1。
 
 ## 8. 调度与 Serving
 
@@ -204,6 +210,12 @@ Continuous Batching、FCFS 和 Chunked Prefill。
 
 连续加入较重的 Vision Prefill 会打断已有 Decode，因此调度器会控制 Prefill 粒度。
 HTTP Runtime 支持普通 JSON 响应、SSE Token Stream、取消请求和退出时释放显存。
+
+当前仍是同步的 schedule → execute → postprocess 步进，不是异步 CPU/GPU 调度。
+Scaled-FP8 Prefix 命中的 Attention 从 Context 保存的 CPU offsets 读取长度，按有效页数
+截取页表；不会逐层把长度或页号读回 CPU。KV 仍会 gather/反量化到连续临时张量，再用
+`causal_lower_right` 对齐后缀的因果范围，并由支持 GQA 的 SDPA 后端执行 Attention。
+这解决逐层同步和手工 K/V head 复制，但不是直接读取 FP8 页的融合 Prefill kernel。
 
 ## 9. 当前实现情况
 

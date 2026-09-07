@@ -1,61 +1,39 @@
-# 已探索并被证伪的方向（REJECTED EXPERIMENTS）
+# 未采用方案与历史实验
 
-本文档记录 Prism-Infer 探索过、实测后放弃的技术方向及放弃依据。保留这些记录
-是为了让后续读者（以及面试官）不用重复踩坑：每一项都有动机、实现、测量和结论。
+记录项目探索过的方案及当时依据。由实现缺陷造成的结果不能当作算法结论；下面先更正
+视觉剪枝部分，其余条目保留原实验范围。
 
-## 1. 视觉 token 剪枝 / KV 压实（Visual Pruning / Compaction）
+## 1. 视觉 Token Pruning 与 KV 压实
 
-**状态：已放弃（2026-08）。Dense Scaled-FP8 是唯一推荐路径。**
+默认不删除视觉 token，Uniform 和 Attention Top-k 仍作为可选研究配置保留。此前将它们
+写成“已被质量实验证伪”不准确：当时 FP8 压实 kernel 存在 int32 地址溢出。
 
-### 动机
+### 实现与动机
 
-4 GiB KV 预算装不下完整工作集的视觉前缀（pressure 工作集需要 312 页，预算只有
-220 页）。剪掉一部分视觉 token 的 KV（"压实"）可以让更多媒体组驻留，提高命中率、
-降低 TTFT。
+在固定 KV 预算下，删除部分视觉 token 可以减少要保存的 KV。选择逻辑位于
+`prism_infer/engine/visual_pruning.py`，物理复制和页回收由
+`kv_compaction_coordinator.py`、`ops/kv_compaction.py` 及 BlockManager 配合完成。
+支持 `visual_compact`、`visual_compact_fp8`、`visual_compact_scaled_fp8`。
 
-### 实现
+### 更正后的证据
 
-- `prism_infer/engine/visual_pruning.py`：query-agnostic Uniform 采样与
-  Attention Top-k 两种选择策略；
-- `prism_infer/engine/compression.py` / `kv_compaction_coordinator.py`：物理压实
-  （copy 保留行、回收页）、压缩后页共享、CoW/tail-clone 全链路；
-- 配置层 `compression_mode` 支持 `visual_compact` / `visual_compact_fp8` /
-  `visual_compact_scaled_fp8`。
+2026-08-13 的 int64 地址修复后，MuirBench 全部 85 题中 Dense/Uniform 为 46/85、
+47/85；实际删除视觉 token 的同一组 49 题为 27/49、28/49。两种配置有 3 个答案不同。
+原始逐题记录见 [cache_pressure_20260813](../artifacts/cache_pressure_20260813/README.md)。
 
-### 实测（质量协议，49 个 MuirBench 样本 + 252 个 MVBench 视频样本）
+旧的 Uniform 20/49、两种 Attention Top-k 20/49，以及 MVBench 183/252 → 113/252
+均来自修复前记录，不能据此断言 Uniform 质量更差或 Attention 没有价值。后两类对照尚
+没有修复后重跑结果。DocVQA 的 190 个样本未触发删除，也不能证明剪枝保留了 OCR 精度。
 
-| 配置 | MuirBench 准确率 | 说明 |
-| --- | --- | --- |
-| 参考（不剪枝） | **27/49 (55.1%)** | |
-| Uniform 复用（第一题决定剪枝集，跨问题复用） | 20/49 (40.8%) | -14.3pp |
-| Attention Top-k（每题独立） | 20/49 (40.8%) | 与 Uniform 无差异 |
-| Attention Top-k（复用第一题选择） | 20/49 (40.8%) | 不优于 Uniform |
-
-- 视频：MVBench 252 样本实际删除 20,064 个视觉 token（约 183→113 可保留问题数，
-  见 working_set_quality.csv）。
-- DocVQA：受 768-token 最低保留量限制，实际未发生删除（0 样本被压缩）。
-- 容量侧：压缩路径运行中 Prefix 页数 -29.92%，可驻留媒体组 +48.15%。
-
-### 放弃原因
-
-1. **质量损失不可接受**：-14.3pp 意味着答案直接错掉。前缀缓存的立身之本是
-   "无损复用"（相同输入 → 相同输出）；剪枝把缓存变成了有损压缩，违背设计前提。
-2. **Attention 选择没有更好的可复用方案**：逐题 Top-k 无法跨问题复用（每题
-   attention 不同），复用第一题的选择也不优于 Uniform——说明这个负载下不存在
-   "既压缩又可复用且不损质量"的简单选择策略。
-3. **FP8 已提供无损容量**：Scaled-FP8 每 token 存储 -48.44%，容量 ×1.95，是
-   来自量化而不是删 token 的收益。
-
-### 遗产
-
-压实/CoW/tail-clone 的代码保留在仓库中（`compression_mode` 默认 `off`），
-作为显式对照配置与测试资产；Dense FP8 Prefix 成为唯一默认路径。
+不默认开启剪枝，是因为删除上下文会改变模型计算，而现有修复后质量证据只覆盖很小的
+样本集合；不是因为旧的 -14.3pp 已经证明算法不可用。同样，FP8 存储减少 48.44% 是容量
+结果，不能写成“FP8 提供无损容量”。
 
 ---
 
 ## 2. Qwen3-VL-30B-A3B MoE + Pipeline Parallel
 
-**状态：已放弃（2026-08），改动归档在 `moe-30b-wip` 分支，永不合并。**
+**状态：已放弃（2026-08），改动保留在 `moe-30b-wip` 分支，未作为主路径。**
 
 ### 动机
 
@@ -77,7 +55,7 @@
 
 ## 3. EAGLE3 投机解码（多模态负载）
 
-**状态：闸门实测后判定不划算（2026-08-18），集成实现保留为工程能力证明。**
+**状态：该实验配置未采用为默认推理路径（2026-08-18）。**
 
 ### 实测（vLLM 0.25.1 + taobao-mnn/Qwen3-VL-8B-Instruct-Eagle3，TP1，greedy，k=4）
 

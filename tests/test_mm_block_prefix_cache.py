@@ -53,11 +53,7 @@ def make_mm_seq(
             f"test pad layout mismatch: pads={pad_count} images={n_images} "
             f"per_image={pads_per_image}"
         )
-    grid = (
-        torch.tensor([[1, pads_per_image, 1]] * n_images, dtype=torch.long)
-        if n_images
-        else None
-    )
+    grid = torch.tensor([[1, pads_per_image, 1]] * n_images, dtype=torch.long) if n_images else None
     pixel = torch.zeros(pad_count, 3) if n_images else None
     return Sequence(
         token_ids,
@@ -66,9 +62,7 @@ def make_mm_seq(
         pixel_values=pixel,
         image_grid_thw=grid,
         position_ids=(
-            torch.arange(len(token_ids), dtype=torch.long)
-            .view(1, 1, -1)
-            .expand(3, 1, -1)
+            torch.arange(len(token_ids), dtype=torch.long).view(1, 1, -1).expand(3, 1, -1)
         ),
         rope_delta=torch.zeros(1, 1),
         image_token_id=PAD,
@@ -78,12 +72,22 @@ def make_mm_seq(
     )
 
 
+def prefill(manager: BlockManager, seq: Sequence):
+    """Complete the CPU metadata equivalent of one prompt forward."""
+
+    copies = manager.allocate(seq)
+    seq.num_computed_tokens = seq.num_prompt_tokens
+    manager.publish_computed_blocks(seq, seq.num_cached_tokens, seq.num_prompt_tokens)
+    return copies
+
+
 def decode_tokens(manager: BlockManager, seq: Sequence, tokens: list[int]) -> None:
     """Replicate the scheduler decode loop: CoW -> may_append -> append_token."""
     for token in tokens:
         if seq.physical_kv_len % manager.block_size != 1:
             manager.copy_on_write(seq)
         manager.may_append(seq)
+        manager.publish_computed_blocks(seq, seq.num_tokens - 1, seq.num_tokens)
         seq.append_token(token)
 
 
@@ -100,12 +104,13 @@ def dense_manager(num_blocks: int, block_size: int = 4) -> BlockManager:
 # 1. 连续公共前缀复用
 # ---------------------------------------------------------------------------
 
+
 def test_shorter_media_prompt_reuses_only_leading_common_block() -> None:
     """图 A+B 与图 A 请求只共享从 token 0 开始的连续公共块。"""
 
     manager = dense_manager(num_blocks=16)
     full = make_mm_seq(manager, [PAD] * 4 + [SEP] + [PAD] * 4 + [11, 12, 13], (H_A, H_B), 0)
-    manager.allocate(full)
+    prefill(manager, full)
     assert full.num_cached_tokens == 0  # 冷请求
 
     shorter = make_mm_seq(manager, [PAD] * 4 + [21, 22, 23], (H_A,), 1)
@@ -125,7 +130,7 @@ def test_same_image_different_question_partial_reuse() -> None:
 
     manager = dense_manager(num_blocks=16)
     first = make_mm_seq(manager, [PAD] * 4 + [31, 32, 33], (H_A,), 0)
-    manager.allocate(first)
+    prefill(manager, first)
 
     second = make_mm_seq(manager, [PAD] * 4 + [41, 42, 43, 44], (H_A,), 1)
     manager.allocate(second)
@@ -143,13 +148,14 @@ def test_same_image_different_question_partial_reuse() -> None:
 # 2. 多轮追问
 # ---------------------------------------------------------------------------
 
+
 def test_multiturn_text_growth_reuse() -> None:
     """图+Q1 缓存的 block 必须被 图+Q1+A1+Q4 请求复用。"""
 
     manager = dense_manager(num_blocks=16)
     # R1: 图 + Q1 (7 tokens -> block 0 满, block 1 是 3/4 的 partial)
     r1 = make_mm_seq(manager, [PAD] * 4 + [51, 52, 53], (H_A,), 0)
-    manager.allocate(r1)
+    prefill(manager, r1)
     decode_tokens(manager, r1, [61, 62, 63, 64])  # 生成 A1, block 1 完成时注册 hash
     r1_table = list(r1.block_table)
     manager.deallocate(r1)  # 池层 lazy retention 保留满块 hash
@@ -177,12 +183,13 @@ def test_multiturn_text_growth_reuse() -> None:
 # 3. 碰撞安全
 # ---------------------------------------------------------------------------
 
+
 def test_collision_safety_same_pads_different_media() -> None:
     """相同 pad token 序列但媒体不同 → 绝不复用。"""
 
     manager = dense_manager(num_blocks=16)
     first = make_mm_seq(manager, [PAD] * 4 + [11, 12, 13], (H_A,), 0)
-    manager.allocate(first)
+    prefill(manager, first)
 
     impostor = make_mm_seq(manager, [PAD] * 4 + [11, 12, 13], (H_B,), 1)
     manager.allocate(impostor)
@@ -199,7 +206,7 @@ def test_multimodal_without_media_identity_never_hashes() -> None:
 
     manager = dense_manager(num_blocks=16)
     first = make_mm_seq(manager, [PAD] * 4 + [11, 12, 13], None, 0)
-    manager.allocate(first)
+    prefill(manager, first)
     second = make_mm_seq(manager, [PAD] * 4 + [11, 12, 13], None, 1)
     manager.allocate(second)
 
@@ -215,12 +222,13 @@ def test_multimodal_without_media_identity_never_hashes() -> None:
 # 4. 布局变化
 # ---------------------------------------------------------------------------
 
+
 def test_layout_change_cascades_miss() -> None:
     """标签变化使前缀块 hash 变化, 后续块链式失效, 不错误复用。"""
 
     manager = dense_manager(num_blocks=16)
     layout_a = make_mm_seq(manager, [10, PAD, PAD, PAD, PAD, 11, 12], (H_A,), 0)
-    manager.allocate(layout_a)
+    prefill(manager, layout_a)
 
     layout_b = make_mm_seq(manager, [20, PAD, PAD, PAD, PAD, 11, 12], (H_A,), 1)
     manager.allocate(layout_b)
@@ -242,7 +250,7 @@ def test_same_image_block_is_not_reused_after_prefix_chain_mismatch() -> None:
         (H_A,),
         0,
     )
-    manager.allocate(first)
+    prefill(manager, first)
 
     changed_prefix = make_mm_seq(
         manager,
@@ -261,7 +269,7 @@ def test_pure_image_block_reuses_across_different_suffix() -> None:
 
     manager = dense_manager(num_blocks=16)
     first = make_mm_seq(manager, [PAD] * 4 + [11, 12, 13], (H_A,), 0)
-    manager.allocate(first)
+    prefill(manager, first)
 
     other = make_mm_seq(manager, [PAD] * 4 + [99, 98, 97, 96], (H_A,), 1)
     manager.allocate(other)
@@ -274,12 +282,13 @@ def test_pure_image_block_reuses_across_different_suffix() -> None:
 # 5. Pool lazy retention
 # ---------------------------------------------------------------------------
 
+
 def test_pool_lazy_retention_survives_deallocate_and_revives() -> None:
     """deallocate 后满块 hash 保留为 cached, 新请求可复活复用。"""
 
     manager = dense_manager(num_blocks=4)
     first = Sequence([1, 2, 3, 4], block_size=4, request_id=0)
-    manager.allocate(first)
+    prefill(manager, first)
     first_block = first.block_table[0]
     first_hash = manager.blocks[first_block].hash
     manager.deallocate(first)
@@ -302,7 +311,7 @@ def test_fully_cached_aligned_prompt_leaves_computable_tail() -> None:
 
     manager = dense_manager(num_blocks=8)
     first = Sequence([1, 2, 3, 4], block_size=4, request_id=0)
-    manager.allocate(first)
+    prefill(manager, first)
     first_block = first.block_table[0]
     manager.deallocate(first)
 
@@ -310,7 +319,7 @@ def test_fully_cached_aligned_prompt_leaves_computable_tail() -> None:
     manager.allocate(second)
     assert second.num_cached_tokens == 0  # 完整 prompt 不留全缓存
     assert second.block_table[0] != first_block  # 末块强制 miss (新块)
-    assert manager.blocks[second.block_table[0]].hash != -1  # 新块仍登记 hash
+    assert manager.blocks[second.block_table[0]].hash == -1  # 未执行的页不能发布
 
     third = Sequence([1, 2, 3, 4], block_size=4, request_id=2)
     candidate = manager.probe_multimodal_prefix(third, would_hydrate_visual=False)
@@ -322,7 +331,7 @@ def test_pool_cached_blocks_evict_under_pressure() -> None:
 
     manager = dense_manager(num_blocks=2)
     seq_a = Sequence([1, 2, 3, 4], block_size=4, request_id=0)
-    manager.allocate(seq_a)
+    prefill(manager, seq_a)
     hash_a = manager.blocks[seq_a.block_table[0]].hash
     manager.deallocate(seq_a)  # block 0 cached; 1 个真 free
 
@@ -339,12 +348,13 @@ def test_pool_cached_blocks_evict_under_pressure() -> None:
 # 6. Probe 语义
 # ---------------------------------------------------------------------------
 
+
 def test_probe_block_level_partial_and_full_hits() -> None:
     """probe 返回块级最长缓存前缀; hydration skip 只统计整段视觉命中。"""
 
     manager = dense_manager(num_blocks=16)
     full = make_mm_seq(manager, [PAD] * 8 + [11, 12, 13], (H_A,), 0, pads_per_image=8)
-    manager.allocate(full)
+    prefill(manager, full)
 
     # 整段命中: 同图不同问 -> probe == boundary(8), hydration skip +1
     same = make_mm_seq(manager, [PAD] * 8 + [21, 22, 23], (H_A,), 1, pads_per_image=8)
@@ -371,7 +381,7 @@ def test_snap_to_image_boundary_prevents_mid_image_split() -> None:
 
     manager = dense_manager(num_blocks=16)
     first = make_mm_seq(manager, [PAD] * 6 + [11, 12], (H_A,), 0, pads_per_image=6)  # span [0, 6)
-    manager.allocate(first)
+    prefill(manager, first)
 
     # 走查命中 block 0 (candidate=4) 但 4 落在 span [0,6) 内部 -> snap 到 0
     other = make_mm_seq(manager, [PAD] * 6 + [13, 14, 15, 16], (H_A,), 1, pads_per_image=6)
@@ -383,7 +393,7 @@ def test_snap_to_image_boundary_prevents_mid_image_split() -> None:
     print(f"copy pairs: {pairs}")
 
     assert other.num_cached_tokens == 0  # 不能切开图片 span, 整段重算
-    assert len(pairs) == 1  # 共享块已私有化 (CoW)
+    assert len(pairs) == 0  # 整图重算, 新私有页不需要复制旧内容
     assert other.block_table[0] != first.block_table[0]
     assert manager.blocks[first.block_table[0]].ref_count == 1  # 缓存未被污染
 
@@ -392,12 +402,13 @@ def test_snap_to_image_boundary_prevents_mid_image_split() -> None:
 # 7. Decode boundary-aligned 修复
 # ---------------------------------------------------------------------------
 
+
 def test_decode_after_boundary_aligned_prompt() -> None:
     """prompt 整除 block_size 时 decode 第一步不得 raise (历史潜在 bug)。"""
 
     manager = dense_manager(num_blocks=8)
     seq = Sequence([1, 2, 3, 4, 5, 6, 7, 8], block_size=4, request_id=0)
-    manager.allocate(seq)
+    prefill(manager, seq)
     decode_tokens(manager, seq, [9, 10, 11])
     print(f"table: {seq.block_table}, hashes: {[manager.blocks[b].hash for b in seq.block_table]}")
     assert seq.num_tokens == 11
@@ -409,12 +420,13 @@ def test_decode_after_boundary_aligned_shared_prefix() -> None:
 
     manager = dense_manager(num_blocks=8)
     first = Sequence([1, 2, 3, 4, 5, 6, 7, 8], block_size=4, request_id=0)
-    manager.allocate(first)
+    prefill(manager, first)
     second = Sequence([1, 2, 3, 4, 5, 6, 7, 8], block_size=4, request_id=1)
     manager.allocate(second)
     assert second.block_table[0] == first.block_table[0]  # 前缀块共享
     assert second.block_table[1] != first.block_table[1]  # 末块不复用
-    assert manager.blocks[second.block_table[1]].hash != NO_BLOCK_HASH
+    assert manager.blocks[second.block_table[1]].hash == NO_BLOCK_HASH
+    manager.publish_computed_blocks(second, second.num_cached_tokens, second.num_prompt_tokens)
     decode_tokens(manager, second, [9, 10, 11])
     print(f"second table: {second.block_table}")
     # first 的缓存不受污染
@@ -424,6 +436,7 @@ def test_decode_after_boundary_aligned_shared_prefix() -> None:
 # ---------------------------------------------------------------------------
 # 8. Swap 往返
 # ---------------------------------------------------------------------------
+
 
 def test_swap_roundtrip_keeps_mm_metadata() -> None:
     """swap_out/swap_in 后 mm block 的 hash 与 mm 元数据可恢复。"""
@@ -436,7 +449,7 @@ def test_swap_roundtrip_keeps_mm_metadata() -> None:
         block_level_mm_prefix=True,
     )
     seq = make_mm_seq(manager, [PAD] * 4 + [11, 12, 13], (H_A,), 0)
-    manager.allocate(seq)
+    prefill(manager, seq)
     full_hash = manager.blocks[seq.block_table[0]].hash
     full_mm = dict(manager.blocks[seq.block_table[0]].mm_token_hashes or {})
 
@@ -452,6 +465,7 @@ def test_swap_roundtrip_keeps_mm_metadata() -> None:
 # ---------------------------------------------------------------------------
 # 9. 视觉 payload 范围切片 (纯函数, CPU)
 # ---------------------------------------------------------------------------
+
 
 def test_image_payload_split_for_range_pure_math() -> None:
     """整图子集切片: patch 行、token 行、切片边界正确。"""

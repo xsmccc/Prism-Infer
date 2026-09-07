@@ -1,6 +1,6 @@
 # 性能与质量结果
 
-## 测试环境
+## 历史模型实验环境
 
 | 项目 | 配置 |
 |---|---|
@@ -16,6 +16,9 @@
 工作集结果、batch-1 Decode、KV 容量和 TP2 使用不同的固定协议。下面分别陈述，不把
 不同协议的数字拼成一次实验。请求级记录和派生表位于
 [`artifacts/working_set`](../artifacts/working_set/README.md)。
+
+2026-09-07 的代码修复和 GPU 检查使用单独记录，不把历史模型结果视作本轮复测：
+[运行时修复说明](RUNTIME_FIXES_20260907.md)。
 
 ## 1. 重复视觉上下文
 
@@ -37,65 +40,70 @@ Paged KV 和 256 MiB Vision Cache；vLLM 使用 FP8 KV、Automatic Prefix Cachin
 1 GiB Processor Cache；SGLang 使用 FP8 KV、Radix Cache 与 `mm_global_cache`。进程峰值
 来自 NVML compute-process 采样，不用整卡 `memory.used` 代替。
 
-### 1.2 Prism 内部对照
+### 1.2 压实地址修复后的历史对照
 
-`pressure` 工作集：
+下面的数据来自 2026-08-13 的 `c4c8550` 加 int64 压实修复和当时的 benchmark 改动，
+不是 2026-09-07 APC 修复后的 main 测量。原始请求记录已补入
+[`artifacts/cache_pressure_20260813`](../artifacts/cache_pressure_20260813/README.md)。
 
-| 路径 | 驻留媒体 | Prefix 淘汰 | Vision miss | 重算 prompt tokens | TTFT p50 / p99 | E2E p50 / p99 |
-|---|---:|---:|---:|---:|---:|---:|
-| Vision/DeepStack Cache only | 7 | 0 | 375 | 903,982 | 677.832 / 2,698.370 ms | 1,660.992 / 4,280.080 ms |
-| Dense Scaled-FP8 Prefix | 27 | 96 | 71 | 188,169 | 124.994 / 695.924 ms | 403.902 / 1,112.062 ms |
-| **Compact Scaled-FP8 Prefix** | **40** | **15** | **4** | **75,951** | **101.692 / 497.899 ms** | **334.834 / 832.635 ms** |
+相同 220-page 预算、600 请求下的 Prism 内部对照：
 
-Compact 路径累计处理 3,941 个 Dense-equivalent Prefix pages，实际保留 2,762 pages，
-减少 29.92%。相对 Dense Prefix，驻留媒体增加 48.15%，淘汰减少 84.38%，重算 token
-减少 59.64%；TTFT p50/p99 分别降低 18.64%/28.46%，E2E p50/p99 分别降低
-17.10%/25.13%。这条链路说明收益来自“页减少 → 驻留增加 → 淘汰和重算减少”，而不是
-一次偶然的 Decode 波动。
+| 路径 | 缓存驻留媒体组 | Prefix 淘汰 | TTFT p50 / p99 | E2E p50 / p99 |
+|---|---:|---:|---:|---:|
+| Dense Prefix | 27 | 96 | 101.356 / 721.983 ms | 379.096 / 1,062.074 ms |
+| Uniform Compact Prefix | 40 | 15 | 90.264 / 523.621 ms | 324.390 / 845.583 ms |
 
-![Working-set pressure](../artifacts/working_set/performance/working_set_summary.png)
+TTFT p50/p99 分别降低 10.94%/27.47%。计时起点是 controller 开始处理到期请求、尚未执行
+框架相关 Prompt/media 准备的时刻；初始化、Graph capture 和 42 条 population 请求均已完成。
 
-### 1.3 Prism、vLLM 与 SGLang
+3,941 → 2,762（-29.92%）来自命中请求携带的冷构建压实记录累计，并非某一时刻的页池
+驻留量。不要把它写成“整个 KV Pool 的实际页数减少 29.92%”。
 
-表中 Prism 使用 Compact Prefix。延迟单位为毫秒：
+### 1.3 三引擎的容量敏感性
 
-| Workset | 引擎 | TTFT p50 / p99 | E2E p50 / p99 | 进程峰值 | 重算 prompt tokens |
-|---|---|---:|---:|---:|---:|
-| fit | Prism | **98.923** / 445.645 | 329.764 / 771.089 | **24,002 MiB** | 70,206 |
-| fit | vLLM | 105.237 / **224.541** | **287.106 / 445.438** | 24,212 MiB | **34,234** |
-| fit | SGLang | 249.515 / 713.390 | 460.995 / 1,191.603 | 25,110 MiB | 34,234 |
-| knee | Prism | **96.449** / 581.247 | 327.460 / 867.021 | **24,002 MiB** | 69,779 |
-| knee | vLLM | 111.677 / **310.884** | **294.012 / 574.876** | 24,212 MiB | **51,194** |
-| knee | SGLang | 255.155 / 894.247 | 472.975 / 1,240.037 | 25,688 MiB | 75,514 |
-| pressure | **Prism** | **101.692 / 497.899** | 334.834 / **832.635** | **24,002 MiB** | **75,951** |
-| pressure | vLLM | 134.719 / 709.764 | **325.141** / 1,026.414 | 24,440 MiB | 165,678 |
-| pressure | SGLang | 305.770 / 1,165.342 | 523.622 / 1,909.157 | 26,598 MiB | 181,294 |
+每个引擎分别运行三次 352/220-page 对应字节预算的配对实验：两次大容量到小容量，一次
+反序。先计算每次配对中小容量相对大容量的变化，再取三次变化的中位数。
 
-`fit` 和 `knee` 上，Prism 的 TTFT p50 较低，但 vLLM 的 tail latency 与 E2E 更好；此时
-额外的缓存容量没有转化为端到端优势。`pressure` 超过 KV 容量后，Prism 相对 vLLM 的
-TTFT p50/p99 分别低 24.52%/29.85%，E2E p99 低 18.88%，重算 token 少 54.16%，
-进程峰值低 438 MiB；E2E p50 仍慢 2.98%。
+| 引擎 | 首 token p50 增幅中位数 | 三次范围 | 首 token 均值增幅中位数 |
+|---|---:|---:|---:|
+| Prism | +1.63% | +0.78%–+1.67% | -0.02% |
+| vLLM 0.25.1 | +14.30% | +6.37%–+14.93% | +35.34% |
+| SGLang 0.5.15.post1 | +36.98% | +23.97%–+41.96% | +37.68% |
 
-三套引擎的输出吞吐为 64.16–64.26 tok/s，主要由固定到达率和 output 16 决定，不作为
-吞吐领先证据。vLLM/SGLang 不公开与 Prism 完全同义的 resident-entry 和 eviction
-计数，因此这些字段标为 unavailable，不从间接指标推算。
+这组历史记录显示所测 Prism 配置对容量收缩较不敏感，不是三套引擎绝对延迟的通用排名。
+计时都不包含启动，但框架原生 API 和预处理路径并不相同；跨引擎完整输出也不完全一致。
+由 `prompt_tokens - cached_tokens` 得到的数值是逻辑缓存覆盖代理量，不是相同定义的
+Vision 重算或 GPU Prefill 工作量。固定 4 req/s、output 16 也使吞吐主要受请求到达率限制。
 
-### 1.4 质量取舍
+旧页面引用的 Compact TTFT 101.692/497.899 ms 和“较 vLLM 降低 24.52%/29.85%”来自
+压实修复前记录，不再作为有效性能结论。原始文件保留用于解释历史问题。
 
-| Dataset / cohort | Dense reference | Compact result | 结论 |
-|---|---:|---:|---|
-| MuirBench，85 条布局对照 | 官方交错 49/85 | labeled media-first 46/85 | Prompt 重排损失 3 题 |
-| MuirBench，49 条实际删除样本 | labeled Dense 27/49 | Uniform 20/49 | 净损失 7 题；两种 Attention 对照也为 20/49 |
-| DocVQA，190 条 | ANLS 0.93335 | ANLS 0.93335 | 0 条发生删除，不能证明压实无损 |
-| MVBench，252 条 | 183/252 | 113/252 | 视频删除质量下降，默认关闭 |
+### 1.4 质量记录的更正
 
-Uniform 是 query-agnostic 的跨问题复用对照，不是新的 token selection 算法。当前结果是
-明确的有损 operating point，也不是与 vLLM/SGLang 等质量的通用排名。完整配对结果见
-[`working_set_quality.md`](../artifacts/working_set/quality/working_set_quality.md)。
+FP8 压实 kernel 曾以 int32 计算跨 K/V 层偏移，在实际 KV Pool 大小时溢出。因此旧
+MuirBench 27/49 → 20/49、MVBench 183/252 → 113/252 混入了实现错误，不能把差异
+直接归因于视觉 Token Pruning。
+
+修复后的 MuirBench 配对记录：
+
+| 样本 | Dense Scaled-FP8 | Uniform Compact |
+|---|---:|---:|
+| 全部 85 题，media-first | 46/85 | 47/85 |
+| 实际删除视觉 token 的同一组 49 题 | 27/49 | 28/49 |
+
+两种配置有 3/85 个答案不同。这支持“该样本未观察到准确率下降”，不证明等价或准确率提升。
+这是 Dense FP8 与 FP8 加剪枝的对照，**不是 BF16 与 FP8 量化损失测试**。
+
+Dense 官方交错布局与 media-first 的历史准确率为 49/85 和 46/85；这反映 Prompt 布局
+也会影响答案。Attention Top-k、MVBench Compact 尚无修复后重跑结果，不能继续据旧数据
+比较 selector。DocVQA 的 190 条样本未触发 token 删除，不能用于证明剪枝保留 OCR 精度。
+
+默认仍不删除视觉 token。FP8 量化和 Token Pruning 都不应表述为数学上无损；前者改变数值
+表示，后者改变可见上下文。更多说明见[未采用方案与历史实验](REJECTED_EXPERIMENTS.md)。
 
 ### 1.5 Prefix-hit Trace
 
-代表性 Nsight Systems capture 分别包含冷请求和同媒体不同问题的 Prefix 命中请求：
+历史 Nsight Systems capture 分别包含冷请求和同媒体不同问题的 Prefix 命中请求：
 
 - 冷请求出现一次 `prism::model.vision.embedding_cache_miss`；
 - Prefix-hit range 没有 Vision/DeepStack range；
@@ -155,7 +163,7 @@ GPU 时间，NCCL AllReduce 约 8%，Paged Attention 约 2.6%；结论是语言 
 ## 5. 适用范围
 
 - 主工作集结果只覆盖 Qwen3-VL-8B、RTX 5090、TP1、固定 KV 字节预算和重复多图提问；
-- 图片压实存在明确质量损失，视频删除默认关闭；
+- 图片压实只有有限的修复后质量样本，默认不删除视觉 token；视频删除也默认关闭；
 - Prefix Cache 位于单个 Engine Process 内，不跨进程或机器共享；
 - Vision Parallel、PP、MoE Expert Parallel 和多机推理尚未实现；
 - Serving API 为项目自有格式，不兼容 OpenAI API。

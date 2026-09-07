@@ -345,7 +345,7 @@ def test_decode_cow_reclaims_idle_prefix_page() -> None:
     manager.allocate(second)
     # 末块强制 miss: 相同对齐 prompt 不复用末块 (调度器需要可计算尾巴)
     assert first.block_table != second.block_table
-    assert manager.blocks[second.block_table[0]].hash != -1
+    assert manager.blocks[second.block_table[0]].hash == -1
     manager.allocate(filler)
     assert not manager.free_block_id_set
 
@@ -450,6 +450,26 @@ def test_block_manager_and_runner_commit_physical_compaction() -> None:
         assert seq.physical_kv_len == 6
         assert seq.visual_pruning_decision_record["physical_compaction"] is True
         assert diff.max().item() == 0.0
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("num_pages", [220, 352])
+def test_fp8_compaction_uses_64bit_offsets_for_qwen_kv_pool(num_pages):
+    """The real 72-row KV layout crosses the int32 address range."""
+
+    from prism_infer.ops.kv_compaction import compact_kv_slots
+
+    num_slots = num_pages * 256
+    cache = torch.empty(2, 36, num_slots, 8, 128, dtype=torch.float8_e4m3fn, device="cuda")
+    raw = cache.view(torch.uint8).view(72, num_slots, 1024)
+    source = torch.tensor([0, num_slots // 2, num_slots - 2, num_slots - 1], device="cuda")
+    destination = torch.tensor([1, 0, 2, 3], device="cuda")
+    expected = (torch.arange(72 * 4 * 1024, device="cuda") % 120).to(torch.uint8)
+    expected = expected.view(72, 4, 1024)
+    raw.index_copy_(1, source, expected)
+    compact_kv_slots(cache, source, destination)
+    assert torch.equal(raw.index_select(1, destination), expected)
 
 
 def test_multimodal_prefix_cache_reuses_compacted_pages_with_tail_cow() -> None:

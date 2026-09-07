@@ -2,7 +2,8 @@
 
 ## 1. 环境
 
-重复视觉上下文工作集使用：
+以下为历史重复视觉上下文工作集的环境；本轮运行时修复记录见
+[RUNTIME_FIXES_20260907.md](RUNTIME_FIXES_20260907.md)：
 
 ```text
 GPU: RTX 5090 32 GB
@@ -34,36 +35,28 @@ export PRISM_MODEL_PATH=/path/to/Qwen3-VL-8B-Instruct
 python scripts/check_environment.py --model "$PRISM_MODEL_PATH"
 ```
 
-## 2. 检查仓库内证据
+## 2. 查看仓库内证据
 
-仓库包含共用 Plan、请求级性能与质量记录、派生表、主图和 Prefix-hit Trace。模型权重与
-数据集媒体不随仓库分发。
+模型权重与数据集媒体不随仓库分发。先区分数据来源，再查看请求记录：
+
+- `artifacts/cache_pressure_20260813/`：int64 压实修复后的历史配对实验与 MuirBench 质量记录。
+- `artifacts/review_fixes_20260907/`：本轮 Scaled-FP8 Prefill 执行路径观察。
+- `artifacts/working_set/`：早期测量原件；Compact 延迟和剪枝质量含已知压实缺陷，
+  不用于当前算法取舍或排名。
+
+例如在仓库根目录展开修复后的逐题记录：
 
 ```bash
-cd artifacts/working_set
-sha256sum -c SHA256SUMS
+gzip -dk artifacts/cache_pressure_20260813/muir_dense_media_first.json.gz
+gzip -dk artifacts/cache_pressure_20260813/muir_uniform_reuse.json.gz
 ```
 
-压缩记录可单独展开：
+逐题 `sample_id` 用于配对，`score.strict_score` 是严格答案分数，
+`quality_dropped_visual_tokens > 0` 标识实际删除样本。比较 49 题时，Dense 也必须取同一批
+Sample ID，不能用它自身的删除计数筛选。统计表集中在 [Results](RESULTS.md)。
 
-```bash
-gzip -dk performance/performance_raw/prism_compact_prefix_pressure.json.gz
-gzip -dk quality/quality_raw/muir_uniform_reuse.json.gz
-```
-
-质量请求记录中的 `materialization_verification.selection_sha256` 指向测量当时的选择文件。
-原件保存在 `protocol/quality_raw/quality_selection.json.gz`；解压后 SHA256 为
-`c511ab44dca420a5b4ef65ae378104ce046f21f81703203a26a73620f9a9651e`。当前
-`benchmarks/workloads/` 下的文件使用清理后的命名和元数据，用于新的运行，不替代历史
-测量身份。
-
-适合快速检查的文件：
-
-- `highlights.json`：主结果、质量代价和适用范围；
-- `performance/working_set_summary.json`：完整工作集机器可读汇总；
-- `performance/working_set_prism_ablation.csv`：Prism 内部对照；
-- `performance/working_set_engine_comparison.csv`：三引擎比较；
-- `trace/trace_audit.json`：冷请求与 Prefix 命中路径观察。
+`artifacts/working_set/highlights.json` 已更正为带来源日期的摘要。旧导出中的
+`SHA256SUMS` 仅记录当时的文件状态，不是修改文档后必须重新生成的运行条件。
 
 ## 3. 数据准备
 
@@ -112,12 +105,7 @@ python benchmarks/build_working_set_plan.py \
   --output data/working_set/muirbench_working_set_plan.json
 ```
 
-当前仓库产物身份：
-
-```text
-dense pages SHA256: 028f471748d7431f63b7cfbb859fc73680aa7a8b97b4c9ff9c4d969eff7ebbef
-plan SHA256:        74102cb70c6a62cdb62c1c6ed72c92a878d3a11eda4c43da101c2305fabb2739
-```
+历史 Plan 与 Dense Page 清单位于 `artifacts/working_set/protocol/`。
 
 Plan 只选择至少包含两个不同问题的媒体组，并记录 `available_questions`、
 `observed_questions` 与 `measured_question_switches`。当前三个工作集的 600 条测量请求都
@@ -162,19 +150,9 @@ python benchmarks/bench_working_set_quality.py run \
   --raw-root data/quality/raw
 ```
 
-需要运行的配置：
-
-```text
-muir_dense_official
-muir_dense_media_first
-muir_attention_per_question
-muir_attention_first_reuse
-muir_uniform_reuse
-docvqa_dense
-docvqa_uniform
-mvbench_dense
-mvbench_uniform
-```
+可选 stage 包括 `muir_dense_official`、`muir_dense_media_first`、
+`muir_attention_per_question`、`muir_attention_first_reuse`、`muir_uniform_reuse`，以及
+DocVQA/MVBench 的 Dense 与 Uniform 对照。按需要选择，不要求每次修改重跑全部配置。
 
 两个 Attention 配置把选择和 replay 放在独立进程，以避免同时保留两份模型状态：
 

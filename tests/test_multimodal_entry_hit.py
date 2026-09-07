@@ -25,9 +25,7 @@ def make_vl_seq(
         request_id=request_id,
         pixel_values=torch.zeros(pad_count, 3),
         image_grid_thw=torch.tensor([[1, 3, 1], [1, 4, 1]], dtype=torch.long),
-        position_ids=torch.arange(len(token_ids), dtype=torch.long)
-        .view(1, 1, -1)
-        .expand(3, 1, -1),
+        position_ids=torch.arange(len(token_ids), dtype=torch.long).view(1, 1, -1).expand(3, 1, -1),
         rope_delta=torch.zeros(1, 1),
         image_token_id=PAD,
         image_token_count=pad_count,
@@ -48,6 +46,7 @@ def dense_manager() -> BlockManager:
 def store_entry(manager: BlockManager, seq: Sequence) -> None:
     seq.multimodal_prefix_cache_key = "test-media-key"
     seq.num_computed_tokens = seq.num_prompt_tokens
+    manager.publish_computed_blocks(seq, seq.num_cached_tokens, seq.num_prompt_tokens)
     assert manager.store_multimodal_prefix(seq)
 
 
@@ -87,10 +86,12 @@ def test_entry_hit_boundary_aligned_decode() -> None:
     manager.allocate(second)
 
     assert second.num_cached_tokens > 0
+    manager.publish_computed_blocks(second, second.num_cached_tokens, second.num_prompt_tokens)
     second.append_token(299)
     for token in (300, 301, 302, 303, 304, 305):
         if second.physical_kv_len % manager.block_size != 1:
             manager.copy_on_write(second)
         manager.may_append(second)
+        manager.publish_computed_blocks(second, second.num_tokens - 1, second.num_tokens)
         second.append_token(token)
     assert second.physical_kv_len == 19

@@ -89,6 +89,7 @@ def test_block_manager_deallocate_clears_hash_index() -> None:
         manager = BlockManager(num_blocks=4, block_size=block_size)
         seq = sequence([1, 2, 3, 4])
         manager.allocate(seq)
+        manager.publish_computed_blocks(seq, 0, len(seq))
         assert len(seq.block_table) == 1
         block_id = seq.block_table[0]
         block_hash = manager.blocks[block_id].hash
@@ -210,6 +211,7 @@ def test_block_manager_swap_in_restores_hash_from_metadata_after_decode_pickle()
         manager = BlockManager(num_blocks=4, block_size=block_size, num_cpu_blocks=4)
         seq = sequence([10, 11, 12, 13, 14])
         manager.allocate(seq)
+        manager.publish_computed_blocks(seq, 0, len(seq))
         full_block_hash = manager.blocks[seq.block_table[0]].hash
         full_block_tokens = list(manager.blocks[seq.block_table[0]].token_ids)
         seq.append_token(99)
@@ -277,6 +279,8 @@ def test_block_manager_capacity_failures_are_atomic() -> None:
         assert len(swap_in_manager.cpu_free_block_ids) == 0
 
 
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepare_prefill_builds_paged_prefix_context() -> None:
     """Prefix-hit Q<K prefill must expose exact paged history metadata."""
 
@@ -295,6 +299,8 @@ def test_prepare_prefill_builds_paged_prefix_context() -> None:
             assert model_inputs.input_ids.tolist() == [5, 6]
             assert context.cu_seqlens_q.tolist() == [0, 2]
             assert context.cu_seqlens_k.tolist() == [0, 6]
+            assert context.cu_seqlens_q_host == (0, 2)
+            assert context.cu_seqlens_k_host == (0, 6)
             assert context.context_lens.tolist() == [6]
             assert context.block_tables.tolist() == [[0, 1]]
             assert context.slot_mapping.tolist() == [4, 5]

@@ -192,9 +192,7 @@ class ModelInputPreparer:
         if seq.precomputed_visual_embeds is not None and not force_raw:
             # 缓存视觉 embedding: 允许整图子集（block 级前缀复用从任意图边界开始）
             video_observed = (
-                current_tokens.count(seq.video_token_id)
-                if seq.video_token_id is not None
-                else 0
+                current_tokens.count(seq.video_token_id) if seq.video_token_id is not None else 0
             )
             expected_tokens = seq.image_token_count + seq.video_token_count
             if seq.video_token_id is not None and video_observed not in (0, seq.video_token_count):
@@ -237,8 +235,7 @@ class ModelInputPreparer:
                 row_end = sum(tokens_per_image[: last + 1])
                 embeds = seq.precomputed_visual_embeds[row_start:row_end]
                 deepstack = tuple(
-                    value[row_start:row_end]
-                    for value in seq.precomputed_deepstack_visual_embeds
+                    value[row_start:row_end] for value in seq.precomputed_deepstack_visual_embeds
                 )
             else:
                 embeds = seq.precomputed_visual_embeds
@@ -349,9 +346,7 @@ class ModelInputPreparer:
                     f"covered={covered_pads}"
                 )
             if sliced_payload is None or sliced_grid is None:
-                raise ValueError(
-                    f"image payload slice failed for seq={seq.seq_id}"
-                )
+                raise ValueError(f"image payload slice failed for seq={seq.seq_id}")
             payload_chunks.append(sliced_payload)
             grid_chunks.append(sliced_grid)
 
@@ -615,6 +610,8 @@ class ModelInputPreparer:
                 is_prefill=True,
                 cu_seqlens_q=cu_seqlens_q,
                 cu_seqlens_k=cu_seqlens_k,
+                cu_seqlens_q_host=tuple(host.cu_seqlens_q),
+                cu_seqlens_k_host=tuple(host.cu_seqlens_k),
                 max_seqlen_q=host.max_seqlen_q,
                 max_seqlen_k=host.max_seqlen_k,
                 slot_mapping=slot_mapping,

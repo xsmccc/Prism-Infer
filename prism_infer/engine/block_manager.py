@@ -2,7 +2,7 @@
 
 import copy
 import hashlib
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -128,10 +128,7 @@ class BlockManager:
 
         if not seq.is_multimodal:
             return True
-        if not (
-            self.block_level_mm_prefix
-            and seq.multimodal_media_token_hashes is not None
-        ):
+        if not (self.block_level_mm_prefix and seq.multimodal_media_token_hashes is not None):
             return False
         if seq.pixel_values_videos is not None or seq.video_grid_thw is not None:
             return False
@@ -168,9 +165,7 @@ class BlockManager:
         cached = 0
         full_blocks = seq.num_prompt_tokens // self.block_size
         walk_blocks = (
-            full_blocks
-            if seq.num_prompt_tokens % self.block_size != 0
-            else max(0, full_blocks - 1)
+            full_blocks if seq.num_prompt_tokens % self.block_size != 0 else max(0, full_blocks - 1)
         )
         for block_index in range(walk_blocks):
             block_hash, mm_token_hashes = self._block_hash_and_mm(
@@ -212,17 +207,11 @@ class BlockManager:
         block_id = seq.block_table[block_index]
         block = self.blocks[block_id]
         if block.ref_count <= 1:
+            self._gpu_pool.clear_hash(block_id)
             return None
         self._ensure_free_blocks(1)
         new_block = self._allocate_free_block()
         new_block_id = new_block.block_id
-        if block.hash != NO_BLOCK_HASH:
-            self._gpu_pool.register_hash(
-                new_block_id,
-                block.hash,
-                block.token_ids,
-                block.mm_token_hashes,
-            )
         self._gpu_pool.release_reference(block_id)
         seq.block_table[block_index] = new_block_id
         return (block_id, new_block_id)
@@ -280,9 +269,7 @@ class BlockManager:
             seq.multimodal_prefix_pre_admission_hit = True
             self._multimodal_prefix_pre_admission_hits += 1
             boundary = self._multimodal_prefix_boundary(seq)
-            if would_hydrate_visual and (
-                boundary is None or candidate_tokens >= boundary
-            ):
+            if would_hydrate_visual and (boundary is None or candidate_tokens >= boundary):
                 self._multimodal_prefix_visual_hydration_skips += 1
         return candidate_tokens
 
@@ -324,12 +311,16 @@ class BlockManager:
         *,
         protected_cache_id: str | None = None,
     ) -> int:
-        return sum(
-            1
+        cache_references = Counter(
+            block_id
             for cache_id, entry in self._multimodal_prefix_cache.items()
             if cache_id != protected_cache_id
             for block_id in (*entry.block_ids, *entry.tail_clone_block_ids)
-            if self.blocks[block_id].ref_count == 1
+        )
+        # Multiple entries may share a page without any active request owning it.
+        return sum(
+            self.blocks[block_id].ref_count == references
+            for block_id, references in cache_references.items()
         )
 
     def _eviction_candidate(
@@ -414,8 +405,7 @@ class BlockManager:
             else:
                 block_hash = NO_BLOCK_HASH
             aligned_last_block = bool(
-                seq.num_prompt_tokens % self.block_size == 0
-                and i == seq.num_blocks - 1
+                seq.num_prompt_tokens % self.block_size == 0 and i == seq.num_blocks - 1
             )
             cached_block = (
                 None
@@ -433,14 +423,6 @@ class BlockManager:
             else:
                 seq.num_cached_tokens += self.block_size
                 block = self._gpu_pool.retain(cached_block.block_id)
-            if block_hash != NO_BLOCK_HASH:
-                if cache_miss or block.ref_count == 1:
-                    self._gpu_pool.register_hash(
-                        block.block_id,
-                        block_hash,
-                        token_ids,
-                        mm_token_hashes,
-                    )
             seq.block_table.append(block.block_id)
         copy_prefix: list[tuple[int, int, int]] = []
         if seq.is_multimodal:
@@ -448,10 +430,15 @@ class BlockManager:
             # 尾部重算落在共享块上时先私有化 (CoW) 再交给 executor 复制。
             snapped = self._snap_to_image_boundary(seq, seq.num_cached_tokens)
             if snapped != seq.num_cached_tokens:
-                pair = self._privatize_block(seq, snapped // self.block_size)
-                if pair is not None:
-                    copy_prefix.append((*pair, self.block_size))
+                for block_index in range(
+                    snapped // self.block_size, seq.num_cached_tokens // self.block_size
+                ):
+                    pair = self._privatize_block(seq, block_index)
+                    retained_rows = max(0, snapped - block_index * self.block_size)
+                    if pair is not None and retained_rows:
+                        copy_prefix.append((*pair, retained_rows))
                 seq.num_cached_tokens = snapped
+        seq.prefix_cache_candidate_tokens = seq.num_cached_tokens
         return tuple(copy_prefix)
 
     def _allocate_multimodal_prefix_hit(
@@ -586,28 +573,18 @@ class BlockManager:
             if idle_tail_clone is not None:
                 # 复用空闲 tail clone (内容为上次请求写过的尾块, 前缀行未变)
                 self._gpu_pool.retain(idle_tail_clone)
+                self._gpu_pool.clear_hash(idle_tail_clone)
                 seq.block_table.append(idle_tail_clone)
                 self._multimodal_prefix_cache_tail_clone_hits += 1
             else:
                 canonical_tail = entry.block_ids[-1]
-                block = self.blocks[canonical_tail]
                 new_block = self._allocate_free_block()
                 new_block_id = new_block.block_id
-                if block.hash != NO_BLOCK_HASH:
-                    self._gpu_pool.register_hash(
-                        new_block_id,
-                        block.hash,
-                        block.token_ids,
-                        block.mm_token_hashes,
-                    )
                 seq.block_table.append(new_block_id)
-                copy_prefix.append((canonical_tail, new_block_id, self.block_size))
+                copy_prefix.append((canonical_tail, new_block_id, tail_rows))
                 self._multimodal_prefix_cache_cow_copies += 1
                 self._multimodal_prefix_cache_cow_rows += tail_rows
-                if (
-                    self._multimodal_prefix_cache_blocks
-                    < self._multimodal_prefix_cache_max_blocks
-                ):
+                if self._multimodal_prefix_cache_blocks < self._multimodal_prefix_cache_max_blocks:
                     self._gpu_pool.retain(new_block_id)
                     entry.tail_clone_block_ids.append(new_block_id)
                     self._multimodal_prefix_cache_blocks += 1
@@ -616,35 +593,8 @@ class BlockManager:
         suffix_tokens = seq.num_prompt_tokens - entry.logical_prefix_len
         final_physical_tokens = entry.physical_prefix_len + suffix_tokens
         final_blocks = (final_physical_tokens + self.block_size - 1) // self.block_size
-        suffix_start_block = len(seq.block_table)
         while len(seq.block_table) < final_blocks:
             seq.block_table.append(self._allocate_free_block().block_id)
-        # 后缀块按 dense 链式纪律补注册: 入口整段复用不得破坏 decode 期
-        # hash 链 (may_append 假定每个完成的 dense 块都带 hash)。
-        if self._hashable_sequence(seq):
-            chain = (
-                self.blocks[seq.block_table[suffix_start_block - 1]].hash
-                if suffix_start_block > 0
-                else NO_BLOCK_HASH
-            )
-            for block_index in range(suffix_start_block, final_blocks):
-                token_ids = seq.block(block_index)
-                if len(token_ids) != self.block_size:
-                    break
-                block_hash, mm_token_hashes = self._block_hash_and_mm(
-                    seq,
-                    block_index,
-                    chain,
-                )
-                if block_hash == NO_BLOCK_HASH:
-                    break
-                self._gpu_pool.register_hash(
-                    seq.block_table[block_index],
-                    block_hash,
-                    token_ids,
-                    mm_token_hashes,
-                )
-                chain = block_hash
 
         compression_record = dict(entry.compression_record)
         compression_record.update(
@@ -707,8 +657,8 @@ class BlockManager:
 
         ``mm_token_hashes`` 把 block 内 pad 位置映射到逐图 surrogate int64，
         使 pad token 序列相同但媒体不同的 block 产生不同 hash。
-        位置编码 (m-rope) 有意不参与 hash——同一媒体在不同布局下位置不同，
-        复用后 attention 重新计算位置。
+        链中包含完整左侧 token 上下文和媒体布局；只有位置一致的连续前缀
+        才能复用已经应用 M-RoPE 的 K，不能将图片块脱离前缀独立复用。
         """
 
         h = xxhash.xxh64()
@@ -1077,60 +1027,37 @@ class BlockManager:
         return self._gpu_pool.free_count + self._reclaimable_cache_blocks() >= required_blocks
 
     def may_append(self, seq: Sequence) -> None:
+        """Reserve a new page when the next decode input crosses a page boundary."""
+
         self._assert_sequence_block_size(seq)
-        block_table = seq.block_table
-        last_block = self.blocks[block_table[-1]]  # 取当前最后一个 block
-        physical_remainder = seq.physical_kv_len % self.block_size
-        if physical_remainder == 1:
-            # The appended token starts a new physical block.
-            # 上一个 block 刚填满(hash 已算好), 需要分配新块
-            if (
-                not seq.has_compact_kv_layout
-                and self.enable_prefix_caching
-                and self._hashable_sequence(seq)
-            ):
-                if last_block.hash == NO_BLOCK_HASH:
-                    raise RuntimeError("completed dense KV block is missing its hash")
+        if seq.physical_kv_len % self.block_size == 1:
             self._ensure_free_blocks(1)
             block = self._allocate_free_block()
-            block_table.append(block.block_id)
-        elif physical_remainder == 0:
-            # The appended token completes the current block.
-            # 计算这个 block 的哈希, 注册到缓存索引
-            if (
-                not seq.has_compact_kv_layout
-                and self.enable_prefix_caching
-                and self._hashable_sequence(seq)
-            ):
-                token_ids = seq.block(seq.num_blocks - 1)
-                if last_block.hash == NO_BLOCK_HASH:
-                    prefix = (
-                        self.blocks[block_table[-2]].hash
-                        if len(block_table) > 1
-                        else NO_BLOCK_HASH
-                    )
-                    block_hash, mm_token_hashes = self._block_hash_and_mm(
-                        seq,
-                        seq.num_blocks - 1,
-                        prefix,
-                    )
-                    if block_hash != NO_BLOCK_HASH:
-                        self._gpu_pool.register_hash(
-                            last_block.block_id,
-                            block_hash,
-                            token_ids,
-                            mm_token_hashes,
-                        )
-                elif last_block.token_ids != token_ids:
-                    # prompt 整除 block_size 时, 分配期已注册满块 hash;
-                    # decode 首 token 再次"完成"该块, 内容一致则跳过注册。
-                    raise RuntimeError("mutable KV block unexpectedly has a prefix hash")
-                else:
-                    pass  # 边界对齐的已注册满块: 内容一致, 无操作
-        else:
-            # A partially filled private block needs no metadata update.
-            if last_block.hash != NO_BLOCK_HASH:
-                raise RuntimeError("partial KV block unexpectedly has a prefix hash")
+            seq.block_table.append(block.block_id)
+
+    def publish_computed_blocks(self, seq: Sequence, token_start: int, token_end: int) -> None:
+        """Index full pages only after their KV writes have completed."""
+
+        start_block = token_start // self.block_size
+        end_block = token_end // self.block_size
+        if start_block >= end_block:
+            return
+        if (
+            not self.enable_prefix_caching
+            or seq.has_compact_kv_layout
+            or not self._hashable_sequence(seq)
+        ):
+            return
+        chain = self.blocks[seq.block_table[start_block - 1]].hash if start_block else NO_BLOCK_HASH
+        for block_index in range(start_block, end_block):
+            block_hash, mm_token_hashes = self._block_hash_and_mm(seq, block_index, chain)
+            self._gpu_pool.register_hash(
+                seq.block_table[block_index],
+                block_hash,
+                seq.block(block_index),
+                mm_token_hashes,
+            )
+            chain = block_hash
 
     def can_swap_out(self, seq: Sequence) -> bool:
         """Return whether the CPU pool can hold this sequence's KV blocks."""
@@ -1311,15 +1238,7 @@ class BlockManager:
             return None
         new_block = self._allocate_free_block()
         new_block_id = new_block.block_id
-        # 复制旧 block 的元数据 (hash, token_ids, mm 身份) 到新 block
-        # CoW 只是逻辑分离, GPU 上的 KV 数据由调用者 (model_runner.copy_kv_blocks) 复制
-        if last_block.hash != NO_BLOCK_HASH:
-            self._gpu_pool.register_hash(
-                new_block_id,
-                last_block.hash,
-                last_block.token_ids,
-                last_block.mm_token_hashes,
-            )
+        # The new tail is writable; publish its hash only after its KV is complete.
         self._gpu_pool.release_reference(last_block_id)
 
         seq.block_table[-1] = new_block_id  # 更新页表
