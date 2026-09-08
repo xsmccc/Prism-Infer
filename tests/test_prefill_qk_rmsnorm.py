@@ -3,6 +3,7 @@ import torch
 
 from prism_infer.ops.qk_rmsnorm import (
     HAS_QK_RMSNORM_TRITON,
+    can_use_prefill_qk_rmsnorm,
     fused_qk_rmsnorm_prefill,
 )
 
@@ -39,13 +40,15 @@ def test_prefill_qk_rmsnorm_mrope_keeps_native_reductions_exact() -> None:
     eps = 1e-6
     q_weight = torch.randn((128,), dtype=torch.bfloat16, device="cuda")
     k_weight = torch.randn((128,), dtype=torch.bfloat16, device="cuda")
-    for rows in (5, 37):
+    for rows in (1, 5, 17, 21, 37, 255, 1607):
         q = torch.randn((rows, 32, 128), dtype=torch.bfloat16, device="cuda")
         k = torch.randn((rows, 8, 128), dtype=torch.bfloat16, device="cuda")
         cos = torch.randn((rows, 128), dtype=torch.bfloat16, device="cuda")
         sin = torch.randn((rows, 128), dtype=torch.bfloat16, device="cuda")
         expected_q = _mrope(_rmsnorm(q, q_weight, eps), cos, sin)
         expected_k = _mrope(_rmsnorm(k, k_weight, eps), cos, sin)
+
+        assert can_use_prefill_qk_rmsnorm(q, k, cos, sin)
 
         actual_q, actual_k = fused_qk_rmsnorm_prefill(
             q,

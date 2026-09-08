@@ -1,0 +1,478 @@
+{
+  "parent": "cc77b08",
+  "pair_job": 9816,
+  "execution_order": [
+    "baseline-1",
+    "candidate-1",
+    "candidate-2",
+    "baseline-2"
+  ],
+  "scope": "TP1 RTX 5090 native HTTP fixture; cooperative/chunked Prefill off",
+  "aggregation": "Per-run request medians, then median of two runs. Warmup excluded.",
+  "outputs": {
+    "baseline-1": {
+      "status": "complete",
+      "requests": 11,
+      "generated_tokens": 624,
+      "same_inputs": true,
+      "streams_match_final": true,
+      "differences_from_baseline_1": []
+    },
+    "candidate-1": {
+      "status": "complete",
+      "requests": 11,
+      "generated_tokens": 624,
+      "same_inputs": true,
+      "streams_match_final": true,
+      "differences_from_baseline_1": [
+        {
+          "request_index": 5,
+          "phase": "decode_with_cold_image",
+          "first_token_index": 127
+        }
+      ]
+    },
+    "candidate-2": {
+      "status": "complete",
+      "requests": 11,
+      "generated_tokens": 624,
+      "same_inputs": true,
+      "streams_match_final": true,
+      "differences_from_baseline_1": [
+        {
+          "request_index": 5,
+          "phase": "decode_with_cold_image",
+          "first_token_index": 127
+        },
+        {
+          "request_index": 7,
+          "phase": "decode_with_cold_image",
+          "first_token_index": 127
+        }
+      ]
+    },
+    "baseline-2": {
+      "status": "complete",
+      "requests": 11,
+      "generated_tokens": 624,
+      "same_inputs": true,
+      "streams_match_final": true,
+      "differences_from_baseline_1": [
+        {
+          "request_index": 5,
+          "phase": "decode_with_cold_image",
+          "first_token_index": 127
+        },
+        {
+          "request_index": 7,
+          "phase": "decode_with_cold_image",
+          "first_token_index": 127
+        }
+      ]
+    }
+  },
+  "metrics": {
+    "hot_changed_question": {
+      "ttft_ms": {
+        "baseline_runs": [
+          201.11668,
+          215.614018
+        ],
+        "candidate_runs": [
+          145.376417,
+          143.833618
+        ],
+        "baseline_median": 208.36534899999998,
+        "candidate_median": 144.6050175,
+        "paired_change_percent": [
+          -27.71538541706238,
+          -33.29115642193542
+        ]
+      },
+      "e2e_ms": {
+        "baseline_runs": [
+          366.828129,
+          384.238231
+        ],
+        "candidate_runs": [
+          312.397536,
+          307.869426
+        ],
+        "baseline_median": 375.53318,
+        "candidate_median": 310.13348099999996,
+        "paired_change_percent": [
+          -14.83817316528635,
+          -19.875379084805335
+        ]
+      },
+      "tpot_ms": {
+        "baseline_runs": [
+          10.9944464,
+          11.069335933333333
+        ],
+        "candidate_runs": [
+          10.835380466666667,
+          10.933644666666666
+        ],
+        "baseline_median": 11.031891166666666,
+        "candidate_median": 10.884512566666666,
+        "paired_change_percent": [
+          -1.4467843813703252,
+          -1.2258302348387207
+        ]
+      },
+      "max_itl_ms": {
+        "baseline_runs": [
+          11.907565,
+          12.669833
+        ],
+        "candidate_runs": [
+          11.726923,
+          11.987728
+        ],
+        "baseline_median": 12.288699000000001,
+        "candidate_median": 11.8573255,
+        "paired_change_percent": [
+          -1.5170355987979112,
+          -5.383693691937374
+        ]
+      },
+      "p95_itl_ms": {
+        "baseline_runs": [
+          11.4077328,
+          12.036129299999999
+        ],
+        "candidate_runs": [
+          11.2468639,
+          11.3613001
+        ],
+        "baseline_median": 11.721931049999998,
+        "candidate_median": 11.304082,
+        "paired_change_percent": [
+          -1.4101741583568694,
+          -5.6066961660174215
+        ]
+      }
+    },
+    "decode_alone": {
+      "ttft_ms": {
+        "baseline_runs": [
+          196.815068,
+          196.600278
+        ],
+        "candidate_runs": [
+          140.568241,
+          130.309322
+        ],
+        "baseline_median": 196.707673,
+        "candidate_median": 135.4387815,
+        "paired_change_percent": [
+          -28.57851666113288,
+          -33.71864814962265
+        ]
+      },
+      "e2e_ms": {
+        "baseline_runs": [
+          1578.511062,
+          1583.857669
+        ],
+        "candidate_runs": [
+          1519.977074,
+          1511.309939
+        ],
+        "baseline_median": 1581.1843655,
+        "candidate_median": 1515.6435065,
+        "paired_change_percent": [
+          -3.708177244309996,
+          -4.5804450374511525
+        ]
+      },
+      "tpot_ms": {
+        "baseline_runs": [
+          10.879496015748032,
+          10.923286543307087
+        ],
+        "candidate_runs": [
+          10.861486874015748,
+          10.872569787401575
+        ],
+        "baseline_median": 10.901391279527559,
+        "candidate_median": 10.867028330708662,
+        "paired_change_percent": [
+          -0.16553286757231556,
+          -0.46429941853523005
+        ]
+      },
+      "max_itl_ms": {
+        "baseline_runs": [
+          13.523682,
+          13.530625
+        ],
+        "candidate_runs": [
+          20.550555,
+          12.240888
+        ],
+        "baseline_median": 13.5271535,
+        "candidate_median": 16.3957215,
+        "paired_change_percent": [
+          51.95976214170075,
+          -9.531983925354526
+        ]
+      },
+      "p95_itl_ms": {
+        "baseline_runs": [
+          11.190112599999999,
+          11.402599199999997
+        ],
+        "candidate_runs": [
+          11.274728399999999,
+          11.2497212
+        ],
+        "baseline_median": 11.296355899999998,
+        "candidate_median": 11.262224799999998,
+        "paired_change_percent": [
+          0.7561657601193428,
+          -1.3407294014157523
+        ]
+      }
+    },
+    "decode_with_cold_image": {
+      "ttft_ms": {
+        "baseline_runs": [
+          188.402491,
+          198.54308
+        ],
+        "candidate_runs": [
+          136.179954,
+          144.830171
+        ],
+        "baseline_median": 193.4727855,
+        "candidate_median": 140.5050625,
+        "paired_change_percent": [
+          -27.718602191942352,
+          -27.05352863469228
+        ]
+      },
+      "e2e_ms": {
+        "baseline_runs": [
+          1811.656456,
+          1827.187834
+        ],
+        "candidate_runs": [
+          1743.186679,
+          1752.870756
+        ],
+        "baseline_median": 1819.422145,
+        "candidate_median": 1748.0287174999999,
+        "paired_change_percent": [
+          -3.7794018161244614,
+          -4.0672927335176245
+        ]
+      },
+      "tpot_ms": {
+        "baseline_runs": [
+          12.718656456692914,
+          12.848630322834646
+        ],
+        "candidate_runs": [
+          12.650202007874016,
+          12.643055047244095
+        ],
+        "baseline_median": 12.78364338976378,
+        "candidate_median": 12.646628527559056,
+        "paired_change_percent": [
+          -0.5382207550929996,
+          -1.5999781332738716
+        ]
+      },
+      "max_itl_ms": {
+        "baseline_runs": [
+          224.780065,
+          233.148976
+        ],
+        "candidate_runs": [
+          214.741083,
+          216.01247
+        ],
+        "baseline_median": 228.9645205,
+        "candidate_median": 215.3767765,
+        "paired_change_percent": [
+          -4.466135375483593,
+          -7.3500241322097875
+        ]
+      },
+      "p95_itl_ms": {
+        "baseline_runs": [
+          12.3138937,
+          12.582648699999996
+        ],
+        "candidate_runs": [
+          12.697115099999998,
+          12.1965336
+        ],
+        "baseline_median": 12.448271199999997,
+        "candidate_median": 12.44682435,
+        "paired_change_percent": [
+          3.1121057996464474,
+          -3.06863132879166
+        ]
+      }
+    },
+    "injected_cold_image": {
+      "ttft_ms": {
+        "baseline_runs": [
+          475.743391,
+          475.612789
+        ],
+        "candidate_runs": [
+          449.314511,
+          457.946925
+        ],
+        "baseline_median": 475.67809,
+        "candidate_median": 453.630718,
+        "paired_change_percent": [
+          -5.555280535678531,
+          -3.714337462864148
+        ]
+      },
+      "e2e_ms": {
+        "baseline_runs": [
+          657.884117,
+          657.254005
+        ],
+        "candidate_runs": [
+          634.255849,
+          637.431843
+        ],
+        "baseline_median": 657.5690609999999,
+        "candidate_median": 635.843846,
+        "paired_change_percent": [
+          -3.591554711450795,
+          -3.015905852106604
+        ]
+      },
+      "tpot_ms": {
+        "baseline_runs": [
+          12.142715066666666,
+          12.2944412
+        ],
+        "candidate_runs": [
+          12.329422533333334,
+          12.1231796
+        ],
+        "baseline_median": 12.218578133333333,
+        "candidate_median": 12.226301066666668,
+        "paired_change_percent": [
+          1.5376088925878273,
+          -1.3930002772309713
+        ]
+      },
+      "max_itl_ms": {
+        "baseline_runs": [
+          12.882628,
+          13.359433
+        ],
+        "candidate_runs": [
+          13.329534,
+          13.54835
+        ],
+        "baseline_median": 13.1210305,
+        "candidate_median": 13.438942,
+        "paired_change_percent": [
+          3.469059263373908,
+          1.4141094161705725
+        ]
+      },
+      "p95_itl_ms": {
+        "baseline_runs": [
+          12.5886196,
+          13.0915115
+        ],
+        "candidate_runs": [
+          13.2790276,
+          13.145897
+        ],
+        "baseline_median": 12.840065549999998,
+        "candidate_median": 13.212462299999999,
+        "paired_change_percent": [
+          5.48438210016291,
+          0.415425674873382
+        ]
+      }
+    }
+  },
+  "device_mode_cpu_profiles": {
+    "cooperative": [
+      {
+        "query_tokens": 21,
+        "profiled_step_ms": 136.76606584340334,
+        "device_mode_calls": 13096
+      },
+      {
+        "query_tokens": 21,
+        "profiled_step_ms": 119.95649011805654,
+        "device_mode_calls": 13089
+      },
+      {
+        "query_tokens": 21,
+        "profiled_step_ms": 119.36141131445765,
+        "device_mode_calls": 13089
+      },
+      {
+        "query_tokens": 17,
+        "profiled_step_ms": 120.16501976177096,
+        "device_mode_calls": 13089
+      }
+    ],
+    "prefill-fused": [
+      {
+        "query_tokens": 21,
+        "profiled_step_ms": 93.04609103128314,
+        "device_mode_calls": 0
+      },
+      {
+        "query_tokens": 21,
+        "profiled_step_ms": 63.319181092083454,
+        "device_mode_calls": 0
+      },
+      {
+        "query_tokens": 21,
+        "profiled_step_ms": 64.21196181327105,
+        "device_mode_calls": 0
+      },
+      {
+        "query_tokens": 17,
+        "profiled_step_ms": 64.12615207955241,
+        "device_mode_calls": 0
+      }
+    ]
+  },
+  "fusion_ablation": {
+    "job": 9819,
+    "scope": "same process, device mode already repaired; no HTTP or preprocessing",
+    "prefill_step_median_ms": {
+      "False": 57.815472,
+      "True": 40.3129895
+    },
+    "all_outputs_equal": true
+  },
+  "fusions_only_exploration": {
+    "pair_job": 9813,
+    "hot_ttft": {
+      "baseline_runs": [
+        145.710168,
+        194.47736
+      ],
+      "candidate_runs": [
+        164.466013,
+        183.709553
+      ],
+      "baseline_median": 170.09376400000002,
+      "candidate_median": 174.087783,
+      "paired_change_percent": [
+        12.872022081533796,
+        -5.536792046128147
+      ]
+    }
+  }
+}

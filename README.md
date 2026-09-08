@@ -53,6 +53,12 @@ HTTP 负载的两组反序对照中，每 8 层插入 Decode 将最大 token 停
 42.19 ms，但冷请求 TTFT 从 456.51 增至 625.23 ms，平均 TPOT 与 ITL p95 也上升。
 这是一项显式开启的调度取舍，默认保持关闭；同时修复了暂停 Prefill 的取消和缺页处理。
 
+随后优化了[Prefix 命中后的短 Prefill](docs/PREFIX_PREFILL_OPTIMIZATION.md)：融合
+Q/K RMSNorm-M-RoPE 与 paged KV gather/反量化，并修正初始化遗留的 PyTorch 默认设备
+分发模式。相同 HTTP 负载中，同图换问题 TTFT 从 208.37 降至 144.61 ms，两组配对
+分别降低 27.72%/33.29%；热 Prefill kernel 数从 2,111 降至 959。调度未改变，冷请求
+TTFT 略有改善，Decode TPOT 基本不变。此结果不是三引擎排名。
+
 ## 结果与适用范围
 
 Qwen3-VL-8B、RTX 5090 上的 KV 容量记录如下，scale 开销已计入：
@@ -104,6 +110,7 @@ prism-serve --model "$PRISM_MODEL_PATH" --host 127.0.0.1 --port 8000
 - [多卡多模态实现与取舍](docs/MULTI_GPU.md)：Encoder DP、TP2 Prefix、双副本和 PP2 参照。
 - [共享预处理与后台准备](docs/SHARED_PREPROCESSING.md)：统一缓存、线程所有权、取消与 HTTP 实测。
 - [Prefill 与 Decode 交错执行](docs/PREFILL_INTERLEAVING.md)：长停顿、TTFT/TPOT 取舍及请求状态修复。
+- [热 Prefix 后缀优化](docs/PREFIX_PREFILL_OPTIMIZATION.md)：GPU融合、CPU分发根因与HTTP收益。
 - [历史请求级 JSON 与 Trace](artifacts/working_set/README.md)。
 - [相关工作](docs/RELATED_WORK.md)、[未采用方案与历史实验](docs/REJECTED_EXPERIMENTS.md)。
 

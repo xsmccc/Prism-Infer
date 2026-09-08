@@ -1,0 +1,89 @@
+{
+  "candidate": [
+    {
+      "hot_prefill_index": 0,
+      "host_ms": 108.561105,
+      "gpu_kernel_ms": 12.185137,
+      "gpu_span_ms": 107.487095,
+      "kernel_count": 959,
+      "fused_gather_calls": 36,
+      "fused_qk_calls": 36
+    },
+    {
+      "hot_prefill_index": 1,
+      "host_ms": 92.778779,
+      "gpu_kernel_ms": 12.141483,
+      "gpu_span_ms": 90.742775,
+      "kernel_count": 959,
+      "fused_gather_calls": 36,
+      "fused_qk_calls": 36
+    },
+    {
+      "hot_prefill_index": 2,
+      "host_ms": 91.615668,
+      "gpu_kernel_ms": 12.155726,
+      "gpu_span_ms": 89.570582,
+      "kernel_count": 959,
+      "fused_gather_calls": 36,
+      "fused_qk_calls": 36
+    }
+  ],
+  "fusions_only": [
+    {
+      "hot_prefill_index": 0,
+      "host_ms": 202.508467,
+      "gpu_kernel_ms": 12.197093,
+      "gpu_span_ms": 200.788817,
+      "kernel_count": 959,
+      "fused_gather_calls": 36,
+      "fused_qk_calls": 36
+    },
+    {
+      "hot_prefill_index": 1,
+      "host_ms": 143.997843,
+      "gpu_kernel_ms": 12.145933,
+      "gpu_span_ms": 142.277674,
+      "kernel_count": 959,
+      "fused_gather_calls": 36,
+      "fused_qk_calls": 36
+    },
+    {
+      "hot_prefill_index": 2,
+      "host_ms": 135.614553,
+      "gpu_kernel_ms": 12.167394,
+      "gpu_span_ms": 133.978592,
+      "kernel_count": 959,
+      "fused_gather_calls": 36,
+      "fused_qk_calls": 36
+    }
+  ],
+  "previous_code": [
+    {
+      "hot_prefill_index": 0,
+      "host_ms": 156.936213,
+      "gpu_kernel_ms": 14.663594,
+      "gpu_span_ms": 155.009605,
+      "kernel_count": 2111,
+      "fused_gather_calls": 0,
+      "fused_qk_calls": 0
+    },
+    {
+      "hot_prefill_index": 1,
+      "host_ms": 112.610323,
+      "gpu_kernel_ms": 14.617799,
+      "gpu_span_ms": 111.460019,
+      "kernel_count": 2111,
+      "fused_gather_calls": 0,
+      "fused_qk_calls": 0
+    },
+    {
+      "hot_prefill_index": 2,
+      "host_ms": 113.68198,
+      "gpu_kernel_ms": 14.633219,
+      "gpu_span_ms": 112.237653,
+      "kernel_count": 2111,
+      "fused_gather_calls": 0,
+      "fused_qk_calls": 0
+    }
+  ]
+}

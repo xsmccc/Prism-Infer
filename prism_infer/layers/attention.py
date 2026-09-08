@@ -35,6 +35,8 @@ from prism_infer.ops.paged_decode import (
 from prism_infer.ops.paged_decode import (
     paged_decode_attention,
 )
+from prism_infer.ops.paged_kv_gather import HAS_TRITON as HAS_KV_GATHER_TRITON
+from prism_infer.ops.paged_kv_gather import gather_paged_kv_fused
 from prism_infer.utils.context import Context, get_context
 
 # FlashAttention is optional and selected only for compatible CUDA paths.
@@ -632,6 +634,14 @@ class Attention(nn.Module):
         k_offsets = context.cu_seqlens_k_host
         num_seqs = len(q_offsets) - 1
         block_tables = context.block_tables
+        gather = gather_paged_kv_vectorized
+        if (
+            HAS_KV_GATHER_TRITON
+            and q.is_cuda
+            and q.dtype in (torch.bfloat16, torch.float16, torch.float32)
+            and self.k_cache.dtype in (torch.bfloat16, torch.float16, torch.float8_e4m3fn)
+        ):
+            gather = gather_paged_kv_fused
         outputs: list[torch.Tensor] = []
         for seq in range(num_seqs):
             q_start, q_end = q_offsets[seq : seq + 2]
@@ -639,7 +649,7 @@ class Attention(nn.Module):
             k_len = k_offsets[seq + 1] - k_offsets[seq]
             if q_len <= 0 or k_len < q_len:
                 raise RuntimeError("invalid paged prefill lengths for fast path")
-            keys, values = gather_paged_kv_vectorized(
+            keys, values = gather(
                 self.k_cache,
                 self.v_cache,
                 block_tables[seq],

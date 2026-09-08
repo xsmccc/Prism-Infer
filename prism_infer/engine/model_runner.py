@@ -146,14 +146,8 @@ class _PerImageVisualEmbeddingHostCache:
     """
 
     def __init__(self, max_bytes: int) -> None:
-        if (
-            isinstance(max_bytes, bool)
-            or not isinstance(max_bytes, int)
-            or max_bytes <= 0
-        ):
-            raise ValueError(
-                f"host cache max_bytes must be a positive int, got {max_bytes!r}"
-            )
+        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
+            raise ValueError(f"host cache max_bytes must be a positive int, got {max_bytes!r}")
         self.max_bytes = int(max_bytes)
         self._entries: OrderedDict[bytes, _VisualEmbeddingCacheEntry] = OrderedDict()
         self.resident_bytes = 0
@@ -178,11 +172,7 @@ class _PerImageVisualEmbeddingHostCache:
     ) -> None:
         """Keep pinned host copies; evict LRU-first under the byte budget."""
 
-        host_embeds = (
-            visual_embeds
-            if not visual_embeds.is_cuda
-            else visual_embeds.detach().cpu()
-        )
+        host_embeds = visual_embeds if not visual_embeds.is_cuda else visual_embeds.detach().cpu()
         host_deepstack = tuple(
             value if not value.is_cuda else value.detach().cpu()
             for value in deepstack_visual_embeds
@@ -191,8 +181,7 @@ class _PerImageVisualEmbeddingHostCache:
             host_embeds = host_embeds.pin_memory()
             host_deepstack = tuple(value.pin_memory() for value in host_deepstack)
         storage_bytes = sum(
-            value.numel() * value.element_size()
-            for value in (host_embeds, *host_deepstack)
+            value.numel() * value.element_size() for value in (host_embeds, *host_deepstack)
         )
         self.misses += 1
         if storage_bytes > self.max_bytes:
@@ -288,16 +277,14 @@ def _model_initialization_defaults(dtype: torch.dtype) -> Iterator[None]:
     """Scope global torch defaults used while constructing model parameters."""
 
     default_dtype = torch.get_default_dtype()
-    default_device = torch.get_default_device()
     try:
         torch.set_default_dtype(dtype)
-        torch.set_default_device("cuda")
-        yield
+        # set_default_device("cpu") would leave a DeviceContext installed after
+        # initialization, intercepting every subsequent Python torch call.
+        with torch.device("cuda"):
+            yield
     finally:
-        try:
-            torch.set_default_device(default_device)
-        finally:
-            torch.set_default_dtype(default_dtype)
+        torch.set_default_dtype(default_dtype)
 
 
 class ModelRunner:
@@ -382,10 +369,7 @@ class ModelRunner:
         """Instantiate exactly one validated model family on the active GPU."""
 
         model_family = resolve_model_family(hf_config)
-        if (
-            self.config.enable_visual_embedding_cache
-            and model_family is not ModelFamily.QWEN3_VL
-        ):
+        if self.config.enable_visual_embedding_cache and model_family is not ModelFamily.QWEN3_VL:
             raise ValueError("visual embedding cache currently requires Qwen3-VL")
         if model_family is ModelFamily.QWEN3_VL:
             self.model = Qwen3VLForCausalLM(
@@ -491,9 +475,7 @@ class ModelRunner:
         if visual_embedding_cache is not None:
             visual_embedding_cache.clear()
         self._visual_embedding_cache_resident_bytes = 0
-        visual_embedding_host_cache = getattr(
-            self, "_visual_embedding_host_cache", None
-        )
+        visual_embedding_host_cache = getattr(self, "_visual_embedding_host_cache", None)
         if visual_embedding_host_cache is not None:
             visual_embedding_host_cache.clear()
         self._release_execution_backend()
@@ -769,7 +751,6 @@ class ModelRunner:
         self._visual_embedding_cache[key] = entry
         self._visual_embedding_cache_resident_bytes += storage_bytes
 
-
     @torch.inference_mode()
     def _hydrate_visual_embedding_cache_per_image(
         self,
@@ -820,9 +801,7 @@ class ModelRunner:
                 ]
             )
             device_grid = self._visual_cache_device_tensor(grid)
-            missing_grid = device_grid[
-                torch.tensor(missing, device=device_grid.device)
-            ]
+            missing_grid = device_grid[torch.tensor(missing, device=device_grid.device)]
             with profile_region(
                 "model.vision.embedding_cache_per_image_encode",
                 metadata={
@@ -841,9 +820,7 @@ class ModelRunner:
             for index in missing:
                 length = output_rows[index]
                 image_embeds = visual_embeds[offset : offset + length]
-                image_deepstack = tuple(
-                    value[offset : offset + length] for value in deepstack
-                )
+                image_deepstack = tuple(value[offset : offset + length] for value in deepstack)
                 offset += length
                 self._visual_embedding_host_cache.store(
                     per_image_hashes[index],
@@ -851,9 +828,7 @@ class ModelRunner:
                     image_deepstack,
                 )
                 parts[index] = (image_embeds, image_deepstack)
-        assembled = _assemble_per_image_visual_outputs(
-            [part for part in parts if part is not None]
-        )
+        assembled = _assemble_per_image_visual_outputs([part for part in parts if part is not None])
         visual_embeds, deepstack_visual_embeds = assembled
         if int(visual_embeds.shape[0]) == 0:
             return False
@@ -861,9 +836,7 @@ class ModelRunner:
         if (
             int(visual_embeds.shape[0]) != expected_rows
             or not deepstack_visual_embeds
-            or any(
-                value.shape != visual_embeds.shape for value in deepstack_visual_embeds
-            )
+            or any(value.shape != visual_embeds.shape for value in deepstack_visual_embeds)
         ):
             raise RuntimeError(
                 "Per-image Vision Encoder cache output does not match visual "
@@ -910,9 +883,7 @@ class ModelRunner:
             attention.engine_attn.flashinfer_decode_enabled = decode_enabled
 
     def _attention_layers(self):
-        return [
-            layer.self_attn for layer in self.model.model.language_model.layers
-        ]
+        return [layer.self_attn for layer in self.model.model.language_model.layers]
 
     def _configure_decode_compile(self) -> None:
         """Enable exactly one explicitly configured decode compile region."""

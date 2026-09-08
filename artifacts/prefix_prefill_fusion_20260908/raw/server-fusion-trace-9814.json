@@ -1,0 +1,4510 @@
+{
+  "source_package": "/home/lcpu/87120912/preprocessing/prefill-fused/prism_infer/__init__.py",
+  "model": "/home/lcpu/87120912/models/Qwen3-VL-8B-Instruct",
+  "options": {
+    "tensor_parallel_size": 1,
+    "execution_backend": "cuda_graph",
+    "compression_mode": "scaled_fp8_kv",
+    "max_model_len": 4096,
+    "max_num_batched_tokens": 4096,
+    "max_num_seqs": 4,
+    "num_kvcache_blocks": 64,
+    "kvcache_block_size": 256,
+    "image_max_pixels": 200704,
+    "enable_prefix_caching": true,
+    "enable_visual_embedding_cache": false,
+    "enable_chunked_prefill": false,
+    "paged_decode_block_n": 256,
+    "enable_fused_qk_rmsnorm": true,
+    "enable_fused_qk_mrope": true,
+    "enable_fused_add_rmsnorm": true,
+    "enable_packed_kv_projection": true
+  },
+  "torch": "2.11.0+cu130",
+  "nvtx": true,
+  "gpu": "NVIDIA GeForce RTX 5090",
+  "media_preprocess_cache": {
+    "scope": "engine_shared_cpu_media_results",
+    "entries": 2,
+    "max_entries": 128,
+    "hits": 3,
+    "misses": 2,
+    "uncacheable": 0,
+    "prompt_rebind_hits": 2,
+    "prompt_rebind_misses": 0
+  },
+  "metrics": {
+    "requests": [
+      {
+        "request_id": 0,
+        "prompt_tokens": 1607,
+        "cached_tokens": 0,
+        "max_tokens": 16,
+        "output_tokens": 16,
+        "submitted_ns": 3077019090815388,
+        "first_scheduled_ns": 3077019417722611,
+        "first_token_ns": 3077020492580203,
+        "finished_ns": 3077020679929122,
+        "queue_ms": 326.907223,
+        "ttft_ms": 1401.764815,
+        "tpot_ms": 12.476800133333334,
+        "inter_token_ms": [
+          17.064235,
+          12.201149,
+          12.108557,
+          11.986494,
+          12.015465,
+          11.966406,
+          11.932126,
+          12.049315,
+          12.002327,
+          11.949033,
+          11.945627,
+          11.972001,
+          12.075341,
+          13.051484,
+          12.832442
+        ],
+        "latency_ms": 1589.113734,
+        "finish_reason": "length"
+      },
+      {
+        "request_id": 1,
+        "prompt_tokens": 1607,
+        "cached_tokens": 1586,
+        "max_tokens": 16,
+        "output_tokens": 16,
+        "submitted_ns": 3077020710018528,
+        "first_scheduled_ns": 3077020742235280,
+        "first_token_ns": 3077020945257913,
+        "finished_ns": 3077021140527807,
+        "queue_ms": 32.216752,
+        "ttft_ms": 235.239385,
+        "tpot_ms": 13.003954,
+        "inter_token_ms": [
+          14.724386,
+          13.14079,
+          12.665796,
+          12.63003,
+          12.691695,
+          12.714107,
+          12.77891,
+          12.672717,
+          14.573874,
+          13.369665,
+          12.628981,
+          12.612669,
+          12.631458,
+          12.604233,
+          12.619999
+        ],
+        "latency_ms": 430.509279,
+        "finish_reason": "length"
+      },
+      {
+        "request_id": 2,
+        "prompt_tokens": 1603,
+        "cached_tokens": 1586,
+        "max_tokens": 128,
+        "output_tokens": 128,
+        "submitted_ns": 3077021170672903,
+        "first_scheduled_ns": 3077021205942001,
+        "first_token_ns": 3077021350085465,
+        "finished_ns": 3077022916407077,
+        "queue_ms": 35.269098,
+        "ttft_ms": 179.412562,
+        "tpot_ms": 12.332475748031497,
+        "inter_token_ms": [
+          14.009907,
+          12.403502,
+          12.365302,
+          12.577095,
+          12.407497,
+          12.427895,
+          12.43916,
+          12.427473,
+          12.411382,
+          12.420203,
+          12.447197,
+          12.382333,
+          12.403222,
+          12.394095,
+          12.386196,
+          12.403325,
+          12.546363,
+          12.504738,
+          12.480649,
+          12.368889,
+          12.430867,
+          12.384205,
+          12.369381,
+          12.401277,
+          12.413033,
+          12.486096,
+          12.515442,
+          12.459769,
+          12.595675,
+          12.554901,
+          12.492197,
+          12.389205,
+          12.57833,
+          12.515111,
+          12.502495,
+          12.507416,
+          12.409365,
+          12.396616,
+          12.403661,
+          12.49615,
+          12.411831,
+          12.398635,
+          12.399601,
+          12.42581,
+          12.492643,
+          12.429939,
+          12.514636,
+          12.39751,
+          12.683689,
+          12.409352,
+          12.451358,
+          13.341806,
+          12.383589,
+          12.318466,
+          12.084157,
+          11.981333,
+          12.107769,
+          11.957714,
+          11.89483,
+          11.868778,
+          11.959715,
+          11.871695,
+          11.878383,
+          11.873192,
+          11.918024,
+          11.998763,
+          11.928688,
+          11.928056,
+          11.889125,
+          11.952876,
+          11.965802,
+          11.87713,
+          11.971337,
+          11.899157,
+          11.983324,
+          12.543881,
+          12.702312,
+          12.60466,
+          14.631047,
+          12.627959,
+          12.578811,
+          12.631955,
+          12.738911,
+          12.540473,
+          12.616367,
+          12.565058,
+          12.513106,
+          12.561888,
+          12.321966,
+          12.61512,
+          12.634769,
+          12.847389,
+          12.69205,
+          12.578546,
+          12.579082,
+          12.536028,
+          12.613172,
+          12.552026,
+          12.670275,
+          12.291603,
+          12.342191,
+          12.046267,
+          11.932244,
+          11.917754,
+          12.015997,
+          11.986858,
+          12.016772,
+          12.115356,
+          11.959354,
+          11.982442,
+          11.947591,
+          11.950067,
+          12.031386,
+          11.966898,
+          12.000389,
+          11.970067,
+          11.970655,
+          12.14235,
+          11.978199,
+          11.948169,
+          12.052059,
+          11.958132,
+          11.967356,
+          12.0165,
+          11.958519,
+          11.969265,
+          11.936801
+        ],
+        "latency_ms": 1745.734174,
+        "finish_reason": "length"
+      },
+      {
+        "request_id": 3,
+        "prompt_tokens": 1603,
+        "cached_tokens": 1586,
+        "max_tokens": 128,
+        "output_tokens": 128,
+        "submitted_ns": 3077022939950103,
+        "first_scheduled_ns": 3077022963871271,
+        "first_token_ns": 3077023099618853,
+        "finished_ns": 3077025009511441,
+        "queue_ms": 23.921168,
+        "ttft_ms": 159.66875,
+        "tpot_ms": 15.037723015748032,
+        "inter_token_ms": [
+          13.67694,
+          12.484358,
+          12.536044,
+          12.668934,
+          12.412287,
+          12.352689,
+          12.532808,
+          12.925702,
+          12.411202,
+          12.335109,
+          12.319118,
+          12.331856,
+          12.385197,
+          12.717302,
+          12.411884,
+          12.412285,
+          12.525454,
+          12.340794,
+          12.464446,
+          12.407259,
+          12.371778,
+          12.331166,
+          12.400921,
+          12.531047,
+          12.360512,
+          334.351936,
+          14.880088,
+          14.716825,
+          14.603997,
+          14.931417,
+          14.616045,
+          14.403317,
+          14.564429,
+          14.42437,
+          14.704744,
+          14.752781,
+          14.746072,
+          14.86441,
+          14.56172,
+          14.935482,
+          12.660919,
+          12.446899,
+          12.072491,
+          11.978137,
+          12.045247,
+          12.067077,
+          12.043549,
+          12.014341,
+          12.086847,
+          12.085502,
+          12.039569,
+          12.003228,
+          12.059403,
+          12.109215,
+          12.189629,
+          12.550852,
+          12.546989,
+          12.512305,
+          12.846661,
+          13.58177,
+          12.238667,
+          12.093682,
+          12.069075,
+          12.154,
+          12.201771,
+          12.256091,
+          12.170726,
+          12.13078,
+          12.100297,
+          12.16597,
+          12.111587,
+          12.087304,
+          12.087302,
+          12.111347,
+          12.13204,
+          12.101531,
+          12.25819,
+          12.123513,
+          12.151852,
+          12.096986,
+          12.052827,
+          12.057652,
+          12.110549,
+          12.09309,
+          12.078042,
+          12.052954,
+          12.048169,
+          12.095468,
+          12.066507,
+          12.051097,
+          12.098399,
+          12.069627,
+          12.098403,
+          12.125374,
+          12.042117,
+          12.079641,
+          12.027744,
+          12.048218,
+          12.110151,
+          12.123455,
+          12.167904,
+          12.149804,
+          12.279005,
+          12.196587,
+          12.095381,
+          12.043512,
+          12.093447,
+          12.078025,
+          12.116228,
+          12.0817,
+          12.165808,
+          12.06197,
+          12.083455,
+          11.999652,
+          12.091994,
+          11.989199,
+          12.094398,
+          12.062952,
+          12.103633,
+          12.082264,
+          12.081729,
+          12.035452,
+          12.017188,
+          12.127456,
+          12.122494,
+          12.071161,
+          12.280875
+        ],
+        "latency_ms": 2069.561338,
+        "finish_reason": "length"
+      },
+      {
+        "request_id": 4,
+        "prompt_tokens": 1607,
+        "cached_tokens": 0,
+        "max_tokens": 16,
+        "output_tokens": 16,
+        "submitted_ns": 3077023167863106,
+        "first_scheduled_ns": 3077023422614503,
+        "first_token_ns": 3077023726927144,
+        "finished_ns": 3077023952467160,
+        "queue_ms": 254.751397,
+        "ttft_ms": 559.064038,
+        "tpot_ms": 15.026428933333333,
+        "inter_token_ms": [
+          19.690737,
+          14.880088,
+          14.716825,
+          14.603997,
+          14.931417,
+          14.616045,
+          14.403317,
+          14.564429,
+          14.42437,
+          14.704744,
+          14.752781,
+          14.746072,
+          14.86441,
+          14.56172,
+          14.935482
+        ],
+        "latency_ms": 784.604054,
+        "finish_reason": "length"
+      }
+    ],
+    "batches": [
+      {
+        "phase": "prefill",
+        "batch_size": 1,
+        "scheduled_tokens": 1607,
+        "vision_patches": 6272,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077019418063151,
+        "finished_ns": 3077020492580203,
+        "duration_ms": 1074.517052,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020496797388,
+        "finished_ns": 3077020509644438,
+        "duration_ms": 12.84705,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020509979539,
+        "finished_ns": 3077020521845587,
+        "duration_ms": 11.866048,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020522142577,
+        "finished_ns": 3077020533954144,
+        "duration_ms": 11.811567,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020534182308,
+        "finished_ns": 3077020545940638,
+        "duration_ms": 11.75833,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020546180247,
+        "finished_ns": 3077020557956103,
+        "duration_ms": 11.775856,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020558175053,
+        "finished_ns": 3077020569922509,
+        "duration_ms": 11.747456,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020570107964,
+        "finished_ns": 3077020581854635,
+        "duration_ms": 11.746671,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020582091970,
+        "finished_ns": 3077020593903950,
+        "duration_ms": 11.81198,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020594145539,
+        "finished_ns": 3077020605906277,
+        "duration_ms": 11.760738,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020606130098,
+        "finished_ns": 3077020617855310,
+        "duration_ms": 11.725212,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020618054943,
+        "finished_ns": 3077020629800937,
+        "duration_ms": 11.745994,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020630028643,
+        "finished_ns": 3077020641772938,
+        "duration_ms": 11.744295,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020641992633,
+        "finished_ns": 3077020653848279,
+        "duration_ms": 11.855646,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020654113444,
+        "finished_ns": 3077020666899763,
+        "duration_ms": 12.786319,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          0
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020667190758,
+        "finished_ns": 3077020679732205,
+        "duration_ms": 12.541447,
+        "compaction_count": 0
+      },
+      {
+        "phase": "prefill",
+        "batch_size": 1,
+        "scheduled_tokens": 21,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020742341594,
+        "finished_ns": 3077020945257913,
+        "duration_ms": 202.916319,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020946929456,
+        "finished_ns": 3077020959982299,
+        "duration_ms": 13.052843,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020960747741,
+        "finished_ns": 3077020973123089,
+        "duration_ms": 12.375348,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020973444010,
+        "finished_ns": 3077020985788885,
+        "duration_ms": 12.344875,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020986080038,
+        "finished_ns": 3077020998418915,
+        "duration_ms": 12.338877,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077020998728020,
+        "finished_ns": 3077021011110610,
+        "duration_ms": 12.38259,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021011379739,
+        "finished_ns": 3077021023824717,
+        "duration_ms": 12.444978,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021024239413,
+        "finished_ns": 3077021036603627,
+        "duration_ms": 12.364214,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021036905887,
+        "finished_ns": 3077021049276344,
+        "duration_ms": 12.370457,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021049561149,
+        "finished_ns": 3077021063850218,
+        "duration_ms": 14.289069,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021064514745,
+        "finished_ns": 3077021077219883,
+        "duration_ms": 12.705138,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021077500265,
+        "finished_ns": 3077021089848864,
+        "duration_ms": 12.348599,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021090137761,
+        "finished_ns": 3077021102461533,
+        "duration_ms": 12.323772,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021102753881,
+        "finished_ns": 3077021115092991,
+        "duration_ms": 12.33911,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021115340481,
+        "finished_ns": 3077021127697224,
+        "duration_ms": 12.356743,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          1
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021127991876,
+        "finished_ns": 3077021140317223,
+        "duration_ms": 12.325347,
+        "compaction_count": 0
+      },
+      {
+        "phase": "prefill",
+        "batch_size": 1,
+        "scheduled_tokens": 17,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021206049859,
+        "finished_ns": 3077021350085465,
+        "duration_ms": 144.035606,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021351115076,
+        "finished_ns": 3077021364095372,
+        "duration_ms": 12.980296,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021364386295,
+        "finished_ns": 3077021376498874,
+        "duration_ms": 12.112579,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021376770055,
+        "finished_ns": 3077021388864176,
+        "duration_ms": 12.094121,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021389144377,
+        "finished_ns": 3077021401441271,
+        "duration_ms": 12.296894,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021401723135,
+        "finished_ns": 3077021413848768,
+        "duration_ms": 12.125633,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021414142480,
+        "finished_ns": 3077021426276663,
+        "duration_ms": 12.134183,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021426575873,
+        "finished_ns": 3077021438715823,
+        "duration_ms": 12.13995,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021438999851,
+        "finished_ns": 3077021451143296,
+        "duration_ms": 12.143445,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021451427963,
+        "finished_ns": 3077021463554678,
+        "duration_ms": 12.126715,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021463833420,
+        "finished_ns": 3077021475974881,
+        "duration_ms": 12.141461,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021476304895,
+        "finished_ns": 3077021488422078,
+        "duration_ms": 12.117183,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021488690856,
+        "finished_ns": 3077021500804411,
+        "duration_ms": 12.113555,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021501103298,
+        "finished_ns": 3077021513207633,
+        "duration_ms": 12.104335,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021513490231,
+        "finished_ns": 3077021525601728,
+        "duration_ms": 12.111497,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021525878399,
+        "finished_ns": 3077021537987924,
+        "duration_ms": 12.109525,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021538263612,
+        "finished_ns": 3077021550391249,
+        "duration_ms": 12.127637,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021550690254,
+        "finished_ns": 3077021562937612,
+        "duration_ms": 12.247358,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021563226168,
+        "finished_ns": 3077021575442350,
+        "duration_ms": 12.216182,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021575726879,
+        "finished_ns": 3077021587922999,
+        "duration_ms": 12.19612,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021588195803,
+        "finished_ns": 3077021600291888,
+        "duration_ms": 12.096085,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021600591366,
+        "finished_ns": 3077021612722755,
+        "duration_ms": 12.131389,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021613007897,
+        "finished_ns": 3077021625106960,
+        "duration_ms": 12.099063,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021625380693,
+        "finished_ns": 3077021637476341,
+        "duration_ms": 12.095648,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021637766537,
+        "finished_ns": 3077021649877618,
+        "duration_ms": 12.111081,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021650147805,
+        "finished_ns": 3077021662290651,
+        "duration_ms": 12.142846,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021662615511,
+        "finished_ns": 3077021674776747,
+        "duration_ms": 12.161236,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021675058780,
+        "finished_ns": 3077021687292189,
+        "duration_ms": 12.233409,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021687585871,
+        "finished_ns": 3077021699751958,
+        "duration_ms": 12.166087,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021700061067,
+        "finished_ns": 3077021712347633,
+        "duration_ms": 12.286566,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021712645208,
+        "finished_ns": 3077021724902534,
+        "duration_ms": 12.257326,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021725188863,
+        "finished_ns": 3077021737394731,
+        "duration_ms": 12.205868,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021737653404,
+        "finished_ns": 3077021749783936,
+        "duration_ms": 12.130532,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021750094904,
+        "finished_ns": 3077021762362266,
+        "duration_ms": 12.267362,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021762657092,
+        "finished_ns": 3077021774877377,
+        "duration_ms": 12.220285,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021775162206,
+        "finished_ns": 3077021787379872,
+        "duration_ms": 12.217666,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021787656808,
+        "finished_ns": 3077021799887288,
+        "duration_ms": 12.23048,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021800173501,
+        "finished_ns": 3077021812296653,
+        "duration_ms": 12.123152,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021812580979,
+        "finished_ns": 3077021824693269,
+        "duration_ms": 12.11229,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021824978573,
+        "finished_ns": 3077021837096930,
+        "duration_ms": 12.118357,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021837381076,
+        "finished_ns": 3077021849593080,
+        "duration_ms": 12.212004,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021849873103,
+        "finished_ns": 3077021862004911,
+        "duration_ms": 12.131808,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021862285922,
+        "finished_ns": 3077021874403546,
+        "duration_ms": 12.117624,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021874675979,
+        "finished_ns": 3077021886803147,
+        "duration_ms": 12.127168,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021887084857,
+        "finished_ns": 3077021899228957,
+        "duration_ms": 12.1441,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021899505417,
+        "finished_ns": 3077021911721600,
+        "duration_ms": 12.216183,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021911999089,
+        "finished_ns": 3077021924151539,
+        "duration_ms": 12.15245,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021924460894,
+        "finished_ns": 3077021936666175,
+        "duration_ms": 12.205281,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021936949341,
+        "finished_ns": 3077021949063685,
+        "duration_ms": 12.114344,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021949376389,
+        "finished_ns": 3077021961747374,
+        "duration_ms": 12.370985,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021962061077,
+        "finished_ns": 3077021974156726,
+        "duration_ms": 12.095649,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021974451100,
+        "finished_ns": 3077021986608084,
+        "duration_ms": 12.156984,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077021986884039,
+        "finished_ns": 3077021999949890,
+        "duration_ms": 13.065851,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022000233011,
+        "finished_ns": 3077022012333479,
+        "duration_ms": 12.100468,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022012600104,
+        "finished_ns": 3077022024651945,
+        "duration_ms": 12.051841,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022024879490,
+        "finished_ns": 3077022036736102,
+        "duration_ms": 11.856612,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022036961823,
+        "finished_ns": 3077022048717435,
+        "duration_ms": 11.755612,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022048955972,
+        "finished_ns": 3077022060825204,
+        "duration_ms": 11.869232,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022061028793,
+        "finished_ns": 3077022072782918,
+        "duration_ms": 11.754125,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022072991084,
+        "finished_ns": 3077022084677748,
+        "duration_ms": 11.686664,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022084868747,
+        "finished_ns": 3077022096546526,
+        "duration_ms": 11.677779,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022096765293,
+        "finished_ns": 3077022108506241,
+        "duration_ms": 11.740948,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022108714896,
+        "finished_ns": 3077022120377936,
+        "duration_ms": 11.66304,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022120550568,
+        "finished_ns": 3077022132256319,
+        "duration_ms": 11.705751,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022132445290,
+        "finished_ns": 3077022144129511,
+        "duration_ms": 11.684221,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022144315614,
+        "finished_ns": 3077022156047535,
+        "duration_ms": 11.731921,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022156284570,
+        "finished_ns": 3077022168046298,
+        "duration_ms": 11.761728,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022168259172,
+        "finished_ns": 3077022179974986,
+        "duration_ms": 11.715814,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022180182995,
+        "finished_ns": 3077022191903042,
+        "duration_ms": 11.720047,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022192092915,
+        "finished_ns": 3077022203792167,
+        "duration_ms": 11.699252,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022204040387,
+        "finished_ns": 3077022215745043,
+        "duration_ms": 11.704656,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022215927295,
+        "finished_ns": 3077022227710845,
+        "duration_ms": 11.78355,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022227884084,
+        "finished_ns": 3077022239587975,
+        "duration_ms": 11.703891,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022239805009,
+        "finished_ns": 3077022251559312,
+        "duration_ms": 11.754303,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022251751062,
+        "finished_ns": 3077022263458469,
+        "duration_ms": 11.707407,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022263659644,
+        "finished_ns": 3077022275441793,
+        "duration_ms": 11.782149,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022275720754,
+        "finished_ns": 3077022287985674,
+        "duration_ms": 12.26492,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022288302090,
+        "finished_ns": 3077022300687986,
+        "duration_ms": 12.385896,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022300956697,
+        "finished_ns": 3077022313292646,
+        "duration_ms": 12.335949,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022313598540,
+        "finished_ns": 3077022327923693,
+        "duration_ms": 14.325153,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022328247068,
+        "finished_ns": 3077022340551652,
+        "duration_ms": 12.304584,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022340834763,
+        "finished_ns": 3077022353130463,
+        "duration_ms": 12.2957,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022353405821,
+        "finished_ns": 3077022365762418,
+        "duration_ms": 12.356597,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022366051680,
+        "finished_ns": 3077022378501329,
+        "duration_ms": 12.449649,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022378746841,
+        "finished_ns": 3077022391041802,
+        "duration_ms": 12.294961,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022391306959,
+        "finished_ns": 3077022403658169,
+        "duration_ms": 12.35121,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022403936564,
+        "finished_ns": 3077022416223227,
+        "duration_ms": 12.286663,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022416452137,
+        "finished_ns": 3077022428736333,
+        "duration_ms": 12.284196,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022428995043,
+        "finished_ns": 3077022441298221,
+        "duration_ms": 12.303178,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022441552917,
+        "finished_ns": 3077022453620187,
+        "duration_ms": 12.06727,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022453902744,
+        "finished_ns": 3077022466235307,
+        "duration_ms": 12.332563,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022466498420,
+        "finished_ns": 3077022478870076,
+        "duration_ms": 12.371656,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022479152309,
+        "finished_ns": 3077022491717465,
+        "duration_ms": 12.565156,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022492031828,
+        "finished_ns": 3077022504409515,
+        "duration_ms": 12.377687,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022504672860,
+        "finished_ns": 3077022516988061,
+        "duration_ms": 12.315201,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022517245673,
+        "finished_ns": 3077022529567143,
+        "duration_ms": 12.32147,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022529811839,
+        "finished_ns": 3077022542103171,
+        "duration_ms": 12.291332,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022542379893,
+        "finished_ns": 3077022554716343,
+        "duration_ms": 12.33645,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022554962640,
+        "finished_ns": 3077022567268369,
+        "duration_ms": 12.305729,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022567552504,
+        "finished_ns": 3077022579938644,
+        "duration_ms": 12.38614,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022580223765,
+        "finished_ns": 3077022592230247,
+        "duration_ms": 12.006482,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022592516363,
+        "finished_ns": 3077022604572438,
+        "duration_ms": 12.056075,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022604835090,
+        "finished_ns": 3077022616618705,
+        "duration_ms": 11.783615,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022616842954,
+        "finished_ns": 3077022628550949,
+        "duration_ms": 11.707995,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022628760744,
+        "finished_ns": 3077022640468703,
+        "duration_ms": 11.707959,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022640696694,
+        "finished_ns": 3077022652484700,
+        "duration_ms": 11.788006,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022652723321,
+        "finished_ns": 3077022664471558,
+        "duration_ms": 11.748237,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022664696149,
+        "finished_ns": 3077022676488330,
+        "duration_ms": 11.792181,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022676704476,
+        "finished_ns": 3077022688603686,
+        "duration_ms": 11.89921,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022688810278,
+        "finished_ns": 3077022700563040,
+        "duration_ms": 11.752762,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022700770262,
+        "finished_ns": 3077022712545482,
+        "duration_ms": 11.77522,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022712744771,
+        "finished_ns": 3077022724493073,
+        "duration_ms": 11.748302,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022724691916,
+        "finished_ns": 3077022736443140,
+        "duration_ms": 11.751224,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022736673083,
+        "finished_ns": 3077022748474526,
+        "duration_ms": 11.801443,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022748672296,
+        "finished_ns": 3077022760441424,
+        "duration_ms": 11.769128,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022760655064,
+        "finished_ns": 3077022772441813,
+        "duration_ms": 11.786749,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022772645559,
+        "finished_ns": 3077022784411880,
+        "duration_ms": 11.766321,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022784626676,
+        "finished_ns": 3077022796382535,
+        "duration_ms": 11.755859,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022796615991,
+        "finished_ns": 3077022808524885,
+        "duration_ms": 11.908894,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022808726808,
+        "finished_ns": 3077022820503084,
+        "duration_ms": 11.776276,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022820702873,
+        "finished_ns": 3077022832451253,
+        "duration_ms": 11.74838,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022832692640,
+        "finished_ns": 3077022844503312,
+        "duration_ms": 11.810672,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022844708034,
+        "finished_ns": 3077022856461444,
+        "duration_ms": 11.75341,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022856661784,
+        "finished_ns": 3077022868428800,
+        "duration_ms": 11.767016,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022868660901,
+        "finished_ns": 3077022880445300,
+        "duration_ms": 11.784399,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022880640036,
+        "finished_ns": 3077022892403819,
+        "duration_ms": 11.763783,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022892616584,
+        "finished_ns": 3077022904373084,
+        "duration_ms": 11.7565,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          2
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022904588780,
+        "finished_ns": 3077022916309885,
+        "duration_ms": 11.721105,
+        "compaction_count": 0
+      },
+      {
+        "phase": "prefill",
+        "batch_size": 1,
+        "scheduled_tokens": 17,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077022963969528,
+        "finished_ns": 3077023099618853,
+        "duration_ms": 135.649325,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023100658006,
+        "finished_ns": 3077023113295793,
+        "duration_ms": 12.637787,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023113612607,
+        "finished_ns": 3077023125780151,
+        "duration_ms": 12.167544,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023126052844,
+        "finished_ns": 3077023138316195,
+        "duration_ms": 12.263351,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023138572380,
+        "finished_ns": 3077023150985129,
+        "duration_ms": 12.412749,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023151239330,
+        "finished_ns": 3077023163397416,
+        "duration_ms": 12.158086,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023163685915,
+        "finished_ns": 3077023175750105,
+        "duration_ms": 12.06419,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023176129225,
+        "finished_ns": 3077023188282913,
+        "duration_ms": 12.153688,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023188571140,
+        "finished_ns": 3077023201208615,
+        "duration_ms": 12.637475,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023201506659,
+        "finished_ns": 3077023213619817,
+        "duration_ms": 12.113158,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023213909937,
+        "finished_ns": 3077023225954926,
+        "duration_ms": 12.044989,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023226196947,
+        "finished_ns": 3077023238274044,
+        "duration_ms": 12.077097,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023238525208,
+        "finished_ns": 3077023250605900,
+        "duration_ms": 12.080692,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023250884534,
+        "finished_ns": 3077023262991097,
+        "duration_ms": 12.106563,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023263538276,
+        "finished_ns": 3077023275708399,
+        "duration_ms": 12.170123,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023276015529,
+        "finished_ns": 3077023288120283,
+        "duration_ms": 12.104754,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023288364507,
+        "finished_ns": 3077023300532568,
+        "duration_ms": 12.168061,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023300884845,
+        "finished_ns": 3077023313058022,
+        "duration_ms": 12.173177,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023313327585,
+        "finished_ns": 3077023325398816,
+        "duration_ms": 12.071231,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023325698527,
+        "finished_ns": 3077023337863262,
+        "duration_ms": 12.164735,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023338111882,
+        "finished_ns": 3077023350270521,
+        "duration_ms": 12.158639,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023350550165,
+        "finished_ns": 3077023362642299,
+        "duration_ms": 12.092134,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023362879941,
+        "finished_ns": 3077023374973465,
+        "duration_ms": 12.093524,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023375251141,
+        "finished_ns": 3077023387374386,
+        "duration_ms": 12.123245,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023387658196,
+        "finished_ns": 3077023399905433,
+        "duration_ms": 12.247237,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023400200030,
+        "finished_ns": 3077023412265945,
+        "duration_ms": 12.065915,
+        "compaction_count": 0
+      },
+      {
+        "phase": "prefill",
+        "batch_size": 1,
+        "scheduled_tokens": 1607,
+        "vision_patches": 6272,
+        "sequence_ids": [
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023423042182,
+        "finished_ns": 3077023726927144,
+        "duration_ms": 303.884962,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023731202363,
+        "finished_ns": 3077023746617881,
+        "duration_ms": 15.415518,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023747037443,
+        "finished_ns": 3077023761497969,
+        "duration_ms": 14.460526,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023761856799,
+        "finished_ns": 3077023776214794,
+        "duration_ms": 14.357995,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023776543803,
+        "finished_ns": 3077023790818791,
+        "duration_ms": 14.274988,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023791232337,
+        "finished_ns": 3077023805750208,
+        "duration_ms": 14.517871,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023806087376,
+        "finished_ns": 3077023820366253,
+        "duration_ms": 14.278877,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023820709744,
+        "finished_ns": 3077023834769570,
+        "duration_ms": 14.059826,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023835115113,
+        "finished_ns": 3077023849333999,
+        "duration_ms": 14.218886,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023849676052,
+        "finished_ns": 3077023863758369,
+        "duration_ms": 14.082317,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023864128379,
+        "finished_ns": 3077023878463113,
+        "duration_ms": 14.334734,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023878809782,
+        "finished_ns": 3077023893215894,
+        "duration_ms": 14.406112,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023893609843,
+        "finished_ns": 3077023907961966,
+        "duration_ms": 14.352123,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023908349821,
+        "finished_ns": 3077023922826376,
+        "duration_ms": 14.476555,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023923208378,
+        "finished_ns": 3077023937388096,
+        "duration_ms": 14.179718,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 2,
+        "scheduled_tokens": 2,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3,
+          4
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023937771573,
+        "finished_ns": 3077023952323578,
+        "duration_ms": 14.552005,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023952780666,
+        "finished_ns": 3077023964984497,
+        "duration_ms": 12.203831,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023965252638,
+        "finished_ns": 3077023977431396,
+        "duration_ms": 12.178758,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023977647818,
+        "finished_ns": 3077023989503887,
+        "duration_ms": 11.856069,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077023989713562,
+        "finished_ns": 3077024001482024,
+        "duration_ms": 11.768462,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024001712525,
+        "finished_ns": 3077024013527271,
+        "duration_ms": 11.814746,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024013751665,
+        "finished_ns": 3077024025594348,
+        "duration_ms": 11.842683,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024025832449,
+        "finished_ns": 3077024037637897,
+        "duration_ms": 11.805448,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024037872764,
+        "finished_ns": 3077024049652238,
+        "duration_ms": 11.779474,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024049897603,
+        "finished_ns": 3077024061739085,
+        "duration_ms": 11.841482,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024061976525,
+        "finished_ns": 3077024073824587,
+        "duration_ms": 11.848062,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024074063239,
+        "finished_ns": 3077024085864156,
+        "duration_ms": 11.800917,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024086072400,
+        "finished_ns": 3077024097867384,
+        "duration_ms": 11.794984,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024098074980,
+        "finished_ns": 3077024109926787,
+        "duration_ms": 11.851807,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024110155658,
+        "finished_ns": 3077024122036002,
+        "duration_ms": 11.880344,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024122281628,
+        "finished_ns": 3077024134225631,
+        "duration_ms": 11.944003,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024134558445,
+        "finished_ns": 3077024146776483,
+        "duration_ms": 12.218038,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024147099682,
+        "finished_ns": 3077024159323472,
+        "duration_ms": 12.22379,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024159624026,
+        "finished_ns": 3077024171835777,
+        "duration_ms": 12.211751,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024172114505,
+        "finished_ns": 3077024184682438,
+        "duration_ms": 12.567933,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024184935732,
+        "finished_ns": 3077024198264208,
+        "duration_ms": 13.328476,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024198544148,
+        "finished_ns": 3077024210502875,
+        "duration_ms": 11.958727,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024210733173,
+        "finished_ns": 3077024222596557,
+        "duration_ms": 11.863384,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024222844454,
+        "finished_ns": 3077024234665632,
+        "duration_ms": 11.821178,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024234913363,
+        "finished_ns": 3077024246819632,
+        "duration_ms": 11.906269,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024247061140,
+        "finished_ns": 3077024259021403,
+        "duration_ms": 11.960263,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024259260878,
+        "finished_ns": 3077024271277494,
+        "duration_ms": 12.016616,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024271486930,
+        "finished_ns": 3077024283448220,
+        "duration_ms": 11.96129,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024283681990,
+        "finished_ns": 3077024295579000,
+        "duration_ms": 11.89701,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024295824951,
+        "finished_ns": 3077024307679297,
+        "duration_ms": 11.854346,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024307901592,
+        "finished_ns": 3077024319845267,
+        "duration_ms": 11.943675,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024320126690,
+        "finished_ns": 3077024331956854,
+        "duration_ms": 11.830164,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024332213777,
+        "finished_ns": 3077024344044158,
+        "duration_ms": 11.830381,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024344284809,
+        "finished_ns": 3077024356131460,
+        "duration_ms": 11.846651,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024356373588,
+        "finished_ns": 3077024368242807,
+        "duration_ms": 11.869219,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024368511847,
+        "finished_ns": 3077024380374847,
+        "duration_ms": 11.863,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024380608873,
+        "finished_ns": 3077024392476378,
+        "duration_ms": 11.867505,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024392727491,
+        "finished_ns": 3077024404734568,
+        "duration_ms": 12.007077,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024404978630,
+        "finished_ns": 3077024416858081,
+        "duration_ms": 11.879451,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024417100805,
+        "finished_ns": 3077024429009933,
+        "duration_ms": 11.909128,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024429252064,
+        "finished_ns": 3077024441106919,
+        "duration_ms": 11.854855,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024441350852,
+        "finished_ns": 3077024453159746,
+        "duration_ms": 11.808894,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024453386556,
+        "finished_ns": 3077024465217398,
+        "duration_ms": 11.830842,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024465465567,
+        "finished_ns": 3077024477327947,
+        "duration_ms": 11.86238,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024477571874,
+        "finished_ns": 3077024489421037,
+        "duration_ms": 11.849163,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024489662821,
+        "finished_ns": 3077024501499079,
+        "duration_ms": 11.836258,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024501725555,
+        "finished_ns": 3077024513552033,
+        "duration_ms": 11.826478,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024513778547,
+        "finished_ns": 3077024525600202,
+        "duration_ms": 11.821655,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024525839837,
+        "finished_ns": 3077024537695670,
+        "duration_ms": 11.855833,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024537930119,
+        "finished_ns": 3077024549762177,
+        "duration_ms": 11.832058,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024550007169,
+        "finished_ns": 3077024561813274,
+        "duration_ms": 11.806105,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024562059540,
+        "finished_ns": 3077024573911673,
+        "duration_ms": 11.852133,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024574146816,
+        "finished_ns": 3077024585981300,
+        "duration_ms": 11.834484,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024586198682,
+        "finished_ns": 3077024598079703,
+        "duration_ms": 11.881021,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024598340020,
+        "finished_ns": 3077024610205077,
+        "duration_ms": 11.865057,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024610437499,
+        "finished_ns": 3077024622247194,
+        "duration_ms": 11.809695,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024622483750,
+        "finished_ns": 3077024634326835,
+        "duration_ms": 11.843085,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024634540052,
+        "finished_ns": 3077024646354579,
+        "duration_ms": 11.814527,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024646573596,
+        "finished_ns": 3077024658402797,
+        "duration_ms": 11.829201,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024658643496,
+        "finished_ns": 3077024670512948,
+        "duration_ms": 11.869452,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024670759195,
+        "finished_ns": 3077024682636403,
+        "duration_ms": 11.877208,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024682882299,
+        "finished_ns": 3077024694804307,
+        "duration_ms": 11.922008,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024695050617,
+        "finished_ns": 3077024706954111,
+        "duration_ms": 11.903494,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024707194211,
+        "finished_ns": 3077024719233116,
+        "duration_ms": 12.038905,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024719438203,
+        "finished_ns": 3077024731429703,
+        "duration_ms": 11.9915,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024731654637,
+        "finished_ns": 3077024743525084,
+        "duration_ms": 11.870447,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024743748863,
+        "finished_ns": 3077024755568596,
+        "duration_ms": 11.819733,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024755769195,
+        "finished_ns": 3077024767662043,
+        "duration_ms": 11.892848,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024767908100,
+        "finished_ns": 3077024779740068,
+        "duration_ms": 11.831968,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024779963323,
+        "finished_ns": 3077024791856296,
+        "duration_ms": 11.892973,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024792101992,
+        "finished_ns": 3077024803937996,
+        "duration_ms": 11.836004,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024804237306,
+        "finished_ns": 3077024816103804,
+        "duration_ms": 11.866498,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024816330358,
+        "finished_ns": 3077024828165774,
+        "duration_ms": 11.835416,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024828417841,
+        "finished_ns": 3077024840249229,
+        "duration_ms": 11.831388,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024840447407,
+        "finished_ns": 3077024852248881,
+        "duration_ms": 11.801474,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024852519344,
+        "finished_ns": 3077024864340875,
+        "duration_ms": 11.821531,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024864547983,
+        "finished_ns": 3077024876330074,
+        "duration_ms": 11.782091,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024876594946,
+        "finished_ns": 3077024888424472,
+        "duration_ms": 11.829526,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024888691440,
+        "finished_ns": 3077024900487424,
+        "duration_ms": 11.795984,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024900747888,
+        "finished_ns": 3077024912591057,
+        "duration_ms": 11.843169,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024912828666,
+        "finished_ns": 3077024924673321,
+        "duration_ms": 11.844655,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024924916356,
+        "finished_ns": 3077024936755050,
+        "duration_ms": 11.838694,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024936966228,
+        "finished_ns": 3077024948790502,
+        "duration_ms": 11.824274,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024948992624,
+        "finished_ns": 3077024960807690,
+        "duration_ms": 11.815066,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024961055393,
+        "finished_ns": 3077024972935146,
+        "duration_ms": 11.879753,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024973187219,
+        "finished_ns": 3077024985057640,
+        "duration_ms": 11.870421,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024985293660,
+        "finished_ns": 3077024997128801,
+        "duration_ms": 11.835141,
+        "compaction_count": 0
+      },
+      {
+        "phase": "decode",
+        "batch_size": 1,
+        "scheduled_tokens": 1,
+        "vision_patches": 0,
+        "sequence_ids": [
+          3
+        ],
+        "policy_name": "fcfs",
+        "started_ns": 3077024997368877,
+        "finished_ns": 3077025009409676,
+        "duration_ms": 12.040799,
+        "compaction_count": 0
+      }
+    ]
+  },
+  "cooperative_prefill": {
+    "enabled": false,
+    "policy": "fcfs",
+    "layer_quantum": 1,
+    "vision_block_quantum": 1,
+    "coalescing_enabled": false,
+    "coalesce_min_sequences": 3,
+    "coalesce_max_wait_ms": 250.0,
+    "deferred_decode_steps": 0,
+    "atomic_coalesced_batches": 0,
+    "cooperative_batches": 0,
+    "slo_prefill_reserve_ms_by_tier": null,
+    "slo_deadline_releases": 0,
+    "slo_light_atomic_batches": 0,
+    "slo_deadline_atomic_batches": 0,
+    "slo_prefill_interruptions": 0,
+    "slo_pending_deadline_finishes": 0
+  }
+}

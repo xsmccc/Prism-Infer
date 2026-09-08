@@ -24,7 +24,6 @@ class RuntimeCapabilities:
     cuda_available: bool
     distributed_available: bool
     sdpa_available: bool
-    default_device_api_available: bool
     compile_available: bool
     cuda_graph_available: bool
     fp8_e4m3fn_available: bool
@@ -62,10 +61,6 @@ def detect_runtime_capabilities() -> RuntimeCapabilities:
         cuda_available=bool(torch.cuda.is_available()),
         distributed_available=bool(torch.distributed.is_available()),
         sdpa_available=callable(getattr(F, "scaled_dot_product_attention", None)),
-        default_device_api_available=(
-            callable(getattr(torch, "get_default_device", None))
-            and callable(getattr(torch, "set_default_device", None))
-        ),
         compile_available=callable(getattr(torch, "compile", None)),
         cuda_graph_available=(
             hasattr(torch.cuda, "CUDAGraph") and callable(getattr(torch.cuda, "graph", None))
@@ -117,8 +112,6 @@ def _core_capability_errors(
         errors.append("torch.distributed is unavailable")
     if not capabilities.sdpa_available:
         errors.append("torch.nn.functional.scaled_dot_product_attention is unavailable")
-    if not capabilities.default_device_api_available:
-        errors.append("torch default-device APIs are unavailable")
     if require_cuda and not capabilities.cuda_available:
         errors.append("CUDA is unavailable")
     return errors

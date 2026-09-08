@@ -24,7 +24,7 @@ QK_RMSNORM_XBLOCK = 1
 QK_RMSNORM_NUM_WARPS = 1
 SUPPORTED_QK_RMSNORM_HEAD_DIM = 128
 MAX_EXACT_QK_RMSNORM_BATCH = 8
-MIN_PREFILL_QK_RMSNORM_ROWS = 1024
+MIN_PREFILL_QK_RMSNORM_ROWS = 1
 PREFILL_QK_RMSNORM_NUM_WARPS = 1
 PREFILL_Q_HEADS = 32
 PREFILL_K_HEADS = 8
@@ -46,14 +46,14 @@ if HAS_QK_RMSNORM_TRITON:
         )
         return rounded.to(tl.float32)
 
-    @triton.jit
+    @triton.jit(do_not_specialize=["Q_ROWS", "K_ROWS"])
     def _prefill_qk_square_kernel(
         q_ptr,
         k_ptr,
         q_squared_ptr,
         k_squared_ptr,
-        Q_ROWS: tl.constexpr,
-        K_ROWS: tl.constexpr,
+        Q_ROWS,
+        K_ROWS,
         HEAD_DIM: tl.constexpr,
     ):
         row = tl.program_id(0)
@@ -84,7 +84,7 @@ if HAS_QK_RMSNORM_TRITON:
             mask=valid_k,
         )
 
-    @triton.jit
+    @triton.jit(do_not_specialize=["Q_ROWS", "K_ROWS"])
     def _prefill_qk_normalize_mrope_kernel(
         q_ptr,
         k_ptr,
@@ -96,8 +96,8 @@ if HAS_QK_RMSNORM_TRITON:
         sin_ptr,
         q_out_ptr,
         k_out_ptr,
-        Q_ROWS: tl.constexpr,
-        K_ROWS: tl.constexpr,
+        Q_ROWS,
+        K_ROWS,
         Q_HEADS: tl.constexpr,
         K_HEADS: tl.constexpr,
         HEAD_DIM: tl.constexpr,
@@ -554,7 +554,7 @@ def can_use_prefill_qk_rmsnorm(
     cos: torch.Tensor,
     sin: torch.Tensor,
 ) -> bool:
-    """Return whether the validated large-prefill Q/K path applies."""
+    """Select the exact Q/K fusion for cold and prefix-hit prefill."""
 
     if os.environ.get("PRISM_DISABLE_PREFILL_QK_RMSNORM") == "1":
         return False
@@ -599,7 +599,7 @@ def maybe_fused_qk_rmsnorm_prefill(
     cos: torch.Tensor,
     sin: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor] | None:
-    """Run the exact large-prefill fusion or request the native fallback."""
+    """Run the exact prefill fusion or request the native fallback."""
 
     if not can_use_prefill_qk_rmsnorm(q, k, cos, sin):
         return None

@@ -1,0 +1,5811 @@
+{
+  "label": "fusion-trace",
+  "base_url": "http://127.0.0.1:27814",
+  "requests": [
+    {
+      "phase": "warmup",
+      "request_id": "fusion-trace-0",
+      "prompt": "Describe the main color of the first image. Answer with one color word.",
+      "max_tokens": 16,
+      "media_group": 0,
+      "token_ids": [
+        6033,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "token_arrival_ns": [
+        3077020497001417,
+        3077020510713106,
+        3077020522773857,
+        3077020534784136,
+        3077020546731550,
+        3077020558754145,
+        3077020570637070,
+        3077020582664744,
+        3077020594725363,
+        3077020606680944,
+        3077020618591623,
+        3077020630576740,
+        3077020642546977,
+        3077020654560734,
+        3077020667794003,
+        3077020680544930
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3077019412792612,
+          "bytes": 96,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "accepted",
+              "engine_request_id": 0
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020497001417,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 6033,
+              "token_text": "Red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020510713106,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020522773857,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020534784136,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020546731550,
+          "bytes": 136,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020558754145,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020570637070,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020582664744,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020594725363,
+          "bytes": 136,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020606680944,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020618591623,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020630576740,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020642546977,
+          "bytes": 136,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020654560734,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020667794003,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020680544930,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020681104007,
+          "bytes": 246,
+          "events": [
+            {
+              "request_id": "fusion-trace-0",
+              "event": "done",
+              "engine_request_id": 0,
+              "text": "Red\n\n\n\n",
+              "finish_reason": "length",
+              "token_ids": [
+                6033,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3077019055982175,
+      "client_finish_ns": 3077020681104007,
+      "final_token_ids": [
+        6033,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        13.711689,
+        12.060751,
+        12.010279,
+        11.947414,
+        12.022595,
+        11.882925,
+        12.027674,
+        12.060619,
+        11.955581,
+        11.910679,
+        11.985117,
+        11.970237,
+        12.013757,
+        13.233269,
+        12.750927
+      ],
+      "ttft_ms": 1441.019242,
+      "e2e_ms": 1625.121832,
+      "tpot_ms": 12.2362342,
+      "max_itl_ms": 13.711689,
+      "p95_itl_ms": 13.376795,
+      "stream_matches_final_ids": true
+    },
+    {
+      "phase": "hot_changed_question",
+      "request_id": "fusion-trace-1",
+      "prompt": "Describe the main color of image 2. Answer with one color word.",
+      "max_tokens": 16,
+      "media_group": 0,
+      "token_ids": [
+        19576,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "token_arrival_ns": [
+        3077020946487961,
+        3077020961387415,
+        3077020974058468,
+        3077020986684774,
+        3077020999309351,
+        3077021011976231,
+        3077021024807014,
+        3077021037526584,
+        3077021050154541,
+        3077021065395548,
+        3077021078096480,
+        3077021090730619,
+        3077021103349255,
+        3077021115917726,
+        3077021128580222,
+        3077021141370453
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3077020737202987,
+          "bytes": 96,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "accepted",
+              "engine_request_id": 1
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020946487961,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 19576,
+              "token_text": "Green"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020961387415,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020974058468,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020986684774,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077020999309351,
+          "bytes": 136,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021011976231,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021024807014,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021037526584,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021050154541,
+          "bytes": 136,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021065395548,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021078096480,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021090730619,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021103349255,
+          "bytes": 136,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021115917726,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021128580222,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021141370453,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021141566196,
+          "bytes": 249,
+          "events": [
+            {
+              "request_id": "fusion-trace-1",
+              "event": "done",
+              "engine_request_id": 1,
+              "text": "Green\n\n\n\n",
+              "finish_reason": "length",
+              "token_ids": [
+                19576,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3077020682724535,
+      "client_finish_ns": 3077021141566196,
+      "final_token_ids": [
+        19576,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        14.899454,
+        12.671053,
+        12.626306,
+        12.624577,
+        12.66688,
+        12.830783,
+        12.71957,
+        12.627957,
+        15.241007,
+        12.700932,
+        12.634139,
+        12.618636,
+        12.568471,
+        12.662496,
+        12.790231
+      ],
+      "ttft_ms": 263.763426,
+      "e2e_ms": 458.841661,
+      "tpot_ms": 12.992166133333333,
+      "max_itl_ms": 15.241007,
+      "p95_itl_ms": 15.001919899999999,
+      "stream_matches_final_ids": true
+    },
+    {
+      "phase": "decode_alone",
+      "request_id": "fusion-trace-2",
+      "prompt": "Describe each image and compare all their colors in detail.",
+      "max_tokens": 128,
+      "media_group": 0,
+      "token_ids": [
+        785,
+        3897,
+        5335,
+        525,
+        264,
+        738,
+        315,
+        8063,
+        6437,
+        57722,
+        31340,
+        11,
+        1817,
+        71180,
+        1181,
+        1828,
+        4034,
+        13,
+        2619,
+        525,
+        902,
+        6171,
+        11,
+        12624,
+        11,
+        476,
+        52149,
+        2293,
+        4250,
+        264,
+        3175,
+        11,
+        13794,
+        1894,
+        21274,
+        1817,
+        2168,
+        13,
+        21193,
+        374,
+        264,
+        11682,
+        4008,
+        315,
+        1817,
+        2168,
+        323,
+        264,
+        15817,
+        12313,
+        315,
+        862,
+        7987,
+        382,
+        44364,
+        334,
+        1906,
+        3874,
+        24685,
+        25,
+        56177,
+        16,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        16,
+        66963,
+        362,
+        6437,
+        11,
+        32976,
+        2518,
+        13,
+        1084,
+        374,
+        264,
+        8205,
+        11,
+        49485,
+        39040,
+        11,
+        54985,
+        315,
+        264,
+        5538,
+        96019,
+        476,
+        24837,
+        2518,
+        13,
+        576,
+        1894,
+        374,
+        9080,
+        323,
+        13939,
+        11,
+        64340,
+        6529,
+        382,
+        17,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        17,
+        66963,
+        362,
+        6437,
+        11,
+        9906,
+        6176,
+        13,
+        1084,
+        374,
+        264,
+        42020,
+        11,
+        4558,
+        9072,
+        27501,
+        11,
+        4428,
+        311,
+        264
+      ],
+      "token_arrival_ns": [
+        3077021352799605,
+        3077021365521410,
+        3077021377838149,
+        3077021390357260,
+        3077021402878971,
+        3077021415151270,
+        3077021427343401,
+        3077021439757997,
+        3077021452093905,
+        3077021464570504,
+        3077021476989601,
+        3077021489347876,
+        3077021501695185,
+        3077021514109532,
+        3077021526428588,
+        3077021538800700,
+        3077021551309445,
+        3077021563799348,
+        3077021576292843,
+        3077021588704600,
+        3077021601175660,
+        3077021613676173,
+        3077021625998969,
+        3077021638378319,
+        3077021650764912,
+        3077021663251074,
+        3077021675667884,
+        3077021688250367,
+        3077021700652972,
+        3077021713351401,
+        3077021725811196,
+        3077021738259275,
+        3077021750742835,
+        3077021763283618,
+        3077021775799591,
+        3077021788731043,
+        3077021800695061,
+        3077021813191349,
+        3077021825583468,
+        3077021837968299,
+        3077021850485656,
+        3077021862823265,
+        3077021875220283,
+        3077021887664594,
+        3077021900030000,
+        3077021912546071,
+        3077021925053975,
+        3077021937510957,
+        3077021949801715,
+        3077021962644477,
+        3077021975000692,
+        3077021988454804,
+        3077022000801112,
+        3077022013171574,
+        3077022025462988,
+        3077022037501911,
+        3077022049498040,
+        3077022061579386,
+        3077022073703626,
+        3077022085552363,
+        3077022097675695,
+        3077022109821548,
+        3077022121261014,
+        3077022133216413,
+        3077022145219243,
+        3077022157072878,
+        3077022169157144,
+        3077022181160555,
+        3077022192995616,
+        3077022204887759,
+        3077022216740214,
+        3077022228671061,
+        3077022240611924,
+        3077022252561469,
+        3077022264410701,
+        3077022276789400,
+        3077022289549380,
+        3077022301939887,
+        3077022314714566,
+        3077022329217161,
+        3077022341746293,
+        3077022354417592,
+        3077022367171064,
+        3077022379817173,
+        3077022392236926,
+        3077022404888778,
+        3077022417494347,
+        3077022429906581,
+        3077022442445245,
+        3077022454882501,
+        3077022467548641,
+        3077022480210790,
+        3077022493170077,
+        3077022505794023,
+        3077022518141985,
+        3077022530661971,
+        3077022543124801,
+        3077022555672223,
+        3077022568312788,
+        3077022580891937,
+        3077022593182165,
+        3077022605483077,
+        3077022617360454,
+        3077022629345545,
+        3077022641277653,
+        3077022653338296,
+        3077022665234718,
+        3077022677098315,
+        3077022689289281,
+        3077022701298616,
+        3077022713229180,
+        3077022725217904,
+        3077022737210741,
+        3077022749220565,
+        3077022761204205,
+        3077022773171059,
+        3077022785101116,
+        3077022797458476,
+        3077022809231075,
+        3077022821215073,
+        3077022833202073,
+        3077022845234981,
+        3077022857140424,
+        3077022869201319,
+        3077022881158411,
+        3077022893133094,
+        3077022905196728,
+        3077022917108294
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3077021201235059,
+          "bytes": 96,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "accepted",
+              "engine_request_id": 2
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021352799605,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 785,
+              "token_text": "The"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021365521410,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3897,
+              "token_text": " provided"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021377838149,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 5335,
+              "token_text": " images"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021390357260,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 525,
+              "token_text": " are"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021402878971,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021415151270,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 738,
+              "token_text": " set"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021427343401,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021439757997,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 8063,
+              "token_text": " eight"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021452093905,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021464570504,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 57722,
+              "token_text": "-colored"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021476989601,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 31340,
+              "token_text": " squares"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021489347876,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021501695185,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021514109532,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 71180,
+              "token_text": " occupying"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021526428588,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1181,
+              "token_text": " its"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021538800700,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1828,
+              "token_text": " own"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021551309445,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4034,
+              "token_text": " frame"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021563799348,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021576292843,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2619,
+              "token_text": " There"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021588704600,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 525,
+              "token_text": " are"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021601175660,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 902,
+              "token_text": " no"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021613676173,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6171,
+              "token_text": " objects"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021625998969,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021638378319,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 12624,
+              "token_text": " patterns"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021650764912,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021663251074,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 476,
+              "token_text": " or"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021675667884,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 52149,
+              "token_text": " gradients"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021688250367,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2293,
+              "token_text": "—"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021700652972,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4250,
+              "token_text": "just"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021713351401,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021725811196,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3175,
+              "token_text": " single"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021738259275,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021750742835,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13794,
+              "token_text": " uniform"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021763283618,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1894,
+              "token_text": " color"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021775799591,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 21274,
+              "token_text": " filling"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021788731043,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021800695061,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2168,
+              "token_text": " image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021813191349,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021825583468,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 21193,
+              "token_text": " Below"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021837968299,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021850485656,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021862823265,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11682,
+              "token_text": " detailed"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021875220283,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4008,
+              "token_text": " description"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021887664594,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021900030000,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021912546071,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2168,
+              "token_text": " image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021925053975,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 323,
+              "token_text": " and"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021937510957,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021949801715,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 15817,
+              "token_text": " comprehensive"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021962644477,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 12313,
+              "token_text": " comparison"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021975000692,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077021988454804,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 862,
+              "token_text": " their"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022000801112,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 7987,
+              "token_text": " colors"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022013171574,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 382,
+              "token_text": ".\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022025462988,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 44364,
+              "token_text": "---\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022037501911,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 334,
+              "token_text": "**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022049498040,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022061579386,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3874,
+              "token_text": " Des"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022073703626,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 24685,
+              "token_text": "criptions"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022085552363,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 25,
+              "token_text": ":"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022097675695,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 56177,
+              "token_text": "**\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022109821548,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 16,
+              "token_text": "1"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022121261014,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022133216413,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022145219243,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3070,
+              "token_text": " **"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022157072878,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022169157144,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022181160555,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 16,
+              "token_text": "1"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022192995616,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 66963,
+              "token_text": ":**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022204887759,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 362,
+              "token_text": " A"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022216740214,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022228671061,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022240611924,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 32976,
+              "token_text": " vibrant"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022252561469,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2518,
+              "token_text": " red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022264410701,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022276789400,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1084,
+              "token_text": " It"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022289549380,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022301939887,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022314714566,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 8205,
+              "token_text": " warm"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022329217161,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022341746293,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 49485,
+              "token_text": " saturated"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022354417592,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 39040,
+              "token_text": " hue"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022367171064,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022379817173,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 54985,
+              "token_text": " reminiscent"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022392236926,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022404888778,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022417494347,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 5538,
+              "token_text": " deep"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022429906581,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 96019,
+              "token_text": " crimson"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022442445245,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 476,
+              "token_text": " or"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022454882501,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 24837,
+              "token_text": " brick"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022467548641,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2518,
+              "token_text": " red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022480210790,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022493170077,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 576,
+              "token_text": " The"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022505794023,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1894,
+              "token_text": " color"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022518141985,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022530661971,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 9080,
+              "token_text": " rich"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022543124801,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 323,
+              "token_text": " and"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022555672223,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13939,
+              "token_text": " bold"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022568312788,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022580891937,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 64340,
+              "token_text": " commanding"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022593182165,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6529,
+              "token_text": " attention"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022605483077,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 382,
+              "token_text": ".\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022617360454,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 17,
+              "token_text": "2"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022629345545,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022641277653,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022653338296,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3070,
+              "token_text": " **"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022665234718,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022677098315,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022689289281,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 17,
+              "token_text": "2"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022701298616,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 66963,
+              "token_text": ":**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022713229180,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 362,
+              "token_text": " A"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022725217904,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022737210741,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022749220565,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 9906,
+              "token_text": " bright"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022761204205,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6176,
+              "token_text": " green"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022773171059,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022785101116,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1084,
+              "token_text": " It"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022797458476,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022809231075,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022821215073,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 42020,
+              "token_text": " vivid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022833202073,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022845234981,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4558,
+              "token_text": " almost"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022857140424,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 9072,
+              "token_text": " electric"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022869201319,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 27501,
+              "token_text": " shade"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022881158411,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022893133094,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4428,
+              "token_text": " similar"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022905196728,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 311,
+              "token_text": " to"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022917108294,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077022917186019,
+          "bytes": 1294,
+          "events": [
+            {
+              "request_id": "fusion-trace-2",
+              "event": "done",
+              "engine_request_id": 2,
+              "text": "The provided images are a set of eight solid-colored squares, each occupying its own frame. There are no objects, patterns, or gradients—just a single, uniform color filling each image. Below is a detailed description of each image and a comprehensive comparison of their colors.\n\n---\n\n**Image Descriptions:**\n\n1.  **Image 1:** A solid, vibrant red. It is a warm, saturated hue, reminiscent of a deep crimson or brick red. The color is rich and bold, commanding attention.\n\n2.  **Image 2:** A solid, bright green. It is a vivid, almost electric shade, similar to a",
+              "finish_reason": "length",
+              "token_ids": [
+                785,
+                3897,
+                5335,
+                525,
+                264,
+                738,
+                315,
+                8063,
+                6437,
+                57722,
+                31340,
+                11,
+                1817,
+                71180,
+                1181,
+                1828,
+                4034,
+                13,
+                2619,
+                525,
+                902,
+                6171,
+                11,
+                12624,
+                11,
+                476,
+                52149,
+                2293,
+                4250,
+                264,
+                3175,
+                11,
+                13794,
+                1894,
+                21274,
+                1817,
+                2168,
+                13,
+                21193,
+                374,
+                264,
+                11682,
+                4008,
+                315,
+                1817,
+                2168,
+                323,
+                264,
+                15817,
+                12313,
+                315,
+                862,
+                7987,
+                382,
+                44364,
+                334,
+                1906,
+                3874,
+                24685,
+                25,
+                56177,
+                16,
+                13,
+                220,
+                3070,
+                1906,
+                220,
+                16,
+                66963,
+                362,
+                6437,
+                11,
+                32976,
+                2518,
+                13,
+                1084,
+                374,
+                264,
+                8205,
+                11,
+                49485,
+                39040,
+                11,
+                54985,
+                315,
+                264,
+                5538,
+                96019,
+                476,
+                24837,
+                2518,
+                13,
+                576,
+                1894,
+                374,
+                9080,
+                323,
+                13939,
+                11,
+                64340,
+                6529,
+                382,
+                17,
+                13,
+                220,
+                3070,
+                1906,
+                220,
+                17,
+                66963,
+                362,
+                6437,
+                11,
+                9906,
+                6176,
+                13,
+                1084,
+                374,
+                264,
+                42020,
+                11,
+                4558,
+                9072,
+                27501,
+                11,
+                4428,
+                311,
+                264
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3077021143662942,
+      "client_finish_ns": 3077022917186019,
+      "final_token_ids": [
+        785,
+        3897,
+        5335,
+        525,
+        264,
+        738,
+        315,
+        8063,
+        6437,
+        57722,
+        31340,
+        11,
+        1817,
+        71180,
+        1181,
+        1828,
+        4034,
+        13,
+        2619,
+        525,
+        902,
+        6171,
+        11,
+        12624,
+        11,
+        476,
+        52149,
+        2293,
+        4250,
+        264,
+        3175,
+        11,
+        13794,
+        1894,
+        21274,
+        1817,
+        2168,
+        13,
+        21193,
+        374,
+        264,
+        11682,
+        4008,
+        315,
+        1817,
+        2168,
+        323,
+        264,
+        15817,
+        12313,
+        315,
+        862,
+        7987,
+        382,
+        44364,
+        334,
+        1906,
+        3874,
+        24685,
+        25,
+        56177,
+        16,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        16,
+        66963,
+        362,
+        6437,
+        11,
+        32976,
+        2518,
+        13,
+        1084,
+        374,
+        264,
+        8205,
+        11,
+        49485,
+        39040,
+        11,
+        54985,
+        315,
+        264,
+        5538,
+        96019,
+        476,
+        24837,
+        2518,
+        13,
+        576,
+        1894,
+        374,
+        9080,
+        323,
+        13939,
+        11,
+        64340,
+        6529,
+        382,
+        17,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        17,
+        66963,
+        362,
+        6437,
+        11,
+        9906,
+        6176,
+        13,
+        1084,
+        374,
+        264,
+        42020,
+        11,
+        4558,
+        9072,
+        27501,
+        11,
+        4428,
+        311,
+        264
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        12.721805,
+        12.316739,
+        12.519111,
+        12.521711,
+        12.272299,
+        12.192131,
+        12.414596,
+        12.335908,
+        12.476599,
+        12.419097,
+        12.358275,
+        12.347309,
+        12.414347,
+        12.319056,
+        12.372112,
+        12.508745,
+        12.489903,
+        12.493495,
+        12.411757,
+        12.47106,
+        12.500513,
+        12.322796,
+        12.37935,
+        12.386593,
+        12.486162,
+        12.41681,
+        12.582483,
+        12.402605,
+        12.698429,
+        12.459795,
+        12.448079,
+        12.48356,
+        12.540783,
+        12.515973,
+        12.931452,
+        11.964018,
+        12.496288,
+        12.392119,
+        12.384831,
+        12.517357,
+        12.337609,
+        12.397018,
+        12.444311,
+        12.365406,
+        12.516071,
+        12.507904,
+        12.456982,
+        12.290758,
+        12.842762,
+        12.356215,
+        13.454112,
+        12.346308,
+        12.370462,
+        12.291414,
+        12.038923,
+        11.996129,
+        12.081346,
+        12.12424,
+        11.848737,
+        12.123332,
+        12.145853,
+        11.439466,
+        11.955399,
+        12.00283,
+        11.853635,
+        12.084266,
+        12.003411,
+        11.835061,
+        11.892143,
+        11.852455,
+        11.930847,
+        11.940863,
+        11.949545,
+        11.849232,
+        12.378699,
+        12.75998,
+        12.390507,
+        12.774679,
+        14.502595,
+        12.529132,
+        12.671299,
+        12.753472,
+        12.646109,
+        12.419753,
+        12.651852,
+        12.605569,
+        12.412234,
+        12.538664,
+        12.437256,
+        12.66614,
+        12.662149,
+        12.959287,
+        12.623946,
+        12.347962,
+        12.519986,
+        12.46283,
+        12.547422,
+        12.640565,
+        12.579149,
+        12.290228,
+        12.300912,
+        11.877377,
+        11.985091,
+        11.932108,
+        12.060643,
+        11.896422,
+        11.863597,
+        12.190966,
+        12.009335,
+        11.930564,
+        11.988724,
+        11.992837,
+        12.009824,
+        11.98364,
+        11.966854,
+        11.930057,
+        12.35736,
+        11.772599,
+        11.983998,
+        11.987,
+        12.032908,
+        11.905443,
+        12.060895,
+        11.957092,
+        11.974683,
+        12.063634,
+        11.911566
+      ],
+      "ttft_ms": 209.136663,
+      "e2e_ms": 1773.523077,
+      "tpot_ms": 12.317391251968504,
+      "max_itl_ms": 14.502595,
+      "p95_itl_ms": 12.7580276,
+      "stream_matches_final_ids": true
+    },
+    {
+      "phase": "decode_with_cold_image",
+      "request_id": "fusion-trace-3",
+      "prompt": "Describe each image and compare all their colors in detail.",
+      "max_tokens": 128,
+      "media_group": 0,
+      "token_ids": [
+        785,
+        3897,
+        5335,
+        525,
+        264,
+        738,
+        315,
+        8063,
+        6437,
+        57722,
+        31340,
+        11,
+        1817,
+        71180,
+        1181,
+        1828,
+        4034,
+        13,
+        2619,
+        525,
+        902,
+        6171,
+        11,
+        12624,
+        11,
+        476,
+        52149,
+        2293,
+        4250,
+        264,
+        3175,
+        11,
+        13794,
+        1894,
+        21274,
+        1817,
+        2168,
+        13,
+        21193,
+        374,
+        264,
+        11682,
+        4008,
+        315,
+        1817,
+        2168,
+        323,
+        264,
+        15817,
+        12313,
+        315,
+        862,
+        7987,
+        382,
+        44364,
+        334,
+        1906,
+        3874,
+        24685,
+        25,
+        56177,
+        16,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        16,
+        66963,
+        362,
+        6437,
+        11,
+        32976,
+        2518,
+        13,
+        1084,
+        374,
+        264,
+        8205,
+        11,
+        49485,
+        39040,
+        11,
+        54985,
+        315,
+        264,
+        5538,
+        96019,
+        476,
+        24837,
+        2518,
+        13,
+        576,
+        1894,
+        374,
+        9080,
+        323,
+        13939,
+        11,
+        64340,
+        6529,
+        382,
+        17,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        17,
+        66963,
+        362,
+        6437,
+        11,
+        9906,
+        6176,
+        13,
+        1084,
+        374,
+        264,
+        42020,
+        11,
+        4558,
+        9072,
+        27501,
+        11,
+        4428,
+        311,
+        264
+      ],
+      "token_arrival_ns": [
+        3077023102083677,
+        3077023114735036,
+        3077023127227614,
+        3077023169031174,
+        3077023169189925,
+        3077023169189925,
+        3077023177748720,
+        3077023189465727,
+        3077023202740098,
+        3077023227187257,
+        3077023227187257,
+        3077023239159402,
+        3077023251569299,
+        3077023264254135,
+        3077023276598969,
+        3077023288968938,
+        3077023301604711,
+        3077023313948900,
+        3077023326380882,
+        3077023338740323,
+        3077023351136012,
+        3077023363475911,
+        3077023375851882,
+        3077023388319381,
+        3077023400851185,
+        3077023413047458,
+        3077023748572449,
+        3077023763189892,
+        3077023777882992,
+        3077023792238131,
+        3077023807561261,
+        3077023822273953,
+        3077023836125389,
+        3077023851138869,
+        3077023865757197,
+        3077023880169008,
+        3077023895195248,
+        3077023909798298,
+        3077023924581528,
+        3077023939324217,
+        3077023953749196,
+        3077023966333716,
+        3077023978407640,
+        3077023990316009,
+        3077024002321269,
+        3077024014323269,
+        3077024026444826,
+        3077024038434725,
+        3077024050438715,
+        3077024062512140,
+        3077024074592704,
+        3077024086603525,
+        3077024098595779,
+        3077024110688121,
+        3077024122823657,
+        3077024138276180,
+        3077024147697855,
+        3077024160233308,
+        3077024172688706,
+        3077024185528150,
+        3077024199122667,
+        3077024211301534,
+        3077024223383686,
+        3077024235479088,
+        3077024247615671,
+        3077024259827316,
+        3077024272014680,
+        3077024284358788,
+        3077024296418071,
+        3077024308514119,
+        3077024320735921,
+        3077024332782657,
+        3077024344849005,
+        3077024356935247,
+        3077024369104843,
+        3077024381197398,
+        3077024393349177,
+        3077024405601780,
+        3077024417652370,
+        3077024429852240,
+        3077024441907262,
+        3077024453958417,
+        3077024466045098,
+        3077024478122716,
+        3077024490227772,
+        3077024502263763,
+        3077024514303766,
+        3077024526419137,
+        3077024538496447,
+        3077024550551733,
+        3077024562616556,
+        3077024574670321,
+        3077024586736858,
+        3077024598907217,
+        3077024610958223,
+        3077024623061254,
+        3077024635060329,
+        3077024647117672,
+        3077024659215467,
+        3077024671334034,
+        3077024683464014,
+        3077024695590989,
+        3077024707733268,
+        3077024720020114,
+        3077024732180446,
+        3077024744365148,
+        3077024756357254,
+        3077024768504146,
+        3077024780507009,
+        3077024792681910,
+        3077024804813316,
+        3077024816841434,
+        3077024829070055,
+        3077024841032801,
+        3077024853126556,
+        3077024865105227,
+        3077024877172890,
+        3077024889250462,
+        3077024901348020,
+        3077024913384579,
+        3077024925459998,
+        3077024937505403,
+        3077024949525069,
+        3077024961627158,
+        3077024973739640,
+        3077024985826147,
+        3077024997910889,
+        3077025010154942
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3077022959372942,
+          "bytes": 96,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "accepted",
+              "engine_request_id": 3
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023102083677,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 785,
+              "token_text": "The"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023114735036,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3897,
+              "token_text": " provided"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023127227614,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 5335,
+              "token_text": " images"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023169031174,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 525,
+              "token_text": " are"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023169189925,
+          "bytes": 248,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            },
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 738,
+              "token_text": " set"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023177748720,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023189465727,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 8063,
+              "token_text": " eight"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023202740098,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023227187257,
+          "bytes": 262,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 57722,
+              "token_text": "-colored"
+            },
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 31340,
+              "token_text": " squares"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023239159402,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023251569299,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023264254135,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 71180,
+              "token_text": " occupying"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023276598969,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1181,
+              "token_text": " its"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023288968938,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1828,
+              "token_text": " own"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023301604711,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4034,
+              "token_text": " frame"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023313948900,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023326380882,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2619,
+              "token_text": " There"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023338740323,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 525,
+              "token_text": " are"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023351136012,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 902,
+              "token_text": " no"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023363475911,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6171,
+              "token_text": " objects"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023375851882,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023388319381,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 12624,
+              "token_text": " patterns"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023400851185,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023413047458,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 476,
+              "token_text": " or"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023748572449,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 52149,
+              "token_text": " gradients"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023763189892,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2293,
+              "token_text": "—"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023777882992,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4250,
+              "token_text": "just"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023792238131,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023807561261,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3175,
+              "token_text": " single"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023822273953,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023836125389,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13794,
+              "token_text": " uniform"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023851138869,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1894,
+              "token_text": " color"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023865757197,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 21274,
+              "token_text": " filling"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023880169008,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023895195248,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2168,
+              "token_text": " image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023909798298,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023924581528,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 21193,
+              "token_text": " Below"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023939324217,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023953749196,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023966333716,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11682,
+              "token_text": " detailed"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023978407640,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4008,
+              "token_text": " description"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023990316009,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024002321269,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024014323269,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2168,
+              "token_text": " image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024026444826,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 323,
+              "token_text": " and"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024038434725,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024050438715,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 15817,
+              "token_text": " comprehensive"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024062512140,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 12313,
+              "token_text": " comparison"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024074592704,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024086603525,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 862,
+              "token_text": " their"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024098595779,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 7987,
+              "token_text": " colors"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024110688121,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 382,
+              "token_text": ".\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024122823657,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 44364,
+              "token_text": "---\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024138276180,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 334,
+              "token_text": "**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024147697855,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024160233308,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3874,
+              "token_text": " Des"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024172688706,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 24685,
+              "token_text": "criptions"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024185528150,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 25,
+              "token_text": ":"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024199122667,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 56177,
+              "token_text": "**\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024211301534,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 16,
+              "token_text": "1"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024223383686,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024235479088,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024247615671,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3070,
+              "token_text": " **"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024259827316,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024272014680,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024284358788,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 16,
+              "token_text": "1"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024296418071,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 66963,
+              "token_text": ":**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024308514119,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 362,
+              "token_text": " A"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024320735921,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024332782657,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024344849005,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 32976,
+              "token_text": " vibrant"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024356935247,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2518,
+              "token_text": " red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024369104843,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024381197398,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1084,
+              "token_text": " It"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024393349177,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024405601780,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024417652370,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 8205,
+              "token_text": " warm"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024429852240,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024441907262,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 49485,
+              "token_text": " saturated"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024453958417,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 39040,
+              "token_text": " hue"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024466045098,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024478122716,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 54985,
+              "token_text": " reminiscent"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024490227772,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024502263763,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024514303766,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 5538,
+              "token_text": " deep"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024526419137,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 96019,
+              "token_text": " crimson"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024538496447,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 476,
+              "token_text": " or"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024550551733,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 24837,
+              "token_text": " brick"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024562616556,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2518,
+              "token_text": " red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024574670321,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024586736858,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 576,
+              "token_text": " The"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024598907217,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1894,
+              "token_text": " color"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024610958223,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024623061254,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 9080,
+              "token_text": " rich"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024635060329,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 323,
+              "token_text": " and"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024647117672,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13939,
+              "token_text": " bold"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024659215467,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024671334034,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 64340,
+              "token_text": " commanding"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024683464014,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6529,
+              "token_text": " attention"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024695590989,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 382,
+              "token_text": ".\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024707733268,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 17,
+              "token_text": "2"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024720020114,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024732180446,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024744365148,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3070,
+              "token_text": " **"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024756357254,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024768504146,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024780507009,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 17,
+              "token_text": "2"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024792681910,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 66963,
+              "token_text": ":**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024804813316,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 362,
+              "token_text": " A"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024816841434,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024829070055,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024841032801,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 9906,
+              "token_text": " bright"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024853126556,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6176,
+              "token_text": " green"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024865105227,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024877172890,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1084,
+              "token_text": " It"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024889250462,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024901348020,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024913384579,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 42020,
+              "token_text": " vivid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024925459998,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024937505403,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4558,
+              "token_text": " almost"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024949525069,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 9072,
+              "token_text": " electric"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024961627158,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 27501,
+              "token_text": " shade"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024973739640,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024985826147,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4428,
+              "token_text": " similar"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077024997910889,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 311,
+              "token_text": " to"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077025010154942,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077025010323122,
+          "bytes": 1294,
+          "events": [
+            {
+              "request_id": "fusion-trace-3",
+              "event": "done",
+              "engine_request_id": 3,
+              "text": "The provided images are a set of eight solid-colored squares, each occupying its own frame. There are no objects, patterns, or gradients—just a single, uniform color filling each image. Below is a detailed description of each image and a comprehensive comparison of their colors.\n\n---\n\n**Image Descriptions:**\n\n1.  **Image 1:** A solid, vibrant red. It is a warm, saturated hue, reminiscent of a deep crimson or brick red. The color is rich and bold, commanding attention.\n\n2.  **Image 2:** A solid, bright green. It is a vivid, almost electric shade, similar to a",
+              "finish_reason": "length",
+              "token_ids": [
+                785,
+                3897,
+                5335,
+                525,
+                264,
+                738,
+                315,
+                8063,
+                6437,
+                57722,
+                31340,
+                11,
+                1817,
+                71180,
+                1181,
+                1828,
+                4034,
+                13,
+                2619,
+                525,
+                902,
+                6171,
+                11,
+                12624,
+                11,
+                476,
+                52149,
+                2293,
+                4250,
+                264,
+                3175,
+                11,
+                13794,
+                1894,
+                21274,
+                1817,
+                2168,
+                13,
+                21193,
+                374,
+                264,
+                11682,
+                4008,
+                315,
+                1817,
+                2168,
+                323,
+                264,
+                15817,
+                12313,
+                315,
+                862,
+                7987,
+                382,
+                44364,
+                334,
+                1906,
+                3874,
+                24685,
+                25,
+                56177,
+                16,
+                13,
+                220,
+                3070,
+                1906,
+                220,
+                16,
+                66963,
+                362,
+                6437,
+                11,
+                32976,
+                2518,
+                13,
+                1084,
+                374,
+                264,
+                8205,
+                11,
+                49485,
+                39040,
+                11,
+                54985,
+                315,
+                264,
+                5538,
+                96019,
+                476,
+                24837,
+                2518,
+                13,
+                576,
+                1894,
+                374,
+                9080,
+                323,
+                13939,
+                11,
+                64340,
+                6529,
+                382,
+                17,
+                13,
+                220,
+                3070,
+                1906,
+                220,
+                17,
+                66963,
+                362,
+                6437,
+                11,
+                9906,
+                6176,
+                13,
+                1084,
+                374,
+                264,
+                42020,
+                11,
+                4558,
+                9072,
+                27501,
+                11,
+                4428,
+                311,
+                264
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3077022921310136,
+      "client_finish_ns": 3077025010323122,
+      "final_token_ids": [
+        785,
+        3897,
+        5335,
+        525,
+        264,
+        738,
+        315,
+        8063,
+        6437,
+        57722,
+        31340,
+        11,
+        1817,
+        71180,
+        1181,
+        1828,
+        4034,
+        13,
+        2619,
+        525,
+        902,
+        6171,
+        11,
+        12624,
+        11,
+        476,
+        52149,
+        2293,
+        4250,
+        264,
+        3175,
+        11,
+        13794,
+        1894,
+        21274,
+        1817,
+        2168,
+        13,
+        21193,
+        374,
+        264,
+        11682,
+        4008,
+        315,
+        1817,
+        2168,
+        323,
+        264,
+        15817,
+        12313,
+        315,
+        862,
+        7987,
+        382,
+        44364,
+        334,
+        1906,
+        3874,
+        24685,
+        25,
+        56177,
+        16,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        16,
+        66963,
+        362,
+        6437,
+        11,
+        32976,
+        2518,
+        13,
+        1084,
+        374,
+        264,
+        8205,
+        11,
+        49485,
+        39040,
+        11,
+        54985,
+        315,
+        264,
+        5538,
+        96019,
+        476,
+        24837,
+        2518,
+        13,
+        576,
+        1894,
+        374,
+        9080,
+        323,
+        13939,
+        11,
+        64340,
+        6529,
+        382,
+        17,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        17,
+        66963,
+        362,
+        6437,
+        11,
+        9906,
+        6176,
+        13,
+        1084,
+        374,
+        264,
+        42020,
+        11,
+        4558,
+        9072,
+        27501,
+        11,
+        4428,
+        311,
+        264
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        12.651359,
+        12.492578,
+        41.80356,
+        0.158751,
+        0.0,
+        8.558795,
+        11.717007,
+        13.274371,
+        24.447159,
+        0.0,
+        11.972145,
+        12.409897,
+        12.684836,
+        12.344834,
+        12.369969,
+        12.635773,
+        12.344189,
+        12.431982,
+        12.359441,
+        12.395689,
+        12.339899,
+        12.375971,
+        12.467499,
+        12.531804,
+        12.196273,
+        335.524991,
+        14.617443,
+        14.6931,
+        14.355139,
+        15.32313,
+        14.712692,
+        13.851436,
+        15.01348,
+        14.618328,
+        14.411811,
+        15.02624,
+        14.60305,
+        14.78323,
+        14.742689,
+        14.424979,
+        12.58452,
+        12.073924,
+        11.908369,
+        12.00526,
+        12.002,
+        12.121557,
+        11.989899,
+        12.00399,
+        12.073425,
+        12.080564,
+        12.010821,
+        11.992254,
+        12.092342,
+        12.135536,
+        15.452523,
+        9.421675,
+        12.535453,
+        12.455398,
+        12.839444,
+        13.594517,
+        12.178867,
+        12.082152,
+        12.095402,
+        12.136583,
+        12.211645,
+        12.187364,
+        12.344108,
+        12.059283,
+        12.096048,
+        12.221802,
+        12.046736,
+        12.066348,
+        12.086242,
+        12.169596,
+        12.092555,
+        12.151779,
+        12.252603,
+        12.05059,
+        12.19987,
+        12.055022,
+        12.051155,
+        12.086681,
+        12.077618,
+        12.105056,
+        12.035991,
+        12.040003,
+        12.115371,
+        12.07731,
+        12.055286,
+        12.064823,
+        12.053765,
+        12.066537,
+        12.170359,
+        12.051006,
+        12.103031,
+        11.999075,
+        12.057343,
+        12.097795,
+        12.118567,
+        12.12998,
+        12.126975,
+        12.142279,
+        12.286846,
+        12.160332,
+        12.184702,
+        11.992106,
+        12.146892,
+        12.002863,
+        12.174901,
+        12.131406,
+        12.028118,
+        12.228621,
+        11.962746,
+        12.093755,
+        11.978671,
+        12.067663,
+        12.077572,
+        12.097558,
+        12.036559,
+        12.075419,
+        12.045405,
+        12.019666,
+        12.102089,
+        12.112482,
+        12.086507,
+        12.084742,
+        12.244053
+      ],
+      "ttft_ms": 180.773541,
+      "e2e_ms": 2089.012986,
+      "tpot_ms": 15.024183188976378,
+      "max_itl_ms": 335.524991,
+      "p95_itl_ms": 14.944404999999996,
+      "stream_matches_final_ids": true
+    },
+    {
+      "phase": "injected_cold_image",
+      "request_id": "fusion-trace-4",
+      "prompt": "Describe the main color of the first image. Answer with one color word.",
+      "max_tokens": 16,
+      "media_group": 1,
+      "long_request_id": "fusion-trace-3",
+      "long_tokens_observed_at_submit": 3,
+      "long_already_finished_at_submit": false,
+      "token_ids": [
+        6033,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "token_arrival_ns": [
+        3077023732250189,
+        3077023748807140,
+        3077023763410784,
+        3077023778112425,
+        3077023792669203,
+        3077023807798122,
+        3077023822475328,
+        3077023836702586,
+        3077023851350920,
+        3077023865970062,
+        3077023880380829,
+        3077023895409680,
+        3077023910027813,
+        3077023924799645,
+        3077023939530022,
+        3077023954082906
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3077023415837203,
+          "bytes": 96,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "accepted",
+              "engine_request_id": 4
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023732250189,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 6033,
+              "token_text": "Red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023748807140,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023763410784,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023778112425,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023792669203,
+          "bytes": 136,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023807798122,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023822475328,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023836702586,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023851350920,
+          "bytes": 136,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023865970062,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023880380829,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023895409680,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023910027813,
+          "bytes": 136,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023924799645,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023939530022,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3077023954082906,
+          "bytes": 383,
+          "events": [
+            {
+              "request_id": "fusion-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            },
+            {
+              "request_id": "fusion-trace-4",
+              "event": "done",
+              "engine_request_id": 4,
+              "text": "Red\n\n\n\n",
+              "finish_reason": "length",
+              "token_ids": [
+                6033,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3077023127557053,
+      "client_finish_ns": 3077023954082906,
+      "final_token_ids": [
+        6033,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        16.556951,
+        14.603644,
+        14.701641,
+        14.556778,
+        15.128919,
+        14.677206,
+        14.227258,
+        14.648334,
+        14.619142,
+        14.410767,
+        15.028851,
+        14.618133,
+        14.771832,
+        14.730377,
+        14.552884
+      ],
+      "ttft_ms": 604.693136,
+      "e2e_ms": 826.525853,
+      "tpot_ms": 14.788847800000001,
+      "max_itl_ms": 16.556951,
+      "p95_itl_ms": 15.557328599999998,
+      "stream_matches_final_ids": true
+    }
+  ],
+  "status": "complete",
+  "protocol": {
+    "fixture": "eight 448x448 solid RGB images; colors shifted by 17 per cold group",
+    "colors": [
+      [
+        220,
+        50,
+        50
+      ],
+      [
+        50,
+        180,
+        80
+      ],
+      [
+        60,
+        100,
+        220
+      ],
+      [
+        220,
+        180,
+        40
+      ],
+      [
+        170,
+        70,
+        200
+      ],
+      [
+        40,
+        190,
+        190
+      ],
+      [
+        230,
+        120,
+        40
+      ],
+      [
+        120,
+        120,
+        120
+      ]
+    ],
+    "repeat": 1,
+    "long_tokens": 128,
+    "timing": "HTTP client; JSON upload, server image decode, preprocessing, queueing included",
+    "token_time": "observed network read completing each SSE event; no interpolation",
+    "cold_injection": "after at least 3 observed tokens of a live long decode"
+  },
+  "phase_summaries": {
+    "warmup": {
+      "ttft_ms": 1441.019242,
+      "e2e_ms": 1625.121832,
+      "tpot_ms": 12.2362342,
+      "max_itl_ms": 13.711689,
+      "p95_itl_ms": 13.376795
+    },
+    "hot_changed_question": {
+      "ttft_ms": 263.763426,
+      "e2e_ms": 458.841661,
+      "tpot_ms": 12.992166133333333,
+      "max_itl_ms": 15.241007,
+      "p95_itl_ms": 15.001919899999999
+    },
+    "decode_alone": {
+      "ttft_ms": 209.136663,
+      "e2e_ms": 1773.523077,
+      "tpot_ms": 12.317391251968504,
+      "max_itl_ms": 14.502595,
+      "p95_itl_ms": 12.7580276
+    },
+    "decode_with_cold_image": {
+      "ttft_ms": 180.773541,
+      "e2e_ms": 2089.012986,
+      "tpot_ms": 15.024183188976378,
+      "max_itl_ms": 335.524991,
+      "p95_itl_ms": 14.944404999999996
+    },
+    "injected_cold_image": {
+      "ttft_ms": 604.693136,
+      "e2e_ms": 826.525853,
+      "tpot_ms": 14.788847800000001,
+      "max_itl_ms": 16.556951,
+      "p95_itl_ms": 15.557328599999998
+    }
+  }
+}

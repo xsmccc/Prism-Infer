@@ -226,6 +226,12 @@ Scaled-FP8 Prefix 命中的 Attention 从 Context 保存的 CPU offsets 读取�
 `causal_lower_right` 对齐后缀的因果范围，并由支持 GQA 的 SDPA 后端执行 Attention。
 这解决逐层同步和手工 K/V head 复制，但不是直接读取 FP8 页的融合 Prefill kernel。
 
+当前 CUDA 路径在一个 Triton kernel 中完成 K/V gather 和反量化，保留原来的 dtype
+舍入顺序，再交给上述 SDPA。短后缀也使用原生均值归约的 Q/K RMSNorm-M-RoPE 融合。
+模型初始化的 CUDA 默认设备仅存在于 `with torch.device("cuda")` 作用域内，不在退出时
+通过 `set_default_device("cpu")` 留下持续拦截 torch 调用的模式。详见
+[短 Prefill 优化](PREFIX_PREFILL_OPTIMIZATION.md)。
+
 ## 9. 当前实现情况
 
 - TP1 和 TP2 已在 RTX 5090 上完成图像、视频、混合 batch 和 HTTP/SSE 测试；

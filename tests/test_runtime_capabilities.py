@@ -21,7 +21,6 @@ def _complete_capabilities() -> RuntimeCapabilities:
         cuda_available=True,
         distributed_available=True,
         sdpa_available=True,
-        default_device_api_available=True,
         compile_available=True,
         cuda_graph_available=True,
         fp8_e4m3fn_available=True,
@@ -140,7 +139,6 @@ def test_core_capability_errors_include_version_and_required_apis() -> None:
         cuda_available=False,
         distributed_available=False,
         sdpa_available=False,
-        default_device_api_available=False,
     )
 
     errors = runtime_capability_errors(
@@ -149,7 +147,7 @@ def test_core_capability_errors_include_version_and_required_apis() -> None:
         compression_mode="off",
     )
 
-    assert len(errors) == 5
+    assert len(errors) == 4
     assert errors[0].startswith("unsupported PyTorch version")
     assert errors[-1] == "CUDA is unavailable"
 

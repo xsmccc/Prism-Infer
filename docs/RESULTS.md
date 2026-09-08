@@ -179,3 +179,18 @@ TP1、Scaled-FP8 KV、八图 fixture，两组反序开关对照中，每 8 层�
 本轮是执行时序取舍，不是 vLLM 排名或质量测试；跨运行有少数长请求最后一个 token
 不同，关闭交错的两次运行之间也有差异。配置、原始 JSON、取消修复和 Nsight 时间线见
 [PREFILL_INTERLEAVING.md](PREFILL_INTERLEAVING.md)。
+
+## 7. 2026-09-08 热 Prefix 后缀优化
+
+另一次同allocation内旧→新→新→旧 HTTP 对照中，短后缀GPU融合与默认设备作用域修复
+将同图换问题 TTFT 从 208.37 降至 144.61 ms，E2E 从 375.53 降至 310.13 ms。两次
+TTFT配对分别降低27.72%和33.29%。独立Decode TPOT为10.90→10.87 ms，基本不变；
+冷请求TTFT为475.68→453.63 ms。这次没有开启cooperative Prefill。
+
+GPU层面，热Prefill从2111个kernel减少到959个；CPU profile确认初始化留下的
+DeviceContext分发不再发生。修复设备模式后，独立的同进程消融仍显示融合将Prefill
+step从57.82降到40.31 ms，但这不是HTTP计时，不能把两个百分比相加。
+
+四轮各完成11请求/624 tokens；有少数长请求在最后一个token出现跨运行差异，包括
+基线重复运行之间。具体位置、配置与机制见[优化说明](PREFIX_PREFILL_OPTIMIZATION.md)。
+本轮不修改历史量化质量结论，也不构成新的vLLM/SGLang排名。
