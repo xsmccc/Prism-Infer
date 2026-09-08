@@ -250,7 +250,7 @@ class LLMEngine:
         self._pending_prefill: _PendingPrefill | None = None
         self._cooperative_prefill_deferred_decode_steps = 0
         self._cooperative_prefill_atomic_batches = 0
-        self._cooperative_prefill_underfilled_batches = 0
+        self._cooperative_prefill_batches = 0
         self._slo_prefill_deadline_releases = 0
         self._slo_prefill_light_atomic_batches = 0
         self._slo_prefill_deadline_atomic_batches = 0
@@ -1019,15 +1019,23 @@ class LLMEngine:
         if self._is_slo_deadline_atomic_plan(plan):
             self._slo_prefill_deadline_atomic_batches += 1
             return False
-        if plan.batch_size >= _COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES:
+        slo_policy = self._slo_prefill_policy()
+        if (
+            slo_policy is not None
+            and plan.batch_size >= _COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES
+        ):
             self._cooperative_prefill_atomic_batches += 1
             return False
         is_heavy_visual = (
             plan.num_scheduled_vision_patches >= self.config.heavy_prefill_vision_patch_threshold
         )
-        if not is_heavy_visual and not self._cooperative_prefill_fine_grain_enabled():
+        if (
+            slo_policy is not None
+            and not is_heavy_visual
+            and not self._cooperative_prefill_fine_grain_enabled()
+        ):
             return False
-        self._cooperative_prefill_underfilled_batches += 1
+        self._cooperative_prefill_batches += 1
         self.metrics.on_batch_planned(plan)
         clock_ns = getattr(self, "clock_ns", perf_counter_ns)
         started_ns = clock_ns()
@@ -1055,11 +1063,11 @@ class LLMEngine:
         )
 
     def _cooperative_prefill_quanta(self) -> tuple[int, int]:
-        """Choose coarse startup or fine loaded prefill quanta."""
+        """Use configured quanta; retain adaptive quanta for the SLO policy."""
 
         layer_quantum = self.config.cooperative_prefill_layer_quantum
         vision_block_quantum = self.config.cooperative_prefill_vision_block_quantum
-        if self._cooperative_prefill_fine_grain_enabled():
+        if self._slo_prefill_policy() is None or self._cooperative_prefill_fine_grain_enabled():
             return layer_quantum, vision_block_quantum
         return (
             max(
@@ -1078,6 +1086,7 @@ class LLMEngine:
         if (
             not getattr(self.config, "enable_cooperative_prefill", False)
             or not self.scheduler.has_decode_work()
+            or self._slo_prefill_policy() is None
         ):
             return False
         waiting = tuple(self.scheduler.waiting)
@@ -1106,14 +1115,19 @@ class LLMEngine:
         return should_wait
 
     def cooperative_prefill_policy_metadata(self) -> dict[str, object]:
-        """Return measured counters for the deadline-coalescing policy."""
+        """Return the active interleaving settings and measured policy counters."""
 
         return {
+            "enabled": self.config.enable_cooperative_prefill,
+            "policy": self.scheduler.policy.name,
+            "layer_quantum": self.config.cooperative_prefill_layer_quantum,
+            "vision_block_quantum": self.config.cooperative_prefill_vision_block_quantum,
+            "coalescing_enabled": self._slo_prefill_policy() is not None,
             "coalesce_min_sequences": (_COOPERATIVE_PREFILL_COALESCE_MIN_SEQUENCES),
             "coalesce_max_wait_ms": (_COOPERATIVE_PREFILL_COALESCE_MAX_WAIT_NS / 1e6),
             "deferred_decode_steps": (self._cooperative_prefill_deferred_decode_steps),
             "atomic_coalesced_batches": (self._cooperative_prefill_atomic_batches),
-            "cooperative_underfilled_batches": (self._cooperative_prefill_underfilled_batches),
+            "cooperative_batches": self._cooperative_prefill_batches,
             "slo_prefill_reserve_ms_by_tier": (
                 None
                 if self._slo_prefill_policy() is None
@@ -1136,7 +1150,9 @@ class LLMEngine:
                         "engine.scheduler.schedule",
                         cuda=False,
                     ):
-                        plan = self.scheduler.schedule_decode()
+                        plan = self.scheduler.schedule_resident_decode()
+                    if plan is None:
+                        return self._finish_pending_prefill(profile_session)
                     return self._execute_planned_step(
                         plan,
                         profile_session,
@@ -1175,7 +1191,9 @@ class LLMEngine:
             if complete:
                 return self._finish_pending_prefill(profile_session)
             with profile_region("engine.scheduler.schedule", cuda=False):
-                plan = self.scheduler.schedule_decode()
+                plan = self.scheduler.schedule_resident_decode()
+            if plan is None:
+                return self._finish_pending_prefill(profile_session)
             result = self._execute_planned_step(plan, profile_session)
             return result
 
@@ -1187,7 +1205,9 @@ class LLMEngine:
             plan = self.scheduler.schedule()
         if self._start_cooperative_prefill_if_useful(plan):
             with profile_region("engine.scheduler.schedule", cuda=False):
-                decode_plan = self.scheduler.schedule_decode()
+                decode_plan = self.scheduler.schedule_resident_decode()
+            if decode_plan is None:
+                return self._finish_pending_prefill(profile_session)
             return self._execute_planned_step(decode_plan, profile_session)
         return self._execute_planned_step(plan, profile_session)
 
@@ -1220,7 +1240,11 @@ class LLMEngine:
 
         pending = getattr(self, "_pending_prefill", None)
         if pending is not None and request_id in pending.plan.sequence_ids:
-            self._finish_pending_prefill()
+            # No sequence frontier is committed until finish_prefill. Drop the
+            # partial model state rather than generating tokens inside cancel;
+            # surviving members retain their pages and retry the unfinished slice.
+            self._pending_prefill = None
+            self._decode_after_slo_prefill_interrupt = False
         cancelled = self.scheduler.cancel(request_id)
         if cancelled:
             marker = getattr(self.metrics, "mark_terminal", None)
@@ -1288,7 +1312,7 @@ class LLMEngine:
         self.scheduler.block_manager.reset_multimodal_prefix_cache_metrics()
         self._cooperative_prefill_deferred_decode_steps = 0
         self._cooperative_prefill_atomic_batches = 0
-        self._cooperative_prefill_underfilled_batches = 0
+        self._cooperative_prefill_batches = 0
         self._slo_prefill_deadline_releases = 0
         self._slo_prefill_light_atomic_batches = 0
         self._slo_prefill_deadline_atomic_batches = 0

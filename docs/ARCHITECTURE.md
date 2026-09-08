@@ -80,7 +80,9 @@ host state update
 
 ## 4. Tensor Parallel
 
-TP2 切分语言模型，Vision Encoder 暂时复制执行。
+TP2 切分语言模型。Vision Encoder 默认复制执行，也可通过
+`vision_encoder_parallel_mode=data` 按完整图片分工，再收集主特征和全部 DeepStack，
+恢复原始媒体顺序。视频路径不变，详见[多卡实现](MULTI_GPU.md)。
 
 Column-parallel：
 
@@ -212,6 +214,13 @@ Continuous Batching、FCFS 和 Chunked Prefill。
 HTTP Runtime 支持普通 JSON 响应、SSE Token Stream、取消请求和退出时释放显存。
 
 当前仍是同步的 schedule → execute → postprocess 步进，不是异步 CPU/GPU 调度。
+HTTP 的 CPU 媒体准备可在后台线程运行，模型执行和 KV 状态仍由单个 owner 管理。
+TP1 可显式启用 cooperative Prefill，在 Vision block／语言层之间执行独立 Decode
+批次；这不是同一批内混合 Prefill/Decode。普通 FCFS 不再等待 250 ms 凑批，按配置
+指定层数推进；无可执行的驻留 Decode 时先完成 Prefill。取消暂停批次的一条请求后，
+其余请求保留已提交前沿并重算未完成片段。该路径默认关闭，原因和测量见
+[交错执行记录](PREFILL_INTERLEAVING.md)。
+
 Scaled-FP8 Prefix 命中的 Attention 从 Context 保存的 CPU offsets 读取长度，按有效页数
 截取页表；不会逐层把长度或页号读回 CPU。KV 仍会 gather/反量化到连续临时张量，再用
 `causal_lower_right` 对齐后缀的因果范围，并由支持 GQA 的 SDPA 后端执行 Attention。
@@ -220,7 +229,7 @@ Scaled-FP8 Prefix 命中的 Attention 从 Context 保存的 CPU offsets 读取�
 ## 9. 当前实现情况
 
 - TP1 和 TP2 已在 RTX 5090 上完成图像、视频、混合 batch 和 HTTP/SSE 测试；
-- TP2 的 Vision Encoder 仍然复制执行，尚未实现 Vision Parallel；
+- TP2 已支持完整图片级 Vision Encoder 数据并行，视频仍使用原路径；
 - Dynamic Vision Tensor Graph 在混合 shape 下会改变首 token，因此默认关闭；
 - Prefix Cache 位于单个 Engine Process 内，尚未做跨进程或跨机器共享；
 - 当前 Serving API 为项目自有格式，不兼容 OpenAI API。

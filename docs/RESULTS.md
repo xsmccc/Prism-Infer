@@ -165,5 +165,17 @@ GPU 时间，NCCL AllReduce 约 8%，Paged Attention 约 2.6%；结论是语言 
 - 主工作集结果只覆盖 Qwen3-VL-8B、RTX 5090、TP1、固定 KV 字节预算和重复多图提问；
 - 图片压实只有有限的修复后质量样本，默认不删除视觉 token；视频删除也默认关闭；
 - Prefix Cache 位于单个 Engine Process 内，不跨进程或机器共享；
-- Vision Parallel、PP、MoE Expert Parallel 和多机推理尚未实现；
+- 图片级 Vision Encoder 数据并行已实现，见[多卡记录](MULTI_GPU.md)；PP、MoE Expert
+  Parallel 和多机推理尚未实现；
 - Serving API 为项目自有格式，不兼容 OpenAI API。
+
+## 6. 2026-09-08 HTTP Prefill 交错执行
+
+TP1、Scaled-FP8 KV、八图 fixture，两组反序开关对照中，每 8 层插入 Decode 将单请求
+最大 ITL 的汇总值从 225.18 降至 42.19 ms；平均 TPOT 从 12.70 增至 12.82 ms，ITL p95
+从 12.36 增至 28.27 ms，冷请求 TTFT 从 456.51 增至 625.23 ms。因此没有默认开启。
+这些 ITL 值先在每个请求内计算，再汇总，不是整体 p99。
+
+本轮是执行时序取舍，不是 vLLM 排名或质量测试；跨运行有少数长请求最后一个 token
+不同，关闭交错的两次运行之间也有差异。配置、原始 JSON、取消修复和 Nsight 时间线见
+[PREFILL_INTERLEAVING.md](PREFILL_INTERLEAVING.md)。

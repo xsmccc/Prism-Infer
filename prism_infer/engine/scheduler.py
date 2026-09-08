@@ -10,6 +10,7 @@ from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from time import perf_counter_ns
+from typing import cast
 
 from prism_infer.config import DEFAULT_MAX_VISION_PATCHES_PER_BATCH, Config
 from prism_infer.engine.block_manager import BlockManager
@@ -340,10 +341,9 @@ class Scheduler:
         )
 
     def _collect_running_prefills(self, batch: _PrefillBatchBuilder) -> None:
-        if not self.enable_chunked_prefill:
-            return
-        # Continue prior chunks before admitting new work. Decode requests
-        # remain in the shared running queue but are ignored by this pass.
+        # Continue unfinished work before admission, including survivors of an
+        # aborted cooperative batch when token chunking is disabled. The policy
+        # still decides whether the remaining prompt is one atomic slice.
         for seq in tuple(self.running):
             if seq.status is not RequestState.PREFILLING:
                 continue
@@ -506,7 +506,7 @@ class Scheduler:
             created_ns=self.clock_ns(),
         )
 
-    def _decode_plan(self) -> BatchPlan:
+    def _decode_plan(self, *, resident_only: bool = False) -> BatchPlan | None:
         # The latency-critical offline/interactive path has one resident
         # decoding request and no swapped work.  Keep it in-place instead of
         # rebuilding/removing/restoring temporary deques every token.  Any
@@ -542,7 +542,8 @@ class Scheduler:
         scheduled: list[Sequence] = []
 
         while (
-            self.swapped
+            not resident_only
+            and self.swapped
             and len(self.running) < self.max_num_seqs
             and self.block_manager.can_swap_in(self.swapped[0])
         ):
@@ -567,6 +568,11 @@ class Scheduler:
         while decode_candidates and len(scheduled) < self.max_num_seqs:
             seq = decode_candidates.popleft()
             while not self.block_manager.can_append(seq):
+                if resident_only:
+                    # A paused Prefill owns pages that Decode cannot reclaim.
+                    # Leave this request untouched until Prefill can finish.
+                    self.running.append(seq)
+                    break
                 victim = self.policy.preemption_candidate(tuple(decode_candidates))
                 if victim is not None:
                     decode_candidates.remove(victim)
@@ -588,6 +594,8 @@ class Scheduler:
         # Candidates beyond max_num_seqs were not preempted; restore queue order.
         self.running.extend(decode_candidates)
         if not scheduled:
+            if resident_only:
+                return None
             raise RuntimeError("scheduler decode step produced no runnable sequences")
         self.running.extendleft(reversed(scheduled))
         self._observe_state()
@@ -619,9 +627,21 @@ class Scheduler:
 
         if not self.has_decode_work():
             raise RuntimeError("scheduler has no decode work")
-        plan = self._decode_plan()
+        plan = cast(BatchPlan, self._decode_plan())
         self.consecutive_prefill_batches = 0
         self.decode_batches_since_heavy_prefill += 1
+        return plan
+
+    def schedule_resident_decode(self) -> BatchPlan | None:
+        """Interleave Decode without preempting or swapping a paused Prefill.
+
+        No runnable resident request means the caller should finish Prefill,
+        not preempt the last decoder and lose an unexecuted swap transfer.
+        """
+        plan = self._decode_plan(resident_only=True)
+        if plan is not None:
+            self.consecutive_prefill_batches = 0
+            self.decode_batches_since_heavy_prefill += 1
         return plan
 
     def _record_prefill_plan(self, plan: BatchPlan) -> BatchPlan:

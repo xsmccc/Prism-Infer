@@ -48,6 +48,11 @@ HTTP 请求中，同图换问题 TTFT 中位数由 317.96 降至 189.14 ms；Dec
 每个长请求的最大 token 间隔的中位数由 388.49 降至 216.54 ms。冷图片请求自身的 TTFT
 略有上升，完整原始结果和 CPU/GPU 重叠 Trace 均保留；这不是竞品排名或总体 p99 结果。
 
+继续处理 GPU Prefill 阻塞的[交错执行记录](docs/PREFILL_INTERLEAVING.md)表明：在相同
+HTTP 负载的两组反序对照中，每 8 层插入 Decode 将最大 token 停顿从 225.18 降至
+42.19 ms，但冷请求 TTFT 从 456.51 增至 625.23 ms，平均 TPOT 与 ITL p95 也上升。
+这是一项显式开启的调度取舍，默认保持关闭；同时修复了暂停 Prefill 的取消和缺页处理。
+
 ## 结果与适用范围
 
 Qwen3-VL-8B、RTX 5090 上的 KV 容量记录如下，scale 开销已计入：
@@ -98,6 +103,7 @@ prism-serve --model "$PRISM_MODEL_PATH" --host 127.0.0.1 --port 8000
 - [本轮修复与执行证据](docs/RUNTIME_FIXES_20260907.md)。
 - [多卡多模态实现与取舍](docs/MULTI_GPU.md)：Encoder DP、TP2 Prefix、双副本和 PP2 参照。
 - [共享预处理与后台准备](docs/SHARED_PREPROCESSING.md)：统一缓存、线程所有权、取消与 HTTP 实测。
+- [Prefill 与 Decode 交错执行](docs/PREFILL_INTERLEAVING.md)：长停顿、TTFT/TPOT 取舍及请求状态修复。
 - [历史请求级 JSON 与 Trace](artifacts/working_set/README.md)。
 - [相关工作](docs/RELATED_WORK.md)、[未采用方案与历史实验](docs/REJECTED_EXPERIMENTS.md)。
 

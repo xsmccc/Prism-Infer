@@ -1,0 +1,5817 @@
+{
+  "label": "prefill-trace",
+  "base_url": "http://127.0.0.1:27802",
+  "requests": [
+    {
+      "phase": "warmup",
+      "request_id": "prefill-trace-0",
+      "prompt": "Describe the main color of the first image. Answer with one color word.",
+      "max_tokens": 16,
+      "media_group": 0,
+      "token_ids": [
+        6033,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "token_arrival_ns": [
+        3073473729470884,
+        3073473742919664,
+        3073473755667022,
+        3073473768449064,
+        3073473781024507,
+        3073473793561093,
+        3073473806128959,
+        3073473818643304,
+        3073473831182174,
+        3073473843742783,
+        3073473856334689,
+        3073473868858468,
+        3073473881212118,
+        3073473893455735,
+        3073473905418949,
+        3073473917382775
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3073472813646611,
+          "bytes": 97,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "accepted",
+              "engine_request_id": 0
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473729470884,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 6033,
+              "token_text": "Red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473742919664,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473755667022,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473768449064,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473781024507,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473793561093,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473806128959,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473818643304,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473831182174,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473843742783,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473856334689,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473868858468,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473881212118,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473893455735,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473905418949,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473917382775,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073473917511141,
+          "bytes": 247,
+          "events": [
+            {
+              "request_id": "prefill-trace-0",
+              "event": "done",
+              "engine_request_id": 0,
+              "text": "Red\n\n\n\n",
+              "finish_reason": "length",
+              "token_ids": [
+                6033,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3073472479119860,
+      "client_finish_ns": 3073473917511141,
+      "final_token_ids": [
+        6033,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        13.44878,
+        12.747358,
+        12.782042,
+        12.575443,
+        12.536586,
+        12.567866,
+        12.514345,
+        12.53887,
+        12.560609,
+        12.591906,
+        12.523779,
+        12.35365,
+        12.243617,
+        11.963214,
+        11.963826
+      ],
+      "ttft_ms": 1250.351024,
+      "e2e_ms": 1438.391281,
+      "tpot_ms": 12.5274594,
+      "max_itl_ms": 13.44878,
+      "p95_itl_ms": 12.9820634,
+      "stream_matches_final_ids": true
+    },
+    {
+      "phase": "hot_changed_question",
+      "request_id": "prefill-trace-1",
+      "prompt": "Describe the main color of image 2. Answer with one color word.",
+      "max_tokens": 16,
+      "media_group": 0,
+      "token_ids": [
+        19576,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "token_arrival_ns": [
+        3073474145492284,
+        3073474158252463,
+        3073474170337242,
+        3073474182398658,
+        3073474194465054,
+        3073474206640337,
+        3073474218779039,
+        3073474230814703,
+        3073474242907639,
+        3073474255002477,
+        3073474267073192,
+        3073474280728241,
+        3073474292792453,
+        3073474304931968,
+        3073474317030441,
+        3073474329050506
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3073473980291594,
+          "bytes": 97,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "accepted",
+              "engine_request_id": 1
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474145492284,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 19576,
+              "token_text": "Green"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474158252463,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474170337242,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474182398658,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474194465054,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474206640337,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474218779039,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474230814703,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474242907639,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474255002477,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474267073192,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474280728241,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474292792453,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474304931968,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474317030441,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474329050506,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474329211399,
+          "bytes": 250,
+          "events": [
+            {
+              "request_id": "prefill-trace-1",
+              "event": "done",
+              "engine_request_id": 1,
+              "text": "Green\n\n\n\n",
+              "finish_reason": "length",
+              "token_ids": [
+                19576,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3073473918797093,
+      "client_finish_ns": 3073474329211399,
+      "final_token_ids": [
+        19576,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        12.760179,
+        12.084779,
+        12.061416,
+        12.066396,
+        12.175283,
+        12.138702,
+        12.035664,
+        12.092936,
+        12.094838,
+        12.070715,
+        13.655049,
+        12.064212,
+        12.139515,
+        12.098473,
+        12.020065
+      ],
+      "ttft_ms": 226.695191,
+      "e2e_ms": 410.414306,
+      "tpot_ms": 12.2372148,
+      "max_itl_ms": 13.655049,
+      "p95_itl_ms": 13.02864,
+      "stream_matches_final_ids": true
+    },
+    {
+      "phase": "decode_alone",
+      "request_id": "prefill-trace-2",
+      "prompt": "Describe each image and compare all their colors in detail.",
+      "max_tokens": 128,
+      "media_group": 0,
+      "token_ids": [
+        785,
+        3897,
+        5335,
+        525,
+        264,
+        738,
+        315,
+        8063,
+        6437,
+        57722,
+        31340,
+        11,
+        1817,
+        71180,
+        1181,
+        1828,
+        4034,
+        13,
+        2619,
+        525,
+        902,
+        6171,
+        11,
+        12624,
+        11,
+        476,
+        52149,
+        2293,
+        4250,
+        264,
+        3175,
+        11,
+        13794,
+        1894,
+        21274,
+        1817,
+        2168,
+        13,
+        21193,
+        374,
+        264,
+        11682,
+        4008,
+        315,
+        1817,
+        2168,
+        323,
+        264,
+        15817,
+        12313,
+        315,
+        862,
+        7987,
+        382,
+        44364,
+        334,
+        1906,
+        3874,
+        24685,
+        25,
+        56177,
+        16,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        16,
+        66963,
+        362,
+        6437,
+        11,
+        32976,
+        2518,
+        13,
+        1084,
+        374,
+        264,
+        8205,
+        11,
+        49485,
+        39040,
+        11,
+        54985,
+        315,
+        264,
+        5538,
+        96019,
+        476,
+        24837,
+        2518,
+        13,
+        576,
+        1894,
+        374,
+        9080,
+        323,
+        13939,
+        11,
+        64340,
+        6529,
+        382,
+        17,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        17,
+        66963,
+        362,
+        6437,
+        11,
+        9906,
+        6176,
+        13,
+        1084,
+        374,
+        264,
+        42020,
+        11,
+        4558,
+        9072,
+        27501,
+        11,
+        4428,
+        311,
+        264
+      ],
+      "token_arrival_ns": [
+        3073474482870254,
+        3073474495602356,
+        3073474507693707,
+        3073474519768134,
+        3073474531761777,
+        3073474543787858,
+        3073474555781933,
+        3073474567930722,
+        3073474579857294,
+        3073474591912805,
+        3073474603910742,
+        3073474616086807,
+        3073474628096974,
+        3073474640173718,
+        3073474652094399,
+        3073474664415737,
+        3073474676928600,
+        3073474688589487,
+        3073474700834323,
+        3073474713531736,
+        3073474726100073,
+        3073474738831742,
+        3073474751480448,
+        3073474763922686,
+        3073474776519120,
+        3073474789124910,
+        3073474801713829,
+        3073474814261429,
+        3073474826823379,
+        3073474839571246,
+        3073474851987496,
+        3073474864556698,
+        3073474876852307,
+        3073474889455433,
+        3073474902101490,
+        3073474914699652,
+        3073474927274604,
+        3073474939859640,
+        3073474952302853,
+        3073474964846821,
+        3073474977423805,
+        3073474990045898,
+        3073475002693347,
+        3073475015289745,
+        3073475027863091,
+        3073475040506098,
+        3073475053081488,
+        3073475065713441,
+        3073475078254841,
+        3073475090821722,
+        3073475103368278,
+        3073475115964933,
+        3073475128525112,
+        3073475141108509,
+        3073475153779708,
+        3073475166084770,
+        3073475178346185,
+        3073475190333726,
+        3073475202266896,
+        3073475214267633,
+        3073475226105516,
+        3073475238038549,
+        3073475249993224,
+        3073475262196498,
+        3073475274163492,
+        3073475286137258,
+        3073475298045239,
+        3073475310085752,
+        3073475322891363,
+        3073475335062931,
+        3073475348633616,
+        3073475360641579,
+        3073475372513993,
+        3073475384596496,
+        3073475396683868,
+        3073475408779803,
+        3073475420906545,
+        3073475433345345,
+        3073475445506545,
+        3073475457577886,
+        3073475469621312,
+        3073475481711235,
+        3073475493829848,
+        3073475506888125,
+        3073475518231959,
+        3073475530396575,
+        3073475542503345,
+        3073475554617329,
+        3073475566649691,
+        3073475578573748,
+        3073475590938698,
+        3073475602970590,
+        3073475615064019,
+        3073475627142170,
+        3073475639233099,
+        3073475651383331,
+        3073475663463856,
+        3073475675592349,
+        3073475687698315,
+        3073475699843660,
+        3073475711973342,
+        3073475724096214,
+        3073475736220984,
+        3073475748299035,
+        3073475760363089,
+        3073475772456052,
+        3073475784612157,
+        3073475796654492,
+        3073475808855033,
+        3073475820961277,
+        3073475833096685,
+        3073475845160067,
+        3073475857236955,
+        3073475869364835,
+        3073475881488064,
+        3073475893552521,
+        3073475905615415,
+        3073475917754297,
+        3073475929841113,
+        3073475941959337,
+        3073475953988958,
+        3073475966104076,
+        3073475978212298,
+        3073475990310210,
+        3073476002344924,
+        3073476014461766,
+        3073476026542664,
+        3073476038617400
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3073474367013947,
+          "bytes": 97,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "accepted",
+              "engine_request_id": 2
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474482870254,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 785,
+              "token_text": "The"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474495602356,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3897,
+              "token_text": " provided"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474507693707,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 5335,
+              "token_text": " images"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474519768134,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 525,
+              "token_text": " are"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474531761777,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474543787858,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 738,
+              "token_text": " set"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474555781933,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474567930722,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 8063,
+              "token_text": " eight"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474579857294,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474591912805,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 57722,
+              "token_text": "-colored"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474603910742,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 31340,
+              "token_text": " squares"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474616086807,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474628096974,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474640173718,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 71180,
+              "token_text": " occupying"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474652094399,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1181,
+              "token_text": " its"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474664415737,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1828,
+              "token_text": " own"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474676928600,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4034,
+              "token_text": " frame"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474688589487,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474700834323,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2619,
+              "token_text": " There"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474713531736,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 525,
+              "token_text": " are"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474726100073,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 902,
+              "token_text": " no"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474738831742,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6171,
+              "token_text": " objects"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474751480448,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474763922686,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 12624,
+              "token_text": " patterns"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474776519120,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474789124910,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 476,
+              "token_text": " or"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474801713829,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 52149,
+              "token_text": " gradients"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474814261429,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2293,
+              "token_text": "—"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474826823379,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4250,
+              "token_text": "just"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474839571246,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474851987496,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3175,
+              "token_text": " single"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474864556698,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474876852307,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13794,
+              "token_text": " uniform"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474889455433,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1894,
+              "token_text": " color"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474902101490,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 21274,
+              "token_text": " filling"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474914699652,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474927274604,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2168,
+              "token_text": " image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474939859640,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474952302853,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 21193,
+              "token_text": " Below"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474964846821,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474977423805,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073474990045898,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11682,
+              "token_text": " detailed"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475002693347,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4008,
+              "token_text": " description"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475015289745,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475027863091,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475040506098,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2168,
+              "token_text": " image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475053081488,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 323,
+              "token_text": " and"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475065713441,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475078254841,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 15817,
+              "token_text": " comprehensive"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475090821722,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 12313,
+              "token_text": " comparison"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475103368278,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475115964933,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 862,
+              "token_text": " their"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475128525112,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 7987,
+              "token_text": " colors"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475141108509,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 382,
+              "token_text": ".\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475153779708,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 44364,
+              "token_text": "---\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475166084770,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 334,
+              "token_text": "**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475178346185,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475190333726,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3874,
+              "token_text": " Des"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475202266896,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 24685,
+              "token_text": "criptions"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475214267633,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 25,
+              "token_text": ":"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475226105516,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 56177,
+              "token_text": "**\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475238038549,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 16,
+              "token_text": "1"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475249993224,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475262196498,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475274163492,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3070,
+              "token_text": " **"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475286137258,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475298045239,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475310085752,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 16,
+              "token_text": "1"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475322891363,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 66963,
+              "token_text": ":**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475335062931,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 362,
+              "token_text": " A"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475348633616,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475360641579,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475372513993,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 32976,
+              "token_text": " vibrant"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475384596496,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2518,
+              "token_text": " red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475396683868,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475408779803,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1084,
+              "token_text": " It"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475420906545,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475433345345,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475445506545,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 8205,
+              "token_text": " warm"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475457577886,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475469621312,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 49485,
+              "token_text": " saturated"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475481711235,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 39040,
+              "token_text": " hue"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475493829848,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475506888125,
+          "bytes": 136,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 54985,
+              "token_text": " reminiscent"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475518231959,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475530396575,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475542503345,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 5538,
+              "token_text": " deep"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475554617329,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 96019,
+              "token_text": " crimson"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475566649691,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 476,
+              "token_text": " or"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475578573748,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 24837,
+              "token_text": " brick"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475590938698,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2518,
+              "token_text": " red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475602970590,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475615064019,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 576,
+              "token_text": " The"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475627142170,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1894,
+              "token_text": " color"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475639233099,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475651383331,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 9080,
+              "token_text": " rich"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475663463856,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 323,
+              "token_text": " and"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475675592349,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13939,
+              "token_text": " bold"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475687698315,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475699843660,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 64340,
+              "token_text": " commanding"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475711973342,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6529,
+              "token_text": " attention"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475724096214,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 382,
+              "token_text": ".\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475736220984,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 17,
+              "token_text": "2"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475748299035,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475760363089,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475772456052,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3070,
+              "token_text": " **"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475784612157,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475796654492,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475808855033,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 17,
+              "token_text": "2"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475820961277,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 66963,
+              "token_text": ":**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475833096685,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 362,
+              "token_text": " A"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475845160067,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475857236955,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475869364835,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 9906,
+              "token_text": " bright"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475881488064,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6176,
+              "token_text": " green"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475893552521,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475905615415,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1084,
+              "token_text": " It"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475917754297,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475929841113,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475941959337,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 42020,
+              "token_text": " vivid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475953988958,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475966104076,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4558,
+              "token_text": " almost"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475978212298,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 9072,
+              "token_text": " electric"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073475990310210,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 27501,
+              "token_text": " shade"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476002344924,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476014461766,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4428,
+              "token_text": " similar"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476026542664,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 311,
+              "token_text": " to"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476038617400,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476038715877,
+          "bytes": 1295,
+          "events": [
+            {
+              "request_id": "prefill-trace-2",
+              "event": "done",
+              "engine_request_id": 2,
+              "text": "The provided images are a set of eight solid-colored squares, each occupying its own frame. There are no objects, patterns, or gradients—just a single, uniform color filling each image. Below is a detailed description of each image and a comprehensive comparison of their colors.\n\n---\n\n**Image Descriptions:**\n\n1.  **Image 1:** A solid, vibrant red. It is a warm, saturated hue, reminiscent of a deep crimson or brick red. The color is rich and bold, commanding attention.\n\n2.  **Image 2:** A solid, bright green. It is a vivid, almost electric shade, similar to a",
+              "finish_reason": "length",
+              "token_ids": [
+                785,
+                3897,
+                5335,
+                525,
+                264,
+                738,
+                315,
+                8063,
+                6437,
+                57722,
+                31340,
+                11,
+                1817,
+                71180,
+                1181,
+                1828,
+                4034,
+                13,
+                2619,
+                525,
+                902,
+                6171,
+                11,
+                12624,
+                11,
+                476,
+                52149,
+                2293,
+                4250,
+                264,
+                3175,
+                11,
+                13794,
+                1894,
+                21274,
+                1817,
+                2168,
+                13,
+                21193,
+                374,
+                264,
+                11682,
+                4008,
+                315,
+                1817,
+                2168,
+                323,
+                264,
+                15817,
+                12313,
+                315,
+                862,
+                7987,
+                382,
+                44364,
+                334,
+                1906,
+                3874,
+                24685,
+                25,
+                56177,
+                16,
+                13,
+                220,
+                3070,
+                1906,
+                220,
+                16,
+                66963,
+                362,
+                6437,
+                11,
+                32976,
+                2518,
+                13,
+                1084,
+                374,
+                264,
+                8205,
+                11,
+                49485,
+                39040,
+                11,
+                54985,
+                315,
+                264,
+                5538,
+                96019,
+                476,
+                24837,
+                2518,
+                13,
+                576,
+                1894,
+                374,
+                9080,
+                323,
+                13939,
+                11,
+                64340,
+                6529,
+                382,
+                17,
+                13,
+                220,
+                3070,
+                1906,
+                220,
+                17,
+                66963,
+                362,
+                6437,
+                11,
+                9906,
+                6176,
+                13,
+                1084,
+                374,
+                264,
+                42020,
+                11,
+                4558,
+                9072,
+                27501,
+                11,
+                4428,
+                311,
+                264
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3073474330656909,
+      "client_finish_ns": 3073476038715877,
+      "final_token_ids": [
+        785,
+        3897,
+        5335,
+        525,
+        264,
+        738,
+        315,
+        8063,
+        6437,
+        57722,
+        31340,
+        11,
+        1817,
+        71180,
+        1181,
+        1828,
+        4034,
+        13,
+        2619,
+        525,
+        902,
+        6171,
+        11,
+        12624,
+        11,
+        476,
+        52149,
+        2293,
+        4250,
+        264,
+        3175,
+        11,
+        13794,
+        1894,
+        21274,
+        1817,
+        2168,
+        13,
+        21193,
+        374,
+        264,
+        11682,
+        4008,
+        315,
+        1817,
+        2168,
+        323,
+        264,
+        15817,
+        12313,
+        315,
+        862,
+        7987,
+        382,
+        44364,
+        334,
+        1906,
+        3874,
+        24685,
+        25,
+        56177,
+        16,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        16,
+        66963,
+        362,
+        6437,
+        11,
+        32976,
+        2518,
+        13,
+        1084,
+        374,
+        264,
+        8205,
+        11,
+        49485,
+        39040,
+        11,
+        54985,
+        315,
+        264,
+        5538,
+        96019,
+        476,
+        24837,
+        2518,
+        13,
+        576,
+        1894,
+        374,
+        9080,
+        323,
+        13939,
+        11,
+        64340,
+        6529,
+        382,
+        17,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        17,
+        66963,
+        362,
+        6437,
+        11,
+        9906,
+        6176,
+        13,
+        1084,
+        374,
+        264,
+        42020,
+        11,
+        4558,
+        9072,
+        27501,
+        11,
+        4428,
+        311,
+        264
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        12.732102,
+        12.091351,
+        12.074427,
+        11.993643,
+        12.026081,
+        11.994075,
+        12.148789,
+        11.926572,
+        12.055511,
+        11.997937,
+        12.176065,
+        12.010167,
+        12.076744,
+        11.920681,
+        12.321338,
+        12.512863,
+        11.660887,
+        12.244836,
+        12.697413,
+        12.568337,
+        12.731669,
+        12.648706,
+        12.442238,
+        12.596434,
+        12.60579,
+        12.588919,
+        12.5476,
+        12.56195,
+        12.747867,
+        12.41625,
+        12.569202,
+        12.295609,
+        12.603126,
+        12.646057,
+        12.598162,
+        12.574952,
+        12.585036,
+        12.443213,
+        12.543968,
+        12.576984,
+        12.622093,
+        12.647449,
+        12.596398,
+        12.573346,
+        12.643007,
+        12.57539,
+        12.631953,
+        12.5414,
+        12.566881,
+        12.546556,
+        12.596655,
+        12.560179,
+        12.583397,
+        12.671199,
+        12.305062,
+        12.261415,
+        11.987541,
+        11.93317,
+        12.000737,
+        11.837883,
+        11.933033,
+        11.954675,
+        12.203274,
+        11.966994,
+        11.973766,
+        11.907981,
+        12.040513,
+        12.805611,
+        12.171568,
+        13.570685,
+        12.007963,
+        11.872414,
+        12.082503,
+        12.087372,
+        12.095935,
+        12.126742,
+        12.4388,
+        12.1612,
+        12.071341,
+        12.043426,
+        12.089923,
+        12.118613,
+        13.058277,
+        11.343834,
+        12.164616,
+        12.10677,
+        12.113984,
+        12.032362,
+        11.924057,
+        12.36495,
+        12.031892,
+        12.093429,
+        12.078151,
+        12.090929,
+        12.150232,
+        12.080525,
+        12.128493,
+        12.105966,
+        12.145345,
+        12.129682,
+        12.122872,
+        12.12477,
+        12.078051,
+        12.064054,
+        12.092963,
+        12.156105,
+        12.042335,
+        12.200541,
+        12.106244,
+        12.135408,
+        12.063382,
+        12.076888,
+        12.12788,
+        12.123229,
+        12.064457,
+        12.062894,
+        12.138882,
+        12.086816,
+        12.118224,
+        12.029621,
+        12.115118,
+        12.108222,
+        12.097912,
+        12.034714,
+        12.116842,
+        12.080898,
+        12.074736
+      ],
+      "ttft_ms": 152.213345,
+      "e2e_ms": 1708.058968,
+      "tpot_ms": 12.249977527559055,
+      "max_itl_ms": 13.570685,
+      "p95_itl_ms": 12.689548799999999,
+      "stream_matches_final_ids": true
+    },
+    {
+      "phase": "decode_with_cold_image",
+      "request_id": "prefill-trace-3",
+      "prompt": "Describe each image and compare all their colors in detail.",
+      "max_tokens": 128,
+      "media_group": 0,
+      "token_ids": [
+        785,
+        3897,
+        5335,
+        525,
+        264,
+        738,
+        315,
+        8063,
+        6437,
+        57722,
+        31340,
+        11,
+        1817,
+        71180,
+        1181,
+        1828,
+        4034,
+        13,
+        2619,
+        525,
+        902,
+        6171,
+        11,
+        12624,
+        11,
+        476,
+        52149,
+        2293,
+        4250,
+        264,
+        3175,
+        11,
+        13794,
+        1894,
+        21274,
+        1817,
+        2168,
+        13,
+        21193,
+        374,
+        264,
+        11682,
+        4008,
+        315,
+        1817,
+        2168,
+        323,
+        264,
+        15817,
+        12313,
+        315,
+        862,
+        7987,
+        382,
+        44364,
+        334,
+        1906,
+        3874,
+        24685,
+        25,
+        56177,
+        16,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        16,
+        66963,
+        362,
+        6437,
+        11,
+        32976,
+        2518,
+        13,
+        1084,
+        374,
+        264,
+        8205,
+        11,
+        49485,
+        39040,
+        11,
+        54985,
+        315,
+        264,
+        5538,
+        96019,
+        476,
+        24837,
+        2518,
+        13,
+        576,
+        1894,
+        374,
+        9080,
+        323,
+        13939,
+        11,
+        64340,
+        6529,
+        382,
+        17,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        17,
+        66963,
+        362,
+        6437,
+        11,
+        9906,
+        6176,
+        13,
+        1084,
+        374,
+        264,
+        42020,
+        11,
+        4558,
+        9072,
+        27501,
+        11,
+        4428,
+        311,
+        264
+      ],
+      "token_arrival_ns": [
+        3073476196076397,
+        3073476208758843,
+        3073476220783515,
+        3073476249644549,
+        3073476249644549,
+        3073476258878189,
+        3073476270265389,
+        3073476282791583,
+        3073476294770502,
+        3073476306877305,
+        3073476319297053,
+        3073476331604713,
+        3073476344040648,
+        3073476356335500,
+        3073476368777972,
+        3073476380777534,
+        3073476392903410,
+        3073476405652676,
+        3073476417730529,
+        3073476429749077,
+        3073476441822216,
+        3073476453895121,
+        3073476466006534,
+        3073476478131072,
+        3073476490104137,
+        3073476502501317,
+        3073476532987009,
+        3073476567413242,
+        3073476591469662,
+        3073476614947714,
+        3073476632423148,
+        3073476662152726,
+        3073476684752483,
+        3073476706989547,
+        3073476750417616,
+        3073476795728696,
+        3073476837449971,
+        3073476878752784,
+        3073476919646386,
+        3073476954318099,
+        3073476968109961,
+        3073476982242797,
+        3073476995792745,
+        3073477009813531,
+        3073477023709325,
+        3073477037525993,
+        3073477053687781,
+        3073477068901434,
+        3073477082803362,
+        3073477097536422,
+        3073477114773989,
+        3073477129691530,
+        3073477143285150,
+        3073477157152799,
+        3073477169190416,
+        3073477181120989,
+        3073477193101038,
+        3073477205014772,
+        3073477217115782,
+        3073477229027542,
+        3073477240946362,
+        3073477253257478,
+        3073477265305423,
+        3073477277400148,
+        3073477289441584,
+        3073477301413548,
+        3073477313416244,
+        3073477325393806,
+        3073477337348837,
+        3073477349294036,
+        3073477361254194,
+        3073477373199150,
+        3073477385161199,
+        3073477397075472,
+        3073477409103284,
+        3073477421165067,
+        3073477433257046,
+        3073477445140822,
+        3073477457088259,
+        3073477469112242,
+        3073477481152489,
+        3073477493111002,
+        3073477505092382,
+        3073477517069904,
+        3073477529014589,
+        3073477541064819,
+        3073477553091099,
+        3073477565045729,
+        3073477577063461,
+        3073477589053885,
+        3073477601061041,
+        3073477613042419,
+        3073477625058055,
+        3073477637095019,
+        3073477649126938,
+        3073477661188343,
+        3073477673217636,
+        3073477685281269,
+        3073477698022553,
+        3073477710012672,
+        3073477721978581,
+        3073477733965468,
+        3073477746062012,
+        3073477757957812,
+        3073477769908428,
+        3073477781826048,
+        3073477793799829,
+        3073477805712642,
+        3073477817685755,
+        3073477829618495,
+        3073477841567820,
+        3073477853493514,
+        3073477865435732,
+        3073477877476321,
+        3073477889466998,
+        3073477901469483,
+        3073477913420000,
+        3073477925409296,
+        3073477937344595,
+        3073477949260111,
+        3073477961190460,
+        3073477973070056,
+        3073477985078879,
+        3073477997000509,
+        3073478009102337,
+        3073478021037654,
+        3073478032950062,
+        3073478044997124
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3073476079148003,
+          "bytes": 97,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "accepted",
+              "engine_request_id": 3
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476196076397,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 785,
+              "token_text": "The"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476208758843,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3897,
+              "token_text": " provided"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476220783515,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 5335,
+              "token_text": " images"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476249644549,
+          "bytes": 250,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 525,
+              "token_text": " are"
+            },
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476258878189,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 738,
+              "token_text": " set"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476270265389,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476282791583,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 8063,
+              "token_text": " eight"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476294770502,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476306877305,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 57722,
+              "token_text": "-colored"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476319297053,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 31340,
+              "token_text": " squares"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476331604713,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476344040648,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476356335500,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 71180,
+              "token_text": " occupying"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476368777972,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1181,
+              "token_text": " its"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476380777534,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1828,
+              "token_text": " own"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476392903410,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4034,
+              "token_text": " frame"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476405652676,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476417730529,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2619,
+              "token_text": " There"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476429749077,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 525,
+              "token_text": " are"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476441822216,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 902,
+              "token_text": " no"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476453895121,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6171,
+              "token_text": " objects"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476466006534,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476478131072,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 12624,
+              "token_text": " patterns"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476490104137,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476502501317,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 476,
+              "token_text": " or"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476532987009,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 52149,
+              "token_text": " gradients"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476567413242,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2293,
+              "token_text": "—"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476591469662,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4250,
+              "token_text": "just"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476614947714,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476632423148,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3175,
+              "token_text": " single"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476662152726,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476684752483,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13794,
+              "token_text": " uniform"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476706989547,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1894,
+              "token_text": " color"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476750417616,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 21274,
+              "token_text": " filling"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476795728696,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476837449971,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2168,
+              "token_text": " image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476878752784,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476919646386,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 21193,
+              "token_text": " Below"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476954318099,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476968109961,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476982242797,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11682,
+              "token_text": " detailed"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476995792745,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4008,
+              "token_text": " description"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477009813531,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477023709325,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477037525993,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2168,
+              "token_text": " image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477053687781,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 323,
+              "token_text": " and"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477068901434,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477082803362,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 15817,
+              "token_text": " comprehensive"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477097536422,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 12313,
+              "token_text": " comparison"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477114773989,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477129691530,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 862,
+              "token_text": " their"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477143285150,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 7987,
+              "token_text": " colors"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477157152799,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 382,
+              "token_text": ".\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477169190416,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 44364,
+              "token_text": "---\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477181120989,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 334,
+              "token_text": "**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477193101038,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477205014772,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3874,
+              "token_text": " Des"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477217115782,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 24685,
+              "token_text": "criptions"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477229027542,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 25,
+              "token_text": ":"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477240946362,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 56177,
+              "token_text": "**\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477253257478,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 16,
+              "token_text": "1"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477265305423,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477277400148,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477289441584,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3070,
+              "token_text": " **"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477301413548,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477313416244,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477325393806,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 16,
+              "token_text": "1"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477337348837,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 66963,
+              "token_text": ":**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477349294036,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 362,
+              "token_text": " A"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477361254194,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477373199150,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477385161199,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 32976,
+              "token_text": " vibrant"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477397075472,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2518,
+              "token_text": " red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477409103284,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477421165067,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1084,
+              "token_text": " It"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477433257046,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477445140822,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477457088259,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 8205,
+              "token_text": " warm"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477469112242,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477481152489,
+          "bytes": 134,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 49485,
+              "token_text": " saturated"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477493111002,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 39040,
+              "token_text": " hue"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477505092382,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477517069904,
+          "bytes": 136,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 54985,
+              "token_text": " reminiscent"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477529014589,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477541064819,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477553091099,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 5538,
+              "token_text": " deep"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477565045729,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 96019,
+              "token_text": " crimson"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477577063461,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 476,
+              "token_text": " or"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477589053885,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 24837,
+              "token_text": " brick"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477601061041,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2518,
+              "token_text": " red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477613042419,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477625058055,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 576,
+              "token_text": " The"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477637095019,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1894,
+              "token_text": " color"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477649126938,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477661188343,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 9080,
+              "token_text": " rich"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477673217636,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 323,
+              "token_text": " and"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477685281269,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13939,
+              "token_text": " bold"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477698022553,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477710012672,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 64340,
+              "token_text": " commanding"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477721978581,
+          "bytes": 133,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6529,
+              "token_text": " attention"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477733965468,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 382,
+              "token_text": ".\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477746062012,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 17,
+              "token_text": "2"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477757957812,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477769908428,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477781826048,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3070,
+              "token_text": " **"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477793799829,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477805712642,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477817685755,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 17,
+              "token_text": "2"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477829618495,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 66963,
+              "token_text": ":**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477841567820,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 362,
+              "token_text": " A"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477853493514,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477865435732,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477877476321,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 9906,
+              "token_text": " bright"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477889466998,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6176,
+              "token_text": " green"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477901469483,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477913420000,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1084,
+              "token_text": " It"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477925409296,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477937344595,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477949260111,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 42020,
+              "token_text": " vivid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477961190460,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477973070056,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4558,
+              "token_text": " almost"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477985078879,
+          "bytes": 132,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 9072,
+              "token_text": " electric"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477997000509,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 27501,
+              "token_text": " shade"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073478009102337,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073478021037654,
+          "bytes": 131,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4428,
+              "token_text": " similar"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073478032950062,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 311,
+              "token_text": " to"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073478044997124,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073478045081768,
+          "bytes": 1295,
+          "events": [
+            {
+              "request_id": "prefill-trace-3",
+              "event": "done",
+              "engine_request_id": 3,
+              "text": "The provided images are a set of eight solid-colored squares, each occupying its own frame. There are no objects, patterns, or gradients—just a single, uniform color filling each image. Below is a detailed description of each image and a comprehensive comparison of their colors.\n\n---\n\n**Image Descriptions:**\n\n1.  **Image 1:** A solid, vibrant red. It is a warm, saturated hue, reminiscent of a deep crimson or brick red. The color is rich and bold, commanding attention.\n\n2.  **Image 2:** A solid, bright green. It is a vivid, almost electric shade, similar to a",
+              "finish_reason": "length",
+              "token_ids": [
+                785,
+                3897,
+                5335,
+                525,
+                264,
+                738,
+                315,
+                8063,
+                6437,
+                57722,
+                31340,
+                11,
+                1817,
+                71180,
+                1181,
+                1828,
+                4034,
+                13,
+                2619,
+                525,
+                902,
+                6171,
+                11,
+                12624,
+                11,
+                476,
+                52149,
+                2293,
+                4250,
+                264,
+                3175,
+                11,
+                13794,
+                1894,
+                21274,
+                1817,
+                2168,
+                13,
+                21193,
+                374,
+                264,
+                11682,
+                4008,
+                315,
+                1817,
+                2168,
+                323,
+                264,
+                15817,
+                12313,
+                315,
+                862,
+                7987,
+                382,
+                44364,
+                334,
+                1906,
+                3874,
+                24685,
+                25,
+                56177,
+                16,
+                13,
+                220,
+                3070,
+                1906,
+                220,
+                16,
+                66963,
+                362,
+                6437,
+                11,
+                32976,
+                2518,
+                13,
+                1084,
+                374,
+                264,
+                8205,
+                11,
+                49485,
+                39040,
+                11,
+                54985,
+                315,
+                264,
+                5538,
+                96019,
+                476,
+                24837,
+                2518,
+                13,
+                576,
+                1894,
+                374,
+                9080,
+                323,
+                13939,
+                11,
+                64340,
+                6529,
+                382,
+                17,
+                13,
+                220,
+                3070,
+                1906,
+                220,
+                17,
+                66963,
+                362,
+                6437,
+                11,
+                9906,
+                6176,
+                13,
+                1084,
+                374,
+                264,
+                42020,
+                11,
+                4558,
+                9072,
+                27501,
+                11,
+                4428,
+                311,
+                264
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3073476042857324,
+      "client_finish_ns": 3073478045081768,
+      "final_token_ids": [
+        785,
+        3897,
+        5335,
+        525,
+        264,
+        738,
+        315,
+        8063,
+        6437,
+        57722,
+        31340,
+        11,
+        1817,
+        71180,
+        1181,
+        1828,
+        4034,
+        13,
+        2619,
+        525,
+        902,
+        6171,
+        11,
+        12624,
+        11,
+        476,
+        52149,
+        2293,
+        4250,
+        264,
+        3175,
+        11,
+        13794,
+        1894,
+        21274,
+        1817,
+        2168,
+        13,
+        21193,
+        374,
+        264,
+        11682,
+        4008,
+        315,
+        1817,
+        2168,
+        323,
+        264,
+        15817,
+        12313,
+        315,
+        862,
+        7987,
+        382,
+        44364,
+        334,
+        1906,
+        3874,
+        24685,
+        25,
+        56177,
+        16,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        16,
+        66963,
+        362,
+        6437,
+        11,
+        32976,
+        2518,
+        13,
+        1084,
+        374,
+        264,
+        8205,
+        11,
+        49485,
+        39040,
+        11,
+        54985,
+        315,
+        264,
+        5538,
+        96019,
+        476,
+        24837,
+        2518,
+        13,
+        576,
+        1894,
+        374,
+        9080,
+        323,
+        13939,
+        11,
+        64340,
+        6529,
+        382,
+        17,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        17,
+        66963,
+        362,
+        6437,
+        11,
+        9906,
+        6176,
+        13,
+        1084,
+        374,
+        264,
+        42020,
+        11,
+        4558,
+        9072,
+        27501,
+        11,
+        4428,
+        311,
+        264
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        12.682446,
+        12.024672,
+        28.861034,
+        0.0,
+        9.23364,
+        11.3872,
+        12.526194,
+        11.978919,
+        12.106803,
+        12.419748,
+        12.30766,
+        12.435935,
+        12.294852,
+        12.442472,
+        11.999562,
+        12.125876,
+        12.749266,
+        12.077853,
+        12.018548,
+        12.073139,
+        12.072905,
+        12.111413,
+        12.124538,
+        11.973065,
+        12.39718,
+        30.485692,
+        34.426233,
+        24.05642,
+        23.478052,
+        17.475434,
+        29.729578,
+        22.599757,
+        22.237064,
+        43.428069,
+        45.31108,
+        41.721275,
+        41.302813,
+        40.893602,
+        34.671713,
+        13.791862,
+        14.132836,
+        13.549948,
+        14.020786,
+        13.895794,
+        13.816668,
+        16.161788,
+        15.213653,
+        13.901928,
+        14.73306,
+        17.237567,
+        14.917541,
+        13.59362,
+        13.867649,
+        12.037617,
+        11.930573,
+        11.980049,
+        11.913734,
+        12.10101,
+        11.91176,
+        11.91882,
+        12.311116,
+        12.047945,
+        12.094725,
+        12.041436,
+        11.971964,
+        12.002696,
+        11.977562,
+        11.955031,
+        11.945199,
+        11.960158,
+        11.944956,
+        11.962049,
+        11.914273,
+        12.027812,
+        12.061783,
+        12.091979,
+        11.883776,
+        11.947437,
+        12.023983,
+        12.040247,
+        11.958513,
+        11.98138,
+        11.977522,
+        11.944685,
+        12.05023,
+        12.02628,
+        11.95463,
+        12.017732,
+        11.990424,
+        12.007156,
+        11.981378,
+        12.015636,
+        12.036964,
+        12.031919,
+        12.061405,
+        12.029293,
+        12.063633,
+        12.741284,
+        11.990119,
+        11.965909,
+        11.986887,
+        12.096544,
+        11.8958,
+        11.950616,
+        11.91762,
+        11.973781,
+        11.912813,
+        11.973113,
+        11.93274,
+        11.949325,
+        11.925694,
+        11.942218,
+        12.040589,
+        11.990677,
+        12.002485,
+        11.950517,
+        11.989296,
+        11.935299,
+        11.915516,
+        11.930349,
+        11.879596,
+        12.008823,
+        11.92163,
+        12.101828,
+        11.935317,
+        11.912408,
+        12.047062
+      ],
+      "ttft_ms": 153.219073,
+      "e2e_ms": 2002.224444,
+      "tpot_ms": 14.558430921259843,
+      "max_itl_ms": 45.31108,
+      "p95_itl_ms": 33.24407069999996,
+      "stream_matches_final_ids": true
+    },
+    {
+      "phase": "injected_cold_image",
+      "request_id": "prefill-trace-4",
+      "prompt": "Describe the main color of the first image. Answer with one color word.",
+      "max_tokens": 16,
+      "media_group": 1,
+      "long_request_id": "prefill-trace-3",
+      "long_tokens_observed_at_submit": 3,
+      "long_already_finished_at_submit": false,
+      "token_ids": [
+        6033,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "token_arrival_ns": [
+        3073476939270462,
+        3073476954414211,
+        3073476968341075,
+        3073476982342112,
+        3073476996139562,
+        3073477009928917,
+        3073477023820420,
+        3073477037629290,
+        3073477053786967,
+        3073477069279577,
+        3073477083377888,
+        3073477097598016,
+        3073477115299888,
+        3073477129806795,
+        3073477143487557,
+        3073477157330636
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3073476504397085,
+          "bytes": 97,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "accepted",
+              "engine_request_id": 4
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476939270462,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 6033,
+              "token_text": "Red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476954414211,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476968341075,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476982342112,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073476996139562,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477009928917,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477023820420,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477037629290,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477053786967,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477069279577,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477083377888,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477097598016,
+          "bytes": 138,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477115299888,
+          "bytes": 137,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477129806795,
+          "bytes": 135,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477143487557,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3073477157330636,
+          "bytes": 385,
+          "events": [
+            {
+              "request_id": "prefill-trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            },
+            {
+              "request_id": "prefill-trace-4",
+              "event": "done",
+              "engine_request_id": 4,
+              "text": "Red\n\n\n\n",
+              "finish_reason": "length",
+              "token_ids": [
+                6033,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3073476221137836,
+      "client_finish_ns": 3073477157330636,
+      "final_token_ids": [
+        6033,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        15.143749,
+        13.926864,
+        14.001037,
+        13.79745,
+        13.789355,
+        13.891503,
+        13.80887,
+        16.157677,
+        15.49261,
+        14.098311,
+        14.220128,
+        17.701872,
+        14.506907,
+        13.680762,
+        13.843079
+      ],
+      "ttft_ms": 718.132626,
+      "e2e_ms": 936.1928,
+      "tpot_ms": 14.537344933333333,
+      "max_itl_ms": 17.701872,
+      "p95_itl_ms": 16.620935499999998,
+      "stream_matches_final_ids": true
+    }
+  ],
+  "status": "complete",
+  "protocol": {
+    "fixture": "eight 448x448 solid RGB images; colors shifted by 17 per cold group",
+    "colors": [
+      [
+        220,
+        50,
+        50
+      ],
+      [
+        50,
+        180,
+        80
+      ],
+      [
+        60,
+        100,
+        220
+      ],
+      [
+        220,
+        180,
+        40
+      ],
+      [
+        170,
+        70,
+        200
+      ],
+      [
+        40,
+        190,
+        190
+      ],
+      [
+        230,
+        120,
+        40
+      ],
+      [
+        120,
+        120,
+        120
+      ]
+    ],
+    "repeat": 1,
+    "long_tokens": 128,
+    "timing": "HTTP client; JSON upload, server image decode, preprocessing, queueing included",
+    "token_time": "observed network read completing each SSE event; no interpolation",
+    "cold_injection": "after at least 3 observed tokens of a live long decode"
+  },
+  "phase_summaries": {
+    "warmup": {
+      "ttft_ms": 1250.351024,
+      "e2e_ms": 1438.391281,
+      "tpot_ms": 12.5274594,
+      "max_itl_ms": 13.44878,
+      "p95_itl_ms": 12.9820634
+    },
+    "hot_changed_question": {
+      "ttft_ms": 226.695191,
+      "e2e_ms": 410.414306,
+      "tpot_ms": 12.2372148,
+      "max_itl_ms": 13.655049,
+      "p95_itl_ms": 13.02864
+    },
+    "decode_alone": {
+      "ttft_ms": 152.213345,
+      "e2e_ms": 1708.058968,
+      "tpot_ms": 12.249977527559055,
+      "max_itl_ms": 13.570685,
+      "p95_itl_ms": 12.689548799999999
+    },
+    "decode_with_cold_image": {
+      "ttft_ms": 153.219073,
+      "e2e_ms": 2002.224444,
+      "tpot_ms": 14.558430921259843,
+      "max_itl_ms": 45.31108,
+      "p95_itl_ms": 33.24407069999996
+    },
+    "injected_cold_image": {
+      "ttft_ms": 718.132626,
+      "e2e_ms": 936.1928,
+      "tpot_ms": 14.537344933333333,
+      "max_itl_ms": 17.701872,
+      "p95_itl_ms": 16.620935499999998
+    }
+  }
+}

@@ -83,12 +83,16 @@ def main() -> None:
                         None if cache_metadata is None else cache_metadata()
                     ),
                     "metrics": engine.metrics_snapshot(),
+                    "cooperative_prefill": engine.cooperative_prefill_policy_metadata(),
                 }
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
     app.router.lifespan_context = lifespan
-    print(json.dumps({"source_package": prism_infer.__file__, "options": options}), flush=True)
+    print(
+        json.dumps({"source_package": prism_infer.__file__, "options": options}),
+        flush=True,
+    )
     try:
         uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
     finally:

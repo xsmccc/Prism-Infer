@@ -1,0 +1,195 @@
+{
+  "source_base": "ae5b921",
+  "scope": "TP1 RTX 5090, same native HTTP fixture; not a vLLM ranking or quality benchmark",
+  "pairs_off_on": [
+    [
+      9799,
+      9798
+    ],
+    [
+      9800,
+      9801
+    ]
+  ],
+  "run_status": {
+    "9799": "complete",
+    "9798": "complete",
+    "9800": "complete",
+    "9801": "complete"
+  },
+  "request_count_per_run": 11,
+  "generated_tokens_per_run": 624,
+  "agreement": {
+    "9799": {
+      "same_inputs": true,
+      "matching_full_outputs": 11,
+      "stream_matches_final": true,
+      "differences_from_9799": []
+    },
+    "9798": {
+      "same_inputs": true,
+      "matching_full_outputs": 9,
+      "stream_matches_final": true,
+      "differences_from_9799": [
+        {
+          "request_index": 7,
+          "phase": "decode_with_cold_image",
+          "first_different_token_index": 127,
+          "reference_token": 264,
+          "run_token": 41719,
+          "eos_before_difference": false
+        },
+        {
+          "request_index": 9,
+          "phase": "decode_with_cold_image",
+          "first_different_token_index": 127,
+          "reference_token": 264,
+          "run_token": 41719,
+          "eos_before_difference": false
+        }
+      ]
+    },
+    "9800": {
+      "same_inputs": true,
+      "matching_full_outputs": 10,
+      "stream_matches_final": true,
+      "differences_from_9799": [
+        {
+          "request_index": 9,
+          "phase": "decode_with_cold_image",
+          "first_different_token_index": 127,
+          "reference_token": 264,
+          "run_token": 41719,
+          "eos_before_difference": false
+        }
+      ]
+    },
+    "9801": {
+      "same_inputs": true,
+      "matching_full_outputs": 10,
+      "stream_matches_final": true,
+      "differences_from_9799": [
+        {
+          "request_index": 7,
+          "phase": "decode_with_cold_image",
+          "first_different_token_index": 127,
+          "reference_token": 264,
+          "run_token": 41719,
+          "eos_before_difference": false
+        }
+      ]
+    }
+  },
+  "aggregation": "Each run: median over 3 requests. Table: median of the 2 run medians.",
+  "itl_note": "max and p95 are per-request token gaps, then request medians; neither is population p99",
+  "comparison": [
+    {
+      "phase": "decode_with_cold_image",
+      "metric": "max_itl_ms",
+      "off_run_values_ms": [
+        223.994545,
+        226.361922
+      ],
+      "on_run_values_ms": [
+        42.247271,
+        42.123437
+      ],
+      "off_median_ms": 225.17823349999998,
+      "on_median_ms": 42.185354000000004,
+      "paired_change_percent": [
+        -81.13915184854167,
+        -81.39111179662099
+      ]
+    },
+    {
+      "phase": "decode_with_cold_image",
+      "metric": "p95_itl_ms",
+      "off_run_values_ms": [
+        12.345784199999997,
+        12.375788199999999
+      ],
+      "on_run_values_ms": [
+        27.99976299999998,
+        28.550064899999995
+      ],
+      "off_median_ms": 12.360786199999998,
+      "on_median_ms": 28.274913949999988,
+      "paired_change_percent": [
+        126.7961479514601,
+        130.6929016448423
+      ]
+    },
+    {
+      "phase": "decode_with_cold_image",
+      "metric": "tpot_ms",
+      "off_run_values_ms": [
+        12.69973088976378,
+        12.707455118110236
+      ],
+      "on_run_values_ms": [
+        12.816123062992126,
+        12.831488401574804
+      ],
+      "off_median_ms": 12.703593003937009,
+      "on_median_ms": 12.823805732283464,
+      "paired_change_percent": [
+        0.9164932252396119,
+        0.9760670591533405
+      ]
+    },
+    {
+      "phase": "decode_with_cold_image",
+      "metric": "e2e_ms",
+      "off_run_values_ms": [
+        1808.051634,
+        1817.06224
+      ],
+      "on_run_values_ms": [
+        1827.263403,
+        1822.873013
+      ],
+      "off_median_ms": 1812.5569369999998,
+      "on_median_ms": 1825.068208,
+      "paired_change_percent": [
+        1.0625674974501287,
+        0.3197894310984051
+      ]
+    },
+    {
+      "phase": "injected_cold_image",
+      "metric": "ttft_ms",
+      "off_run_values_ms": [
+        444.268464,
+        468.75479
+      ],
+      "on_run_values_ms": [
+        609.42137,
+        641.045183
+      ],
+      "off_median_ms": 456.511627,
+      "on_median_ms": 625.2332765,
+      "paired_change_percent": [
+        37.17412316711277,
+        36.75490825384418
+      ]
+    },
+    {
+      "phase": "injected_cold_image",
+      "metric": "e2e_ms",
+      "off_run_values_ms": [
+        627.543356,
+        656.624986
+      ],
+      "on_run_values_ms": [
+        791.410811,
+        827.591977
+      ],
+      "off_median_ms": 642.084171,
+      "on_median_ms": 809.501394,
+      "paired_change_percent": [
+        26.1125312591151,
+        26.037235049718312
+      ]
+    }
+  ]
+}

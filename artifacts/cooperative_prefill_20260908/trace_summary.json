@@ -1,0 +1,8 @@
+{
+  "source": "raw/prefill-9802.nsys-rep",
+  "vision_quanta": 8,
+  "language_quanta": 5,
+  "quantum_gaps_with_decode_replay": 12,
+  "total_quantum_gaps": 12,
+  "note": "Host NVTX and GPU kernels are separate tracks; interleaving is not simultaneous GPU execution."
+}
