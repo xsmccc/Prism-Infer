@@ -29,6 +29,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from benchmarks.bench_vision_parallel import DEFAULT_HOT_PROMPT, DEFAULT_PROMPT, _load_images
+from benchmarks.vision_parallel_report import save_report, summarize_requests
+
+CONCURRENT_PHASES = {"concurrent_cold_start", "concurrent_hot"}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -38,6 +41,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--images", nargs="+", type=Path)
     parser.add_argument("--image-size", type=int, default=448)
+    parser.add_argument(
+        "--image-max-pixels",
+        type=int,
+        default=448 * 448,
+        help="Processor pixel limit; raise with image size to increase visual token workload",
+    )
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
     parser.add_argument("--hot-prompt", default=DEFAULT_HOT_PROMPT)
     parser.add_argument("--tp", type=int, choices=(1, 2), default=2)
@@ -58,24 +67,13 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    complete = [row for row in rows if row["status"] == "finished"]
-    if not complete:
-        return {"completed_requests": 0}
-    start = min(row["client_start_ns"] for row in complete)
-    end = max(row["client_finish_ns"] for row in complete)
-    duration_s = (end - start) / 1e9
-    tokens = sum(len(row["token_ids"]) for row in complete)
-    return {
-        "completed_requests": len(complete),
-        "client_start_ns": start,
-        "client_finish_ns": end,
-        "duration_s": duration_s,
-        "output_tokens": tokens,
-        "output_tokens_per_s": tokens / duration_s if duration_s > 0 else None,
-        "ttft_median_ms": statistics.median(row["ttft_ms"] for row in complete),
-        "tpot_median_ms": statistics.median(row["tpot_ms"] for row in complete),
-        "e2e_median_ms": statistics.median(row["e2e_ms"] for row in complete),
+def _refresh_summaries(report: dict[str, Any]) -> None:
+    report["phase_summaries"] = {
+        phase: summarize_requests(
+            [row for row in report["requests"] if row["phase"] == phase],
+            concurrent=phase in CONCURRENT_PHASES,
+        )
+        for phase in dict.fromkeys(row["phase"] for row in report["requests"])
     }
 
 
@@ -85,6 +83,8 @@ async def _consume(
     images: list[Any],
     formatted_prompt: str,
     row: dict[str, Any],
+    *,
+    image_token_id: int,
 ) -> None:
     prompt = {"prompt": formatted_prompt, "multi_modal_data": {"image": images}}
     row["client_start_ns"] = perf_counter_ns()
@@ -116,6 +116,10 @@ async def _consume(
     row["e2e_ms"] = (row["client_finish_ns"] - row["client_start_ns"]) / 1e6
     row["output_tokens"] = len(row["token_ids"])
     row["coalesced_chunk_count"] = sum(len(chunk["token_ids"]) > 1 for chunk in row["chunks"])
+    prompt_ids = row.get("prompt_token_ids")
+    row["prompt_image_token_count"] = (
+        None if prompt_ids is None else prompt_ids.count(image_token_id)
+    )
     row["status"] = "finished"
 
 
@@ -125,6 +129,88 @@ async def _reset_caches(engine: Any) -> None:
         raise RuntimeError("vLLM did not clear its prefix cache before a cold phase")
     await engine.reset_encoder_cache()
     await engine.reset_mm_cache()
+
+
+async def _measure_requests(
+    engine: Any,
+    sampling: Any,
+    images: list[Any],
+    formatted: dict[str, str],
+    args: argparse.Namespace,
+    report: dict[str, Any],
+    *,
+    image_token_id: int,
+) -> None:
+    """Run the cold/hot request schedule and save each completed batch."""
+
+    async def batch(phase: str, question: str, count: int) -> None:
+        rows = []
+        for index in range(count):
+            row = {
+                "request_id": f"{args.replica_id}-{len(report['requests'])}",
+                "replica_id": args.replica_id,
+                "phase": phase,
+                "phase_request_index": index,
+                "question": question,
+                "token_ids": [],
+                "token_arrival_ns": [],
+                "chunks": [],
+                "status": "created",
+            }
+            report["requests"].append(row)
+            rows.append(row)
+        await asyncio.gather(
+            *(
+                _consume(
+                    engine,
+                    sampling,
+                    images,
+                    formatted[question],
+                    row,
+                    image_token_id=image_token_id,
+                )
+                for row in rows
+            )
+        )
+        if any(row["output_tokens"] != args.max_tokens for row in rows):
+            raise RuntimeError("fixed-length greedy request returned an unexpected token count")
+        _refresh_summaries(report)
+        save_report(args.output, report)
+        print(
+            "VLLM_PARALLEL_PHASE "
+            + json.dumps(
+                {
+                    "phase": phase,
+                    **summarize_requests(rows, concurrent=phase in CONCURRENT_PHASES),
+                }
+            ),
+            flush=True,
+        )
+
+    for _ in range(args.warmup):
+        await batch("warmup", args.prompt, 1)
+    for _ in range(args.repeat):
+        await _reset_caches(engine)
+        await batch("sequential_cold", args.prompt, 1)
+        await batch("sequential_hot_new_question", args.hot_prompt, 1)
+    if args.wait_for_start:
+        print("VLLM_PARALLEL_READY " + json.dumps({"replica_id": args.replica_id}), flush=True)
+        if sys.stdin.readline().strip() != "START":
+            raise RuntimeError("expected START on stdin before concurrent phases")
+    await _reset_caches(engine)
+    await batch("concurrent_cold_start", args.prompt, args.concurrent_requests)
+    await batch("concurrent_hot", args.hot_prompt, args.concurrent_requests)
+    cold_ids = next(
+        row["token_ids"] for row in report["requests"] if row["phase"] == "sequential_cold"
+    )
+    hot_ids = next(
+        row["token_ids"]
+        for row in report["requests"]
+        if row["phase"] == "sequential_hot_new_question"
+    )
+    for row in report["requests"]:
+        reference = cold_ids if row["question"] == args.prompt else hot_ids
+        row["matches_same_question_sequential_ids"] = row["token_ids"] == reference
 
 
 async def _run(args: argparse.Namespace, report: dict[str, Any], images: list[Any]) -> None:
@@ -156,7 +242,7 @@ async def _run(args: argparse.Namespace, report: dict[str, Any], images: list[An
         "num_gpu_blocks_override": args.kv_blocks,
         "gpu_memory_utilization": 0.85,
         "limit_mm_per_prompt": {"image": len(images), "video": 0},
-        "mm_processor_kwargs": {"max_pixels": 448 * 448},
+        "mm_processor_kwargs": {"max_pixels": args.image_max_pixels},
         "enable_prefix_caching": True,
         "enable_chunked_prefill": False,
         "enforce_eager": args.enforce_eager,
@@ -168,6 +254,7 @@ async def _run(args: argparse.Namespace, report: dict[str, Any], images: list[An
         options["hf_overrides"] = {"text_config": {"architectures": ["Qwen3ForCausalLM"]}}
     report["engine_options"] = options
     hf_config = AutoConfig.from_pretrained(args.model, local_files_only=True)
+    report["input"]["image_token_id"] = hf_config.image_token_id
     text_config = getattr(hf_config, "text_config", hf_config)
     layers = text_config.num_hidden_layers
     kv_heads = text_config.num_key_value_heads
@@ -193,6 +280,7 @@ async def _run(args: argparse.Namespace, report: dict[str, Any], images: list[An
             messages, tokenize=False, add_generation_prompt=True
         )
     report["formatted_prompts"] = formatted
+    save_report(args.output, report)
     engine = None
     try:
         load_start = perf_counter_ns()
@@ -205,56 +293,15 @@ async def _run(args: argparse.Namespace, report: dict[str, Any], images: list[An
             output_kind=RequestOutputKind.DELTA,
         )
 
-        async def batch(phase: str, question: str, count: int) -> None:
-            rows = []
-            for index in range(count):
-                row = {
-                    "request_id": f"{args.replica_id}-{len(report['requests'])}",
-                    "replica_id": args.replica_id,
-                    "phase": phase,
-                    "phase_request_index": index,
-                    "question": question,
-                    "token_ids": [],
-                    "token_arrival_ns": [],
-                    "chunks": [],
-                    "status": "created",
-                }
-                report["requests"].append(row)
-                rows.append(row)
-            await asyncio.gather(
-                *(_consume(engine, sampling, images, formatted[question], row) for row in rows)
-            )
-            if any(row["output_tokens"] != args.max_tokens for row in rows):
-                raise RuntimeError("fixed-length greedy request returned an unexpected token count")
-            print(
-                "VLLM_PARALLEL_PHASE " + json.dumps({"phase": phase, **_summary(rows)}),
-                flush=True,
-            )
-
-        for _ in range(args.warmup):
-            await batch("warmup", args.prompt, 1)
-        for _ in range(args.repeat):
-            await _reset_caches(engine)
-            await batch("sequential_cold", args.prompt, 1)
-            await batch("sequential_hot_new_question", args.hot_prompt, 1)
-        if args.wait_for_start:
-            print("VLLM_PARALLEL_READY " + json.dumps({"replica_id": args.replica_id}), flush=True)
-            if sys.stdin.readline().strip() != "START":
-                raise RuntimeError("expected START on stdin before concurrent phases")
-        await _reset_caches(engine)
-        await batch("concurrent_cold_start", args.prompt, args.concurrent_requests)
-        await batch("concurrent_hot", args.hot_prompt, args.concurrent_requests)
-        cold_ids = next(
-            row["token_ids"] for row in report["requests"] if row["phase"] == "sequential_cold"
+        await _measure_requests(
+            engine,
+            sampling,
+            images,
+            formatted,
+            args,
+            report,
+            image_token_id=hf_config.image_token_id,
         )
-        hot_ids = next(
-            row["token_ids"]
-            for row in report["requests"]
-            if row["phase"] == "sequential_hot_new_question"
-        )
-        for row in report["requests"]:
-            reference = cold_ids if row["question"] == args.prompt else hot_ids
-            row["matches_same_question_sequential_ids"] = row["token_ids"] == reference
     finally:
         if engine is not None:
             engine.shutdown()
@@ -267,9 +314,19 @@ def main() -> None:
         parser.error("this short comparison uses at most two GPUs per engine")
     if args.repeat < 1 or args.warmup < 0 or args.max_tokens < 2:
         parser.error("repeat >= 1, warmup >= 0 and max-tokens >= 2 are required")
-    if min(args.concurrent_requests, args.image_size, args.kv_blocks, args.block_size) < 1:
-        parser.error("request count, image size and KV sizes must be positive")
+    if (
+        min(
+            args.concurrent_requests,
+            args.image_size,
+            args.image_max_pixels,
+            args.kv_blocks,
+            args.block_size,
+        )
+        < 1
+    ):
+        parser.error("request count, image size/pixel limit and KV sizes must be positive")
     images, input_record = _load_images(args)
+    input_record["image_max_pixels"] = args.image_max_pixels
     report: dict[str, Any] = {
         "schema_version": 1,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -294,14 +351,20 @@ def main() -> None:
             "warmup": args.warmup,
             "repeat": args.repeat,
             "throughput_scope": "finite burst including prefill and drain, not saturation",
+            "sequential_summary": "observation window includes intervening phases; no throughput",
+            "progress_save": "after each completed batch, outside request timing",
+            "visual_token_count": "image_token_id occurrences in actual output.prompt_token_ids",
             "pp_encoder": (
                 "only first PP stage runs vision; data mode splits TP ranks, not PP stages"
             ),
             "async_scheduling": False,
         },
         "requests": [],
+        "phase_summaries": {},
+        "status": "running",
     }
     try:
+        save_report(args.output, report)
         asyncio.run(_run(args, report, images))
         report["status"] = "complete"
     except Exception as exc:
@@ -309,16 +372,10 @@ def main() -> None:
         report["error"] = {"type": type(exc).__name__, "message": str(exc)}
         raise
     finally:
-        report["phase_summaries"] = {
-            phase: _summary([row for row in report["requests"] if row["phase"] == phase])
-            for phase in dict.fromkeys(row["phase"] for row in report["requests"])
-        }
+        _refresh_summaries(report)
         for image in images:
             image.close()
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        save_report(args.output, report)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from benchmarks.vision_parallel_report import save_report, summarize_requests
+
 FIXTURE_COLORS = (
     (220, 50, 50),
     (50, 180, 80),
@@ -49,6 +51,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--images", nargs="+", type=Path, help="Real image paths in model order")
     parser.add_argument("--image-size", type=int, default=448, help="Eight-color fixture size only")
+    parser.add_argument(
+        "--image-max-pixels",
+        type=int,
+        default=448 * 448,
+        help="Processor pixel limit per image, separate from source image size",
+    )
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
     parser.add_argument("--hot-prompt", default=DEFAULT_HOT_PROMPT)
     parser.add_argument("--tensor-parallel-size", type=int, choices=(1, 2), default=1)
@@ -147,6 +155,7 @@ def _run_requests(
         row["prompt_token_ids"] = list(sequence.prompt_token_ids)
         row["prompt_tokens"] = len(row["prompt_token_ids"])
         row["image_grid_thw"] = sequence.image_grid_thw.tolist()
+        row["prompt_image_token_count"] = row["prompt_token_ids"].count(sequence.image_token_id)
         spans = sequence.image_token_spans()
         row["image_token_spans"] = None if spans is None else [list(span) for span in spans]
         row["prefix_candidate_tokens_at_submit"] = sequence.prefix_cache_candidate_tokens
@@ -196,26 +205,16 @@ def _run_requests(
     return list(rows.values())
 
 
-def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    finished = [row for row in rows if row["status"] == "finished"]
-    if not finished:
-        return {"completed_requests": 0}
-    start = min(row["client_start_ns"] for row in finished)
-    end = max(row["client_finish_ns"] for row in finished)
-    duration_s = (end - start) / 1e9
-    output_tokens = sum(row["output_tokens"] for row in finished)
-    return {
-        "completed_requests": len(finished),
-        "client_start_ns": start,
-        "client_finish_ns": end,
-        "duration_s": duration_s,
-        "output_tokens": output_tokens,
-        "output_tokens_per_s": output_tokens / duration_s if duration_s > 0 else None,
-        "requests_per_s": len(finished) / duration_s if duration_s > 0 else None,
-        "ttft_median_ms": statistics.median(row["ttft_ms"] for row in finished),
-        "tpot_median_ms": statistics.median(row["tpot_ms"] for row in finished),
-        "e2e_median_ms": statistics.median(row["e2e_ms"] for row in finished),
+def _save_progress(path: Path, report: dict[str, Any]) -> None:
+    """Save completed requests between timed batches, including partial-Prefix phases."""
+    report["phase_summaries"] = {
+        phase: summarize_requests(
+            [row for row in report["requests"] if row["phase"] == phase],
+            concurrent=phase.startswith("concurrent_"),
+        )
+        for phase in dict.fromkeys(row["phase"] for row in report["requests"])
     }
+    save_report(path, report)
 
 
 def _partial_prefix_case(
@@ -223,6 +222,7 @@ def _partial_prefix_case(
     sampling: Any,
     report: dict[str, Any],
     replica_id: str,
+    output_path: Path,
 ) -> None:
     """Exercise A+B -> A+C through the real interleaved image submission API."""
     from PIL import Image
@@ -241,7 +241,7 @@ def _partial_prefix_case(
     )
 
     def run(phase: str, selected: list[Any], prefix: bool) -> dict[str, Any]:
-        return _run_requests(
+        rows = _run_requests(
             llm,
             selected,
             [prompt],
@@ -251,7 +251,9 @@ def _partial_prefix_case(
             output_rows=report["requests"],
             replica_id=replica_id,
             interleaved=True,
-        )[0]
+        )
+        _save_progress(output_path, report)
+        return rows[0]
 
     try:
         reference = run("partial_ac_reference_prefix_disabled", [images[0], images[2]], False)
@@ -272,6 +274,7 @@ def _partial_prefix_case(
             "reference_token_ids": reference["token_ids"],
             "partial_token_ids": partial["token_ids"],
         }
+        _save_progress(output_path, report)
     finally:
         for image in images:
             image.close()
@@ -282,9 +285,10 @@ def main() -> None:
     args = parser.parse_args()
     if args.max_tokens < 2 or args.repeat < 1 or args.warmup < 0:
         parser.error("max-tokens >= 2, repeat >= 1 and warmup >= 0 are required")
-    if args.concurrent_requests < 1 or args.image_size < 1:
-        parser.error("concurrent-requests and image-size must be positive")
+    if args.concurrent_requests < 1 or args.image_size < 1 or args.image_max_pixels < 1:
+        parser.error("concurrent-requests, image-size and image-max-pixels must be positive")
     images, input_record = _load_images(args)
+    input_record["image_max_pixels"] = args.image_max_pixels
     options = {
         "tensor_parallel_size": args.tensor_parallel_size,
         "vision_encoder_parallel_mode": args.vision_mode,
@@ -309,6 +313,7 @@ def main() -> None:
         "enable_fused_add_rmsnorm": True,
         "enable_packed_kv_projection": True,
         "vision_attention_backend": "sdpa",
+        "image_max_pixels": args.image_max_pixels,
     }
     report: dict[str, Any] = {
         "schema_version": 1,
@@ -338,7 +343,9 @@ def main() -> None:
         },
         "requests": [],
         "phase_summaries": {},
+        "status": "running",
     }
+    save_report(args.output, report)
     llm = None
     try:
         import torch
@@ -366,7 +373,7 @@ def main() -> None:
         sampling = SamplingParams(temperature=0.0, max_tokens=args.max_tokens, ignore_eos=True)
 
         def run(phase: str, prompts: list[str], prefix: bool) -> list[dict[str, Any]]:
-            return _run_requests(
+            rows = _run_requests(
                 llm,
                 images,
                 prompts,
@@ -376,6 +383,8 @@ def main() -> None:
                 output_rows=report["requests"],
                 replica_id=args.replica_id,
             )
+            _save_progress(args.output, report)
+            return rows
 
         for _ in range(args.warmup):
             run("warmup", [args.prompt], False)
@@ -387,7 +396,7 @@ def main() -> None:
             run("hot_same_prompt", [args.prompt], True)
         for _ in range(args.repeat):
             run("hot_new_question", [args.hot_prompt], True)
-        _partial_prefix_case(llm, sampling, report, args.replica_id)
+        _partial_prefix_case(llm, sampling, report, args.replica_id, args.output)
 
         for phase, prefix_enabled in (
             ("concurrent_cold_prefix_disabled", False),
@@ -412,9 +421,6 @@ def main() -> None:
         for row in report["requests"]:
             if row["prompt"] == args.prompt:
                 row["matches_sequential_cold_ids"] = row["token_ids"] == reference_ids
-        for phase in dict.fromkeys(row["phase"] for row in report["requests"]):
-            phase_rows = [row for row in report["requests"] if row["phase"] == phase]
-            report["phase_summaries"][phase] = _summary(phase_rows)
         report["prefix_cache_after"] = llm.multimodal_prefix_cache_metadata()
         report["status"] = "complete"
     except Exception as exc:
@@ -428,10 +434,7 @@ def main() -> None:
         finally:
             for image in images:
                 image.close()
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(
-                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-            )
+            _save_progress(args.output, report)
 
 
 if __name__ == "__main__":

@@ -10,15 +10,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 from statistics import median
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from benchmarks.vision_parallel_report import summarize_requests  # noqa: E402
+
 EOS_TOKEN_ID = 151645
 CHOICE_TOKENS = {32: "A", 33: "B", 34: "C", 35: "D", 36: "E"}
 PHASE_METRICS = (
-    "ttft_median_ms", "tpot_median_ms", "e2e_median_ms",
-    "output_tokens_per_s", "requests_per_s", "duration_s",
+    "ttft_median_ms",
+    "tpot_median_ms",
+    "e2e_median_ms",
+    "output_tokens_per_s",
+    "requests_per_s",
+    "duration_s",
 )
 
 
@@ -39,7 +47,14 @@ def percent_changes(reference: dict, candidate: dict) -> dict:
     return {
         key: 100 * (candidate[key] / reference[key] - 1)
         for key in PHASE_METRICS
-        if reference.get(key) not in (None, 0) and candidate.get(key) is not None
+        if reference.get(key) not in (None, 0)
+        and candidate.get(key) is not None
+        and (
+            key != "duration_s"
+            or reference.get("duration_scope")
+            == candidate.get("duration_scope")
+            == "single_concurrent_burst"
+        )
     }
 
 
@@ -90,9 +105,21 @@ def summarize_features(path: Path) -> dict:
 def summarize_diagnosis(path: Path) -> dict:
     raw = read_json(path)
     kept = {
-        "patch_embed", "position_embedding", "position_plus_patch", "rope_cos", "rope_sin",
-        "block00.norm1", "block00.qkv", "block00.attention_projection",
-        "block00", "block08", "block16", "block24", "block25", "block26", "main_merger",
+        "patch_embed",
+        "position_embedding",
+        "position_plus_patch",
+        "rope_cos",
+        "rope_sin",
+        "block00.norm1",
+        "block00.qkv",
+        "block00.attention_projection",
+        "block00",
+        "block08",
+        "block16",
+        "block24",
+        "block25",
+        "block26",
+        "main_merger",
     }
     return {
         "source": source_name(path),
@@ -122,9 +149,19 @@ def summarize_diagnosis(path: Path) -> dict:
 def compact_report(raw: dict, path: Path) -> dict:
     result = {"source": source_name(path)}
     for key in (
-        "status", "error", "git", "model_path", "model_revision", "model_load_ms",
-        "engine_options", "input", "sampling", "protocol", "kv_cache",
-        "configured_kv_capacity", "partial_prefix_validation", "phase_summaries",
+        "status",
+        "error",
+        "git",
+        "model_path",
+        "model_revision",
+        "model_load_ms",
+        "engine_options",
+        "input",
+        "sampling",
+        "protocol",
+        "kv_cache",
+        "configured_kv_capacity",
+        "partial_prefix_validation",
     ):
         if key in raw:
             result[key] = raw[key]
@@ -132,6 +169,14 @@ def compact_report(raw: dict, path: Path) -> dict:
         {key: gpu.get(key) for key in ("name", "gpu_uuid", "driver", "compute_capability")}
         for gpu in raw.get("gpus", [])
     ]
+    by_phase: dict[str, list[dict]] = {}
+    for row in raw.get("requests", []):
+        by_phase.setdefault(row["phase"], []).append(row)
+    result["phase_summaries"] = {
+        phase: summarize_requests(rows, concurrent=phase.startswith("concurrent_"))
+        for phase, rows in by_phase.items()
+    }
+    result["phase_summaries_source"] = "recomputed from raw requests, not raw phase_summaries"
     return result
 
 
@@ -173,12 +218,13 @@ def summarize_tp2_pair(reference_path: Path, candidate_path: Path) -> dict:
         for key in sorted(option_keys)
         if reference["engine_options"].get(key) != candidate["engine_options"].get(key)
     }
-    for phase, before in reference["phase_summaries"].items():
-        if phase not in candidate["phase_summaries"]:
+    for phase, before in result["replicated"]["phase_summaries"].items():
+        if phase not in result["data"]["phase_summaries"]:
             continue
-        after = candidate["phase_summaries"][phase]
+        after = result["data"]["phase_summaries"][phase]
         pairs = [
-            (row, right_rows[key]) for key, row in left_rows.items()
+            (row, right_rows[key])
+            for key, row in left_rows.items()
             if key[0] == phase and key in right_rows
         ]
         result["phase_comparison"][phase] = {
@@ -222,21 +268,23 @@ def summarize_muir(reference_path: Path, candidate_path: Path) -> dict:
         b_choice = CHOICE_TOKENS.get(b_tokens[0]) if b_tokens else None
         if a["answer"] != b["answer"]:
             raise ValueError(f"MuirBench ground truth differs for Sample ID {sample_id}")
-        rows.append({
-            "sample_id": sample_id,
-            "ground_truth": a["answer"],
-            "full_token_ids_exact": a["token_ids"] == b["token_ids"],
-            "both_have_16_tokens": len(a["token_ids"]) == len(b["token_ids"]) == 16,
-            "answer_token_ids_exact": a_tokens == b_tokens,
-            "replicated_answer_token_ids": a_tokens,
-            "data_answer_token_ids": b_tokens,
-            "replicated_choice": a_choice,
-            "data_choice": b_choice,
-            "both_choices_parseable": a_choice is not None and b_choice is not None,
-            "replicated_correct": a_choice == a["answer"],
-            "data_correct": b_choice == b["answer"],
-            "prompt_token_ids_exact": a["prompt_token_ids"] == b["prompt_token_ids"],
-        })
+        rows.append(
+            {
+                "sample_id": sample_id,
+                "ground_truth": a["answer"],
+                "full_token_ids_exact": a["token_ids"] == b["token_ids"],
+                "both_have_16_tokens": len(a["token_ids"]) == len(b["token_ids"]) == 16,
+                "answer_token_ids_exact": a_tokens == b_tokens,
+                "replicated_answer_token_ids": a_tokens,
+                "data_answer_token_ids": b_tokens,
+                "replicated_choice": a_choice,
+                "data_choice": b_choice,
+                "both_choices_parseable": a_choice is not None and b_choice is not None,
+                "replicated_correct": a_choice == a["answer"],
+                "data_correct": b_choice == b["answer"],
+                "prompt_token_ids_exact": a["prompt_token_ids"] == b["prompt_token_ids"],
+            }
+        )
     old_parser = {}
     for label, report in (("replicated", reference), ("data", candidate)):
         requests = report["requests"]
@@ -291,12 +339,26 @@ def summarize_muir(reference_path: Path, candidate_path: Path) -> dict:
 
 def summarize_replicas(path: Path) -> dict:
     raw = read_json(path)
+    requests = [
+        row
+        for replica in raw["replicas"]
+        for row in read_json(path.parent / Path(replica["raw_json"]).name)["requests"]
+    ]
     phases = {}
     for name, phase in raw["phases"].items():
-        compact = {key: value for key, value in phase.items() if not key.startswith("per_request_")}
-        for metric in ("ttft", "tpot", "e2e"):
-            values = phase.get(f"per_request_{metric}_ms", [])
-            compact[f"{metric}_median_ms"] = median(values) if values else None
+        phase_rows = [row for row in requests if row["phase"] == name]
+        compact = summarize_requests(
+            phase_rows,
+            concurrent=name.startswith("concurrent_"),
+        )
+        compact["submitted_records"] = len(phase_rows)
+        compact["all_records_finished"] = all(row["status"] == "finished" for row in phase_rows)
+        for key in (
+            "replica_first_request_start_skew_ms",
+            "cross_replica_token_ids_exact_by_request_index",
+            "full_visual_prefix_reused_requests",
+        ):
+            compact[key] = phase[key]
         phases[name] = compact
     return {
         "source": source_name(path),
@@ -306,6 +368,7 @@ def summarize_replicas(path: Path) -> dict:
         "kv_cache": raw["kv_cache"],
         "timing_scope": raw["timing_scope"],
         "throughput_scope": raw["throughput_scope"],
+        "phase_summaries_source": "recomputed from both raw replica request files",
         "scope": (
             "independent two-TP1-replica experiment; "
             "total KV/slots/offered requests need not match TP2"
@@ -327,9 +390,13 @@ def main() -> None:
         parser.error("provide both --final-replicated and --final-data")
     raw_dir = args.raw_dir
     summary = {
-        "schema_version": 1,
+        "schema_version": 2,
         "selection_policy": (
             "fixed named initial evidence; final TP2/replicas/PP2 require explicit CLI paths"
+        ),
+        "statistics_policy": (
+            "Sequential phases report request latency and a scoped duration, not throughput; "
+            "tok/s and req/s are emitted only for a single concurrent burst."
         ),
         "vision_features": summarize_features(raw_dir / "vision-features-9759.json"),
         "partition_diagnosis": summarize_diagnosis(raw_dir / "vision-partition-9763.json"),
@@ -362,22 +429,27 @@ def main() -> None:
         summary["vllm_internal"]["same_input_fixture"] = vllm_tp2["input"] == pp2["input"]
         summary["vllm_internal"]["same_sampling"] = vllm_tp2["sampling"] == pp2["sampling"]
         if pp2.get("status") == vllm_tp2.get("status") == "complete":
+            tp2_phases = summary["vllm_internal"]["tp2"]["phase_summaries"]
+            pp2_phases = summary["vllm_internal"]["pp2"]["phase_summaries"]
             summary["vllm_internal"]["pp2_vs_tp2_change_percent"] = {
-                phase: percent_changes(values, pp2["phase_summaries"][phase])
-                for phase, values in vllm_tp2["phase_summaries"].items()
-                if phase in pp2["phase_summaries"]
+                phase: percent_changes(values, pp2_phases[phase])
+                for phase, values in tp2_phases.items()
+                if phase in pp2_phases
             }
     # Failure inventory is not a selector: no successful run is promoted here.
     summary["retained_failures"] = []
     for path in sorted(raw_dir.glob("*.json")):
         record = read_json(path)
         if record.get("status") == "failed":
-            summary["retained_failures"].append({
-                "source": source_name(path), "error": record.get("error"),
-                "completed_request_records": Counter(
-                    row.get("status") for row in record.get("requests", [])
-                ).get("finished", 0),
-            })
+            summary["retained_failures"].append(
+                {
+                    "source": source_name(path),
+                    "error": record.get("error"),
+                    "completed_request_records": Counter(
+                        row.get("status") for row in record.get("requests", [])
+                    ).get("finished", 0),
+                }
+            )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

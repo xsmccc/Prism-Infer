@@ -25,6 +25,29 @@ def _patch_auto_config(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def test_visual_embedding_cache_rejects_tp2_before_checkpoint_access(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_checkpoint_access(_path):
+        pytest.fail("invalid TP2 visual cache config reached checkpoint loading")
+
+    monkeypatch.setattr(
+        "prism_infer.config.AutoConfig.from_pretrained",
+        unexpected_checkpoint_access,
+    )
+    with pytest.raises(ValueError, match="visual embedding cache.*TP1"):
+        Config(
+            str(tmp_path),
+            tensor_parallel_size=2,
+            enable_visual_embedding_cache=True,
+        )
+
+    _patch_auto_config(monkeypatch)
+    config = Config(str(tmp_path), tensor_parallel_size=1, enable_visual_embedding_cache=True)
+    assert config.enable_visual_embedding_cache
+
+
 def test_attention_compile_config_requires_off_eager_mode(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

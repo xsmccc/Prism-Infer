@@ -21,6 +21,12 @@ from pathlib import Path
 from time import monotonic, perf_counter_ns
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from benchmarks.vision_parallel_report import save_report
+
 BENCHMARK = Path(__file__).with_name("bench_vision_parallel.py")
 READY_PREFIX = "VISION_PARALLEL_READY "
 PHASES = ("concurrent_cold_prefix_disabled", "concurrent_hot")
@@ -38,6 +44,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--images", nargs="+", type=Path)
     parser.add_argument("--image-size", type=int, default=448)
+    parser.add_argument(
+        "--image-max-pixels",
+        type=int,
+        default=448 * 448,
+        help="Processor pixel limit per image for both replicas",
+    )
     parser.add_argument("--prompt")
     parser.add_argument("--hot-prompt")
     parser.add_argument("--max-model-len", type=int, default=4096)
@@ -49,7 +61,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-tokens", type=int, default=16)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeat", type=int, default=1, help="Sequential probes per replica")
-    parser.add_argument("--timeout-seconds", type=float, default=900.0)
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=840.0,
+        help="Total runtime before cleanup; default leaves 60s in a 15-minute Slurm job",
+    )
     return parser
 
 
@@ -85,6 +102,7 @@ def _child_command(args: argparse.Namespace, replica_id: int, output: Path) -> l
     ]
     for name in (
         "image_size",
+        "image_max_pixels",
         "max_model_len",
         "max_num_batched_tokens",
         "max_num_seqs",
@@ -236,6 +254,8 @@ def main() -> None:
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "mode": "two_independent_tp1_replicas",
         "parent_pid": os.getpid(),
+        "timeout_seconds": args.timeout_seconds,
+        "status": "running",
         "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
         "devices": devices,
         "commands": [],
@@ -269,6 +289,7 @@ def main() -> None:
     readers: list[threading.Thread] = []
     failure: Exception | None = None
     deadline = monotonic() + args.timeout_seconds
+    save_report(summary_path, report)
     try:
         for replica_id, device in enumerate(devices):
             command = _child_command(args, replica_id, raw_paths[replica_id])
@@ -305,6 +326,7 @@ def main() -> None:
         for phase in PHASES:
             report["phase_barriers"].append(_phase_barrier(phase, processes, events, deadline))
             print(f"DP2_START {phase}", flush=True)
+            save_report(summary_path, report)
         for replica_id, process in enumerate(processes):
             code = process.wait(timeout=max(0.1, deadline - monotonic()))
             if code != 0:
@@ -365,9 +387,7 @@ def main() -> None:
             child.get("status") == "complete" for child in child_reports
         )
         report["status"] = "complete" if complete else "failed"
-        summary_path.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        save_report(summary_path, report)
     print("DP2_RESULT " + str(summary_path), flush=True)
     if report["status"] != "complete":
         raise SystemExit(f"DP2 benchmark failed: {report.get('error', 'missing child result')}")

@@ -592,6 +592,8 @@ class PrismConfig:
                 )
         if self.execution.cooperative_prefill and self.model.tensor_parallel_size != 1:
             raise ValueError("enable_cooperative_prefill currently supports TP1 only")
+        if self.multimodal.enable_visual_embedding_cache and self.model.tensor_parallel_size != 1:
+            raise ValueError("visual embedding cache currently requires Qwen3-VL with TP1")
 
     @classmethod
     def from_flat_options(

@@ -50,6 +50,17 @@ Prefix 覆盖与 KV 字节；TTFT 从 add-request 前开始，文件读取和模
 双副本各持有 1,245,708,288 bytes KV，合计是 TP2 的两倍；按两个副本共同时间跨度计算
 总吞吐，不能将局部 tok/s 简单相加，也不声称相同 KV 预算。
 
+汇总中的顺序 phase 只报告逐请求延迟，不报告 tok/s 或 req/s。vLLM 的顺序冷/热请求
+交替执行，旧聚合按同名 phase 的首尾请求取时间窗口，会把穿插的另一 phase 计入分母，
+因此旧顺序吞吐不再透传到派生结果。`summarize.py` 现在从原始 `requests` 重新汇总
+初始/最终 Prism TP2、vLLM TP2/PP2；双副本也从两个原始请求文件合并后汇总，而不复用
+历史 `phase_summaries` 的吞吐字段。`duration_s` 同时保留 `duration_scope`：顺序 phase
+只是可能包含穿插请求和间隙的观察窗口，不参与性能降幅计算；只有 `concurrent_*`
+单次并发批次才按共同起止窗口计算吞吐，仍不代表稳态饱和能力。
+
+此次修正不改 raw 文件、逐请求 TTFT/TPOT/E2E、输入或 token 记录，也不改变已报告的
+并发 DP、TP、PP 数值与结论；它删除的是不能正确归属到顺序冷/热 phase 的旧吞吐统计。
+
 Muir 的 20 条检查没有进行 Token Pruning，目的仅为对比新旧 Encoder 路径。脚本当时为
 固定输出长度设置 `ignore_eos=True`，旧的 `prediction/strict_correct` 对 EOS 后文本
 进行了解析，不能作为正常答题准确率。原始字段不改写，汇总从原始 token IDs 截取首个

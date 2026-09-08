@@ -28,7 +28,12 @@ from prism_infer.engine.scheduler_policy import (
     VisionAwareSchedulerPolicy,
 )
 from prism_infer.engine.sequence import Sequence
-from prism_infer.engine.tp_control import TPControlPlane, TPMethod, TPResponse
+from prism_infer.engine.tp_control import (
+    TPControlPlane,
+    TPMethod,
+    TPResponse,
+    TPResponseStatus,
+)
 from prism_infer.sampling_params import SamplingParams
 
 _REQUEST_IDS = count()
@@ -578,6 +583,65 @@ def test_tp_control_dispatches_prefix_row_copies_and_receives_ack() -> None:
     finally:
         sender.close()
         receiver.close()
+
+
+def test_tp_control_validates_initial_topology_and_timeout_updates() -> None:
+    sender, receiver = Pipe(duplex=True)
+    try:
+        with pytest.raises(ValueError, match="channel count"):
+            TPControlPlane(rank=0, world_size=3, channel=[sender])
+        with pytest.raises(ValueError, match="timeout must be positive"):
+            TPControlPlane(rank=0, world_size=2, channel=[sender], timeout_seconds=0)
+
+        runner = ModelRunner.__new__(ModelRunner)
+        runner.tp_control = TPControlPlane(rank=0, world_size=2, channel=[sender])
+        runner.control_timeout_seconds = 0.25
+        assert runner._control_timeout() == 0.25
+        assert runner._rank0_control_channels() == [sender]
+        with pytest.raises(ValueError, match="timeout must be positive"):
+            runner.control_timeout_seconds = 0
+        assert runner._control_timeout() == 0.25
+
+        worker = TPControlPlane(rank=1, world_size=2, channel=receiver)
+        with pytest.raises(RuntimeError, match="only TP rank 0"):
+            worker.rank0_channels()
+    finally:
+        sender.close()
+        receiver.close()
+
+
+@pytest.mark.parametrize("wrong_field", ["request_id", "worker_rank"])
+def test_tp_control_still_rejects_mismatched_ack(wrong_field) -> None:
+    sender, receiver = Pipe(duplex=True)
+    rank0 = TPControlPlane(rank=0, world_size=2, channel=[sender])
+    rank1 = TPControlPlane(rank=1, world_size=2, channel=receiver)
+    try:
+        command, _ = rank0.broadcast("copy_kv_blocks", ([(1, 2)],))
+        received = rank1.read_command()
+        fields = {"request_id": received.request_id, "worker_rank": 1}
+        fields[wrong_field] += 1
+        rank1.send_response(TPResponse(status=TPResponseStatus.OK, **fields))
+        message = "stale or out-of-order" if wrong_field == "request_id" else "rank mismatch"
+        with pytest.raises(RuntimeError, match=message):
+            rank0.await_responses(command)
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def test_visual_embedding_cache_rejects_text_model_before_construction(monkeypatch) -> None:
+    runner = ModelRunner.__new__(ModelRunner)
+    runner.config = SimpleNamespace(enable_visual_embedding_cache=True)
+
+    def unexpected_model_construction(_config):
+        pytest.fail("visual embedding cache incompatibility reached model construction")
+
+    monkeypatch.setattr(
+        "prism_infer.engine.model_runner.Qwen3ForCausalLM",
+        unexpected_model_construction,
+    )
+    with pytest.raises(ValueError, match="visual embedding cache.*Qwen3-VL"):
+        runner._create_model(SimpleNamespace(model_type="qwen3"))
 
 
 def test_engine_metrics_observe_without_driving_scheduler() -> None:

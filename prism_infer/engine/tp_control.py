@@ -74,18 +74,24 @@ class TPControlPlane:
         if not isinstance(self.channel, Connection):
             raise TypeError("TP worker requires one duplex control Connection")
 
-    def timeout(self) -> float:
-        value = self.timeout_seconds
+    @property
+    def timeout_seconds(self) -> float:
+        return self._timeout_seconds
+
+    @timeout_seconds.setter
+    def timeout_seconds(self, value: float) -> None:
+        """Validate at configuration/update time, not on every ACK wait."""
+
         if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
             raise ValueError(f"TP control timeout must be positive, got {value!r}")
-        return float(value)
+        self._timeout_seconds = float(value)
+
+    def timeout(self) -> float:
+        return self.timeout_seconds
 
     def rank0_channels(self) -> list[Connection]:
         if self.rank != 0 or self.world_size <= 1:
             raise RuntimeError("only TP rank 0 owns worker control channels")
-        self._validate_topology()
-        if not isinstance(self.channel, list):  # narrowed by _validate_topology
-            raise AssertionError("rank 0 TP channel validation did not narrow to a list")
         return self.channel
 
     def next_command(
@@ -326,14 +332,12 @@ def _serialize(message: TPCommand | TPResponse, *, kind: str) -> bytes:
 def serialize_command(command: TPCommand) -> bytes:
     if not isinstance(command, TPCommand):
         raise TypeError("command must be TPCommand")
-    command.validate()
     return _serialize(command, kind="command")
 
 
 def serialize_response(response: TPResponse) -> bytes:
     if not isinstance(response, TPResponse):
         raise TypeError("response must be TPResponse")
-    response.validate()
     return _serialize(response, kind="response")
 
 

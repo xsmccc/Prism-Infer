@@ -382,6 +382,11 @@ class ModelRunner:
         """Instantiate exactly one validated model family on the active GPU."""
 
         model_family = resolve_model_family(hf_config)
+        if (
+            self.config.enable_visual_embedding_cache
+            and model_family is not ModelFamily.QWEN3_VL
+        ):
+            raise ValueError("visual embedding cache currently requires Qwen3-VL")
         if model_family is ModelFamily.QWEN3_VL:
             self.model = Qwen3VLForCausalLM(
                 hf_config,
@@ -676,8 +681,6 @@ class ModelRunner:
 
         if not self.config.enable_visual_embedding_cache:
             return
-        if self.world_size != 1 or not self.is_vl_model:
-            raise RuntimeError("visual embedding cache currently requires Qwen3-VL with TP1")
         key = seq.visual_embedding_cache_key
         if key is None:
             return
