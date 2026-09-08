@@ -48,6 +48,32 @@ def test_visual_embedding_cache_rejects_tp2_before_checkpoint_access(
     assert config.enable_visual_embedding_cache
 
 
+def test_default_scheduler_accepts_multimage_prefix_without_chunking(tmp_path, monkeypatch):
+    from prism_infer.engine.scheduler_policy import FCFSSchedulerPolicy
+    from prism_infer.engine.sequence import Sequence
+    from prism_infer.sampling_params import SamplingParams
+
+    _patch_auto_config(monkeypatch)
+    config = Config(str(tmp_path))
+    assert not config.enable_chunked_prefill
+    policy = FCFSSchedulerPolicy(
+        max_model_len=config.max_model_len,
+        max_num_batched_tokens=config.max_num_batched_tokens,
+        max_num_seqs=config.max_num_seqs,
+        enable_chunked_prefill=config.enable_chunked_prefill,
+        max_chunk_size=config.max_chunk_size,
+    )
+    seq = Sequence(
+        [151655] * (3 * 196) + [1],
+        SamplingParams(max_tokens=16),
+        block_size=256,
+        request_id=0,
+        image_token_id=151655,
+        image_token_count=3 * 196,
+    )
+    assert policy.admit(seq, queued_requests=0).accepted
+
+
 def test_attention_compile_config_requires_off_eager_mode(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

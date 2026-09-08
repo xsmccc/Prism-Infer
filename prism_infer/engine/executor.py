@@ -124,6 +124,16 @@ class ModelExecutor:
                         fast_result = fast_execute(plan)
                 if fast_result is not None:
                     return fast_result
+        # Decode planning restores swapped requests before preempting victims,
+        # then reuses their released GPU pages for appends/CoW. Consume CPU
+        # swap-in sources before swap-out reuses those slots, and GPU swap-out
+        # sources before any page copy or model write reuses those pages.
+        if transfers.swap_in:
+            with profile_region("engine.kv.swap_in"):
+                self.runner.call("swap_blocks", list(transfers.swap_in), "in")
+        if transfers.swap_out:
+            with profile_region("engine.kv.swap_out"):
+                self.runner.call("swap_blocks", list(transfers.swap_out), "out")
         if transfers.copy_prefix:
             with profile_region("engine.kv.copy_prefix"):
                 self.runner.call(
@@ -133,12 +143,6 @@ class ModelExecutor:
         if transfers.copy_on_write:
             with profile_region("engine.kv.copy_on_write"):
                 self.runner.call("copy_kv_blocks", list(transfers.copy_on_write))
-        if transfers.swap_out:
-            with profile_region("engine.kv.swap_out"):
-                self.runner.call("swap_blocks", list(transfers.swap_out), "out")
-        if transfers.swap_in:
-            with profile_region("engine.kv.swap_in"):
-                self.runner.call("swap_blocks", list(transfers.swap_in), "in")
 
         with profile_region("engine.model_runner"):
             runner_result = self.runner.call("run_plan", plan)
@@ -207,10 +211,7 @@ class ModelExecutor:
             # dense 模式: 冷 prefill 完成后把视觉前缀存进 entry (O(1) 探测 fast path)。
             # 跨请求存活由 block 级 hash 索引 + 池层 lazy retention 保证。
             for seq in plan.sequences:
-                if (
-                    seq.is_prefill_finished
-                    and not seq.multimodal_prefix_cache_hit
-                ):
+                if seq.is_prefill_finished and not seq.multimodal_prefix_cache_hit:
                     self.kv_manager.store_multimodal_prefix(seq)
 
         return ExecutionResult(

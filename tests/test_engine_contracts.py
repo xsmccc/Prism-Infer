@@ -555,13 +555,143 @@ def test_executor_applies_immutable_kv_plan_before_model_run() -> None:
     result = executor.execute(plan)
 
     assert result.token_ids == (7,)
-    assert [call[0] for call in runner.calls] == [
-        "copy_kv_blocks",
-        "swap_blocks",
-        "swap_blocks",
-        "run_plan",
+    assert runner.calls[:-1] == [
+        ("swap_blocks", [(5, 6)], "in"),
+        ("swap_blocks", [(3, 4)], "out"),
+        ("copy_kv_blocks", [(1, 2)]),
     ]
+    assert runner.calls[-1][0] == "run_plan"
     assert runner.calls[-1][1] is plan
+
+
+class _CPUTransferRunner:
+    """Real page-copy methods with CPU-backed FP8 payload and FP32 scales."""
+
+    kv_cache_dtype = torch.float8_e4m3fn
+    _bound_gpu_scale_cache = ModelRunner._bound_gpu_scale_cache
+    copy_kv_blocks = ModelRunner.copy_kv_blocks
+    copy_kv_block_prefixes = ModelRunner.copy_kv_block_prefixes
+    swap_blocks = ModelRunner.swap_blocks
+
+    def __init__(self, gpu_pages: int, cpu_pages: int) -> None:
+        self.kv_cache = torch.zeros(2, 1, gpu_pages, 4, 1, 2, dtype=self.kv_cache_dtype)
+        self.cpu_kv_cache = torch.zeros(2, 1, cpu_pages, 4, 1, 2, dtype=self.kv_cache_dtype)
+        self.kv_scale_cache = torch.zeros(2, 1, gpu_pages, 4, 1, dtype=torch.float32)
+        self.cpu_kv_scale_cache = torch.zeros(2, 1, cpu_pages, 4, 1, dtype=torch.float32)
+
+    def call(self, method_name: str, *args: object):
+        if method_name != "run_plan":
+            return getattr(self, method_name)(*args)
+        plan = args[0]
+        for index, seq in enumerate(plan.sequences):
+            if plan.is_prefill:
+                token_slice = plan.prefill_slices[index]
+                start, end = token_slice.token_start, token_slice.token_end
+            else:
+                start, end = seq.num_tokens - 1, seq.num_tokens
+            for position in range(start, end):
+                block = seq.block_table[position // 4]
+                row = position % 4
+                # Write distinct finite FP8 bit patterns, not FP8 arithmetic;
+                # transfer correctness requires payload bytes AND scales exact.
+                self.kv_cache.view(torch.uint8)[:, :, block, row].fill_(
+                    16 + seq.token_ids[position] % 48
+                )
+                self.kv_scale_cache[:, :, block, row].fill_(0.125 + seq.token_ids[position] % 257)
+            if plan.is_prefill:
+                seq.num_computed_tokens = end
+        return ExecutionResult(token_ids=(88,) * plan.batch_size)
+
+
+def _cpu_transfer_engine(monkeypatch, *, gpu_pages: int, cpu_pages: int):
+    # swap_blocks synchronizes CUDA after its real copy_ calls. Only that
+    # device fence is replaced: all storage/copies in these tests are on CPU.
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
+    config = _scheduler_config(
+        num_kvcache_blocks=gpu_pages,
+        num_cpu_blocks=cpu_pages,
+        max_model_len=128,
+        enable_prefix_caching=True,
+        compression_mode="scaled_fp8_kv",
+        tensor_parallel_size=1,
+        max_consecutive_prefill_batches=2,
+    )
+    scheduler = Scheduler(config)
+    runner = _CPUTransferRunner(gpu_pages, cpu_pages)
+    return scheduler, ModelExecutor(config, runner, scheduler.block_manager), runner
+
+
+def _prefill_transfer_requests(scheduler, executor, *requests):
+    for seq in requests:
+        scheduler.add(seq)
+    plan = scheduler.schedule()
+    assert plan.is_prefill
+    result = executor.execute(plan)
+    scheduler.postprocess(plan, result.token_ids)
+
+
+def test_executor_preserves_swap_out_source_reused_by_cow(monkeypatch) -> None:
+    scheduler, executor, runner = _cpu_transfer_engine(monkeypatch, gpu_pages=4, cpu_pages=2)
+    crossing = _sequence([10, 11, 12, 13])
+    shared_tail = _sequence(
+        [1, 151655, 700],
+        pixel_values=torch.zeros(4, 3),
+        image_grid_thw=torch.tensor([[1, 2, 2]]),
+        image_token_id=151655,
+        image_token_count=1,
+        multimodal_media_token_hashes=(bytes(range(32)),),
+    )
+    shared_tail.multimodal_prefix_cache_key = "transfer-test-image"
+    victim = _sequence(list(range(20, 28)))
+    _prefill_transfer_requests(scheduler, executor, crossing, shared_tail, victim)
+    expected_payload = runner.kv_cache.view(torch.uint8)[:, :, victim.block_table].clone()
+    expected_scales = runner.kv_scale_cache[:, :, victim.block_table].clone()
+
+    # crossing needs a new page, preempting the two-page victim. The next
+    # request has a cache-owned tail, whose CoW consumes the other freed page.
+    plan = scheduler.schedule()
+    transfers = plan.kv_transfers
+    assert plan.sequences == (crossing, shared_tail)
+    assert len(transfers.copy_on_write) == 1
+    assert transfers.copy_on_write[0][1] in {src for src, _ in transfers.swap_out}
+    executor.execute(plan)
+
+    assert torch.equal(
+        runner.cpu_kv_cache.view(torch.uint8)[:, :, victim.cpu_block_table],
+        expected_payload,
+    )
+    assert torch.equal(runner.cpu_kv_scale_cache[:, :, victim.cpu_block_table], expected_scales)
+
+
+def test_executor_consumes_swap_in_before_cpu_slot_is_reused(monkeypatch) -> None:
+    scheduler, executor, runner = _cpu_transfer_engine(monkeypatch, gpu_pages=3, cpu_pages=1)
+    crossing = _sequence([10, 11, 12, 13])
+    resident = _sequence([30, 31])
+    swapped = _sequence([40, 41])
+    _prefill_transfer_requests(scheduler, executor, crossing, resident, swapped)
+
+    # Establish a completed earlier preemption using the real scheduler API.
+    scheduler.running.remove(swapped)
+    prior_swap_out = []
+    scheduler.preempt(swapped, prior_swap_out)
+    runner.call("swap_blocks", prior_swap_out, "out")
+    expected_payload = runner.cpu_kv_cache.view(torch.uint8).clone()
+    expected_scales = runner.cpu_kv_scale_cache.clone()
+
+    # A short ordinary request reuses the released GPU page and finishes.
+    # Its bytes must not overwrite swapped's still-live CPU copy next round.
+    probe = _sequence([999], SamplingParams(max_tokens=1))
+    _prefill_transfer_requests(scheduler, executor, probe)
+    assert probe.is_finished
+    plan = scheduler.schedule()
+    transfers = plan.kv_transfers
+    assert plan.sequences == (crossing, resident)
+    assert len(transfers.swap_in) == len(transfers.swap_out) == 1
+    assert transfers.swap_out[0] == tuple(reversed(transfers.swap_in[0]))
+    executor.execute(plan)
+
+    assert torch.equal(runner.cpu_kv_cache.view(torch.uint8), expected_payload)
+    assert torch.equal(runner.cpu_kv_scale_cache, expected_scales)
 
 
 def test_tp_control_dispatches_prefix_row_copies_and_receives_ack() -> None:

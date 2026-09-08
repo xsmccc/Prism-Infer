@@ -8,23 +8,23 @@ from prism_infer.engine.sequence import Sequence
 from prism_infer.sampling_params import SamplingParams
 
 
-def _scheduler() -> Scheduler:
-    return Scheduler(
-        SimpleNamespace(
-            max_num_seqs=4,
-            max_num_batched_tokens=32,
-            max_model_len=128,
-            enable_chunked_prefill=False,
-            max_chunk_size=32,
-            max_queue_size=None,
-            max_consecutive_prefill_batches=1,
-            eos=-1,
-            num_kvcache_blocks=3,
-            kvcache_block_size=4,
-            num_cpu_blocks=3,
-            enable_prefix_caching=False,
-        )
+def _scheduler(**overrides) -> Scheduler:
+    options = dict(
+        max_num_seqs=4,
+        max_num_batched_tokens=32,
+        max_model_len=128,
+        enable_chunked_prefill=False,
+        max_chunk_size=32,
+        max_queue_size=None,
+        max_consecutive_prefill_batches=1,
+        eos=-1,
+        num_kvcache_blocks=3,
+        kvcache_block_size=4,
+        num_cpu_blocks=3,
+        enable_prefix_caching=False,
     )
+    options.update(overrides)
+    return Scheduler(SimpleNamespace(**options))
 
 
 def _complete_prefill(scheduler, plan):
@@ -75,3 +75,34 @@ def test_blocked_decoder_does_not_preempt_another_runnable_decoder():
     assert pending.status is RequestState.PREFILLING
     assert decode.kv_transfers.is_empty
     assert not scheduler.swapped and not scheduler.waiting
+
+
+def test_chunked_prefill_makes_progress_when_decoder_needs_a_page():
+    scheduler = _scheduler(num_kvcache_blocks=4, enable_chunked_prefill=True, max_chunk_size=4)
+    first = Sequence(
+        [1, 2], SamplingParams(max_tokens=8, ignore_eos=True), block_size=4, request_id=0
+    )
+    second = Sequence(
+        list(range(10, 22)),
+        SamplingParams(max_tokens=1, ignore_eos=True),
+        block_size=4,
+        request_id=1,
+    )
+    scheduler.add(first)
+    _complete_prefill(scheduler, scheduler.schedule())
+    scheduler.add(second)
+    finished = set()
+    for _ in range(20):
+        if scheduler.is_finished():
+            break
+        plan = scheduler.schedule()
+        if plan.is_prefill:
+            for seq, part in zip(plan.sequences, plan.prefill_slices, strict=True):
+                seq.num_computed_tokens = part.token_end
+            tokens = [42 if seq.is_prefill_finished else None for seq in plan.sequences]
+        else:
+            tokens = [42] * plan.batch_size
+        finished.update(output.request_id for output in scheduler.postprocess(plan, tokens))
+    assert scheduler.is_finished()
+    assert finished == {0, 1}
+    assert scheduler.swap_preemptions == scheduler.recompute_preemptions == 0

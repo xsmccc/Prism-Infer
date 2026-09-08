@@ -1,0 +1,6 @@
+name, driver_version, memory.total [MiB]
+NVIDIA GeForce RTX 5090, 580.142, 32607 MiB
+NVIDIA GeForce RTX 5090, 580.142, 32607 MiB
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+{"cases": ["chunked_pressure", "visual_cache"], "status": "passed"}
+[{"rank": 0, "injected_local_pages": 10, "selected_pages": 6, "explicit_over_capacity_rejected": true}, {"rank": 1, "injected_local_pages": 6, "selected_pages": 6, "explicit_over_capacity_rejected": true}]

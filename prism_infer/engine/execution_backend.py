@@ -59,6 +59,9 @@ class ModelExecutionBackend(ABC):
                     "prefill plan exceeds the vision patch budget: "
                     f"patches={vision_patches} limit={vision_limit}"
                 )
+            if getattr(runner.config, "enable_visual_embedding_cache", False):
+                with profile_region("runner.prefill.visual_cache"):
+                    runner.prepare_prefill_visual_cache(plan)
         with profile_region(
             "runner.prepare_inputs",
             metadata={

@@ -674,15 +674,24 @@ class Scheduler:
         return self._record_prefill_plan(plan)
 
     def schedule(self) -> BatchPlan:
-        has_prefill = bool(self.waiting) or any(
-            seq.status is RequestState.PREFILLING for seq in self.running
-        )
+        running_prefill = any(seq.status is RequestState.PREFILLING for seq in self.running)
+        has_prefill = bool(self.waiting) or running_prefill
         has_decode = self.has_decode_work()
         if self.policy.should_schedule_prefill(
             has_prefill=has_prefill,
             has_decode=has_decode,
             consecutive_prefill_batches=self.consecutive_prefill_batches,
         ):
+            prefill_plan = self._prefill_plan()
+            if prefill_plan is not None:
+                return self._record_prefill_plan(prefill_plan)
+        if running_prefill:
+            # An unfinished Prefill already owns its pages. If Decode cannot
+            # append, finish more Prefill instead of preempting the last decoder
+            # and returning an empty batch with unexecuted swap operations.
+            decode_plan = self.schedule_resident_decode()
+            if decode_plan is not None:
+                return decode_plan
             prefill_plan = self._prefill_plan()
             if prefill_plan is not None:
                 return self._record_prefill_plan(prefill_plan)

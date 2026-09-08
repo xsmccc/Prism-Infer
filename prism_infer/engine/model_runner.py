@@ -659,7 +659,7 @@ class ModelRunner:
 
     @torch.inference_mode()
     def hydrate_visual_embedding_cache(self, seq: Sequence) -> None:
-        """Attach or compute exact visual outputs for one admitted request."""
+        """Attach or compute visual outputs for an already selected Prefill."""
 
         if not self.config.enable_visual_embedding_cache:
             return
@@ -775,7 +775,6 @@ class ModelRunner:
         if token_spans is None or len(token_spans) != len(per_image_hashes):
             return False
         output_rows = [end - start for start, end in token_spans]
-        device_payload = self._visual_cache_device_tensor(payload)
         parts: list[tuple[torch.Tensor, tuple[torch.Tensor, ...]] | None] = [
             None for _ in per_image_hashes
         ]
@@ -793,6 +792,7 @@ class ModelRunner:
                 ),
             )
         if missing:
+            device_payload = self._visual_cache_device_tensor(payload)
             device = device_payload.device
             selected_rows = torch.cat(
                 [
@@ -847,6 +847,24 @@ class ModelRunner:
         seq.precomputed_deepstack_visual_embeds = deepstack_visual_embeds
         return True
 
+    def prepare_prefill_visual_cache(self, plan: BatchPlan) -> None:
+        """Prepare cached features only for a scheduled, complete visual payload.
+
+        Full Prefix hits have no visual work. Partial visual-prefix hits use
+        InputPreparer's existing whole-image slicing, without hydrating pictures
+        already covered by KV. This leaves the original absolute layout intact.
+        """
+        for seq, part in zip(plan.sequences, plan.prefill_slices, strict=True):
+            if seq.precomputed_visual_embeds is not None:
+                continue
+            total_visual = seq.image_token_count + seq.video_token_count
+            if total_visual == 0:
+                continue
+            tokens = seq.prompt_token_ids[part.token_start : part.token_end]
+            visual_ids = {v for v in (seq.image_token_id, seq.video_token_id) if v is not None}
+            if sum(tokens.count(token_id) for token_id in visual_ids) == total_visual:
+                self.hydrate_visual_embedding_cache(seq)
+
     def visual_embedding_cache_metadata(self) -> dict[str, object]:
         """Return bounded cache state and measured-run counters."""
 
@@ -878,6 +896,15 @@ class ModelRunner:
 
         enabled = bool(getattr(self.config, "enable_flashinfer_paged", False))
         decode_enabled = bool(getattr(self.config, "enable_flashinfer_decode", False))
+        if enabled or decode_enabled:
+            from prism_infer.layers.attention import HAS_FLASHINFER
+
+            if not HAS_FLASHINFER:
+                raise RuntimeError("FlashInfer was requested but its paged backend is unavailable")
+            if self.kv_cache_dtype not in (torch.float16, torch.bfloat16):
+                raise ValueError("FlashInfer paged paths currently require unscaled BF16/FP16 KV")
+            if decode_enabled and self.config.decode_compile_region == "attention":
+                raise ValueError("attention compile uses Triton Decode, not FlashInfer Decode")
         for attention in self._attention_layers():
             attention.engine_attn.flashinfer_paged_enabled = enabled
             attention.engine_attn.flashinfer_decode_enabled = decode_enabled
@@ -1053,6 +1080,11 @@ class ModelRunner:
         current = memory_stats["allocated_bytes.all.current"]
         available_bytes = int(total * self.config.gpu_memory_utilization - used - peak + current)
         max_blocks = available_bytes // block_bytes
+        if self.world_size > 1:
+            # Every rank must agree before allocation or explicit-capacity failure.
+            capacity = torch.tensor(max_blocks, dtype=torch.int64, device=f"cuda:{self.rank}")
+            dist.all_reduce(capacity, op=dist.ReduceOp.MIN)
+            max_blocks = int(capacity.item())
         requested_blocks = self.config.num_kvcache_blocks
         if requested_blocks > 0 and requested_blocks > max_blocks:
             raise RuntimeError(
@@ -1550,7 +1582,9 @@ class ModelRunner:
 
         if getattr(self.config, "enable_flashinfer_decode", False):
             for attention in self._attention_layers():
-                attention.engine_attn.stage_flashinfer_decode_metadata(context)
+                attention.engine_attn.stage_flashinfer_decode_metadata(
+                    context, captured_batch_size=captured_batch_size
+                )
         with profile_region(
             "runner.cudagraph.replay",
             metadata={

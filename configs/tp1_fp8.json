@@ -1,0 +1,16 @@
+{
+  "tensor_parallel_size": 1,
+  "execution_backend": "cuda_graph",
+  "compression_mode": "scaled_fp8_kv",
+  "max_model_len": 4096,
+  "max_num_batched_tokens": 4096,
+  "max_num_seqs": 4,
+  "image_max_pixels": 200704,
+  "enable_prefix_caching": true,
+  "enable_chunked_prefill": false,
+  "paged_decode_block_n": 256,
+  "enable_fused_qk_rmsnorm": true,
+  "enable_fused_qk_mrope": true,
+  "enable_fused_add_rmsnorm": true,
+  "enable_packed_kv_projection": true
+}

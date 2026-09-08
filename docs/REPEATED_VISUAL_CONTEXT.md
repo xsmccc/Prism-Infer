@@ -7,7 +7,8 @@ Prompt 不变，问题文本位于其后。
 
 只缓存 Processor 或 Vision Encoder 输出仍不够：每个新问题都要让语言模型重新 Prefill
 数百到数千个视觉 token。普通 Prefix Cache 可以复用完全相同的前缀，但长视觉前缀会快速
-占满 KV Pool；当工作集超过显存预算时，前缀被淘汰后仍要重新执行 Vision 和语言 Prefill。
+占满 KV Pool；当工作集超过显存预算时，前缀被淘汰后仍要重新执行语言 Prefill。
+是否还要重做 Vision，取决于独立的视觉输出缓存是否命中，不能仅凭 KV 淘汰推断。
 
 Prism-Infer 的处理方式是：
 
@@ -54,30 +55,39 @@ model / processor namespace
 
 相关实现：
 
-- `prism_infer/engine/online.py`：媒体与 Prompt 身份；
+- `prism_infer/engine/media_preprocessing.py`：共享预处理缓存和媒体身份；
 - `prism_infer/engine/sequence.py`：公共前缀边界和请求元数据；
 - `prism_infer/engine/block_manager.py`：Prefix Entry、页引用和回收。
 
 ## 3. Prefix-first 请求路径
 
-Prefix 查询发生在 Scheduler admission 和视觉缓存 hydration 之前：
+入队前只探测 Prefix Cache；页引用获取和模型计算由随后调度出的 Prefill 执行。
+这里的完整命中指实际分配的 Prefix 覆盖全部视觉 token，不是仅有一次早期 probe 命中。
 
 ```mermaid
 flowchart TD
     A["Processor 输出 token 与媒体身份"] --> B["直接查询 Prefix Cache"]
-    B -->|命中| C["挂接只读 Prefix pages"]
-    C --> D["跳过 Vision / DeepStack hydration"]
-    B -->|未命中| E["恢复或计算 Vision / DeepStack"]
-    E --> F["语言 Prefill"]
-    F --> G["Scaled-FP8 KV 物理压实并写入缓存"]
-    D --> H["Scheduler admission"]
-    G --> H
-    H --> I["Decode"]
+    B --> C["Scheduler admission：请求入队"]
+    C --> D["调度分配：确认前缀、取得共享页、分配后缀页"]
+    D --> E{"已分配前缀覆盖完整视觉输入？"}
+    E -->|是| F["跳过视觉计算，仅 Prefill 未共享文本后缀"]
+    E -->|否| G["为本次 Prefill 准备未覆盖媒体的视觉特征"]
+    G --> H["Prefill 未共享的视觉和文本 token"]
+    F --> I["提交已完成 KV，按配置保留 Prefix"]
+    H --> I
+    I --> J["后续 Decode"]
 ```
 
+视觉缓存 hydration 是取出或计算视觉特征，不等于语言 Prefill。它在
+`ModelExecutionBackend.prepare()` 选定的 Prefill 中执行，不在请求入队前发生。
+本次 slice 包含完整视觉 payload 时，可查询或构建启用的 Vision/DeepStack 缓存，
+缓存全部命中不再传输原始 pixels；部分视觉 Prefix 命中则使用已有的整图切片路径，
+只编码未覆盖媒体，不保证这条分支还利用 Encoder Cache。可选的视觉压实只对显式启用
+该配置的请求执行，不是所有冷请求都要删 token。
+
 如果查询和实际页分配之间发生淘汰，请求仍持有原始媒体 Tensor。分配时发现条目消失后，
-请求记录一次 `stale_probe_fallbacks`，然后自然回到完整 Vision + Prefill 路径，不会失败或
-使用失效页。
+请求记录一次 `stale_probe_fallbacks`，然后按实际可复用范围准备视觉特征并执行 Prefill，
+不会使用失效页；是否重做 Vision 仍取决于视觉输出缓存。
 
 运行时公开三项关键计数：
 
@@ -102,7 +112,7 @@ K/V 和 scale 一起经过 Store、Paged Attention、Copy-on-Write、Swap、Comp
 Graph Replay。scale 开销包含在容量计算中，因此同 token capacity 的实际 KV 存储减少
 48.44%，而不是简单写成 50%。
 
-图片 Prefix Prefill 完成后，Uniform selector 生成视觉 token 保留表。运行时把保留 token
+显式启用 Uniform 压实后，图片 Prefix Prefill 完成时生成视觉 token 保留表。运行时把保留 token
 的 K/V 与 scale 移动到连续物理 slot，更新 block table 和 physical context length，再释放
 空出的页。保留 token 的原始 M-RoPE logical position 不变；变化的只是 Attention 读取的
 物理页位置。
@@ -114,9 +124,12 @@ physical KV:      [text][kept visual][suffix]
 M-RoPE position:  保留原始 logical coordinates
 ```
 
-图片配置为 `keep_ratio=0.6`、最少保留 768 个视觉 token。短图不会发生删除；256-token
-page 粒度还会产生取整，因此容量收益必须从真实 physical pages 读取，不能直接按 40%
-估算。视频 token 删除默认关闭。
+历史 working-set 使用 `keep_ratio=0.6`，并把每请求全局最少保留数显式设为 768；
+请求的总视觉 token 数不超过该数量时不删除，不是每张图片都单独受 768 的保护。
+代码中默认最少保留数是 32，但只有显式启用 `visual_compact*` 时才使用这些参数。
+`scaled_fp8_kv` 不删除 token。256-token page 粒度还会产生取整，因此容量收益必须从
+真实 physical pages 读取，不能直接按 40% 估算。纯视频请求默认不删除；公开接口的
+mixed batch是多条单模态请求，各自按Sequence计算保留量，不会跨请求合并视觉token。
 
 物理搬移 Kernel 位于 `prism_infer/ops/kv_compaction.py`，量化 Store 与 Paged Decode 位于
 `prism_infer/ops/kv_cache_store.py` 和 `prism_infer/ops/paged_decode.py`。
@@ -206,8 +219,9 @@ Trace 观察到：
 
 ### 查询顺序
 
-Prefix 查询如果发生在视觉 hydration 之后，即使 KV 命中也无法省去 Vision 路径。查询被
-提前到 submission/admission 之间，并以 `visual_hydration_skips` 和 Trace 确认效果。
+Prefix 查询如果发生在视觉缓存恢复或编码之后，即使 KV 命中，也已经付出了部分不必要的
+视觉处理成本。现在先在入队前 probe，调度分配后按实际未覆盖的媒体准备视觉特征。
+早期查询、实际页复用和模型计算是三个不同的时点，不能把它们都简称为“命中”。
 
 ### 查找复杂度
 

@@ -35,6 +35,40 @@ export PRISM_MODEL_PATH=/path/to/Qwen3-VL-8B-Instruct
 python scripts/check_environment.py --model "$PRISM_MODEL_PATH"
 ```
 
+### 当前 TP1 服务配置
+
+Qwen3-VL-8B 的单卡 FP8 服务可直接使用仓库中的配置文件：
+
+```bash
+prism-serve --model "$PRISM_MODEL_PATH" \
+  --engine-config configs/tp1_fp8.json \
+  --host 127.0.0.1 --port 8000
+```
+
+[`configs/tp1_fp8.json`](../configs/tp1_fp8.json) 使用 Scaled-FP8 KV、Decode CUDA Graph
+和 Prefix Cache，`max_model_len=4096`、`max_num_batched_tokens=4096`、
+`max_num_seqs=4`，`image_max_pixels=200704`，即 448×448 的像素上限。
+KV 页数按可用显存自动确定，不代表历史约 4 GiB 或 220-page 测量配置；复现某张结果表时
+应使用该实验保存的配置。此服务配置不开启视觉 Token Pruning、Vision 输出缓存、
+cooperative Prefill、FlashInfer 或 `torch.compile`。
+
+`enable_chunked_prefill` 现在默认 `false`。显式开启时，当前策略仍把一条请求中从首个到
+最后一个视觉 token 的区间整体处理；`max_chunk_size` 小于该区间会拒绝请求，不会自动
+拆成单张图片。Prefix 部分命中后只计算未覆盖图片，是缓存复用路径，不是新的 token
+分块算法。cooperative Prefill 是另一选项，也默认关闭，其历史延迟取舍见
+[交错执行记录](PREFILL_INTERLEAVING.md)。
+
+仅选择 `cuda_graph` 不启用编译。需要使用 TP1 历史编译路径时，需同时配置
+`execution_backend=compile_graph`、`decode_compile_region=stateless` 和
+`logits_precision=selective_fp32`。该路径编译 batch-1 O-proj 与 FP8 LM-head 候选投影，
+保留原始 LM-head 权重用于 FP32 重排，不是把整个 Decoder 交给 `torch.compile`。
+重排只覆盖 Top-64 候选，没有低 margin 全词表回退；配置和数值含义见
+[Architecture](ARCHITECTURE.md#3-torchcompile-与-cuda-graph)。
+
+`enable_flashinfer_paged`、`enable_flashinfer_decode` 仅用于显式选择 FlashInfer 的
+未量化 BF16/FP16 KV 路径。后端不可用、与 FP8 KV 不兼容，或将 FlashInfer Decode 与
+`attention` compile region 组合时会报错，不会把请求静默切换到其他后端。
+
 ## 2. 查看仓库内证据
 
 模型权重与数据集媒体不随仓库分发。先区分数据来源，再查看请求记录：

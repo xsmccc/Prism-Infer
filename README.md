@@ -27,12 +27,14 @@ Cache 则保留各 Transformer 层已经计算的 K/V。这里讨论的是独立
   scale；贯通 KV 写入、Paged Attention、Prefix 共享、CoW、Swap 和页回收。
 - Prefix 命中的 Scaled-FP8 Prefill 从调度元数据读取长度，批量 gather/反量化 KV，再用
   右下对齐的因果 SDPA 处理问题后缀；支持的 CUDA 后端直接执行 GQA，不手工复制 K/V heads。
-- Decode 按 batch bucket 捕获 CUDA Graph。TP1 的 `torch.compile` 路径编译 Attention
-  输出投影和 FP8 LM-head 候选投影，候选再用原始权重进行 FP32 重排。
+- Decode 按 batch bucket 捕获 CUDA Graph。TP1 的 `stateless` 编译配置处理 Attention
+  输出投影和 FP8 LM-head 候选投影，候选再用原始权重进行 FP32 重排；另一 `attention`
+  配置编译 QKV/QK-Norm/M-RoPE，两者是不同路径。FP32 重排不保证找回候选之外的 token。
 - TP2 支持按完整图片分配 Vision Encoder 工作，一次收集主特征和全部 DeepStack，
   恢复原始媒体顺序后进入语言模型。完整视觉 Prefix 命中时不再向 worker 发送图片 Tensor。
 - 普通生成、Online 和 HTTP 入口共用 CPU 媒体预处理缓存。HTTP 媒体准备在后台线程完成，
   模型与 KV 状态仍由同一个 owner 线程管理，减少冷图片到达对已有 Decode 的阻塞。
+  Vision/DeepStack 缓存准备在请求被调度后执行，不在入队前触发 GPU 编码。
 
 2026-09-07 修复了提前发布未计算 KV、尾页旧哈希、共享缓存页回收少算和 FP8 压实地址
 溢出。对应复现、GPU 检查和执行路径记录见[修复说明](docs/RUNTIME_FIXES_20260907.md)。
@@ -58,6 +60,10 @@ Q/K RMSNorm-M-RoPE 与 paged KV gather/反量化，并修正初始化遗留的 P
 分发模式。相同 HTTP 负载中，同图换问题 TTFT 从 208.37 降至 144.61 ms，两组配对
 分别降低 27.72%/33.29%；热 Prefill kernel 数从 2,111 降至 959。调度未改变，冷请求
 TTFT 略有改善，Decode TPOT 基本不变。此结果不是三引擎排名。
+
+最新的[运行时修复](docs/RUNTIME_REPAIRS_20260908.md)处理了 Swap/CoW 搬运覆盖、满池
+Chunked Prefill 推进、TP 共同 KV 容量和 FlashInfer 元数据更新，并将 Encoder Cache
+准备移到被选中的 Prefill。对应记录是功能和数值检查，不是新的性能排名。
 
 ## 结果与适用范围
 
@@ -95,18 +101,26 @@ python -m pip install -e ".[blackwell,serving]"
 
 export PRISM_MODEL_PATH=/path/to/Qwen3-VL-8B-Instruct
 python example.py
-prism-serve --model "$PRISM_MODEL_PATH" --host 127.0.0.1 --port 8000
+prism-serve --model "$PRISM_MODEL_PATH" \
+  --engine-config configs/tp1_fp8.json --host 127.0.0.1 --port 8000
 ```
 
-`compression_mode` 默认是 `off`；FP8 KV 和视觉 Token Pruning 需要显式选择相应配置。
-运行参数见[Reproducibility](docs/REPRODUCIBILITY.md)。
+上面的服务命令使用[TP1 FP8 配置](configs/tp1_fp8.json)：Scaled-FP8 KV、Decode CUDA
+Graph、Prefix Cache、最大长度 4,096、最多 4 个并行序列，图片预处理像素上限 448×448。
+KV 页数按可用显存自动确定，不固定为历史实验的 220 页。该配置不开启 Token Pruning、
+cooperative Prefill 或 `torch.compile`。不传配置时，`compression_mode` 仍默认 `off`。
+
+Chunked Prefill 默认关闭。显式开启时，现有调度要求同一请求的整组视觉 token 区间完整
+执行，不能靠缩小 chunk size 自动切开多图；过小的 chunk 会使请求被拒绝。更多配置说明
+见[Reproducibility](docs/REPRODUCIBILITY.md)。
 
 ## 文档与代码
 
 - [Architecture](docs/ARCHITECTURE.md)：模型适配、KV 布局、缓存与调度。
 - [重复视觉上下文](docs/REPEATED_VISUAL_CONTEXT.md)：请求路径、历史实验及结果解释。
 - [Results](docs/RESULTS.md)：区分存储、Decode、在线工作集和质量测量。
-- [本轮修复与执行证据](docs/RUNTIME_FIXES_20260907.md)。
+- [APC 与压实修复](docs/RUNTIME_FIXES_20260907.md)。
+- [容量压力与请求准备修复](docs/RUNTIME_REPAIRS_20260908.md)：Swap/CoW、TP 容量、视觉缓存和 FlashInfer。
 - [多卡多模态实现与取舍](docs/MULTI_GPU.md)：Encoder DP、TP2 Prefix、双副本和 PP2 参照。
 - [共享预处理与后台准备](docs/SHARED_PREPROCESSING.md)：统一缓存、线程所有权、取消与 HTTP 实测。
 - [Prefill 与 Decode 交错执行](docs/PREFILL_INTERLEAVING.md)：长停顿、TTFT/TPOT 取舍及请求状态修复。

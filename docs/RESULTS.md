@@ -131,6 +131,10 @@ Qwen3-VL prompt tokens。
 Prism TPOT 比 SGLang 低 4.54%–4.83%，比 vLLM 低 6.13%–6.27%。该结果只覆盖 RTX
 5090、TP1、batch 1 的固定 Decode 路径，不代表高并发吞吐排名。
 
+FP8 LM-head的独立历史验证已补充[公开入口](../artifacts/fp8_lm_head_20260902/README.md)：
+51请求、818个参考轨迹位置上，Top-64召回并重排得到全词表FP32 winner；这是有限样本
+的LM-head检查，不是整个引擎等价或BF16 KV对Scaled-FP8 KV的质量测量。
+
 ## 3. KV Cache 容量
 
 | 配置 | Pages / capacity | KV bytes | NVML peak | Torch peak |

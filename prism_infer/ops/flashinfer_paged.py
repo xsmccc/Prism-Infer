@@ -2,10 +2,10 @@
 
 步骤 1: bf16 KV (dense / compression off) 直接消费引擎的 paged cache:
 k_cache 每层布局 [blocks, block_size, kv_heads, head_dim] (NHD) 与
-flashinfer 期望一致, 零数据搬移。fp8 per-token-per-head scale 路径留待
-步骤 2 (经 *args 的 scale tensor, 形状需在 GPU 上实测)。
+flashinfer 期望一致, 无需重新排列 KV。当前适配器仅支持未缩放的 BF16/FP16 KV，
+不支持 Prism 的 per-token、per-head Scaled-FP8 布局。
 
-导入是可选依赖: flashinfer 未安装时 HAS_FLASHINFER=False, 调用方回退。
+导入是可选依赖；显式请求 FlashInfer 而环境不可用时，引擎启动会报错。
 """
 
 from __future__ import annotations
@@ -29,9 +29,7 @@ def _get_shared_workspace() -> torch.Tensor:
 
     global _SHARED_WORKSPACE
     if _SHARED_WORKSPACE is None:
-        _SHARED_WORKSPACE = torch.empty(
-            _WORKSPACE_BYTES, dtype=torch.uint8, device="cuda"
-        )
+        _SHARED_WORKSPACE = torch.empty(_WORKSPACE_BYTES, dtype=torch.uint8, device="cuda")
     return _SHARED_WORKSPACE
 
 
@@ -131,11 +129,8 @@ class FlashInferPagedDecode:
         self.max_batch = max_batch
         self.max_blocks = max_blocks
         self._workspace = _get_shared_workspace()
-        self._planned_key: tuple[int, int] | None = None
         if max_batch <= 0 or max_blocks <= 0:
-            raise ValueError(
-                "FlashInferPagedDecode requires max_batch and max_blocks"
-            )
+            raise ValueError("FlashInferPagedDecode requires max_batch and max_blocks")
         self.indptr_buf = torch.zeros(max_batch + 1, dtype=torch.int32, device="cuda")
         self.indices_buf = torch.full(
             (max_batch * max_blocks,), -1, dtype=torch.int32, device="cuda"
@@ -189,28 +184,34 @@ class FlashInferPagedDecode:
             raise RuntimeError(
                 f"flashinfer decode block width {width} exceeds static capacity {self.max_blocks}"
             )
-        pages_per_seq = (context_lens + self.block_size - 1) // self.block_size
-        self.indptr_buf[0] = 0
-        self.indptr_buf[1 : batch + 1] = torch.cumsum(
-            pages_per_seq.to(torch.int32),
-            dim=0,
+        indptr, indices, last_page_len = build_flashinfer_decode_plan_inputs(
+            context_lens=context_lens,
+            block_tables=block_tables,
+            block_size=self.block_size,
         )
-        self.indices_buf.fill_(-1)
-        self.indices_buf[: batch * width] = block_tables.flatten()[: batch * width]
-        self.last_page_len_buf[:batch] = torch.where(
-            context_lens % self.block_size == 0,
-            torch.full_like(context_lens, self.block_size),
-            context_lens % self.block_size,
-        ).to(torch.int32)
-        key = (batch, width)
-        if key != self._planned_key:
-            # 形状不变时跳过 replan (重放期 staging 是热路径)
-            self.plan(
-                indptr=self.indptr_buf,
-                indices=self.indices_buf,
-                last_page_len=self.last_page_len_buf,
+        self.indptr_buf[: batch + 1].copy_(indptr)
+        self.indices_buf.zero_()
+        self.indices_buf[: indices.numel()].copy_(indices)
+        self.last_page_len_buf.fill_(1)
+        self.last_page_len_buf[:batch].copy_(last_page_len)
+        if batch < self.max_batch:
+            # Captured padding rows read one token from page 0; their output is
+            # discarded and the runner's slot_mapping=-1 still prevents KV writes.
+            self.indptr_buf[batch + 1 :].copy_(
+                torch.arange(
+                    indices.numel() + 1,
+                    indices.numel() + self.max_batch - batch + 1,
+                    dtype=torch.int32,
+                    device=self.indptr_buf.device,
+                )
             )
-            self._planned_key = key
+        # Page counts affect FlashInfer's execution schedule, even when tensor
+        # shapes are unchanged. Replan outside capture before every replay.
+        self.plan(
+            indptr=self.indptr_buf,
+            indices=self.indices_buf,
+            last_page_len=self.last_page_len_buf,
+        )
 
     def run(
         self,
@@ -232,7 +233,8 @@ def build_flashinfer_decode_plan_inputs(
     """Convert decode scheduling metadata to flashinfer decode-plan inputs.
 
     context_lens: [batch] int32 GPU; block_tables: [batch, max_blocks] int32。
-    返回 (indptr=页数累加, indices=扁平页表, last_page_len)。
+    返回 (indptr=页数累加, indices=逐行打包的有效页表, last_page_len)。
+    只在 graph 外构建；布尔索引打包可能同步 CUDA。
     """
 
     batch = int(context_lens.numel())
@@ -240,9 +242,9 @@ def build_flashinfer_decode_plan_inputs(
     indptr = torch.empty(batch + 1, dtype=torch.int32, device=context_lens.device)
     indptr[0] = 0
     torch.cumsum(pages_per_seq.to(torch.int32), dim=0, out=indptr[1:])
-    # 全宽展平: 有效页数由 indptr 界定, 免逐步 GPU->CPU 同步
-    # (CUDA Graph 捕获期不允许 .item())
-    indices = block_tables.flatten().to(torch.int32)
+    columns = torch.arange(block_tables.shape[1], device=block_tables.device)
+    valid_pages = columns.unsqueeze(0) < pages_per_seq.unsqueeze(1)
+    indices = block_tables[valid_pages].to(torch.int32)
     last_page_len = torch.where(
         context_lens % block_size == 0,
         torch.full_like(context_lens, block_size),
@@ -265,7 +267,6 @@ def build_flashinfer_plan_inputs(
     """
 
     num_seqs = int(cu_seqlens_q.numel()) - 1
-    q_lens = cu_seqlens_q[1:] - cu_seqlens_q[:-1]
     k_lens = cu_seqlens_k[1:] - cu_seqlens_k[:-1]
 
     # paged_kv_indptr 是每请求页数的累加 (不是 token 数)
@@ -288,7 +289,5 @@ def build_flashinfer_plan_inputs(
         indices_list.append(seq_blocks)
         last_page_lens.append(k_len % block_size or block_size)
     paged_kv_indices = torch.cat(indices_list).to(torch.int32)
-    last_page_len = torch.tensor(
-        last_page_lens, dtype=torch.int32, device=block_tables.device
-    )
+    last_page_len = torch.tensor(last_page_lens, dtype=torch.int32, device=block_tables.device)
     return cu_seqlens_q.to(torch.int32), kv_indptr, paged_kv_indices, last_page_len

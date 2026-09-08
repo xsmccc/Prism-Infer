@@ -481,14 +481,12 @@ class LLMEngine:
             "enable_visual_embedding_cache",
             False,
         )
-        cached_prefix_tokens = self.scheduler.block_manager.probe_multimodal_prefix(
+        self.scheduler.block_manager.probe_multimodal_prefix(
             seq,
             would_hydrate_visual=(
                 visual_cache_enabled and seq.visual_embedding_cache_key is not None
             ),
         )
-        if visual_cache_enabled and not cached_prefix_tokens:
-            self.model_runner.hydrate_visual_embedding_cache(seq)
         self.metrics.on_request_submitted(seq, timestamp_ns=arrival_ns)
         try:
             decision = self.scheduler.add(

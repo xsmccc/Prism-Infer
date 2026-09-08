@@ -12,31 +12,45 @@ sequenceDiagram
     participant Processor
     participant Cache as Multimodal Cache
     participant Scheduler
+    participant Executor
     participant Runner as Model Runner
     participant KV as Paged KV
 
     Client->>Processor: text + image/video
     Processor->>Processor: token IDs + M-RoPE positions
-    Processor->>Cache: media hash + visual prompt
-    alt cache hit
-        Cache->>KV: acquire shared prefix pages
-    else cache miss
-        Processor->>Runner: vision inputs
-        Runner->>Runner: Vision Encoder + DeepStack
-        Runner->>KV: prefill and KV compaction
-        KV->>Cache: store reusable prefix
+    Processor->>Cache: probe media + public token prefix
+    Cache-->>Processor: reusable prefix metadata
+    Processor->>Scheduler: enqueue prepared request
+    Scheduler->>KV: acquire shared prefix pages and allocate suffix pages
+    Scheduler->>Executor: BatchPlan
+    Executor->>Runner: page transfers, then run plan
+    alt allocated prefix covers all visual tokens
+        Runner->>KV: prefill only the unshared text suffix
+    else visual tokens still need computation
+        Runner->>Runner: prepare visual features for the scheduled payload
+        Runner->>KV: prefill the uncached visual and text tokens
     end
-    Scheduler->>Runner: BatchPlan
+    Runner-->>Executor: completed KV frontier and sampled token
+    Executor->>Cache: retain visual prefix when prefill is complete
+    Executor-->>Scheduler: execution result
+    Scheduler->>Cache: publish computed full blocks
     loop decode
-        Runner->>Runner: compiled subgraph + CUDA Graph replay
+        Scheduler->>Executor: Decode BatchPlan
+        Executor->>Runner: page transfers, then run plan
+        Runner->>Runner: CUDA Graph replay when configured
         Runner->>KV: append K/V
+        Runner-->>Executor: token result
+        Executor-->>Scheduler: postprocess request state
     end
-    Runner-->>Client: token stream
 ```
 
 Scheduler 每一步生成一个 `BatchPlan`，其中包含请求阶段、token 数、页表和调度操作。
-Executor 按顺序完成页复制、Swap、Prefill、Decode 和资源回收。请求可以处于 waiting、
-running、swapped、completed、cancelled 或 failed 状态。
+Executor 先执行 Swap-in、Swap-out 和页复制，再运行选定的 Prefill 或 Decode。
+请求可以处于 waiting、running、swapped、completed、cancelled 或 failed 状态。
+
+入队前的 Prefix probe 只提供复用信息，不执行语言 Prefill，也不提前拥有共享页。
+调度分配时才确认可用的前缀并取得页引用；如果等待期间缓存被淘汰，请求按实际命中范围
+继续计算。视觉 Token Pruning 仅在显式选择压实配置时发生，不是上图所有 Prefill 的必经步骤。
 
 ## 2. Qwen3-VL 模型
 
@@ -54,29 +68,32 @@ running、swapped、completed、cancelled 或 failed 状态。
 
 ## 3. torch.compile 与 CUDA Graph
 
-Decode 中并不是所有内容都适合交给 compiler。Prism 将稳定计算和动态状态分开：
+`torch.compile` 和 CUDA Graph 解决的是不同开销：前者编译选定的 Tensor 计算，后者
+记录固定 shape 的 GPU 提交序列。仅选择 `cuda_graph` 不会自动启用 `torch.compile`。
+`compile_graph` 的 `decode_compile_region` 有两种实现，不能混为一条路径：
 
-- `torch.compile` 处理 QKV Projection、QK-Norm 和 M-RoPE；
-- CUDA Graph 捕获固定 batch bucket 的完整 GPU Decode；
-- Paged KV 页表、context length、slot mapping 和 FP8 scale 使用固定地址 Tensor；
-- Prefill、请求加入、缓存淘汰和页分配仍在普通运行时中执行。
+| Region | 编译内容 | 适用配置 |
+|---|---|---|
+| `stateless` | batch-1 Attention 输出投影，以及 FP8 LM-head 候选投影 | TP1；与 Scaled-FP8 KV 可组合 |
+| `attention` | QKV Projection、Q/K RMSNorm 和 M-RoPE | KV compression 为 `off`；TP2 的 compile 路径使用该 region |
 
-TP1 的 Graph 可以覆盖模型 Forward、LM Head 和 greedy token selection。TP2 中，
-每个 rank 运行自己的 compiled QKV 子图，外层 Graph 再捕获 Paged Attention、NCCL
-AllReduce、LM Head 和分布式 top-1。
+`stateless` 是代码中的配置名，表示这些编译函数不负责页分配或修改 Scheduler 状态，
+不是“整个 Decode 没有状态”。O-proj 编译路径只替换 batch-1 投影，其他 bucket 继续使用
+原路径。KV 写入、Paged Attention 和采样等操作由外层 Decode Graph 捕获，不属于这两个
+编译函数的范围。实现入口是 `ModelRunner._configure_decode_compile()`。
 
-```text
-host state update
-  -> rank-local compiled QKV/QK-Norm/M-RoPE
-  -> KV store
-  -> Paged Attention
-  -> NCCL AllReduce
-  -> LM Head
-  -> distributed greedy top-1
-```
+CUDA Graph 按 batch bucket 捕获固定 shape 的 GPU Decode。页表、context length、
+slot mapping 和 FP8 scale 使用固定地址 Tensor，replay 前更新内容。TP1 的 Graph 可
+覆盖模型 Forward、LM Head 和 greedy token selection；TP2 在各 rank 的 Graph 中
+执行局部模型计算、NCCL AllReduce 和分布式 top-1。启用 TP2 `attention` 编译时，
+其中的 QKV/QK-Norm/M-RoPE 才由编译函数执行。Prefill、请求加入、淘汰和页分配仍在普通
+运行时中执行，没有被这些 Decode Graph 捕获。
 
-低精度候选选择不会直接决定输出。最终 token 由 FP32 重排得到，候选间距过小时回到
-完整精度路径。
+TP1 `stateless` 配合 `logits_precision=selective_fp32` 时，FP8 LM-head 投影先选出
+Top-64 token，再用原始 BF16 权重和 hidden state 做 FP32 dot products，在候选中选最大值。
+它没有低 margin 检测，也没有自动回到全词表 FP32 计算的分支。重排可以纠正候选之间的
+排序，但不能找回已被 FP8 Top-64 排除的全词表最大值，因此不能表述为对所有输入都精确。
+原始权重仍保留，FP8 候选权重是额外的显存开销，不是权重压缩后的替代副本。
 
 ## 4. Tensor Parallel
 
@@ -125,10 +142,12 @@ per-token、per-head scale。
 
 ## 6. 视觉 KV 压实
 
-Prefill 后，Coordinator 按选定策略产生视觉 token 保留表。运行时支持 Uniform 和
-Attention 两种选择方式；重复提问主路径使用 query-agnostic Uniform，因为它不依赖
-某一道问题，可以让同一份压实 KV 被后续问题直接复用。Attention Top-k 保留在质量
-对照中，用来测量“每题重算选择”和“沿用第一题选择”的差异。
+默认保留全部视觉 token；`scaled_fp8_kv` 只改存储精度，不执行 Token Pruning。
+显式选择 `visual_compact*` 配置后，Coordinator 才按策略产生视觉 token 保留表。
+运行时支持 Uniform 和 Attention 两种选择方式。历史重复提问实验采用 Uniform，按位置
+均匀选取、不使用问题 Attention 分数，让同一份压实 KV 可被不同问题复用；这不代表对
+任务质量没有影响。Attention Top-k 保留为质量对照，用来比较“每题重新选择”和“沿用
+第一题选择”，不是默认服务路径。
 
 得到保留表后，运行时：
 
@@ -139,21 +158,21 @@ Attention 两种选择方式；重复提问主路径使用 query-agnostic Unifor
 5. 保留原始 M-RoPE logical positions。
 
 与 Attention Mask 不同，物理压实会真正释放 KV pages，让后续请求可以使用这些空间。
-主配置为图片 `keep_ratio=0.6`、最少保留 768 个视觉 token；低于该数量的单图不会被
-压实。页数收益还受到 256-token page 粒度影响，因此不能简单按 40% 估算。视频默认
-不删除 token；只有显式提供 `visual_pruning_video_min_keep_tokens` 时才启用视频压实。
+代码中图片剪枝参数的默认值是 `visual_pruning_keep_ratio=0.6`、
+`visual_pruning_min_keep_tokens=32`；没有启用压实模式时，这些值不会触发删除。
+历史 working-set 实验把最少保留数显式改为 768，不应把该实验值当成运行时默认值。
+该最少保留数作用于一个请求的全部视觉 token，不是每张图片各保留这么多；请求总视觉
+token 数不超过它时不删除。页数收益还受到 256-token page 粒度影响，不能简单按 40%
+估算。纯视频请求在 `visual_pruning_video_min_keep_tokens=None` 时不删除。公开Serving
+每请求选择一种媒体modality，`generate_mixed`也是多条单模态请求组成batch；保留数按
+各自Sequence计算，不会把同batch的图片与视频token合成一个全局floor。
 
 ## 7. 多模态前缀缓存
 
-缓存分为两层：
-
-```text
-model / processor version + media bytes + dtype + shape
-    -> Processor、Vision、DeepStack cache
-
-上面的 key + visual prompt tokens
-    -> compacted prefix KV cache
-```
+CPU 媒体预处理缓存复用 Processor 的 pixel/grid Tensor 和媒体身份；可选的视觉输出
+缓存复用 Vision Encoder 主输出及 DeepStack。Prefix KV Cache 则保留语言模型各层的
+公共前缀 K/V。前两者不依赖问题后缀，但只有 Prefix KV 命中才能直接跳过公共前缀的
+语言 Prefill。三种缓存的生命周期不同，不能把“Processor 命中”当成“KV 命中”。
 
 重复提问路径把有序媒体放在问题之前，并保留显式编号：
 
@@ -168,15 +187,17 @@ Question: ...
 前缀，entry 级缓存不含问题文本。Dense block-level APC 还可保留之后已计算完成的文本
 整块，只有它们及其全部左侧上下文一致时才复用。
 
-请求进入 Scheduler 之前先计算媒体与公共 prompt 的身份并查询 Prefix Cache：
+请求入队前先按媒体与公共 prompt 身份探测 Prefix Cache，随后交给 Scheduler。
+真正分配页时再确认可用前缀并增加共享引用，然后才执行 Prefill：完整视觉命中只计算问题
+后缀，不准备视觉特征。`ModelExecutionBackend.prepare()` 在
+`runner.prefill.visual_cache` 区间调用 `prepare_prefill_visual_cache(plan)`：本次
+Prefill slice 包含完整视觉 payload 时，才查询或构建启用的 Vision/DeepStack 缓存。
+视觉输出全部命中时，不再把原始 pixels 传到 GPU；缺失时才传输并编码。
 
-```text
-processor tokens + media identity
-  -> direct prefix lookup
-  -> hit: skip Vision/DeepStack hydration, attach shared KV pages
-  -> miss: hydrate/build Vision/DeepStack, normal prefill, compact and retain pages
-  -> scheduler admission
-```
+部分视觉 Prefix 命中时沿用 `InputPreparer` 的整图切片路径，只编码未覆盖的媒体，
+不为已经有 KV 的图片恢复特征；这个分支不保证利用 Encoder Cache。语言 KV 计算完成
+后才发布缓存：Executor 保存可复用视觉 Prefix Entry，Scheduler postprocess 发布已计算
+完整块的索引；可选压实也在计算完成后进行。这样入队前的 probe 不会隐含一次 GPU 编码。
 
 Prefix ID 由模型与 Processor 布局、按顺序排列的媒体 SHA256、公共 prompt token 数和
 完整 token SHA256 直接得到，随后做字典查找；构造身份仍需遍历输入。命中后仍比较媒体 key、公共长度和完整
@@ -208,9 +229,13 @@ Prefix Cache 持有只读完整页。最后一页未填满时，请求获得自�
 ## 8. 调度与 Serving
 
 运行时记录 TTFT、TPOT、E2E、吞吐、KV pages 和 Cache 命中。Scheduler 支持
-Continuous Batching、FCFS 和 Chunked Prefill。
+Continuous Batching、FCFS 和显式开启的 Chunked Prefill。Chunked Prefill 默认关闭，
+因为现有实现把同一请求首个到最后一个视觉 token 视为完整区间；开启后若
+`max_chunk_size` 小于该区间长度，会拒绝请求，不会自动按图片切开。这一限制与
+Prefix 部分命中后的整图切片是两件事。
 
-连续加入较重的 Vision Prefill 会打断已有 Decode，因此调度器会控制 Prefill 粒度。
+连续加入较重的 Vision Prefill 仍会打断已有 Decode；支持 Chunked Prefill 不等于已经
+实现 Prefill/Decode 混合批次，也不表示可以在任意视觉 token 位置切开。
 HTTP Runtime 支持普通 JSON 响应、SSE Token Stream、取消请求和退出时释放显存。
 
 当前仍是同步的 schedule → execute → postprocess 步进，不是异步 CPU/GPU 调度。
@@ -220,6 +245,10 @@ TP1 可显式启用 cooperative Prefill，在 Vision block／语言层之间执�
 指定层数推进；无可执行的驻留 Decode 时先完成 Prefill。取消暂停批次的一条请求后，
 其余请求保留已提交前沿并重算未完成片段。该路径默认关闭，原因和测量见
 [交错执行记录](PREFILL_INTERLEAVING.md)。
+
+可选 Vision Cache 的 miss 仍在选中 Prefill 的准备阶段整体编码，再进入后续模型执行。
+因此即使开启 cooperative Prefill，这条缓存准备路径也不会按 Vision block 让出 GPU；
+不能把普通视觉模型的分段执行能力套用到所有 Encoder Cache miss。
 
 Scaled-FP8 Prefix 命中的 Attention 从 Context 保存的 CPU offsets 读取长度，按有效页数
 截取页表；不会逐层把长度或页号读回 CPU。KV 仍会 gather/反量化到连续临时张量，再用
@@ -231,6 +260,11 @@ Scaled-FP8 Prefix 命中的 Attention 从 Context 保存的 CPU offsets 读取�
 模型初始化的 CUDA 默认设备仅存在于 `with torch.device("cuda")` 作用域内，不在退出时
 通过 `set_default_device("cpu")` 留下持续拦截 torch 调用的模式。详见
 [短 Prefill 优化](PREFIX_PREFILL_OPTIMIZATION.md)。
+
+FlashInfer Paged Prefill/Decode 需要显式开启，当前只支持未量化的 BF16/FP16 KV。
+未安装可用后端、选择 FP8 KV 或将 `attention` 编译与 FlashInfer Decode 同时启用，
+都会明确报错；FlashInfer Decode 的执行异常也不会静默改走 Triton。默认 TP1 FP8
+配置使用项目的 Triton/SDPA 路径，不开启 FlashInfer。
 
 ## 9. 当前实现情况
 

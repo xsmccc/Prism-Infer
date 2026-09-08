@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "experiment": "fp8_lm_head_cuda_graph_microbenchmark",
+  "model": "/home/lcpu/87120912/models/Qwen3-VL-8B-Instruct",
+  "gpu": "NVIDIA GeForce RTX 5090",
+  "torch": "2.11.0+cu130",
+  "result": {
+    "shape": [
+      1,
+      4096,
+      151936
+    ],
+    "iterations_per_repeat": 1000,
+    "repeats": 5,
+    "baseline": "BF16 full-vocabulary projection plus argmax",
+    "candidate": "compiled FP8 projection plus top-64 plus FP32 rerank",
+    "baseline_ms": [
+      0.7805265502929688,
+      0.7804722290039062,
+      0.7803839111328125,
+      0.7804181518554687,
+      0.7804317016601563
+    ],
+    "candidate_ms": [
+      0.4532508850097656,
+      0.4534979553222656,
+      0.4533646545410156,
+      0.4532830810546875,
+      0.453258056640625
+    ],
+    "baseline_median_ms": 0.7804317016601563,
+    "candidate_median_ms": 0.4532830810546875,
+    "relative_reduction": 0.41918930242012087,
+    "baseline_token": 57555,
+    "candidate_token": 57555,
+    "extra_fp8_weight_bytes": 622329856,
+    "extra_scale_bytes": 607744
+  }
+}

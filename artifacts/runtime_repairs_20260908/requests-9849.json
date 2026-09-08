@@ -1,0 +1,215 @@
+{
+  "torch": "2.11.0+cu130",
+  "gpu": "NVIDIA GeForce RTX 5090",
+  "cases": {
+    "chunked_pressure": {
+      "steps": [
+        {
+          "phase": "decode",
+          "requests": [
+            0
+          ],
+          "scheduled_tokens": 1,
+          "tokens": [
+            498
+          ]
+        },
+        {
+          "phase": "prefill",
+          "requests": [
+            1
+          ],
+          "scheduled_tokens": 256,
+          "tokens": [
+            null
+          ]
+        },
+        {
+          "phase": "decode",
+          "requests": [
+            0
+          ],
+          "scheduled_tokens": 1,
+          "tokens": [
+            525
+          ]
+        },
+        {
+          "phase": "prefill",
+          "requests": [
+            1
+          ],
+          "scheduled_tokens": 256,
+          "tokens": [
+            null
+          ]
+        },
+        {
+          "phase": "prefill",
+          "requests": [
+            1
+          ],
+          "scheduled_tokens": 256,
+          "tokens": [
+            11
+          ]
+        },
+        {
+          "phase": "decode",
+          "requests": [
+            0
+          ],
+          "scheduled_tokens": 1,
+          "tokens": [
+            847
+          ]
+        },
+        {
+          "phase": "decode",
+          "requests": [
+            0
+          ],
+          "scheduled_tokens": 1,
+          "tokens": [
+            4238
+          ]
+        },
+        {
+          "phase": "decode",
+          "requests": [
+            0
+          ],
+          "scheduled_tokens": 1,
+          "tokens": [
+            11
+          ]
+        },
+        {
+          "phase": "decode",
+          "requests": [
+            0
+          ],
+          "scheduled_tokens": 1,
+          "tokens": [
+            600
+          ]
+        },
+        {
+          "phase": "decode",
+          "requests": [
+            0
+          ],
+          "scheduled_tokens": 1,
+          "tokens": [
+            1079
+          ]
+        }
+      ],
+      "first": [
+        11,
+        498,
+        525,
+        847,
+        4238,
+        11,
+        600,
+        1079
+      ],
+      "second": [
+        11
+      ]
+    },
+    "visual_cache": {
+      "outputs": [
+        [
+          1151,
+          151645,
+          198,
+          151643
+        ],
+        [
+          785,
+          1887,
+          1894,
+          315
+        ],
+        [
+          13250,
+          151645,
+          198,
+          151643
+        ]
+      ],
+      "cache_states": [
+        {
+          "enabled": true,
+          "identity": "sha256_model_processor_media_layout_v1",
+          "scope": "vision_encoder_main_and_deepstack_outputs_only",
+          "max_bytes": 268435456,
+          "resident_bytes": 0,
+          "entries": 0,
+          "hits": 0,
+          "misses": 0,
+          "evictions": 0,
+          "oversize_skips": 0,
+          "host_cache": {
+            "scope": "per_image_pinned_lru",
+            "max_bytes": 4294967296,
+            "resident_bytes": 19267584,
+            "entries": 3,
+            "hits": 0,
+            "misses": 3,
+            "evictions": 0,
+            "oversize_skips": 0
+          }
+        },
+        {
+          "enabled": true,
+          "identity": "sha256_model_processor_media_layout_v1",
+          "scope": "vision_encoder_main_and_deepstack_outputs_only",
+          "max_bytes": 268435456,
+          "resident_bytes": 0,
+          "entries": 0,
+          "hits": 0,
+          "misses": 0,
+          "evictions": 0,
+          "oversize_skips": 0,
+          "host_cache": {
+            "scope": "per_image_pinned_lru",
+            "max_bytes": 4294967296,
+            "resident_bytes": 19267584,
+            "entries": 3,
+            "hits": 0,
+            "misses": 3,
+            "evictions": 0,
+            "oversize_skips": 0
+          }
+        },
+        {
+          "enabled": true,
+          "identity": "sha256_model_processor_media_layout_v1",
+          "scope": "vision_encoder_main_and_deepstack_outputs_only",
+          "max_bytes": 268435456,
+          "resident_bytes": 0,
+          "entries": 0,
+          "hits": 0,
+          "misses": 0,
+          "evictions": 0,
+          "oversize_skips": 0,
+          "host_cache": {
+            "scope": "per_image_pinned_lru",
+            "max_bytes": 4294967296,
+            "resident_bytes": 19267584,
+            "entries": 3,
+            "hits": 3,
+            "misses": 3,
+            "evictions": 0,
+            "oversize_skips": 0
+          }
+        }
+      ],
+      "rejected_before_vision": true,
+      "reordered_matches_uncached": true
+    }
+  }
+}

@@ -327,11 +327,7 @@ class Attention(nn.Module):
             and self.k_scale_cache is None
             and self.v_scale_cache is None
         ):
-            try:
-                return self._forward_decode_paged_flashinfer(q, context)
-            except Exception:
-                # flashinfer 失败回退现有路径（正确性优先）
-                pass
+            return self._forward_decode_paged_flashinfer(q, context)
         if (
             HAS_VLLM_PAGED_FLASH_ATTN
             and q.is_cuda
@@ -370,7 +366,8 @@ class Attention(nn.Module):
         batch_size = int(q.shape[0])
         capturing = torch.cuda.is_current_stream_capturing()
         wrapper = self._flashinfer_decode_wrappers.get(batch_size)
-        if wrapper is None:
+        required_blocks = int(context.block_tables.shape[1])
+        if wrapper is None or required_blocks > wrapper.max_blocks:
             if capturing:
                 raise RuntimeError(
                     "flashinfer decode wrapper missing for capture batch "
@@ -384,7 +381,7 @@ class Attention(nn.Module):
                 dtype=k_cache.dtype,
                 use_cuda_graph=True,
                 max_batch=batch_size,
-                max_blocks=int(context.block_tables.shape[1]),
+                max_blocks=required_blocks,
             )
             self._flashinfer_decode_wrappers[batch_size] = wrapper
         if not capturing:
@@ -395,20 +392,24 @@ class Attention(nn.Module):
         with profile_region("attention.decode.flashinfer_paged"):
             return wrapper.run(q, k_cache, v_cache)
 
-    def stage_flashinfer_decode_metadata(self, context: Context) -> None:
+    def stage_flashinfer_decode_metadata(
+        self, context: Context, *, captured_batch_size: int
+    ) -> None:
         """Graph 重放前把当前元数据写进静态 buffer (graph 外调用)。"""
 
-        if not self.flashinfer_decode_enabled or not self._flashinfer_decode_wrappers:
+        if not self.flashinfer_decode_enabled:
             return
         if context.block_tables is None or context.context_lens is None:
             return
-        batch_size = int(context.context_lens.numel())
-        wrapper = self._flashinfer_decode_wrappers.get(batch_size)
-        if wrapper is not None:
-            wrapper.stage_plan_inputs(
-                context.context_lens,
-                context.block_tables,
+        wrapper = self._flashinfer_decode_wrappers.get(captured_batch_size)
+        if wrapper is None:
+            raise RuntimeError(
+                f"flashinfer decode wrapper missing for captured batch {captured_batch_size}"
             )
+        wrapper.stage_plan_inputs(
+            context.context_lens,
+            context.block_tables,
+        )
 
     def _forward_decode_paged_flash(
         self,

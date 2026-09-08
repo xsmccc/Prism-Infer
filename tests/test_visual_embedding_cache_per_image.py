@@ -1,13 +1,22 @@
 """CPU unit tests for the per-image host visual embedding cache (Event 6)."""
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
+from prism_infer.engine.block_manager import BlockManager
+from prism_infer.engine.contracts import BatchPhase, BatchPlan, PrefillSlice
+from prism_infer.engine.llm_engine import LLMEngine
 from prism_infer.engine.model_runner import (
-    _PerImageVisualEmbeddingHostCache,
+    ModelRunner,
     _assemble_per_image_visual_outputs,
     _image_row_ranges,
+    _PerImageVisualEmbeddingHostCache,
 )
+from prism_infer.engine.scheduler import Scheduler
+from prism_infer.engine.sequence import Sequence
+from prism_infer.sampling_params import SamplingParams
 
 
 def _entry_embeds(rows: int, value: float = 1.0, dim: int = 8) -> torch.Tensor:
@@ -25,7 +34,9 @@ class TestImageRowRanges:
 
     def test_rejects_bad_rank(self):
         with pytest.raises(ValueError):
-            _image_row_ranges(torch.tensor([[2, 2, 1], [3, 2, 1], [4, 2, 1]], dtype=torch.int64).unsqueeze(0))
+            _image_row_ranges(
+                torch.tensor([[2, 2, 1], [3, 2, 1], [4, 2, 1]], dtype=torch.int64).unsqueeze(0)
+            )
         with pytest.raises(ValueError):
             _image_row_ranges(torch.tensor([[2, 2], [3, 2]], dtype=torch.int64))
 
@@ -41,9 +52,7 @@ class TestAssemblePerImageOutputs:
         assert vis.shape == (6, 8)
         assert deep[0].shape == (6, 8)
         assert torch.allclose(vis[:, 0], torch.tensor([1.0, 1.0, 2.0, 2.0, 2.0, 3.0]))
-        assert torch.allclose(
-            deep[0][:, 0], torch.tensor([10.0, 10.0, 20.0, 20.0, 20.0, 30.0])
-        )
+        assert torch.allclose(deep[0][:, 0], torch.tensor([10.0, 10.0, 20.0, 20.0, 20.0, 30.0]))
 
     def test_empty_parts(self):
         vis, deep = _assemble_per_image_visual_outputs([])
@@ -138,3 +147,74 @@ class TestHostCacheLru:
             "evictions",
             "oversize_skips",
         }
+
+
+def _cache_sequence():
+    return Sequence(
+        [151655, 151655, 7, 151655, 151655, 8],
+        SamplingParams(max_tokens=1),
+        block_size=4,
+        request_id=0,
+        pixel_values=torch.zeros(4, 3),
+        image_grid_thw=torch.tensor([[1, 2, 1], [1, 2, 1]]),
+        image_merge_size=1,
+        image_token_id=151655,
+        image_token_count=4,
+    )
+
+
+def test_cache_enabled_submission_defers_vision_until_scheduled():
+    seq = _cache_sequence()
+    seq.visual_embedding_cache_key = "images"
+    engine = LLMEngine.__new__(LLMEngine)
+    engine.config = SimpleNamespace(enable_visual_embedding_cache=True)
+    engine.scheduler = Scheduler(
+        SimpleNamespace(
+            max_num_seqs=4,
+            max_num_batched_tokens=32,
+            max_model_len=64,
+            enable_chunked_prefill=False,
+            max_chunk_size=8,
+            eos=-1,
+            max_queue_size=None,
+            max_consecutive_prefill_batches=1,
+        ),
+        kv_manager=BlockManager(8, 4),
+    )
+    engine.model_runner = SimpleNamespace(
+        hydrate_visual_embedding_cache=lambda _: pytest.fail("submission must not run Vision")
+    )
+    engine._submit_sequence(seq)
+    assert list(engine.scheduler.waiting) == [seq]
+    hydrated = []
+    runner = ModelRunner.__new__(ModelRunner)
+    runner.hydrate_visual_embedding_cache = hydrated.append
+    runner.prepare_prefill_visual_cache(engine.scheduler.schedule())
+    assert hydrated == [seq]
+
+
+def test_partial_or_full_visual_prefix_hit_does_not_hydrate_whole_group():
+    seq = _cache_sequence()
+    runner = ModelRunner.__new__(ModelRunner)
+    runner.hydrate_visual_embedding_cache = lambda _: pytest.fail("covered images were restored")
+    for start in (3, 5):
+        seq.num_cached_tokens = start
+        part = PrefillSlice(seq.seq_id, start, 6)
+        plan = BatchPlan(BatchPhase.PREFILL, (seq,), (6 - start,), prefill_slices=(part,))
+        runner.prepare_prefill_visual_cache(plan)
+
+
+def test_all_image_cache_hits_do_not_stage_raw_pixel_tensor():
+    seq = _cache_sequence()
+    runner = ModelRunner.__new__(ModelRunner)
+    runner._visual_embedding_host_cache = _PerImageVisualEmbeddingHostCache(1 << 20)
+    for key in (b"first", b"second"):
+        runner._visual_embedding_host_cache.store(key, _entry_embeds(2), (_entry_embeds(2),))
+
+    def stage(value):
+        assert value is not seq.pixel_values
+        return value
+
+    runner._visual_cache_device_tensor = stage
+    assert runner._hydrate_visual_embedding_cache_per_image(seq, (b"first", b"second"))
+    assert seq.precomputed_visual_embeds.shape == (4, 8)

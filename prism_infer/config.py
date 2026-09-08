@@ -232,7 +232,7 @@ class CacheConfig:
 class SchedulerConfig:
     max_num_batched_tokens: int = 16384
     max_num_seqs: int = 512
-    enable_chunked_prefill: bool = True
+    enable_chunked_prefill: bool = False
     max_chunk_size: int = 512
     scheduler_policy: str = "fcfs"
     max_queue_size: int | None = None
@@ -289,9 +289,7 @@ class MultimodalConfig:
     vision_encoder_parallel_mode: str = "replicated"
     enable_vision_tensor_cudagraph: bool = False
     enable_visual_embedding_cache: bool = False
-    visual_embedding_cache_host_max_bytes: int = (
-        DEFAULT_VISUAL_EMBEDDING_CACHE_HOST_MAX_BYTES
-    )
+    visual_embedding_cache_host_max_bytes: int = DEFAULT_VISUAL_EMBEDDING_CACHE_HOST_MAX_BYTES
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -415,8 +413,7 @@ class ExecutionConfig:
             raise ValueError("enable_fused_qk_mrope requires enable_fused_qk_rmsnorm")
         if self.paged_decode_num_splits <= 0:
             raise ValueError(
-                f"paged_decode_num_splits must be positive; "
-                f"got {self.paged_decode_num_splits!r}"
+                f"paged_decode_num_splits must be positive; got {self.paged_decode_num_splits!r}"
             )
         if self.paged_decode_block_n not in SUPPORTED_PAGED_DECODE_BLOCK_N:
             supported = ", ".join(str(value) for value in sorted(SUPPORTED_PAGED_DECODE_BLOCK_N))
@@ -619,9 +616,7 @@ class PrismConfig:
             "vision_encoder_parallel_mode": "vision_encoder_parallel_mode",
             "enable_vision_tensor_cudagraph": ("enable_vision_tensor_cudagraph"),
             "enable_visual_embedding_cache": "enable_visual_embedding_cache",
-            "visual_embedding_cache_host_max_bytes": (
-                "visual_embedding_cache_host_max_bytes"
-            ),
+            "visual_embedding_cache_host_max_bytes": ("visual_embedding_cache_host_max_bytes"),
         }
         cache_fields = {
             "gpu_memory_utilization": "gpu_memory_utilization",

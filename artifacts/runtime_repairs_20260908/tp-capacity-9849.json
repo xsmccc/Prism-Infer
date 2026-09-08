@@ -1,0 +1,17 @@
+{
+  "scope": "real NCCL with injected capacity limits",
+  "ranks": [
+    {
+      "rank": 0,
+      "injected_local_pages": 10,
+      "selected_pages": 6,
+      "explicit_over_capacity_rejected": true
+    },
+    {
+      "rank": 1,
+      "injected_local_pages": 6,
+      "selected_pages": 6,
+      "explicit_over_capacity_rejected": true
+    }
+  ]
+}
