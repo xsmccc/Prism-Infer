@@ -1,0 +1,47 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+NCCL version 2.28.9+cuda13.0
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer-vision-dp/prism_infer/engine/tp_control.py", line 96, in next_command
+[rank0]:     method = TPMethod(method_name)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/enum.py", line 751, in __call__
+[rank0]:     return cls.__new__(cls, value)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/enum.py", line 1170, in __new__
+[rank0]:     raise ve_exc
+[rank0]: ValueError: 'copy_kv_block_prefixes' is not a valid TPMethod
+
+[rank0]: The above exception was the direct cause of the following exception:
+
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer-vision-dp/benchmarks/bench_vision_parallel.py", line 408, in <module>
+[rank0]:     main()
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer-vision-dp/benchmarks/bench_vision_parallel.py", line 366, in main
+[rank0]:     run("hot_same_prompt", [args.prompt], True)
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer-vision-dp/benchmarks/bench_vision_parallel.py", line 354, in run
+[rank0]:     return _run_requests(
+[rank0]:            ^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer-vision-dp/benchmarks/bench_vision_parallel.py", line 155, in _run_requests
+[rank0]:     step = llm.step_result()
+[rank0]:            ^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer-vision-dp/prism_infer/engine/llm_engine.py", line 1143, in step_result
+[rank0]:     result = self._next_step_result(profile_session)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer-vision-dp/prism_infer/engine/llm_engine.py", line 1133, in _next_step_result
+[rank0]:     return self._execute_planned_step(plan, profile_session)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer-vision-dp/prism_infer/engine/llm_engine.py", line 848, in _execute_planned_step
+[rank0]:     execution = self.executor.execute(plan)
+[rank0]:                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer-vision-dp/prism_infer/engine/executor.py", line 129, in execute
+[rank0]:     self.runner.call(
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer-vision-dp/prism_infer/engine/model_runner.py", line 602, in call
+[rank0]:     command, _ = self.tp_control.broadcast(
+[rank0]:                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer-vision-dp/prism_infer/engine/tp_control.py", line 135, in broadcast
+[rank0]:     command = self.next_command(method_name, args)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/home/lcpu/87120912/Prism-Infer-vision-dp/prism_infer/engine/tp_control.py", line 99, in next_command
+[rank0]:     raise ValueError(
+[rank0]: ValueError: unsupported TP control method 'copy_kv_block_prefixes'; supported methods: copy_kv_blocks, swap_blocks, run_plan, execute_single_greedy_decode_cudagraph_state, compact_kv_cache, run, exit

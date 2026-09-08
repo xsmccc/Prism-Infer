@@ -7,7 +7,7 @@ import torch
 from conftest import get_model_path, require_transformers
 from PIL import Image
 
-from prism_infer.engine.sequence import Sequence
+from prism_infer.engine.sequence import Sequence, split_image_payloads_for_range
 from prism_infer.engine.vl_inputs import prepare_single_image_inputs
 from prism_infer.models.qwen3_vl_position import get_qwen3_vl_rope_index_from_config
 from prism_infer.sampling_params import SamplingParams
@@ -146,3 +146,133 @@ def test_single_image_sequence_decode_state_omits_pixels():
     assert torch.equal(restored.rope_delta, seq.rope_delta)
     print(f"decode rope_delta shape: {list(restored.rope_delta.shape)}")
     print("single image decode sequence roundtrip: PASS")
+
+
+@pytest.mark.parametrize("merge_size", [1, 2])
+def test_partial_image_prefill_roundtrip_preserves_merge_size(merge_size):
+    """TP workers must recover image spans after a partial prefix-cache hit."""
+
+    image_token_id = 151655
+    grid = torch.tensor([[1, 4, 4], [1, 4, 8]], dtype=torch.long)
+    pixels = torch.arange(48 * 3, dtype=torch.float32).reshape(48, 3)
+    first_tokens = 16 // (merge_size * merge_size)
+    second_tokens = 32 // (merge_size * merge_size)
+    tokens = (
+        [7]
+        + [image_token_id] * first_tokens
+        + [9]
+        + [image_token_id] * second_tokens
+        + [10, 11]
+    )
+    seq = Sequence(
+        tokens,
+        block_size=4,
+        request_id=1,
+        pixel_values=pixels,
+        image_grid_thw=grid,
+        image_token_id=image_token_id,
+        image_token_count=first_tokens + second_tokens,
+        image_merge_size=merge_size,
+    )
+    seq.num_cached_tokens = 1 + first_tokens
+    seq.num_computed_tokens = seq.num_cached_tokens
+
+    restored = pickle.loads(pickle.dumps(seq))
+    assert restored.image_merge_size == merge_size
+    # A cached first image must not rebase the second image's original spans.
+    assert torch.equal(restored.pixel_values, pixels)
+    assert torch.equal(restored.image_grid_thw, grid)
+    assert seq.pixel_values is pixels
+    assert seq.image_grid_thw is grid
+    spans = restored.image_token_spans()
+    assert spans == seq.image_token_spans()
+    payload, sliced_grid, covered_pads = split_image_payloads_for_range(
+        pixel_values=restored.pixel_values,
+        grid=restored.image_grid_thw,
+        merge_size=restored.image_merge_size,
+        image_spans=spans,
+        range_start=restored.num_cached_tokens,
+        range_end=restored.num_prompt_tokens,
+    )
+    assert torch.equal(payload, pixels[16:])
+    assert torch.equal(sliced_grid, grid[1:])
+    assert covered_pads == second_tokens
+
+
+def _synthetic_image_video_sequence() -> Sequence:
+    """CPU-only state: image spans [1, 5), video spans [6, 10), then text."""
+
+    image_token_id = 151655
+    video_token_id = 151656
+    tokens = [7] + [image_token_id] * 4 + [8] + [video_token_id] * 4 + [9, 10]
+    return Sequence(
+        tokens,
+        block_size=4,
+        request_id=3,
+        pixel_values=torch.arange(48, dtype=torch.float32).reshape(16, 3),
+        image_grid_thw=torch.tensor([[1, 4, 4]]),
+        pixel_values_videos=torch.arange(48, dtype=torch.float32).reshape(16, 3) + 100,
+        video_grid_thw=torch.tensor([[1, 4, 4]]),
+        position_ids=torch.arange(len(tokens)).repeat(3, 1),
+        rope_delta=torch.tensor([0]),
+        image_token_id=image_token_id,
+        image_token_count=4,
+        video_token_id=video_token_id,
+        video_token_count=4,
+    )
+
+
+@pytest.mark.parametrize("frontier", ["num_cached_tokens", "num_computed_tokens"])
+def test_prefill_roundtrip_omits_fully_covered_visual_payload(frontier):
+    """Full visual coverage omits image/video tensors, without changing rank 0."""
+
+    seq = _synthetic_image_video_sequence()
+    setattr(seq, frontier, 10)
+    original_pixels = seq.pixel_values
+    original_grid = seq.image_grid_thw
+    original_video = seq.pixel_values_videos
+    original_video_grid = seq.video_grid_thw
+
+    restored = pickle.loads(pickle.dumps(seq))
+
+    assert restored.pixel_values is None
+    assert restored.image_grid_thw is None
+    assert restored.pixel_values_videos is None
+    assert restored.video_grid_thw is None
+    assert restored.token_ids == seq.token_ids
+    assert torch.equal(restored.position_ids, seq.position_ids)
+    assert torch.equal(restored.rope_delta, seq.rope_delta)
+    assert restored.image_merge_size == seq.image_merge_size
+    assert getattr(restored, frontier) == 10
+    assert seq.pixel_values is original_pixels
+    assert seq.image_grid_thw is original_grid
+    assert seq.pixel_values_videos is original_video
+    assert seq.video_grid_thw is original_video_grid
+
+
+def test_prefill_roundtrip_keeps_uncovered_modality_only():
+    """Covering the image does not suppress a later video's required payload."""
+
+    seq = _synthetic_image_video_sequence()
+    seq.num_cached_tokens = 5
+    restored = pickle.loads(pickle.dumps(seq))
+
+    assert restored.pixel_values is None
+    assert restored.image_grid_thw is None
+    assert torch.equal(restored.pixel_values_videos, seq.pixel_values_videos)
+    assert torch.equal(restored.video_grid_thw, seq.video_grid_thw)
+    assert restored.token_ids == seq.token_ids
+
+
+def test_prefill_roundtrip_ignores_unconfirmed_prefix_candidate():
+    """Probe flags cannot replace the actual cached/computed frontier."""
+
+    seq = _synthetic_image_video_sequence()
+    seq.prefix_cache_candidate_tokens = 10
+    seq.multimodal_prefix_cache_hit = True
+    restored = pickle.loads(pickle.dumps(seq))
+
+    assert torch.equal(restored.pixel_values, seq.pixel_values)
+    assert torch.equal(restored.image_grid_thw, seq.image_grid_thw)
+    assert torch.equal(restored.pixel_values_videos, seq.pixel_values_videos)
+    assert torch.equal(restored.video_grid_thw, seq.video_grid_thw)

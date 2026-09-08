@@ -388,6 +388,7 @@ class ModelRunner:
                 mlp_projection_mode=self.config.mlp_projection_mode,
                 vision_encoder_microbatch_patches=(self.config.vision_encoder_microbatch_patches),
                 vision_attention_backend=self.config.vision_attention_backend,
+                vision_encoder_parallel_mode=self.config.vision_encoder_parallel_mode,
                 enable_vision_tensor_cudagraph=(self.config.enable_vision_tensor_cudagraph),
             )
             self.model.logits_precision = self.config.logits_precision

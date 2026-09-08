@@ -1,0 +1,337 @@
+[ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+[ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+INFO 09-08 10:27:03 [model.py:619] Resolved architecture: Qwen3VLForConditionalGeneration
+INFO 09-08 10:27:03 [model.py:1776] Using max model len 4096
+WARNING 09-08 10:27:03 [arg_utils.py:2498] This model does not officially support disabling chunked prefill. Disabling this manually may cause the engine to crash or produce incorrect outputs.
+INFO 09-08 10:27:03 [vllm.py:1042] Asynchronous scheduling is disabled.
+WARNING 09-08 10:27:03 [vllm.py:1096] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none
+WARNING 09-08 10:27:03 [vllm.py:1144] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+INFO 09-08 10:27:03 [kernel.py:292] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+INFO 09-08 10:27:03 [vllm.py:1322] Cudagraph is disabled under eager mode
+INFO 09-08 10:27:04 [compilation.py:312] Enabled custom fusions: norm_quant, act_quant
+[transformers] The `use_fast` parameter is deprecated and will be removed in a future version. Use `backend="torchvision"` instead of `use_fast=True`, or `backend="pil"` instead of `use_fast=False`.
+WARNING 09-08 10:27:13 [system_utils.py:157] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
+(EngineCore pid=2746250) INFO 09-08 10:27:20 [core.py:114] Initializing a V1 LLM engine (v0.25.1) with config: model='/home/lcpu/87120912/models/Qwen3-VL-8B-Instruct', speculative_config=None, tokenizer='/home/lcpu/87120912/models/Qwen3-VL-8B-Instruct', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=2, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, quantization_config=None, enforce_eager=True, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=/home/lcpu/87120912/models/Qwen3-VL-8B-Instruct, enable_prefix_caching=True, enable_chunked_prefill=False, pooler_config=None, compilation_config={'mode': <CompilationMode.NONE: 0>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['all'], 'ir_enable_torch_wrap': False, 'splitting_ops': [], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [4096], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.NONE: 0>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': [], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False}, 'max_cudagraph_capture_size': 0, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native']), enable_flashinfer_autotune=True, enable_cutedsl_warmup=True, moe_backend='auto', linear_backend='auto')
+(EngineCore pid=2746250) INFO 09-08 10:27:20 [multiproc_executor.py:140] DP group leader: node_rank=0, node_rank_within_dp=0, master_addr=127.0.0.1, mq_connect_ip=10.62.105.29 (local), world_size=2, local_world_size=2
+[ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+[ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+[ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+[ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+(Worker pid=2746502) INFO 09-08 10:27:32 [parallel_state.py:1607] world_size=2 rank=0 local_rank=0 distributed_init_method=tcp://127.0.0.1:41553 backend=nccl
+(Worker pid=2746503) INFO 09-08 10:27:32 [parallel_state.py:1607] world_size=2 rank=1 local_rank=1 distributed_init_method=tcp://127.0.0.1:41553 backend=nccl
+(Worker pid=2746502) INFO 09-08 10:27:35 [pynccl.py:113] vLLM is using nccl==2.28.9
+NCCL version 2.28.9+cuda13.0
+(Worker pid=2746502) WARNING 09-08 10:27:35 [symm_mem.py:66] SymmMemCommunicator: Device capability 12.0 not supported, communicator is not available.
+(Worker pid=2746503) WARNING 09-08 10:27:35 [symm_mem.py:66] SymmMemCommunicator: Device capability 12.0 not supported, communicator is not available.
+(Worker pid=2746503) (Worker pid=2746502) WARNING 09-08 10:27:35 [custom_all_reduce.py:162] Custom allreduce is disabled because your platform lacks GPU P2P capability or P2P test failed. To silence this warning, specify disable_custom_all_reduce=True explicitly.
+WARNING 09-08 10:27:35 [custom_all_reduce.py:162] Custom allreduce is disabled because your platform lacks GPU P2P capability or P2P test failed. To silence this warning, specify disable_custom_all_reduce=True explicitly.
+(Worker pid=2746502) INFO 09-08 10:27:35 [cuda_communicator.py:264] Using ['PYNCCL'] all-reduce backends (in dispatch order) for group 'tp:0' out of potential backends: ['NCCL_SYMM_MEM', 'QUICK_REDUCE', 'FLASHINFER', 'AITER_CUSTOM', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'].
+(Worker pid=2746502) INFO 09-08 10:27:35 [parallel_state.py:1942] rank 0 in world size 2 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(Worker pid=2746502) INFO 09-08 10:27:35 [gpu_worker.py:360] Using V2 Model Runner
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:36 [model_runner.py:281] Loading model from scratch...
+(Worker_TP1 pid=2746503) INFO 09-08 10:27:36 [model_runner.py:281] Loading model from scratch...
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:36 [cuda.py:535] Using backend AttentionBackendEnum.FLASH_ATTN for vit attention
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:36 [mm_encoder_attention.py:373] Using AttentionBackendEnum.FLASH_ATTN for MMEncoderAttention.
+(Worker_TP1 pid=2746503) WARNING 09-08 10:27:36 [vllm.py:1096] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none
+(Worker_TP1 pid=2746503) WARNING 09-08 10:27:36 [vllm.py:1144] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(Worker_TP1 pid=2746503) INFO 09-08 10:27:36 [kernel.py:292] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+(Worker_TP1 pid=2746503) INFO 09-08 10:27:36 [vllm.py:1322] Cudagraph is disabled under eager mode
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:37 [vllm.py:1042] Asynchronous scheduling is disabled.
+(Worker_TP0 pid=2746502) WARNING 09-08 10:27:37 [vllm.py:1096] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none
+(Worker_TP0 pid=2746502) WARNING 09-08 10:27:37 [vllm.py:1144] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:37 [kernel.py:292] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:37 [vllm.py:1322] Cudagraph is disabled under eager mode
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:37 [compilation.py:312] Enabled custom fusions: norm_quant, act_quant
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:37 [cuda.py:476] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:37 [flash_attn.py:718] Using FlashAttention version 2
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:37 [weight_utils.py:849] Filesystem type for checkpoints: EXT4. Checkpoint size: 16.33 GiB. Available RAM: 202.26 GiB.
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:37 [weight_utils.py:872] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre). If you want to force prefetching, start vLLM with --safetensors-load-strategy=prefetch.
+(Worker_TP0 pid=2746502) Loading safetensors checkpoint shards:   0% Completed | 0/4 [00:00<?, ?it/s]
+(Worker_TP0 pid=2746502) Loading safetensors checkpoint shards:  25% Completed | 1/4 [00:01<00:03,  1.16s/it]
+(Worker_TP0 pid=2746502) Loading safetensors checkpoint shards:  50% Completed | 2/4 [00:02<00:02,  1.47s/it]
+(Worker_TP0 pid=2746502) Loading safetensors checkpoint shards:  75% Completed | 3/4 [00:04<00:01,  1.47s/it]
+(Worker_TP0 pid=2746502) Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:05<00:00,  1.21s/it]
+(Worker_TP0 pid=2746502) Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:05<00:00,  1.29s/it]
+(Worker_TP0 pid=2746502) 
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:42 [default_loader.py:430] Loading weights took 5.28 seconds
+(Worker_TP1 pid=2746503) INFO 09-08 10:27:43 [model_runner.py:302] Model loading took 9.06 GiB and 6.940081 seconds
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:43 [model_runner.py:302] Model loading took 9.06 GiB and 6.965651 seconds
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:43 [topk_topp_sampler.py:55] Using FlashInfer for top-p & top-k sampling.
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:48 [gpu_worker.py:538] Available KV cache memory: 17.28 GiB
+(EngineCore pid=2746250) INFO 09-08 10:27:48 [kv_cache_utils.py:2084] Overriding num_gpu_blocks=982 with num_gpu_blocks_override=64
+(EngineCore pid=2746250) INFO 09-08 10:27:48 [kv_cache_utils.py:2084] Overriding num_gpu_blocks=982 with num_gpu_blocks_override=64
+(EngineCore pid=2746250) INFO 09-08 10:27:48 [kv_cache_utils.py:2146] GPU KV cache size: 16,384 tokens
+(EngineCore pid=2746250) INFO 09-08 10:27:48 [kv_cache_utils.py:2147] Maximum concurrency for 4,096 tokens per request: 4.00x
+(Worker_TP1 pid=2746503) 2026-09-08 10:27:48,741 - INFO - autotuner.py:651 - flashinfer.jit: [Autotuner]: Autotuning process starts ...
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:48 [deep_gemm.py:175] deep_gemm not found in site-packages, trying vendored vllm.third_party.deep_gemm
+(Worker_TP0 pid=2746502) INFO 09-08 10:27:48 [deep_gemm.py:202] DeepGEMM PDL enabled on vllm.third_party.deep_gemm.
+(Worker_TP0 pid=2746502) 2026-09-08 10:27:48,786 - INFO - autotuner.py:651 - flashinfer.jit: [Autotuner]: Autotuning process starts ...
+(Worker_TP1 pid=2746503) 2026-09-08 10:28:35,640 - INFO - autotuner.py:674 - flashinfer.jit: [Autotuner]: Autotuning process ends
+(Worker_TP0 pid=2746502) 2026-09-08 10:28:41,252 - INFO - autotuner.py:674 - flashinfer.jit: [Autotuner]: Autotuning process ends
+(Worker_TP0 pid=2746502) INFO 09-08 10:28:41 [cutedsl_warmup.py:97] Skipping CuTeDSL warmup because no compile units were requested.
+(Worker_TP1 pid=2746503) INFO 09-08 10:28:41 [cutedsl_warmup.py:97] Skipping CuTeDSL warmup because no compile units were requested.
+(EngineCore pid=2746250) INFO 09-08 10:28:49 [shm_broadcast.py:705] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(Worker_TP1 pid=2746503) INFO 09-08 10:29:41 [jit_monitor.py:73] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_TP0 pid=2746502) INFO 09-08 10:29:41 [jit_monitor.py:73] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(EngineCore pid=2746250) INFO 09-08 10:29:41 [core.py:344] init engine (profile, create kv cache, warmup model) took 117.95 s
+(EngineCore pid=2746250) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+(EngineCore pid=2746250) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+(EngineCore pid=2746250) [transformers] The `use_fast` parameter is deprecated and will be removed in a future version. Use `backend="torchvision"` instead of `use_fast=True`, or `backend="pil"` instead of `use_fast=False`.
+(EngineCore pid=2746250) INFO 09-08 10:29:44 [vllm.py:1042] Asynchronous scheduling is disabled.
+(EngineCore pid=2746250) WARNING 09-08 10:29:44 [vllm.py:1096] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none
+(EngineCore pid=2746250) WARNING 09-08 10:29:44 [vllm.py:1144] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(EngineCore pid=2746250) INFO 09-08 10:29:44 [kernel.py:292] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+(EngineCore pid=2746250) INFO 09-08 10:29:44 [vllm.py:1322] Cudagraph is disabled under eager mode
+(EngineCore pid=2746250) INFO 09-08 10:29:44 [compilation.py:312] Enabled custom fusions: norm_quant, act_quant
+WARNING 09-08 10:29:45 [input_processor.py:282] Passing raw prompts to InputProcessor is deprecated and will be removed in v0.18. You should instead pass the outputs of Renderer.render_cmpl() or Renderer.render_chat().
+(Worker_TP0 pid=2746502) WARNING 09-08 10:29:53 [jit_monitor.py:129] Triton kernel JIT compilation during inference: _bilinear_pos_embed_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP0 pid=2746502) WARNING 09-08 10:29:53 [jit_monitor.py:129] Triton kernel JIT compilation during inference: rotary_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP0 pid=2746502) WARNING 09-08 10:30:03 [jit_monitor.py:129] Triton kernel JIT compilation during inference: _triton_mrope_forward. This causes a latency spike; consider extending warmup to cover this shape/config.
+VLLM_PARALLEL_PHASE {"phase": "warmup", "completed_requests": 1, "client_start_ns": 3059555807312501, "client_finish_ns": 3059574388522981, "duration_s": 18.58121048, "output_tokens": 16, "output_tokens_per_s": 0.8610849124830537, "ttft_median_ms": 17656.438404, "tpot_median_ms": 61.65147173333333, "e2e_median_ms": 18581.21048}
+(EngineCore pid=2746250) INFO 09-08 10:30:03 [block_pool.py:685] Successfully reset prefix cache
+VLLM_PARALLEL_PHASE {"phase": "sequential_cold", "completed_requests": 1, "client_start_ns": 3059574391259361, "client_finish_ns": 3059574942590405, "duration_s": 0.551331044, "output_tokens": 16, "output_tokens_per_s": 29.020676731564567, "ttft_median_ms": 216.909846, "tpot_median_ms": 22.294746533333335, "e2e_median_ms": 551.331044}
+VLLM_PARALLEL_PHASE {"phase": "sequential_hot_new_question", "completed_requests": 1, "client_start_ns": 3059574942814404, "client_finish_ns": 3059575424527403, "duration_s": 0.481712999, "output_tokens": 16, "output_tokens_per_s": 33.21479809184058, "ttft_median_ms": 75.12515, "tpot_median_ms": 27.1058566, "e2e_median_ms": 481.712999}
+(EngineCore pid=2746250) INFO 09-08 10:30:04 [block_pool.py:685] Successfully reset prefix cache
+VLLM_PARALLEL_PHASE {"phase": "sequential_cold", "completed_requests": 1, "client_start_ns": 3059575426775126, "client_finish_ns": 3059575991947275, "duration_s": 0.565172149, "output_tokens": 16, "output_tokens_per_s": 28.309958352176338, "ttft_median_ms": 216.45457, "tpot_median_ms": 23.2478386, "e2e_median_ms": 565.172149}
+VLLM_PARALLEL_PHASE {"phase": "sequential_hot_new_question", "completed_requests": 1, "client_start_ns": 3059575992197594, "client_finish_ns": 3059576555944812, "duration_s": 0.563747218, "output_tokens": 16, "output_tokens_per_s": 28.38151478026451, "ttft_median_ms": 74.756761, "tpot_median_ms": 32.5993638, "e2e_median_ms": 563.747218}
+(EngineCore pid=2746250) INFO 09-08 10:30:05 [block_pool.py:685] Successfully reset prefix cache
+VLLM_PARALLEL_PHASE {"phase": "sequential_cold", "completed_requests": 1, "client_start_ns": 3059576557557469, "client_finish_ns": 3059577248808685, "duration_s": 0.691251216, "output_tokens": 16, "output_tokens_per_s": 23.14643306175392, "ttft_median_ms": 205.66105, "tpot_median_ms": 32.37267773333333, "e2e_median_ms": 691.251216}
+VLLM_PARALLEL_PHASE {"phase": "sequential_hot_new_question", "completed_requests": 1, "client_start_ns": 3059577248977396, "client_finish_ns": 3059577802567086, "duration_s": 0.55358969, "output_tokens": 16, "output_tokens_per_s": 28.90227236710279, "ttft_median_ms": 68.833067, "tpot_median_ms": 32.3171082, "e2e_median_ms": 553.58969}
+(EngineCore pid=2746250) INFO 09-08 10:30:07 [block_pool.py:685] Successfully reset prefix cache
+VLLM_PARALLEL_PHASE {"phase": "sequential_cold", "completed_requests": 1, "client_start_ns": 3059577804193965, "client_finish_ns": 3059578495210648, "duration_s": 0.691016683, "output_tokens": 16, "output_tokens_per_s": 23.154289026043674, "ttft_median_ms": 204.769856, "tpot_median_ms": 32.416455133333336, "e2e_median_ms": 691.016683}
+VLLM_PARALLEL_PHASE {"phase": "sequential_hot_new_question", "completed_requests": 1, "client_start_ns": 3059578495377749, "client_finish_ns": 3059579050587281, "duration_s": 0.555209532, "output_tokens": 16, "output_tokens_per_s": 28.81794904054349, "ttft_median_ms": 70.624997, "tpot_median_ms": 32.30563566666667, "e2e_median_ms": 555.209532}
+(EngineCore pid=2746250) INFO 09-08 10:30:08 [block_pool.py:685] Successfully reset prefix cache
+VLLM_PARALLEL_PHASE {"phase": "sequential_cold", "completed_requests": 1, "client_start_ns": 3059579052251906, "client_finish_ns": 3059579745608087, "duration_s": 0.693356181, "output_tokens": 16, "output_tokens_per_s": 23.076162639703938, "ttft_median_ms": 209.170269, "tpot_median_ms": 32.2790608, "e2e_median_ms": 693.356181}
+VLLM_PARALLEL_PHASE {"phase": "sequential_hot_new_question", "completed_requests": 1, "client_start_ns": 3059579745774356, "client_finish_ns": 3059580143825381, "duration_s": 0.398051025, "output_tokens": 16, "output_tokens_per_s": 40.19585177553556, "ttft_median_ms": 67.354854, "tpot_median_ms": 22.0464114, "e2e_median_ms": 398.051025}
+(EngineCore pid=2746250) INFO 09-08 10:30:09 [block_pool.py:685] Successfully reset prefix cache
+VLLM_PARALLEL_PHASE {"phase": "concurrent_cold_start", "completed_requests": 8, "client_start_ns": 3059580145933141, "client_finish_ns": 3059580947792722, "duration_s": 0.801859581, "output_tokens": 128, "output_tokens_per_s": 159.62894630550034, "ttft_median_ms": 232.47789849999998, "tpot_median_ms": 32.98093576666666, "e2e_median_ms": 733.7358790000001}
+VLLM_PARALLEL_PHASE {"phase": "concurrent_hot", "completed_requests": 8, "client_start_ns": 3059580948043010, "client_finish_ns": 3059581418691601, "duration_s": 0.470648591, "output_tokens": 128, "output_tokens_per_s": 271.9651188757091, "ttft_median_ms": 94.442051, "tpot_median_ms": 22.72669523333333, "e2e_median_ms": 442.444338}
+INFO 09-08 10:30:10 [core_client.py:655] [shutdown] MPClient: start timeout=default
+INFO 09-08 10:30:10 [core_client.py:657] [shutdown] MPClient: stopping engine manager
+(EngineCore pid=2746250) INFO 09-08 10:30:10 [core.py:1214] [shutdown] EngineCore: trigger received signal=SIGTERM
+(EngineCore pid=2746250) INFO 09-08 10:30:10 [core.py:1333] [shutdown] EngineCore: start mode=abort timeout=0s
+(EngineCore pid=2746250) INFO 09-08 10:30:10 [core.py:1364] [shutdown] EngineCore: request processing complete; starting resource teardown
+(EngineCore pid=2746250) INFO 09-08 10:30:10 [core.py:1227] [shutdown] EngineCore: exiting busy loop
+(Worker_TP0 pid=2746502) INFO 09-08 10:30:10 [multiproc_executor.py:790] Parent process exited, terminating worker queues
+(EngineCore pid=2746250) INFO 09-08 10:30:10 [multiproc_executor.py:426] [shutdown] Executor: waiting for worker exit count=2
+(EngineCore pid=2746250) INFO 09-08 10:30:13 [multiproc_executor.py:433] [shutdown] Executor: all workers exited gracefully
+INFO 09-08 10:30:14 [core_client.py:659] [shutdown] MPClient: engine manager stopped
+INFO 09-08 10:30:14 [core_client.py:660] [shutdown] MPClient: cleaning up background resources
+INFO 09-08 10:30:14 [core_client.py:662] [shutdown] MPClient: complete
+[ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+[ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+INFO 09-08 10:30:37 [model.py:619] Resolved architecture: Qwen3VLForConditionalGeneration
+INFO 09-08 10:30:37 [model.py:1776] Using max model len 4096
+WARNING 09-08 10:30:37 [arg_utils.py:2498] This model does not officially support disabling chunked prefill. Disabling this manually may cause the engine to crash or produce incorrect outputs.
+INFO 09-08 10:30:37 [vllm.py:1042] Asynchronous scheduling is disabled.
+WARNING 09-08 10:30:37 [vllm.py:1096] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none
+WARNING 09-08 10:30:37 [vllm.py:1144] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+INFO 09-08 10:30:37 [kernel.py:292] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+INFO 09-08 10:30:37 [vllm.py:1322] Cudagraph is disabled under eager mode
+INFO 09-08 10:30:37 [compilation.py:312] Enabled custom fusions: norm_quant, act_quant
+[transformers] The `use_fast` parameter is deprecated and will be removed in a future version. Use `backend="torchvision"` instead of `use_fast=True`, or `backend="pil"` instead of `use_fast=False`.
+WARNING 09-08 10:30:46 [system_utils.py:157] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
+(EngineCore pid=2751126) INFO 09-08 10:30:54 [core.py:114] Initializing a V1 LLM engine (v0.25.1) with config: model='/home/lcpu/87120912/models/Qwen3-VL-8B-Instruct', speculative_config=None, tokenizer='/home/lcpu/87120912/models/Qwen3-VL-8B-Instruct', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=2, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, quantization_config=None, enforce_eager=True, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=/home/lcpu/87120912/models/Qwen3-VL-8B-Instruct, enable_prefix_caching=True, enable_chunked_prefill=False, pooler_config=None, compilation_config={'mode': <CompilationMode.NONE: 0>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['all'], 'ir_enable_torch_wrap': False, 'splitting_ops': [], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [4096], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.NONE: 0>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': [], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False}, 'max_cudagraph_capture_size': 0, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native']), enable_flashinfer_autotune=True, enable_cutedsl_warmup=True, moe_backend='auto', linear_backend='auto')
+(EngineCore pid=2751126) INFO 09-08 10:30:54 [multiproc_executor.py:140] DP group leader: node_rank=0, node_rank_within_dp=0, master_addr=127.0.0.1, mq_connect_ip=10.62.105.29 (local), world_size=2, local_world_size=2
+[ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+[ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+[ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+[ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.
+(Worker pid=2751164) INFO 09-08 10:31:03 [parallel_state.py:1607] world_size=2 rank=1 local_rank=1 distributed_init_method=tcp://127.0.0.1:41397 backend=nccl
+(Worker pid=2751163) INFO 09-08 10:31:04 [parallel_state.py:1607] world_size=2 rank=0 local_rank=0 distributed_init_method=tcp://127.0.0.1:41397 backend=nccl
+(Worker pid=2751163) INFO 09-08 10:31:06 [pynccl.py:113] vLLM is using nccl==2.28.9
+NCCL version 2.28.9+cuda13.0
+(Worker pid=2751163) INFO 09-08 10:31:07 [cuda_communicator.py:264] Using ['PYNCCL'] all-reduce backends (in dispatch order) for group 'pp:0' out of potential backends: ['NCCL_SYMM_MEM', 'QUICK_REDUCE', 'FLASHINFER', 'AITER_CUSTOM', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'].
+(Worker pid=2751163) INFO 09-08 10:31:07 [parallel_state.py:1942] rank 0 in world size 2 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(Worker pid=2751163) INFO 09-08 10:31:07 [gpu_worker.py:360] Using V2 Model Runner
+(Worker_PP1 pid=2751164) INFO 09-08 10:31:07 [model_runner.py:281] Loading model from scratch...
+(Worker_PP0 pid=2751163) INFO 09-08 10:31:07 [model_runner.py:281] Loading model from scratch...
+(Worker_PP0 pid=2751163) INFO 09-08 10:31:07 [cuda.py:535] Using backend AttentionBackendEnum.FLASH_ATTN for vit attention
+(Worker_PP0 pid=2751163) INFO 09-08 10:31:07 [mm_encoder_attention.py:373] Using AttentionBackendEnum.FLASH_ATTN for MMEncoderAttention.
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898] WorkerProc failed to start.
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898] Traceback (most recent call last):
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 865, in worker_main
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     worker = WorkerProc(*args, **kwargs)
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     return func(*args, **kwargs)
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 634, in __init__
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     self.worker.load_model()
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 413, in load_model
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     self.model_runner.load_model(load_dummy_weights=load_dummy_weights)
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/worker/gpu/model_runner.py", line 283, in load_model
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     self.model = model_loader.load_model(
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]                  ^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     return func(*args, **kwargs)
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/model_executor/model_loader/base_loader.py", line 55, in load_model
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     model = initialize_model(
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]             ^^^^^^^^^^^^^^^^^
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     return func(*args, **kwargs)
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/model_executor/model_loader/utils.py", line 63, in initialize_model
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     model = model_class(vllm_config=vllm_config, prefix=prefix)
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/model_executor/models/qwen3_vl.py", line 1741, in __init__
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     vllm_config=vllm_config.with_hf_config(config.text_config),
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/config/vllm.py", line 725, in with_hf_config
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     return replace(self, model_config=model_config)
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/config/utils.py", line 127, in replace
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     return cls(**dataclass_dict)
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/pydantic/_internal/_dataclasses.py", line 121, in __init__
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     s.__pydantic_validator__.validate_python(ArgsKwargs(args, kwargs), self_instance=s)
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898] pydantic_core._pydantic_core.ValidationError: 1 validation error for VllmConfig
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   Value error, No model architectures are specified [type=value_error, input_value=ArgsKwargs((), {'model_co... 'shutdown_timeout': 0}), input_type=ArgsKwargs]
+(Worker_PP1 pid=2751164) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     For further information visit https://errors.pydantic.dev/2.13/v/value_error
+(EngineCore pid=2751126) INFO 09-08 10:31:08 [multiproc_executor.py:426] [shutdown] Executor: waiting for worker exit count=2
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898] WorkerProc failed to start.
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898] Traceback (most recent call last):
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 865, in worker_main
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     worker = WorkerProc(*args, **kwargs)
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     return func(*args, **kwargs)
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 634, in __init__
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     self.worker.load_model()
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 413, in load_model
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     self.model_runner.load_model(load_dummy_weights=load_dummy_weights)
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/worker/gpu/model_runner.py", line 283, in load_model
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     self.model = model_loader.load_model(
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]                  ^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     return func(*args, **kwargs)
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/model_executor/model_loader/base_loader.py", line 55, in load_model
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     model = initialize_model(
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]             ^^^^^^^^^^^^^^^^^
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     return func(*args, **kwargs)
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/model_executor/model_loader/utils.py", line 63, in initialize_model
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     model = model_class(vllm_config=vllm_config, prefix=prefix)
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/model_executor/models/qwen3_vl.py", line 1741, in __init__
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     vllm_config=vllm_config.with_hf_config(config.text_config),
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/config/vllm.py", line 725, in with_hf_config
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     return replace(self, model_config=model_config)
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/config/utils.py", line 127, in replace
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     return cls(**dataclass_dict)
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/pydantic/_internal/_dataclasses.py", line 121, in __init__
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     s.__pydantic_validator__.validate_python(ArgsKwargs(args, kwargs), self_instance=s)
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898] pydantic_core._pydantic_core.ValidationError: 1 validation error for VllmConfig
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]   Value error, No model architectures are specified [type=value_error, input_value=ArgsKwargs((), {'model_co... 'shutdown_timeout': 0}), input_type=ArgsKwargs]
+(Worker_PP0 pid=2751163) ERROR 09-08 10:31:08 [multiproc_executor.py:898]     For further information visit https://errors.pydantic.dev/2.13/v/value_error
+[rank0]:[W908 10:31:09.857955466 ProcessGroupNCCL.cpp:1575] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+(EngineCore pid=2751126) INFO 09-08 10:31:09 [multiproc_executor.py:433] [shutdown] Executor: all workers exited gracefully
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231] EngineCore failed to start.
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231] Traceback (most recent call last):
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1200, in run_engine_core
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]     engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]     return func(*args, **kwargs)
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 966, in __init__
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]     super().__init__(
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 123, in __init__
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]     self.model_executor = executor_class(vllm_config)
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 108, in __init__
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]     super().__init__(vllm_config)
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]     return func(*args, **kwargs)
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/executor/abstract.py", line 109, in __init__
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]     self._init_executor()
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 201, in _init_executor
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]     self.workers = WorkerProc.wait_for_ready(unready_workers)
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 762, in wait_for_ready
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231]     raise e from None
+(EngineCore pid=2751126) ERROR 09-08 10:31:09 [core.py:1231] Exception: WorkerProc initialization failed due to an exception in a background process. See stack trace for root cause.
+(EngineCore pid=2751126) Process EngineCore:
+(EngineCore pid=2751126) Traceback (most recent call last):
+(EngineCore pid=2751126)   File "/home/lcpu/87120912/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+(EngineCore pid=2751126)     self.run()
+(EngineCore pid=2751126)   File "/home/lcpu/87120912/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/multiprocessing/process.py", line 108, in run
+(EngineCore pid=2751126)     self._target(*self._args, **self._kwargs)
+(EngineCore pid=2751126)   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1235, in run_engine_core
+(EngineCore pid=2751126)     raise e
+(EngineCore pid=2751126)   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1200, in run_engine_core
+(EngineCore pid=2751126)     engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+(EngineCore pid=2751126)                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2751126)   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=2751126)     return func(*args, **kwargs)
+(EngineCore pid=2751126)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2751126)   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 966, in __init__
+(EngineCore pid=2751126)     super().__init__(
+(EngineCore pid=2751126)   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 123, in __init__
+(EngineCore pid=2751126)     self.model_executor = executor_class(vllm_config)
+(EngineCore pid=2751126)                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2751126)   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 108, in __init__
+(EngineCore pid=2751126)     super().__init__(vllm_config)
+(EngineCore pid=2751126)   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=2751126)     return func(*args, **kwargs)
+(EngineCore pid=2751126)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2751126)   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/executor/abstract.py", line 109, in __init__
+(EngineCore pid=2751126)     self._init_executor()
+(EngineCore pid=2751126)   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 201, in _init_executor
+(EngineCore pid=2751126)     self.workers = WorkerProc.wait_for_ready(unready_workers)
+(EngineCore pid=2751126)                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2751126)   File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 762, in wait_for_ready
+(EngineCore pid=2751126)     raise e from None
+(EngineCore pid=2751126) Exception: WorkerProc initialization failed due to an exception in a background process. See stack trace for root cause.
+Traceback (most recent call last):
+  File "/home/lcpu/87120912/Prism-Infer-vision-dp/benchmarks/bench_vllm_parallel.py", line 319, in <module>
+    main()
+  File "/home/lcpu/87120912/Prism-Infer-vision-dp/benchmarks/bench_vllm_parallel.py", line 299, in main
+    asyncio.run(_run(args, report, images))
+  File "/home/lcpu/87120912/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/home/lcpu/87120912/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lcpu/87120912/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/home/lcpu/87120912/Prism-Infer-vision-dp/benchmarks/bench_vllm_parallel.py", line 194, in _run
+    engine = AsyncLLM.from_engine_args(AsyncEngineArgs(**options))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 246, in from_engine_args
+    return cls(
+           ^^^^
+  File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 146, in __init__
+    self.engine_core = EngineCoreClient.make_async_mp_client(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 132, in make_async_mp_client
+    return AsyncMPClient(*client_args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 963, in __init__
+    super().__init__(
+  File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 573, in __init__
+    with launch_core_engines(
+         ^^^^^^^^^^^^^^^^^^^^
+  File "/home/lcpu/87120912/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 144, in __exit__
+    next(self.gen)
+  File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/utils.py", line 1213, in launch_core_engines
+    wait_for_engine_startup(
+  File "/home/lcpu/87120912/venvs/vllm/lib/python3.12/site-packages/vllm/v1/engine/utils.py", line 1272, in wait_for_engine_startup
+    raise RuntimeError(
+RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}

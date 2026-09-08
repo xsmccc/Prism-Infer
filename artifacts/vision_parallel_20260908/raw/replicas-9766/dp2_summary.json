@@ -1,0 +1,673 @@
+{
+  "schema_version": 1,
+  "timestamp_utc": "2026-09-08T02:34:36.922148+00:00",
+  "mode": "two_independent_tp1_replicas",
+  "parent_pid": 2758316,
+  "slurm_job_id": "9766",
+  "devices": [
+    "0",
+    "1"
+  ],
+  "commands": [
+    {
+      "replica_id": 0,
+      "pid": 2758317,
+      "cuda_visible_devices": "0",
+      "argv": [
+        "/home/lcpu/87120912/venvs/prism/bin/python",
+        "-u",
+        "/home/lcpu/87120912/Prism-Infer-vision-dp/benchmarks/bench_vision_parallel.py",
+        "--model",
+        "/home/lcpu/87120912/models/Qwen3-VL-8B-Instruct",
+        "--output",
+        "/home/lcpu/87120912/vision-dp/runs/replicas-9766/replica_0.json",
+        "--tensor-parallel-size",
+        "1",
+        "--vision-mode",
+        "replicated",
+        "--execution-backend",
+        "cuda_graph",
+        "--replica-id",
+        "0",
+        "--wait-for-start",
+        "--image-size",
+        "448",
+        "--max-model-len",
+        "4096",
+        "--max-num-batched-tokens",
+        "4096",
+        "--max-num-seqs",
+        "4",
+        "--num-kvcache-blocks",
+        "64",
+        "--kvcache-block-size",
+        "256",
+        "--concurrent-requests",
+        "4",
+        "--max-tokens",
+        "16",
+        "--warmup",
+        "1",
+        "--repeat",
+        "1"
+      ]
+    },
+    {
+      "replica_id": 1,
+      "pid": 2758319,
+      "cuda_visible_devices": "1",
+      "argv": [
+        "/home/lcpu/87120912/venvs/prism/bin/python",
+        "-u",
+        "/home/lcpu/87120912/Prism-Infer-vision-dp/benchmarks/bench_vision_parallel.py",
+        "--model",
+        "/home/lcpu/87120912/models/Qwen3-VL-8B-Instruct",
+        "--output",
+        "/home/lcpu/87120912/vision-dp/runs/replicas-9766/replica_1.json",
+        "--tensor-parallel-size",
+        "1",
+        "--vision-mode",
+        "replicated",
+        "--execution-backend",
+        "cuda_graph",
+        "--replica-id",
+        "1",
+        "--wait-for-start",
+        "--image-size",
+        "448",
+        "--max-model-len",
+        "4096",
+        "--max-num-batched-tokens",
+        "4096",
+        "--max-num-seqs",
+        "4",
+        "--num-kvcache-blocks",
+        "64",
+        "--kvcache-block-size",
+        "256",
+        "--concurrent-requests",
+        "4",
+        "--max-tokens",
+        "16",
+        "--warmup",
+        "1",
+        "--repeat",
+        "1"
+      ]
+    }
+  ],
+  "phase_barriers": [
+    {
+      "phase": "concurrent_cold_prefix_disabled",
+      "parent_observed_ready_ns": {
+        "0": 3059879269234367,
+        "1": 3059879349002718
+      },
+      "parent_start_write_ns": {
+        "0": 3059879349016530,
+        "1": 3059879349068873
+      },
+      "start_write_skew_ms": 0.052343
+    },
+    {
+      "phase": "concurrent_hot",
+      "parent_observed_ready_ns": {
+        "1": 3059881163389461,
+        "0": 3059881211635562
+      },
+      "parent_start_write_ns": {
+        "0": 3059881211642535,
+        "1": 3059881211670326
+      },
+      "start_write_skew_ms": 0.027791
+    }
+  ],
+  "resource_contract": {
+    "gpu_count": 2,
+    "model_replicas": 2,
+    "tensor_parallel_size_per_replica": 1,
+    "max_num_seqs_per_replica": 4,
+    "max_num_seqs_total": 8,
+    "max_num_batched_tokens_per_replica": 4096,
+    "max_num_batched_tokens_total": 8192,
+    "concurrent_requests_per_replica": 4,
+    "concurrent_requests_total": 8,
+    "kv_blocks_per_replica": 64,
+    "kv_budget_note": "two complete TP1 KV pools; twice one engine, not equal total KV",
+    "comparison_note": "Compare on the same two physical GPUs. Match total offered requests and record global sequence slots and KV bytes; do not describe these as automatically equal."
+  },
+  "timing_scope": "in_process_client; aggregate earliest_start_to_latest_finish",
+  "throughput_scope": "finite_concurrent_batch_with_prefill_and_drain_not_saturation",
+  "sequential_probe_note": "Child warmup/sequential/partial probes can overlap on the host. They are retained as diagnostics, not a new isolated TP1 latency baseline.",
+  "replicas": [
+    {
+      "replica_id": 0,
+      "cuda_visible_devices": "0",
+      "raw_json": "/home/lcpu/87120912/vision-dp/runs/replicas-9766/replica_0.json",
+      "log": "/home/lcpu/87120912/vision-dp/runs/replicas-9766/replica_0.log",
+      "returncode": 0,
+      "status": "complete",
+      "gpus": [
+        {
+          "logical_device_index": 0,
+          "name": "NVIDIA GeForce RTX 5090",
+          "gpu_uuid": "GPU-04a5a4c1-bcd8-d070-2531-cecfeec61a26",
+          "driver": "580.142",
+          "compute_capability": "12.0",
+          "multiprocessor_count": 170,
+          "total_memory_bytes": 33668857856,
+          "cuda_visible_devices": "0",
+          "nvidia_visible_devices": null,
+          "nvidia_smi": {
+            "available": true,
+            "gpu_uuid": "GPU-04a5a4c1-bcd8-d070-2531-cecfeec61a26",
+            "driver": "580.142",
+            "memory_used_mib": 3.0,
+            "memory_free_mib": 32107.0,
+            "utilization_gpu_percent": 0.0,
+            "sm_clock_mhz": 2400.0,
+            "power_draw_w": 60.64
+          }
+        }
+      ],
+      "kv_cache": {
+        "rank0_payload_shape": [
+          2,
+          36,
+          64,
+          256,
+          8,
+          128
+        ],
+        "payload_dtype": "torch.float8_e4m3fn",
+        "rank0_payload_bytes": 1207959552,
+        "rank0_scale_bytes": 37748736,
+        "bytes_per_rank": 1245708288,
+        "total_bytes_equal_shards": 1245708288,
+        "capacity_tokens": 16384
+      },
+      "phase_summaries": {
+        "warmup": {
+          "completed_requests": 1,
+          "client_start_ns": 3059874803232233,
+          "client_finish_ns": 3059876036594142,
+          "duration_s": 1.233361909,
+          "output_tokens": 16,
+          "output_tokens_per_s": 12.972672403165646,
+          "requests_per_s": 0.8107920251978529,
+          "ttft_median_ms": 1068.081443,
+          "tpot_median_ms": 11.018697733333333,
+          "e2e_median_ms": 1233.361909
+        },
+        "cold_prefix_disabled": {
+          "completed_requests": 1,
+          "client_start_ns": 3059876036821129,
+          "client_finish_ns": 3059876655236569,
+          "duration_s": 0.61841544,
+          "output_tokens": 16,
+          "output_tokens_per_s": 25.872575238419014,
+          "requests_per_s": 1.6170359524011884,
+          "ttft_median_ms": 452.391421,
+          "tpot_median_ms": 11.068267933333333,
+          "e2e_median_ms": 618.41544
+        },
+        "prefix_prime": {
+          "completed_requests": 1,
+          "client_start_ns": 3059876655521798,
+          "client_finish_ns": 3059877273156220,
+          "duration_s": 0.617634422,
+          "output_tokens": 16,
+          "output_tokens_per_s": 25.905291917165847,
+          "requests_per_s": 1.6190807448228655,
+          "ttft_median_ms": 450.39378,
+          "tpot_median_ms": 11.149376133333334,
+          "e2e_median_ms": 617.634422
+        },
+        "hot_same_prompt": {
+          "completed_requests": 1,
+          "client_start_ns": 3059877273350788,
+          "client_finish_ns": 3059877784321826,
+          "duration_s": 0.510971038,
+          "output_tokens": 16,
+          "output_tokens_per_s": 31.312929324968906,
+          "requests_per_s": 1.9570580828105566,
+          "ttft_median_ms": 345.231029,
+          "tpot_median_ms": 11.049333933333333,
+          "e2e_median_ms": 510.971038
+        },
+        "hot_new_question": {
+          "completed_requests": 1,
+          "client_start_ns": 3059877784466641,
+          "client_finish_ns": 3059878280516849,
+          "duration_s": 0.496050208,
+          "output_tokens": 16,
+          "output_tokens_per_s": 32.25479949803791,
+          "requests_per_s": 2.0159249686273695,
+          "ttft_median_ms": 329.760299,
+          "tpot_median_ms": 11.085993933333333,
+          "e2e_median_ms": 496.050208
+        },
+        "partial_ac_reference_prefix_disabled": {
+          "completed_requests": 1,
+          "client_start_ns": 3059878283418813,
+          "client_finish_ns": 3059878631611157,
+          "duration_s": 0.348192344,
+          "output_tokens": 16,
+          "output_tokens_per_s": 45.95161345649806,
+          "requests_per_s": 2.8719758410311287,
+          "ttft_median_ms": 194.546391,
+          "tpot_median_ms": 10.243063533333334,
+          "e2e_median_ms": 348.192344
+        },
+        "partial_ab_prime": {
+          "completed_requests": 1,
+          "client_start_ns": 3059878631721333,
+          "client_finish_ns": 3059878948295738,
+          "duration_s": 0.316574405,
+          "output_tokens": 16,
+          "output_tokens_per_s": 50.54104105478773,
+          "requests_per_s": 3.1588150659242333,
+          "ttft_median_ms": 162.580652,
+          "tpot_median_ms": 10.2662502,
+          "e2e_median_ms": 316.574405
+        },
+        "partial_ac_hit": {
+          "completed_requests": 1,
+          "client_start_ns": 3059878948401062,
+          "client_finish_ns": 3059879267268342,
+          "duration_s": 0.31886728,
+          "output_tokens": 16,
+          "output_tokens_per_s": 50.17761621700414,
+          "requests_per_s": 3.136101013562759,
+          "ttft_median_ms": 164.468133,
+          "tpot_median_ms": 10.293276466666667,
+          "e2e_median_ms": 318.86728
+        },
+        "concurrent_cold_prefix_disabled": {
+          "completed_requests": 4,
+          "client_start_ns": 3059879349192998,
+          "client_finish_ns": 3059881210935220,
+          "duration_s": 1.861742222,
+          "output_tokens": 64,
+          "output_tokens_per_s": 34.376402513580636,
+          "requests_per_s": 2.1485251570987898,
+          "ttft_median_ms": 1014.4108655,
+          "tpot_median_ms": 35.579110533333335,
+          "e2e_median_ms": 1548.0975235
+        },
+        "concurrent_hot": {
+          "completed_requests": 4,
+          "client_start_ns": 3059881211806822,
+          "client_finish_ns": 3059882463067411,
+          "duration_s": 1.251260589,
+          "output_tokens": 64,
+          "output_tokens_per_s": 51.14841829322573,
+          "requests_per_s": 3.196776143326608,
+          "ttft_median_ms": 724.113589,
+          "tpot_median_ms": 12.9850344,
+          "e2e_median_ms": 918.889105
+        }
+      },
+      "partial_prefix_validation": {
+        "input": "448x448 fixture colors A=red, B=green, C=blue",
+        "fixed_text_tokens_between_images": 449,
+        "second_image_grid_equal": true,
+        "first_image_fully_reused": true,
+        "changed_second_image_not_reused": true,
+        "cached_tokens": 512,
+        "matches_apc_off_reference_ids": true,
+        "reference_token_ids": [
+          28715,
+          389,
+          264,
+          9124,
+          12313,
+          315,
+          279,
+          1378,
+          15057,
+          11,
+          279,
+          1887,
+          6672,
+          374,
+          279,
+          3070
+        ],
+        "partial_token_ids": [
+          28715,
+          389,
+          264,
+          9124,
+          12313,
+          315,
+          279,
+          1378,
+          15057,
+          11,
+          279,
+          1887,
+          6672,
+          374,
+          279,
+          3070
+        ]
+      },
+      "error": null
+    },
+    {
+      "replica_id": 1,
+      "cuda_visible_devices": "1",
+      "raw_json": "/home/lcpu/87120912/vision-dp/runs/replicas-9766/replica_1.json",
+      "log": "/home/lcpu/87120912/vision-dp/runs/replicas-9766/replica_1.log",
+      "returncode": 0,
+      "status": "complete",
+      "gpus": [
+        {
+          "logical_device_index": 0,
+          "name": "NVIDIA GeForce RTX 5090",
+          "gpu_uuid": "GPU-bb7dbf76-fcbb-8851-5119-99b4073ba9ce",
+          "driver": "580.142",
+          "compute_capability": "12.0",
+          "multiprocessor_count": 170,
+          "total_memory_bytes": 33668857856,
+          "cuda_visible_devices": "1",
+          "nvidia_visible_devices": null,
+          "nvidia_smi": {
+            "available": true,
+            "gpu_uuid": "GPU-bb7dbf76-fcbb-8851-5119-99b4073ba9ce",
+            "driver": "580.142",
+            "memory_used_mib": 3.0,
+            "memory_free_mib": 32107.0,
+            "utilization_gpu_percent": 0.0,
+            "sm_clock_mhz": 2400.0,
+            "power_draw_w": 61.59
+          }
+        }
+      ],
+      "kv_cache": {
+        "rank0_payload_shape": [
+          2,
+          36,
+          64,
+          256,
+          8,
+          128
+        ],
+        "payload_dtype": "torch.float8_e4m3fn",
+        "rank0_payload_bytes": 1207959552,
+        "rank0_scale_bytes": 37748736,
+        "bytes_per_rank": 1245708288,
+        "total_bytes_equal_shards": 1245708288,
+        "capacity_tokens": 16384
+      },
+      "phase_summaries": {
+        "warmup": {
+          "completed_requests": 1,
+          "client_start_ns": 3059874791448591,
+          "client_finish_ns": 3059876026813469,
+          "duration_s": 1.235364878,
+          "output_tokens": 16,
+          "output_tokens_per_s": 12.951639054125677,
+          "requests_per_s": 0.8094774408828548,
+          "ttft_median_ms": 1068.352438,
+          "tpot_median_ms": 11.134162666666667,
+          "e2e_median_ms": 1235.364878
+        },
+        "cold_prefix_disabled": {
+          "completed_requests": 1,
+          "client_start_ns": 3059876027068746,
+          "client_finish_ns": 3059876645277448,
+          "duration_s": 0.618208702,
+          "output_tokens": 16,
+          "output_tokens_per_s": 25.88122740465727,
+          "requests_per_s": 1.6175767127910794,
+          "ttft_median_ms": 452.325474,
+          "tpot_median_ms": 11.058881866666667,
+          "e2e_median_ms": 618.208702
+        },
+        "prefix_prime": {
+          "completed_requests": 1,
+          "client_start_ns": 3059876645584273,
+          "client_finish_ns": 3059877294413204,
+          "duration_s": 0.648828931,
+          "output_tokens": 16,
+          "output_tokens_per_s": 24.659812834394092,
+          "requests_per_s": 1.5412383021496308,
+          "ttft_median_ms": 482.03755,
+          "tpot_median_ms": 11.119425399999999,
+          "e2e_median_ms": 648.828931
+        },
+        "hot_same_prompt": {
+          "completed_requests": 1,
+          "client_start_ns": 3059877294671909,
+          "client_finish_ns": 3059877838274245,
+          "duration_s": 0.543602336,
+          "output_tokens": 16,
+          "output_tokens_per_s": 29.43328043387952,
+          "requests_per_s": 1.83958002711747,
+          "ttft_median_ms": 376.530313,
+          "tpot_median_ms": 11.138134866666666,
+          "e2e_median_ms": 543.602336
+        },
+        "hot_new_question": {
+          "completed_requests": 1,
+          "client_start_ns": 3059877838415899,
+          "client_finish_ns": 3059878386236801,
+          "duration_s": 0.547820902,
+          "output_tokens": 16,
+          "output_tokens_per_s": 29.206625635470914,
+          "requests_per_s": 1.8254141022169321,
+          "ttft_median_ms": 382.466652,
+          "tpot_median_ms": 11.023616666666667,
+          "e2e_median_ms": 547.820902
+        },
+        "partial_ac_reference_prefix_disabled": {
+          "completed_requests": 1,
+          "client_start_ns": 3059878388789395,
+          "client_finish_ns": 3059878714273271,
+          "duration_s": 0.325483876,
+          "output_tokens": 16,
+          "output_tokens_per_s": 49.15758100410479,
+          "requests_per_s": 3.0723488127565495,
+          "ttft_median_ms": 171.957271,
+          "tpot_median_ms": 10.235107,
+          "e2e_median_ms": 325.483876
+        },
+        "partial_ab_prime": {
+          "completed_requests": 1,
+          "client_start_ns": 3059878714385355,
+          "client_finish_ns": 3059879029037750,
+          "duration_s": 0.314652395,
+          "output_tokens": 16,
+          "output_tokens_per_s": 50.84976391169691,
+          "requests_per_s": 3.178110244481057,
+          "ttft_median_ms": 160.616709,
+          "tpot_median_ms": 10.269045733333334,
+          "e2e_median_ms": 314.652395
+        },
+        "partial_ac_hit": {
+          "completed_requests": 1,
+          "client_start_ns": 3059879029154801,
+          "client_finish_ns": 3059879347168624,
+          "duration_s": 0.318013823,
+          "output_tokens": 16,
+          "output_tokens_per_s": 50.31227840684146,
+          "requests_per_s": 3.144517400427591,
+          "ttft_median_ms": 163.732109,
+          "tpot_median_ms": 10.2854476,
+          "e2e_median_ms": 318.013823
+        },
+        "concurrent_cold_prefix_disabled": {
+          "completed_requests": 4,
+          "client_start_ns": 3059879349125896,
+          "client_finish_ns": 3059881162926787,
+          "duration_s": 1.813800891,
+          "output_tokens": 64,
+          "output_tokens_per_s": 35.28501960582618,
+          "requests_per_s": 2.205313725364136,
+          "ttft_median_ms": 992.1319424999999,
+          "tpot_median_ms": 36.257361200000005,
+          "e2e_median_ms": 1535.9923605
+        },
+        "concurrent_hot": {
+          "completed_requests": 4,
+          "client_start_ns": 3059881211799516,
+          "client_finish_ns": 3059882575734300,
+          "duration_s": 1.363934784,
+          "output_tokens": 64,
+          "output_tokens_per_s": 46.923064614796125,
+          "requests_per_s": 2.932691538424758,
+          "ttft_median_ms": 777.4578435000001,
+          "tpot_median_ms": 12.8387708,
+          "e2e_median_ms": 970.0394054999999
+        }
+      },
+      "partial_prefix_validation": {
+        "input": "448x448 fixture colors A=red, B=green, C=blue",
+        "fixed_text_tokens_between_images": 449,
+        "second_image_grid_equal": true,
+        "first_image_fully_reused": true,
+        "changed_second_image_not_reused": true,
+        "cached_tokens": 512,
+        "matches_apc_off_reference_ids": true,
+        "reference_token_ids": [
+          28715,
+          389,
+          264,
+          9124,
+          12313,
+          315,
+          279,
+          1378,
+          15057,
+          11,
+          279,
+          1887,
+          6672,
+          374,
+          279,
+          3070
+        ],
+        "partial_token_ids": [
+          28715,
+          389,
+          264,
+          9124,
+          12313,
+          315,
+          279,
+          1378,
+          15057,
+          11,
+          279,
+          1887,
+          6672,
+          374,
+          279,
+          3070
+        ]
+      },
+      "error": null
+    }
+  ],
+  "phases": {
+    "concurrent_cold_prefix_disabled": {
+      "submitted_records": 8,
+      "completed_requests": 8,
+      "all_records_finished": true,
+      "client_start_ns": 3059879349125896,
+      "client_finish_ns": 3059881210935220,
+      "duration_s": 1.861809324,
+      "output_tokens": 128,
+      "output_tokens_per_s": 68.7503270877378,
+      "requests_per_s": 4.296895442983613,
+      "replica_first_request_start_skew_ms": 0.067102,
+      "cross_replica_token_ids_exact_by_request_index": true,
+      "full_visual_prefix_reused_requests": 0,
+      "per_request_ttft_ms": [
+        942.961142,
+        976.959145,
+        1051.862586,
+        1123.915564,
+        895.41377,
+        956.643346,
+        1027.620539,
+        1115.550338
+      ],
+      "per_request_tpot_ms": [
+        58.0333884,
+        43.0348882,
+        28.123332866666665,
+        13.349085733333332,
+        58.177037,
+        43.6472034,
+        28.867519,
+        13.219053866666666
+      ],
+      "per_request_e2e_ms": [
+        1813.461968,
+        1622.482468,
+        1473.712579,
+        1324.15185,
+        1768.069325,
+        1611.351397,
+        1460.633324,
+        1313.836146
+      ]
+    },
+    "concurrent_hot": {
+      "submitted_records": 8,
+      "completed_requests": 8,
+      "all_records_finished": true,
+      "client_start_ns": 3059881211799516,
+      "client_finish_ns": 3059882575734300,
+      "duration_s": 1.363934784,
+      "output_tokens": 128,
+      "output_tokens_per_s": 93.84612922959225,
+      "requests_per_s": 5.865383076849516,
+      "replica_first_request_start_skew_ms": 0.007306,
+      "cross_replica_token_ids_exact_by_request_index": true,
+      "full_visual_prefix_reused_requests": 8,
+      "per_request_ttft_ms": [
+        1056.485073,
+        831.858563,
+        616.368615,
+        424.656505,
+        1171.353222,
+        892.013398,
+        662.902289,
+        410.682528
+      ],
+      "per_request_tpot_ms": [
+        12.9850344,
+        12.9850344,
+        12.9850344,
+        12.9850344,
+        12.8387708,
+        12.8387708,
+        12.8387708,
+        12.8387708
+      ],
+      "per_request_e2e_ms": [
+        1251.260589,
+        1026.634079,
+        811.144131,
+        619.432021,
+        1363.934784,
+        1084.59496,
+        855.483851,
+        603.26409
+      ]
+    }
+  },
+  "kv_cache": {
+    "bytes_per_replica": [
+      1245708288,
+      1245708288
+    ],
+    "total_bytes": 2491416576,
+    "budget_relation": "sum of two TP1 pools, not a same-KV-budget TP2 comparison"
+  },
+  "status": "complete"
+}

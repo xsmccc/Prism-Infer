@@ -82,8 +82,14 @@ class Sequence:
         self.image_token_count = image_token_count
         self.video_token_id = video_token_id
         self.video_token_count = video_token_count
-        if isinstance(image_merge_size, bool) or not isinstance(image_merge_size, int) or image_merge_size <= 0:
-            raise ValueError(f"image_merge_size must be a positive integer, got {image_merge_size!r}")
+        if (
+            isinstance(image_merge_size, bool)
+            or not isinstance(image_merge_size, int)
+            or image_merge_size <= 0
+        ):
+            raise ValueError(
+                f"image_merge_size must be a positive integer, got {image_merge_size!r}"
+            )
         self.image_merge_size = image_merge_size
         # Runtime-only content fingerprint for the exact visual-output cache.
         # It is intentionally excluded from request serialization.
@@ -563,9 +569,21 @@ class Sequence:
         self.precomputed_deepstack_visual_embeds = ()
 
     def __getstate__(self):
-        """Serialize full prefill state or the compact decode control payload."""
+        """Serialize pending prefill media or the compact decode control payload."""
 
         is_prefill_payload = self.num_completion_tokens == 0
+        # Scheduler slices are inside the remaining prompt. Keep the complete
+        # modality payload if any of its tokens remain, including future chunks;
+        # partial image slicing would change the worker's original span layout.
+        remaining_prefill = (
+            self.token_ids[
+                max(self.num_cached_tokens, self.num_computed_tokens) : self.num_prompt_tokens
+            ]
+            if is_prefill_payload
+            else ()
+        )
+        needs_images = self.image_token_id is not None and self.image_token_id in remaining_prefill
+        needs_video = self.video_token_id is not None and self.video_token_id in remaining_prefill
         return {
             "seq_id": self.seq_id,
             "submitted_ns": self.submitted_ns,
@@ -586,14 +604,15 @@ class Sequence:
             "ignore_eos": self.ignore_eos,
             "payload": self.token_ids if is_prefill_payload else self.last_token,
             "is_prefill_payload": is_prefill_payload,
-            "pixel_values": self.pixel_values if is_prefill_payload else None,
-            "image_grid_thw": self.image_grid_thw if is_prefill_payload else None,
-            "pixel_values_videos": self.pixel_values_videos if is_prefill_payload else None,
-            "video_grid_thw": self.video_grid_thw if is_prefill_payload else None,
+            "pixel_values": self.pixel_values if needs_images else None,
+            "image_grid_thw": self.image_grid_thw if needs_images else None,
+            "pixel_values_videos": self.pixel_values_videos if needs_video else None,
+            "video_grid_thw": self.video_grid_thw if needs_video else None,
             "position_ids": self.position_ids if is_prefill_payload else None,
             "rope_delta": self.rope_delta,
             "image_token_id": self.image_token_id,
             "image_token_count": self.image_token_count,
+            "image_merge_size": self.image_merge_size,
             "video_token_id": self.video_token_id,
             "video_token_count": self.video_token_count,
             "visual_pruning_decision_record": self.visual_pruning_decision_record,
@@ -681,6 +700,7 @@ class Sequence:
         self.rope_delta = state.get("rope_delta")
         self.image_token_id = state.get("image_token_id")
         self.image_token_count = state.get("image_token_count", 0)
+        self.image_merge_size = state.get("image_merge_size", 2)
         self.video_token_id = state.get("video_token_id")
         self.video_token_count = state.get("video_token_count", 0)
         self.visual_embedding_cache_key = None

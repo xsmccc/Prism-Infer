@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "timestamp_utc": "2026-09-08T02:30:16.575586+00:00",
+  "pid": 2750625,
+  "replica_id": "0",
+  "model_path": "/home/lcpu/87120912/models/Qwen3-VL-8B-Instruct",
+  "model_revision": null,
+  "input": {
+    "kind": "h1_eight_color_fixture",
+    "rgb_colors": [
+      [
+        220,
+        50,
+        50
+      ],
+      [
+        50,
+        180,
+        80
+      ],
+      [
+        60,
+        100,
+        220
+      ],
+      [
+        220,
+        180,
+        40
+      ],
+      [
+        170,
+        70,
+        200
+      ],
+      [
+        40,
+        190,
+        190
+      ],
+      [
+        230,
+        120,
+        40
+      ],
+      [
+        120,
+        120,
+        120
+      ]
+    ],
+    "image_sizes_wh": [
+      [
+        448,
+        448
+      ],
+      [
+        448,
+        448
+      ],
+      [
+        448,
+        448
+      ],
+      [
+        448,
+        448
+      ],
+      [
+        448,
+        448
+      ],
+      [
+        448,
+        448
+      ],
+      [
+        448,
+        448
+      ],
+      [
+        448,
+        448
+      ]
+    ],
+    "image_count": 8
+  },
+  "sampling": {
+    "temperature": 0.0,
+    "max_tokens": 16,
+    "ignore_eos": true
+  },
+  "protocol": {
+    "scope": "vLLM internal TP/PP direction comparison, not an absolute Prism ranking",
+    "client": "AsyncLLM.generate with DELTA RequestOutput",
+    "ttft": "immediately before generate to first nonempty token yield",
+    "itl": "observed client token intervals; coalesced tokens share one timestamp",
+    "e2e": "immediately before generate to finished RequestOutput",
+    "image_loading_and_chat_template_in_timing": false,
+    "vllm_processing_and_admission_in_timing": true,
+    "cold": "drain then reset prefix, encoder and multimodal processor caches",
+    "hot": "same images, changed question, resident prefix and encoder caches",
+    "concurrent_cold": "cold at burst start; reuse within the burst is allowed",
+    "concurrency": 8,
+    "warmup": 1,
+    "repeat": 5,
+    "throughput_scope": "finite burst including prefill and drain, not saturation",
+    "pp_encoder": "only first PP stage runs vision; data mode splits TP ranks, not PP stages",
+    "async_scheduling": false
+  },
+  "requests": [],
+  "vllm_version": "0.25.1",
+  "torch_version": "2.11.0+cu130",
+  "git": {
+    "commit": "unknown",
+    "dirty": true
+  },
+  "gpus": [
+    {
+      "logical_device_index": 0,
+      "name": "NVIDIA GeForce RTX 5090",
+      "gpu_uuid": "GPU-04a5a4c1-bcd8-d070-2531-cecfeec61a26",
+      "driver": "580.142",
+      "compute_capability": "12.0",
+      "multiprocessor_count": 170,
+      "total_memory_bytes": 33668857856,
+      "cuda_visible_devices": "0,1",
+      "nvidia_visible_devices": null,
+      "nvidia_smi": {
+        "available": true,
+        "gpu_uuid": "GPU-04a5a4c1-bcd8-d070-2531-cecfeec61a26",
+        "driver": "580.142",
+        "memory_used_mib": 3.0,
+        "memory_free_mib": 32107.0,
+        "utilization_gpu_percent": 0.0,
+        "sm_clock_mhz": 2400.0,
+        "power_draw_w": 61.69
+      }
+    },
+    {
+      "logical_device_index": 1,
+      "name": "NVIDIA GeForce RTX 5090",
+      "gpu_uuid": "GPU-bb7dbf76-fcbb-8851-5119-99b4073ba9ce",
+      "driver": "580.142",
+      "compute_capability": "12.0",
+      "multiprocessor_count": 170,
+      "total_memory_bytes": 33668857856,
+      "cuda_visible_devices": "0,1",
+      "nvidia_visible_devices": null,
+      "nvidia_smi": {
+        "available": true,
+        "gpu_uuid": "GPU-bb7dbf76-fcbb-8851-5119-99b4073ba9ce",
+        "driver": "580.142",
+        "memory_used_mib": 3.0,
+        "memory_free_mib": 32107.0,
+        "utilization_gpu_percent": 0.0,
+        "sm_clock_mhz": 2400.0,
+        "power_draw_w": 62.47
+      }
+    }
+  ],
+  "engine_options": {
+    "model": "/home/lcpu/87120912/models/Qwen3-VL-8B-Instruct",
+    "dtype": "bfloat16",
+    "kv_cache_dtype": "auto",
+    "tensor_parallel_size": 1,
+    "pipeline_parallel_size": 2,
+    "distributed_executor_backend": "mp",
+    "mm_encoder_tp_mode": "weights",
+    "max_model_len": 4096,
+    "max_num_batched_tokens": 4096,
+    "max_num_seqs": 8,
+    "block_size": 256,
+    "num_gpu_blocks_override": 64,
+    "gpu_memory_utilization": 0.85,
+    "limit_mm_per_prompt": {
+      "image": 8,
+      "video": 0
+    },
+    "mm_processor_kwargs": {
+      "max_pixels": 200704
+    },
+    "enable_prefix_caching": true,
+    "enable_chunked_prefill": false,
+    "enforce_eager": true,
+    "async_scheduling": false,
+    "disable_log_stats": false
+  },
+  "configured_kv_capacity": {
+    "logical_token_slots_per_engine": 16384,
+    "bf16_payload_bytes_all_ranks": 2415919104,
+    "note": "TP2 and PP2 shard the same logical KV; two TP1 engines duplicate this capacity"
+  },
+  "formatted_prompts": {
+    "Compare all eight images carefully. Describe the important details in each image, then identify similarities, differences, and any cross-image pattern.": "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|>Compare all eight images carefully. Describe the important details in each image, then identify similarities, differences, and any cross-image pattern.<|im_end|>\n<|im_start|>assistant\n",
+    "Compare the first and last images. Describe their most important differences.": "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|>Compare the first and last images. Describe their most important differences.<|im_end|>\n<|im_start|>assistant\n"
+  },
+  "status": "failed",
+  "error": {
+    "type": "RuntimeError",
+    "message": "Engine core initialization failed. See root cause above. Failed core proc(s): {}"
+  },
+  "phase_summaries": {}
+}

@@ -15,6 +15,7 @@ class TPMethod(str, Enum):
     """ModelRunner methods that are safe to dispatch to every TP rank."""
 
     COPY_KV_BLOCKS = "copy_kv_blocks"
+    COPY_KV_BLOCK_PREFIXES = "copy_kv_block_prefixes"
     SWAP_BLOCKS = "swap_blocks"
     RUN_PLAN = "run_plan"
     EXECUTE_SINGLE_GREEDY_DECODE_CUDAGRAPH_STATE = "execute_single_greedy_decode_cudagraph_state"

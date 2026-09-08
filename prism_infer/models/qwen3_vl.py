@@ -51,6 +51,7 @@ from prism_infer.ops.selective_topk import (
 from prism_infer.ops.swiglu import fused_silu_mul
 from prism_infer.utils.context import get_context
 from prism_infer.vision.backends import VisionAttentionBackendName
+from prism_infer.vision.data_parallel import encode_images_data_parallel
 from prism_infer.vision.mrope import MRope, apply_mrope
 from prism_infer.vision.vision_encoder import VisionEncoder
 
@@ -1183,6 +1184,7 @@ class Qwen3VLModel(nn.Module):
             VisionAttentionBackendName.SDPA
         ),
         enable_vision_tensor_cudagraph: bool = False,
+        vision_encoder_parallel_mode: str = "replicated",
     ):
         super().__init__()
         architecture = (
@@ -1229,6 +1231,7 @@ class Qwen3VLModel(nn.Module):
         ):
             raise ValueError("vision_encoder_microbatch_patches must be a positive integer or None")
         self.vision_encoder_microbatch_patches = vision_encoder_microbatch_patches
+        self.vision_encoder_parallel_mode = vision_encoder_parallel_mode
 
     @staticmethod
     def _plan_visual_microbatches(
@@ -1335,6 +1338,29 @@ class Qwen3VLModel(nn.Module):
             [torch.cat(parts, dim=0) for parts in (deepstack_parts or [])],
         )
 
+    def _encode_images(
+        self,
+        pixel_values: torch.Tensor,
+        image_grid_thw: torch.Tensor,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        """Encode whole images locally or distribute them across language TP ranks."""
+        if (
+            self.vision_encoder_parallel_mode == "replicated"
+            or _tensor_parallel_world_size() == 1
+            or image_grid_thw.shape[0] == 1
+        ):
+            # One image has no parallel work to distribute; avoid an extra gather.
+            return self._encode_visual_payload(pixel_values, image_grid_thw)
+        return encode_images_data_parallel(
+            pixel_values,
+            image_grid_thw,
+            self._encode_visual_payload,
+            spatial_merge_size=self.visual.spatial_merge_size,
+            output_size=self.architecture.vision.output_size,
+            num_deepstack_features=len(self.visual.deepstack_visual_indexes),
+            dtype=self.visual.pos_embed.weight.dtype,
+        )
+
     def prepare_language_inputs(
         self,
         input_ids: torch.Tensor,
@@ -1382,7 +1408,7 @@ class Qwen3VLModel(nn.Module):
                 "model.vision.image",
                 metadata={"patch_tokens": int(pixel_values.shape[0])},
             ):
-                main_vis, deepstack_vis = self._encode_visual_payload(
+                main_vis, deepstack_vis = self._encode_images(
                     pixel_values,
                     image_grid_thw,
                 )
@@ -1542,6 +1568,7 @@ class Qwen3VLForCausalLM(nn.Module):
             VisionAttentionBackendName.SDPA
         ),
         enable_vision_tensor_cudagraph: bool = False,
+        vision_encoder_parallel_mode: str = "replicated",
     ):
         # Backward compatibility: Qwen3VLForCausalLM(torch.bfloat16)
         if isinstance(config, torch.dtype):
@@ -1565,6 +1592,7 @@ class Qwen3VLForCausalLM(nn.Module):
             vision_encoder_microbatch_patches=vision_encoder_microbatch_patches,
             vision_attention_backend=vision_attention_backend,
             enable_vision_tensor_cudagraph=enable_vision_tensor_cudagraph,
+            vision_encoder_parallel_mode=vision_encoder_parallel_mode,
         )
         architecture = self.model.architecture
         hidden_size = architecture.text.hidden_size

@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
 from itertools import count
+from multiprocessing import Pipe
 from types import SimpleNamespace
 
 import pytest
@@ -27,6 +28,7 @@ from prism_infer.engine.scheduler_policy import (
     VisionAwareSchedulerPolicy,
 )
 from prism_infer.engine.sequence import Sequence
+from prism_infer.engine.tp_control import TPControlPlane, TPMethod, TPResponse
 from prism_infer.sampling_params import SamplingParams
 
 _REQUEST_IDS = count()
@@ -555,6 +557,27 @@ def test_executor_applies_immutable_kv_plan_before_model_run() -> None:
         "run_plan",
     ]
     assert runner.calls[-1][1] is plan
+
+
+def test_tp_control_dispatches_prefix_row_copies_and_receives_ack() -> None:
+    sender, receiver = Pipe(duplex=True)
+    rank0 = TPControlPlane(rank=0, world_size=2, channel=[sender])
+    rank1 = TPControlPlane(rank=1, world_size=2, channel=receiver)
+    copies = [(1, 2, 145), (3, 4, 1)]
+    dispatched: list[object] = []
+    worker = SimpleNamespace(copy_kv_block_prefixes=dispatched.append)
+    try:
+        sent, _ = rank0.broadcast("copy_kv_block_prefixes", (copies,))
+        received = rank1.read_command()
+        assert received.method is TPMethod.COPY_KV_BLOCK_PREFIXES
+        assert received.args == (copies,)
+        ModelRunner._invoke_local(worker, received.method.value, received.args)
+        assert dispatched == [copies]
+        rank1.send_response(TPResponse.ok(received, worker_rank=1))
+        rank0.await_responses(sent)
+    finally:
+        sender.close()
+        receiver.close()
 
 
 def test_engine_metrics_observe_without_driving_scheduler() -> None:

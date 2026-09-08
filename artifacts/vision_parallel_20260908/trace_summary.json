@@ -1,0 +1,208 @@
+{
+  "source_sqlite": "vision-dp-9769.sqlite",
+  "trace_origin_ns": 42648578,
+  "time_definition": "Chrome ts/dur are microseconds; phases retain actual relative spacing",
+  "cpu_mapping": "opaque globalTid mapped to presentation tracks; no PID/TID bit decoding",
+  "gpu_mapping": "deviceId process track, distinct globalPid/contextId/streamId lanes",
+  "timing_caution": "NVTX is CPU range timing. Kernel sums count overlapping work across streams/GPUs; timeline spans include gaps. Neither can be added to the NVTX request duration, nor substituted for an unprofiled end-to-end benchmark. GPU activity union is per device.",
+  "gpu_devices": {
+    "1": {
+      "id": 1,
+      "name": "NVIDIA GeForce RTX 5090",
+      "uuid": "bb7dbf76-fcbb-8851-5119-99b4073ba9ce",
+      "busLocation": "0000:6a:00.0"
+    },
+    "0": {
+      "id": 0,
+      "name": "NVIDIA GeForce RTX 5090",
+      "uuid": "04a5a4c1-bcd8-d070-2531-cecfeec61a26",
+      "busLocation": "0000:40:00.0"
+    }
+  },
+  "included_memcpy": true,
+  "phases": {
+    "trace_cold": {
+      "source_start_ns": 42648578,
+      "trace_offset_ms": 0.0,
+      "nvtx_request_window_ms": 888.454956,
+      "nvtx_ranges": 541,
+      "vision_nvtx_counts": {
+        "model.vision.image": 2,
+        "model.vision.data_parallel.encode": 2,
+        "model.vision.data_parallel.gather": 2,
+        "model.vision.data_parallel.restore": 2
+      },
+      "vision_by_global_tid": {
+        "327852975861304": {
+          "model.vision.image": 1,
+          "model.vision.data_parallel.encode": 1,
+          "model.vision.data_parallel.gather": 1,
+          "model.vision.data_parallel.restore": 1
+        },
+        "327853479177814": {
+          "model.vision.image": 1,
+          "model.vision.data_parallel.encode": 1,
+          "model.vision.data_parallel.gather": 1,
+          "model.vision.data_parallel.restore": 1
+        }
+      },
+      "vision_encoder_threads": 2,
+      "vision_encode_calls": 2,
+      "vision_gather_calls": 2,
+      "gpu_kernel_records": 19664,
+      "all_devices_kernel_duration_sum_ms": 687.013103,
+      "all_devices_kernel_timeline_span_ms": 507.746482,
+      "per_device": {
+        "0": {
+          "kernel_records": 9833,
+          "kernel_duration_sum_ms": 377.215503,
+          "kernel_activity_union_ms": 377.215503,
+          "kernel_timeline_span_ms": 507.745965
+        },
+        "1": {
+          "kernel_records": 9831,
+          "kernel_duration_sum_ms": 309.7976,
+          "kernel_activity_union_ms": 309.7976,
+          "kernel_timeline_span_ms": 398.718318
+        }
+      },
+      "top_kernels_by_accumulated_duration": [
+        {
+          "name": "ncclDevKernel_AllReduce_Sum_bf16_RING_LL",
+          "count": 2336,
+          "duration_sum_ms": 300.91573
+        },
+        {
+          "name": "kernel",
+          "count": 4352,
+          "duration_sum_ms": 146.950053
+        },
+        {
+          "name": "Kernel2",
+          "count": 664,
+          "duration_sum_ms": 132.348045
+        },
+        {
+          "name": "ncclDevKernel_AllGather_RING_LL",
+          "count": 32,
+          "duration_sum_ms": 34.039916
+        },
+        {
+          "name": "_paged_decode_attention_kernel",
+          "count": 1080,
+          "duration_sum_ms": 23.202695
+        },
+        {
+          "name": "flash_fwd_kernel",
+          "count": 72,
+          "duration_sum_ms": 8.457015
+        },
+        {
+          "name": "elementwise_kernel",
+          "count": 1602,
+          "duration_sum_ms": 8.114382
+        },
+        {
+          "name": "flash_fwd_splitkv_kernel",
+          "count": 216,
+          "duration_sum_ms": 7.828716
+        },
+        {
+          "name": "vectorized_elementwise_kernel",
+          "count": 1612,
+          "duration_sum_ms": 3.855845
+        },
+        {
+          "name": "_fused_add_rmsnorm_kernel",
+          "count": 2160,
+          "duration_sum_ms": 3.024905
+        }
+      ],
+      "memcpy_records": 708,
+      "memcpy_bytes_full_records": 713163266
+    },
+    "trace_full_prefix_hit": {
+      "source_start_ns": 931119321,
+      "trace_offset_ms": 888.470743,
+      "nvtx_request_window_ms": 548.145066,
+      "nvtx_ranges": 502,
+      "vision_nvtx_counts": {},
+      "vision_by_global_tid": {},
+      "vision_encoder_threads": 0,
+      "vision_encode_calls": 0,
+      "vision_gather_calls": 0,
+      "gpu_kernel_records": 18388,
+      "all_devices_kernel_duration_sum_ms": 385.709568,
+      "all_devices_kernel_timeline_span_ms": 320.742396,
+      "per_device": {
+        "0": {
+          "kernel_records": 9195,
+          "kernel_duration_sum_ms": 280.003332,
+          "kernel_activity_union_ms": 280.003332,
+          "kernel_timeline_span_ms": 320.742396
+        },
+        "1": {
+          "kernel_records": 9193,
+          "kernel_duration_sum_ms": 105.706236,
+          "kernel_activity_union_ms": 105.706236,
+          "kernel_timeline_span_ms": 320.090178
+        }
+      },
+      "top_kernels_by_accumulated_duration": [
+        {
+          "name": "ncclDevKernel_AllReduce_Sum_bf16_RING_LL",
+          "count": 2336,
+          "duration_sum_ms": 190.334574
+        },
+        {
+          "name": "kernel",
+          "count": 4352,
+          "duration_sum_ms": 146.852263
+        },
+        {
+          "name": "_paged_decode_attention_kernel",
+          "count": 1080,
+          "duration_sum_ms": 22.938602
+        },
+        {
+          "name": "Kernel2",
+          "count": 432,
+          "duration_sum_ms": 10.007469
+        },
+        {
+          "name": "_fused_add_rmsnorm_kernel",
+          "count": 2160,
+          "duration_sum_ms": 3.021965
+        },
+        {
+          "name": "elementwise_kernel",
+          "count": 1002,
+          "duration_sum_ms": 1.688275
+        },
+        {
+          "name": "reduce_kernel",
+          "count": 381,
+          "duration_sum_ms": 1.537144
+        },
+        {
+          "name": "indexSelectSmallIndex",
+          "count": 318,
+          "duration_sum_ms": 1.344219
+        },
+        {
+          "name": "_store_scaled_kvcache_triton",
+          "count": 1152,
+          "duration_sum_ms": 1.219447
+        },
+        {
+          "name": "vectorized_elementwise_kernel",
+          "count": 1308,
+          "duration_sum_ms": 1.153081
+        }
+      ],
+      "memcpy_records": 300,
+      "memcpy_bytes_full_records": 9865432
+    }
+  },
+  "chrome_event_records": 40114
+}

@@ -29,10 +29,17 @@ Cache 则保留各 Transformer 层已经计算的 K/V。这里讨论的是独立
   右下对齐的因果 SDPA 处理问题后缀；支持的 CUDA 后端直接执行 GQA，不手工复制 K/V heads。
 - Decode 按 batch bucket 捕获 CUDA Graph。TP1 的 `torch.compile` 路径编译 Attention
   输出投影和 FP8 LM-head 候选投影，候选再用原始权重进行 FP32 重排。
+- TP2 支持按完整图片分配 Vision Encoder 工作，一次收集主特征和全部 DeepStack，
+  恢复原始媒体顺序后进入语言模型。完整视觉 Prefix 命中时不再向 worker 发送图片 Tensor。
 
 2026-09-07 修复了提前发布未计算 KV、尾页旧哈希、共享缓存页回收少算和 FP8 压实地址
 溢出。对应复现、GPU 检查和执行路径记录见[修复说明](docs/RUNTIME_FIXES_20260907.md)。
 本轮没有重跑三引擎端到端排名。
+
+2026-09-08 增加了[多图 Encoder 数据并行](docs/MULTI_GPU.md)，并修复 TP2 Prefix
+尾页复制的命令分发和图片布局字段恢复。两张 5090、八图视觉阶段从 59.33 ms 降至
+31.81 ms（含特征聚合）；这不是端到端 1.86×。同资源的 TP2、双 TP1 副本和 PP2
+方向比较、数值差异及请求级结果均在该文档中说明。
 
 ## 结果与适用范围
 
@@ -82,6 +89,7 @@ prism-serve --model "$PRISM_MODEL_PATH" --host 127.0.0.1 --port 8000
 - [重复视觉上下文](docs/REPEATED_VISUAL_CONTEXT.md)：请求路径、历史实验及结果解释。
 - [Results](docs/RESULTS.md)：区分存储、Decode、在线工作集和质量测量。
 - [本轮修复与执行证据](docs/RUNTIME_FIXES_20260907.md)。
+- [多卡多模态实现与取舍](docs/MULTI_GPU.md)：Encoder DP、TP2 Prefix、双副本和 PP2 参照。
 - [历史请求级 JSON 与 Trace](artifacts/working_set/README.md)。
 - [相关工作](docs/RELATED_WORK.md)、[未采用方案与历史实验](docs/REJECTED_EXPERIMENTS.md)。
 

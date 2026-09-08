@@ -286,6 +286,7 @@ class MultimodalConfig:
     max_vision_patches_per_batch: int = DEFAULT_MAX_VISION_PATCHES_PER_BATCH
     vision_encoder_microbatch_patches: int = DEFAULT_VISION_ENCODER_MICROBATCH_PATCHES
     vision_attention_backend: VisionAttentionBackendName | str = VisionAttentionBackendName.SDPA
+    vision_encoder_parallel_mode: str = "replicated"
     enable_vision_tensor_cudagraph: bool = False
     enable_visual_embedding_cache: bool = False
     visual_embedding_cache_host_max_bytes: int = (
@@ -328,6 +329,8 @@ class MultimodalConfig:
             "vision_attention_backend",
             normalize_vision_attention_backend(self.vision_attention_backend),
         )
+        if self.vision_encoder_parallel_mode not in {"replicated", "data"}:
+            raise ValueError("vision_encoder_parallel_mode must be 'replicated' or 'data'")
 
 
 @dataclass(frozen=True, slots=True)
@@ -611,6 +614,7 @@ class PrismConfig:
             "max_vision_patches_per_batch": "max_vision_patches_per_batch",
             "vision_encoder_microbatch_patches": ("vision_encoder_microbatch_patches"),
             "vision_attention_backend": "vision_attention_backend",
+            "vision_encoder_parallel_mode": "vision_encoder_parallel_mode",
             "enable_vision_tensor_cudagraph": ("enable_vision_tensor_cudagraph"),
             "enable_visual_embedding_cache": "enable_visual_embedding_cache",
             "visual_embedding_cache_host_max_bytes": (
@@ -938,6 +942,10 @@ class Config:
     @property
     def vision_attention_backend(self) -> VisionAttentionBackendName:
         return self.multimodal_config.vision_attention_backend
+
+    @property
+    def vision_encoder_parallel_mode(self) -> str:
+        return self.multimodal_config.vision_encoder_parallel_mode
 
     @property
     def enable_vision_tensor_cudagraph(self) -> bool:
