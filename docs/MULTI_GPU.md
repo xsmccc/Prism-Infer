@@ -2,6 +2,8 @@
 
 这轮工作针对一个具体问题：Prism 的语言模型已经做 TP2，但此前每个 rank 都完整计算同一批图片的 Vision Encoder。现在可以让 TP ranks 分担整张图片的编码，再汇总视觉特征交给原语言 TP2；同时用两个完整 TP1 副本和 vLLM 的 TP2/PP2 做方向比较。它没有实现 Prism PP，也没有把引擎改成异步 CPU/GPU 调度。
 
+本页数据对应共享 CPU 预处理改动之前的版本。后续普通生成和 HTTP 入口也接入了媒体结果缓存，Serving 的 CPU 准备可与 Decode 重叠，见[共享预处理说明](SHARED_PREPROCESSING.md)。现在运行 `cold_prefix_disabled` 只保证 Prefix KV 不复用，Processor 缓存仍可能命中；不要将新版本重跑结果当作这里的原始数字。
+
 ## 四种并行不要混着解释
 
 | 方式 | 每张卡负责什么 | 可能改善什么 | 主要代价 |

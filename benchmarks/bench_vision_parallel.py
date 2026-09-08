@@ -334,6 +334,7 @@ def main() -> None:
             "processor_and_admission_in_timing": True,
             "explicit_per_step_cuda_synchronize": False,
             "prefix_disabled_for_cold_repeats": True,
+            "processor_cache_can_hit_during_prefix_disabled_repeats": True,
             "prefix_prime_is_cache_enabled_cold_first_visit": True,
             "warmup": args.warmup,
             "repeat": args.repeat,

@@ -1,0 +1,149 @@
+{
+  "baseline": "8145043",
+  "scope": "same HTTP workload, TP1, RTX 5090, eight 448x448 fixture images",
+  "model_options": {
+    "tensor_parallel_size": 1,
+    "execution_backend": "cuda_graph",
+    "compression_mode": "scaled_fp8_kv",
+    "max_model_len": 4096,
+    "max_num_batched_tokens": 4096,
+    "max_num_seqs": 4,
+    "num_kvcache_blocks": 64,
+    "kvcache_block_size": 256,
+    "image_max_pixels": 200704,
+    "enable_prefix_caching": true,
+    "enable_visual_embedding_cache": false,
+    "enable_chunked_prefill": false,
+    "paged_decode_block_n": 256,
+    "enable_fused_qk_rmsnorm": true,
+    "enable_fused_qk_mrope": true,
+    "enable_fused_add_rmsnorm": true,
+    "enable_packed_kv_projection": true
+  },
+  "model_options_equal": true,
+  "requests": 11,
+  "same_inputs": true,
+  "same_full_token_sequences": 11,
+  "total_generated_tokens_per_run": 624,
+  "all_streams_match_final_ids": true,
+  "all_cold_requests_injected_during_decode": true,
+  "metric_note": "max_itl_ms is the median of each request's maximum, not population p99",
+  "phase_comparison": {
+    "hot_changed_question": {
+      "before": {
+        "ttft_ms": 317.964837,
+        "e2e_ms": 485.109941,
+        "tpot_ms": 11.143006933333334,
+        "max_itl_ms": 14.819362,
+        "p95_itl_ms": 12.728302499999996
+      },
+      "after": {
+        "ttft_ms": 189.139526,
+        "e2e_ms": 352.254528,
+        "tpot_ms": 10.874333466666666,
+        "max_itl_ms": 11.892561,
+        "p95_itl_ms": 11.2333591
+      },
+      "latency_reduction_percent": {
+        "ttft_ms": 40.51558411787527,
+        "e2e_ms": 27.38666058381186,
+        "tpot_ms": 2.4111397244396815,
+        "max_itl_ms": 19.749844831376674,
+        "p95_itl_ms": 11.745033558088336
+      }
+    },
+    "decode_alone": {
+      "before": {
+        "ttft_ms": 290.5802,
+        "e2e_ms": 1677.842596,
+        "tpot_ms": 10.92204609448819,
+        "max_itl_ms": 16.03791,
+        "p95_itl_ms": 11.210352599999998
+      },
+      "after": {
+        "ttft_ms": 172.577091,
+        "e2e_ms": 1540.677425,
+        "tpot_ms": 10.770600566929135,
+        "max_itl_ms": 11.827349,
+        "p95_itl_ms": 10.9244039
+      },
+      "latency_reduction_percent": {
+        "ttft_ms": 40.60948027429261,
+        "e2e_ms": 8.17509171164229,
+        "tpot_ms": 1.3866039957062815,
+        "max_itl_ms": 26.253801149900458,
+        "p95_itl_ms": 2.550755629220791
+      }
+    },
+    "decode_with_cold_image": {
+      "before": {
+        "ttft_ms": 310.791741,
+        "e2e_ms": 2070.583535,
+        "tpot_ms": 13.966052377952757,
+        "max_itl_ms": 388.48685,
+        "p95_itl_ms": 12.0857998
+      },
+      "after": {
+        "ttft_ms": 179.775812,
+        "e2e_ms": 1772.649789,
+        "tpot_ms": 12.558109661417323,
+        "max_itl_ms": 216.539206,
+        "p95_itl_ms": 11.986164200000001
+      },
+      "latency_reduction_percent": {
+        "ttft_ms": 42.155537524402874,
+        "e2e_ms": 14.388878350662637,
+        "tpot_ms": 10.081178835889638,
+        "max_itl_ms": 44.260865972683504,
+        "p95_itl_ms": 0.8244022046434929
+      }
+    },
+    "injected_cold_image": {
+      "before": {
+        "ttft_ms": 419.900482,
+        "e2e_ms": 603.020247,
+        "tpot_ms": 12.207984333333334,
+        "max_itl_ms": 14.462927,
+        "p95_itl_ms": 13.455666899999999
+      },
+      "after": {
+        "ttft_ms": 434.612127,
+        "e2e_ms": 612.97603,
+        "tpot_ms": 11.912796333333333,
+        "max_itl_ms": 12.827034,
+        "p95_itl_ms": 12.3357159
+      },
+      "latency_reduction_percent": {
+        "ttft_ms": -3.5036027893866395,
+        "e2e_ms": -1.6509865215188935,
+        "tpot_ms": 2.417991307492129,
+        "max_itl_ms": 11.310940033092898,
+        "p95_itl_ms": 8.323266385258087
+      }
+    }
+  },
+  "media_cache": {
+    "scope": "engine_shared_cpu_media_results",
+    "entries": 4,
+    "max_entries": 128,
+    "hits": 7,
+    "misses": 4,
+    "uncacheable": 0,
+    "prompt_rebind_hits": 4,
+    "prompt_rebind_misses": 0
+  },
+  "trace": {
+    "source": "raw/preprocessing-9791.nsys-rep",
+    "selected_preprocessing_call": 1,
+    "scope": "single-GPU trace; kernel overlap is not an end-to-end speedup",
+    "cpu_image_processor_ms": 115.024022,
+    "gpu_kernel_activity_overlapping_cpu_ms": 100.500138,
+    "paged_decode_kernels_overlapping_cpu": 345,
+    "decode_replay_calls_during_cpu": 10,
+    "preprocessing_thread": "331453601511095",
+    "decode_replay_threads": [
+      "331453601510797"
+    ],
+    "chrome_trace": "trace.json"
+  }
+}

@@ -16,6 +16,12 @@ from transformers import AutoTokenizer
 from prism_infer.config import Config, PrismConfig
 from prism_infer.engine.contracts import BatchPlan, MetricsSink, StepResult
 from prism_infer.engine.executor import ModelExecutor
+from prism_infer.engine.media_preprocessing import (
+    MediaPreprocessingCache,
+    _cache_namespace,
+    _per_image_media_hashes,
+    _visual_embedding_fingerprint,
+)
 from prism_infer.engine.metrics import EngineMetrics
 from prism_infer.engine.model_runner import ModelRunner
 from prism_infer.engine.request import (
@@ -233,6 +239,7 @@ class LLMEngine:
             else None
         )
         self.config = config
+        self._media_preprocess_cache = MediaPreprocessingCache(_cache_namespace(self))
         self.clock_ns = clock_ns
         self.scheduler = Scheduler(config, clock_ns=clock_ns)  # 调度器
         self.executor = ModelExecutor(
@@ -386,6 +393,9 @@ class LLMEngine:
         )
         if clear_prefix_cache is not None:
             clear_prefix_cache()
+        media_cache = getattr(self, "_media_preprocess_cache", None)
+        if media_cache is not None:
+            media_cache.clear()
         failure = self._release_model_runner()
         failure = self._first_cleanup_failure(
             failure,
@@ -529,6 +539,7 @@ class LLMEngine:
         sampling_params: SamplingParams,
         *,
         request_id: int | None = None,
+        media_identity: tuple[str, tuple[bytes, ...] | None] | None = None,
     ) -> Sequence:
         """Build one image sequence without mutating scheduler queues."""
 
@@ -551,7 +562,9 @@ class LLMEngine:
             position_ids=position_ids,
             rope_delta=rope_delta,
         )
-        fingerprint, per_image_hashes = self._image_media_identity(inputs)
+        fingerprint, per_image_hashes = (
+            self._image_media_identity(inputs) if media_identity is None else media_identity
+        )
         seq.multimodal_prefix_cache_key = fingerprint
         seq.visual_embedding_cache_key = fingerprint
         seq.multimodal_media_token_hashes = per_image_hashes
@@ -567,16 +580,7 @@ class LLMEngine:
         落在同一哈希空间（同一张图在任一入口都产生相同 hash）。
         """
 
-        from prism_infer.engine.online import (
-            _cache_namespace,
-            _per_image_media_hashes,
-            _visual_embedding_fingerprint,
-        )
-
-        namespace = getattr(self, "_media_cache_namespace", None)
-        if namespace is None:
-            namespace = _cache_namespace(self)
-            self._media_cache_namespace = namespace
+        namespace = self._media_preprocess_cache.namespace
         return (
             _visual_embedding_fingerprint(namespace, "images", inputs),
             _per_image_media_hashes(namespace, "images", inputs),
@@ -592,12 +596,68 @@ class LLMEngine:
     ) -> Sequence:
         """Run image preprocessing without publishing a request."""
 
-        inputs = self._process_image_inputs(prompt, image)
+        return self._prepare_media_request(
+            "images",
+            prompt,
+            image,
+            sampling_params,
+            request_id=self._allocate_request_id() if request_id is None else request_id,
+        )
+
+    def _prepare_media_request(
+        self,
+        request_type: str,
+        prompt: str,
+        media: Any,
+        sampling_params: SamplingParams,
+        *,
+        request_id: int,
+        image_marker: str = "<image>",
+    ) -> Sequence:
+        """Prepare CPU media state; ID allocation and submission belong to the owner."""
+
+        validate_request_id(request_id)
+        if request_type not in ("image", "images", "interleaved_images", "video"):
+            raise ValueError(f"unsupported media request type: {request_type!r}")
+
+        def process_inputs() -> ImageInputs | VideoInputs:
+            if request_type in ("image", "images"):
+                return self._process_image_inputs(prompt, media)
+            if request_type == "interleaved_images":
+                return self._process_interleaved_image_inputs(
+                    prompt, media, image_marker=image_marker
+                )
+            return self._process_video_inputs(prompt, media)
+
+        prepared = self._media_preprocess_cache.prepare(
+            request_type,
+            prompt,
+            media,
+            process_inputs=process_inputs,
+            tokenizer=getattr(self.vl_processor, "tokenizer", None),
+            image_marker=image_marker,
+        )
+        if request_type == "video":
+            sequence = self._prepare_video_sequence(
+                prepared.inputs,
+                sampling_params,
+                request_id=request_id,
+            )
+            sequence.visual_embedding_cache_key = prepared.visual_embedding_fingerprint
+            sequence.multimodal_prefix_cache_key = prepared.visual_embedding_fingerprint
+            return sequence
         return self._prepare_image_sequence(
-            inputs,
+            prepared.inputs,
             sampling_params,
             request_id=request_id,
+            media_identity=(prepared.visual_embedding_fingerprint, prepared.per_image_hashes),
         )
+
+    def media_preprocess_cache_metadata(self) -> dict[str, int | str]:
+        return self._media_preprocess_cache.metadata()
+
+    def reset_media_preprocess_cache_metrics(self) -> None:
+        self._media_preprocess_cache.reset_metrics()
 
     def _process_image_inputs(
         self,
@@ -683,18 +743,16 @@ class LLMEngine:
     ) -> int:
         """提交图片按 marker 穿插在文本中的多图请求。"""
 
-        if self.vl_processor is None:
-            raise ValueError("add_interleaved_images_request requires a Qwen3-VL model config")
-        with profile_region("preprocess.image_processor", cuda=False):
-            inputs = prepare_interleaved_image_inputs(
-                self.vl_processor,
-                prompt,
-                images,
-                image_marker=image_marker,
-            )
-        return self._submit_image_inputs(
-            inputs,
+        sequence = self._prepare_media_request(
+            "interleaved_images",
+            prompt,
+            images,
             sampling_params,
+            request_id=self._allocate_request_id(),
+            image_marker=image_marker,
+        )
+        return self._submit_sequence(
+            sequence,
             submitted_ns=submitted_ns,
             raise_on_reject=raise_on_reject,
         )
@@ -773,11 +831,12 @@ class LLMEngine:
     ) -> Sequence:
         """Run video preprocessing without publishing a request."""
 
-        inputs = self._process_video_inputs(prompt, video)
-        return self._prepare_video_sequence(
-            inputs,
+        return self._prepare_media_request(
+            "video",
+            prompt,
+            video,
             sampling_params,
-            request_id=request_id,
+            request_id=self._allocate_request_id() if request_id is None else request_id,
         )
 
     def _process_video_inputs(
@@ -1237,6 +1296,7 @@ class LLMEngine:
         self._slo_pending_deadline_finishes = 0
         self._decode_after_slo_prefill_interrupt = False
         self.model_runner.reset_visual_embedding_cache_metrics()
+        self.reset_media_preprocess_cache_metrics()
         reset()
 
     def request_state(self, request_id: int):

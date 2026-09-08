@@ -31,6 +31,8 @@ Cache 则保留各 Transformer 层已经计算的 K/V。这里讨论的是独立
   输出投影和 FP8 LM-head 候选投影，候选再用原始权重进行 FP32 重排。
 - TP2 支持按完整图片分配 Vision Encoder 工作，一次收集主特征和全部 DeepStack，
   恢复原始媒体顺序后进入语言模型。完整视觉 Prefix 命中时不再向 worker 发送图片 Tensor。
+- 普通生成、Online 和 HTTP 入口共用 CPU 媒体预处理缓存。HTTP 媒体准备在后台线程完成，
+  模型与 KV 状态仍由同一个 owner 线程管理，减少冷图片到达对已有 Decode 的阻塞。
 
 2026-09-07 修复了提前发布未计算 KV、尾页旧哈希、共享缓存页回收少算和 FP8 压实地址
 溢出。对应复现、GPU 检查和执行路径记录见[修复说明](docs/RUNTIME_FIXES_20260907.md)。
@@ -40,6 +42,11 @@ Cache 则保留各 Transformer 层已经计算的 K/V。这里讨论的是独立
 尾页复制的命令分发和图片布局字段恢复。两张 5090、八图视觉阶段从 59.33 ms 降至
 31.81 ms（含特征聚合）；这不是端到端 1.86×。同资源的 TP2、双 TP1 副本和 PP2
 方向比较、数值差异及请求级结果均在该文档中说明。
+
+随后统一了[共享预处理与 HTTP 请求路径](docs/SHARED_PREPROCESSING.md)。在同一组八图
+HTTP 请求中，同图换问题 TTFT 中位数由 317.96 降至 189.14 ms；Decode 中插入冷图片时，
+每个长请求的最大 token 间隔的中位数由 388.49 降至 216.54 ms。冷图片请求自身的 TTFT
+略有上升，完整原始结果和 CPU/GPU 重叠 Trace 均保留；这不是竞品排名或总体 p99 结果。
 
 ## 结果与适用范围
 
@@ -90,6 +97,7 @@ prism-serve --model "$PRISM_MODEL_PATH" --host 127.0.0.1 --port 8000
 - [Results](docs/RESULTS.md)：区分存储、Decode、在线工作集和质量测量。
 - [本轮修复与执行证据](docs/RUNTIME_FIXES_20260907.md)。
 - [多卡多模态实现与取舍](docs/MULTI_GPU.md)：Encoder DP、TP2 Prefix、双副本和 PP2 参照。
+- [共享预处理与后台准备](docs/SHARED_PREPROCESSING.md)：统一缓存、线程所有权、取消与 HTTP 实测。
 - [历史请求级 JSON 与 Trace](artifacts/working_set/README.md)。
 - [相关工作](docs/RELATED_WORK.md)、[未采用方案与历史实验](docs/REJECTED_EXPERIMENTS.md)。
 

@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import queue
 import threading
+from collections import deque
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from time import perf_counter_ns
+from typing import TYPE_CHECKING, Any, Protocol
 
-from prism_infer.engine.contracts import StepResult
 from prism_infer.engine.request import RequestState
 from prism_infer.sampling_params import SamplingParams
 from prism_infer.serving.protocol import (
@@ -18,6 +20,10 @@ from prism_infer.serving.protocol import (
     Modality,
     ServingEvent,
 )
+
+if TYPE_CHECKING:
+    from prism_infer.engine.contracts import StepResult
+    from prism_infer.engine.sequence import Sequence
 
 
 class ServingOverloadedError(RuntimeError):
@@ -55,33 +61,28 @@ class ServingEngine(Protocol):
         sampling_params: SamplingParams,
         *,
         raise_on_reject: bool,
+        submitted_ns: int,
     ) -> int: ...
 
-    def add_vl_request(
-        self,
-        prompt: str,
-        image: Any,
-        sampling_params: SamplingParams,
-        *,
-        raise_on_reject: bool,
-    ) -> int: ...
+    def _allocate_request_id(self) -> int: ...
 
-    def add_images_request(
+    def _prepare_media_request(
         self,
+        request_type: str,
         prompt: str,
-        images: Any,
+        media: Any,
         sampling_params: SamplingParams,
         *,
-        raise_on_reject: bool,
-    ) -> int: ...
+        request_id: int,
+        image_marker: str = "<image>",
+    ) -> Sequence: ...
 
-    def add_video_request(
+    def _submit_sequence(
         self,
-        prompt: str,
-        video: Any,
-        sampling_params: SamplingParams,
+        seq: Sequence,
         *,
         raise_on_reject: bool,
+        submitted_ns: int,
     ) -> int: ...
 
     def cancel_request(self, request_id: int) -> bool: ...
@@ -130,6 +131,15 @@ class RequestHandle:
 class _Submission:
     request: GenerationRequest
     handle: RequestHandle
+    submitted_ns: int
+
+
+@dataclass(slots=True)
+class _PendingMedia:
+    submission: _Submission
+    engine_request_id: int
+    future: Future[Sequence] | None = None
+    discarded: bool = False
 
 
 @dataclass(slots=True)
@@ -143,13 +153,12 @@ class _ActiveRequest:
 class ServingRuntime:
     """以一个专用线程独占并持续驱动一个 Prism-Infer 引擎。
 
-    网络协程只负责将请求放入有界入口队列并异步消费事件。模型初始化、请求
-    admission、每次 schedule/execute/commit、tokenizer 解码和资源释放都在
-    同一个所有者线程完成，避免并发协程直接触碰 CUDA 引擎状态。
+    网络协程只负责有界提交与消费事件。媒体 CPU 准备在单独 worker 执行；
+    请求 ID 分配、admission、Prefix/KV、模型执行和资源释放仍由 owner 独占。
 
     Args:
         engine_factory: 在所有者线程内构造引擎的无参工厂。
-        ingress_capacity: 尚未交给引擎 admission 的最大网络请求数。
+        ingress_capacity: 入口、待准备和正在 CPU 准备的请求总上限。
         idle_poll_seconds: 引擎空闲时检查取消和关闭信号的周期。
     """
 
@@ -179,9 +188,12 @@ class ServingRuntime:
         self._ingress: queue.Queue[_Submission] = queue.Queue(
             maxsize=ingress_capacity,
         )
+        self._ingress_capacity = ingress_capacity
+        self._unadmitted_requests = 0
         self._cancellations: queue.SimpleQueue[str] = queue.SimpleQueue()
         self._idle_poll_seconds = float(idle_poll_seconds)
         self._stop_requested = threading.Event()
+        self._wake_owner = threading.Event()
         self._ready = threading.Event()
         self._state_lock = threading.Lock()
         self._known_request_ids: set[str] = set()
@@ -191,6 +203,10 @@ class ServingRuntime:
         self._active_by_external: dict[str, _ActiveRequest] = {}
         self._external_by_engine: dict[int, str] = {}
         self._cancelled_before_admission: set[str] = set()
+        self._media_waiting: deque[_PendingMedia] = deque()
+        self._pending_media: dict[str, _PendingMedia] = {}
+        self._preparing: _PendingMedia | None = None
+        self._preprocessor: ThreadPoolExecutor | None = None
 
     @property
     def is_healthy(self) -> bool:
@@ -237,7 +253,9 @@ class ServingRuntime:
         thread = self._thread
         if thread is None:
             return
-        self._stop_requested.set()
+        with self._state_lock:
+            self._stop_requested.set()
+        self._wake_owner.set()
         thread.join()
 
     def submit(
@@ -269,14 +287,23 @@ class ServingRuntime:
 
         handle = RequestHandle(request.request_id, event_loop)
         with self._state_lock:
+            if not self.is_healthy:
+                raise ServingUnavailableError("serving runtime is not healthy")
             if request.request_id in self._known_request_ids:
                 raise DuplicateRequestError(f"duplicate active request_id: {request.request_id!r}")
+            if self._unadmitted_requests >= self._ingress_capacity:
+                raise ServingOverloadedError("serving ingress and preprocessing capacity is full")
             self._known_request_ids.add(request.request_id)
+            self._unadmitted_requests += 1
             try:
-                self._ingress.put_nowait(_Submission(request=request, handle=handle))
+                self._ingress.put_nowait(
+                    _Submission(request=request, handle=handle, submitted_ns=perf_counter_ns())
+                )
             except queue.Full as exc:
                 self._known_request_ids.remove(request.request_id)
+                self._unadmitted_requests -= 1
                 raise ServingOverloadedError("serving ingress queue is full") from exc
+        self._wake_owner.set()
         return handle
 
     def cancel(self, request_id: str) -> None:
@@ -285,10 +312,16 @@ class ServingRuntime:
         if not isinstance(request_id, str) or not request_id:
             raise ValueError("request_id must be a non-empty string")
         self._cancellations.put(request_id)
+        self._wake_owner.set()
+
+    def _release_admission_slot(self) -> None:
+        with self._state_lock:
+            self._unadmitted_requests -= 1
 
     def _forget_request_id(self, request_id: str) -> None:
         with self._state_lock:
             self._known_request_ids.discard(request_id)
+        self._cancelled_before_admission.discard(request_id)
 
     def _publish_error(
         self,
@@ -305,72 +338,30 @@ class ServingRuntime:
         )
         self._forget_request_id(submission.request.request_id)
 
-    def _submit_to_engine(
+    def _finish_unadmitted(
         self,
-        engine: ServingEngine,
-        request: GenerationRequest,
-    ) -> int:
-        common = {"raise_on_reject": False}
-        if request.modality is Modality.TEXT:
-            return engine.add_request(
-                request.prompt,
-                request.sampling_params,
-                **common,
+        submission: _Submission,
+        *,
+        reason: str,
+        engine_request_id: int | None = None,
+    ) -> None:
+        submission.handle.publish(
+            ServingEvent(
+                request_id=submission.request.request_id,
+                kind=EventKind.DONE,
+                engine_request_id=engine_request_id,
+                finish_reason=reason,
             )
-        if request.modality is Modality.IMAGE:
-            if isinstance(request.media, tuple):
-                if len(request.media) == 1:
-                    return engine.add_vl_request(
-                        request.prompt,
-                        request.media[0],
-                        request.sampling_params,
-                        **common,
-                    )
-                return engine.add_images_request(
-                    request.prompt,
-                    request.media,
-                    request.sampling_params,
-                    **common,
-                )
-            return engine.add_vl_request(
-                request.prompt,
-                request.media,
-                request.sampling_params,
-                **common,
-            )
-        return engine.add_video_request(
-            request.prompt,
-            request.media,
-            request.sampling_params,
-            **common,
         )
+        self._forget_request_id(submission.request.request_id)
 
-    def _admit(
+    def _track_admitted(
         self,
         engine: ServingEngine,
         submission: _Submission,
+        engine_request_id: int,
     ) -> None:
         request = submission.request
-        if request.request_id in self._cancelled_before_admission:
-            self._cancelled_before_admission.remove(request.request_id)
-            submission.handle.publish(
-                ServingEvent(
-                    request_id=request.request_id,
-                    kind=EventKind.DONE,
-                    finish_reason="cancelled",
-                )
-            )
-            self._forget_request_id(request.request_id)
-            return
-        try:
-            engine_request_id = self._submit_to_engine(engine, request)
-        except (OSError, TypeError, ValueError) as exc:
-            self._publish_error(
-                submission,
-                message=f"{type(exc).__name__}: {exc}",
-            )
-            return
-
         state = engine.request_state(engine_request_id)
         submission.handle.publish(
             ServingEvent(
@@ -380,17 +371,12 @@ class ServingRuntime:
             )
         )
         if state is RequestState.REJECTED:
-            submission.handle.publish(
-                ServingEvent(
-                    request_id=request.request_id,
-                    kind=EventKind.DONE,
-                    engine_request_id=engine_request_id,
-                    finish_reason="rejected",
-                )
+            self._finish_unadmitted(
+                submission,
+                reason="rejected",
+                engine_request_id=engine_request_id,
             )
-            self._forget_request_id(request.request_id)
             return
-
         active = _ActiveRequest(
             request=request,
             handle=submission.handle,
@@ -399,15 +385,140 @@ class ServingRuntime:
         self._active_by_external[request.request_id] = active
         self._external_by_engine[engine_request_id] = request.request_id
 
-    def _drain_ingress(self, engine: ServingEngine) -> bool:
-        admitted_any = False
-        while True:
+    def _submit_to_engine(
+        self,
+        engine: ServingEngine,
+        submission: _Submission,
+        *,
+        prepared: Sequence | None = None,
+    ) -> None:
+        try:
+            if prepared is None:
+                request = submission.request
+                engine_request_id = engine.add_request(
+                    request.prompt,
+                    request.sampling_params,
+                    raise_on_reject=False,
+                    submitted_ns=submission.submitted_ns,
+                )
+            else:
+                engine_request_id = engine._submit_sequence(
+                    prepared,
+                    raise_on_reject=False,
+                    submitted_ns=submission.submitted_ns,
+                )
+            self._track_admitted(engine, submission, engine_request_id)
+        except (OSError, TypeError, ValueError) as exc:
+            self._publish_error(submission, message=f"{type(exc).__name__}: {exc}")
+        except Exception as exc:
+            self._publish_error(submission, message=f"{type(exc).__name__}: {exc}")
+            raise
+        finally:
+            self._release_admission_slot()
+
+    def _admit(self, engine: ServingEngine, submission: _Submission) -> None:
+        request_id = submission.request.request_id
+        if request_id in self._cancelled_before_admission:
+            self._cancelled_before_admission.remove(request_id)
+            self._finish_unadmitted(submission, reason="cancelled")
+            self._release_admission_slot()
+            return
+        if self._stop_requested.is_set():
+            self._finish_unadmitted(submission, reason="shutdown")
+            self._release_admission_slot()
+            return
+        if submission.request.modality is Modality.TEXT:
+            self._submit_to_engine(engine, submission)
+            return
+        try:
+            engine_request_id = engine._allocate_request_id()
+        except Exception as exc:
+            self._publish_error(submission, message=f"{type(exc).__name__}: {exc}")
+            self._release_admission_slot()
+            raise
+        pending = _PendingMedia(submission, engine_request_id)
+        self._pending_media[request_id] = pending
+        self._media_waiting.append(pending)
+
+    def _start_preparation(self, engine: ServingEngine) -> None:
+        # The executor has at most one Future. Its private queue cannot grow
+        # independently of the runtime's bounded admission slots.
+        if self._preparing is not None or not self._media_waiting:
+            return
+        if self._stop_requested.is_set():
+            return
+        pending = self._media_waiting[0]
+        request = pending.submission.request
+        assert self._preprocessor is not None
+        pending.future = self._preprocessor.submit(
+            engine._prepare_media_request,
+            "images" if request.modality is Modality.IMAGE else "video",
+            request.prompt,
+            request.media,
+            request.sampling_params,
+            request_id=pending.engine_request_id,
+        )
+        self._media_waiting.popleft()
+        self._preparing = pending
+        pending.future.add_done_callback(lambda _: self._wake_owner.set())
+
+    def _discard_preparation(
+        self,
+        pending: _PendingMedia,
+        *,
+        reason: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        if pending.discarded:
+            return
+        pending.discarded = True
+        self._pending_media.pop(pending.submission.request.request_id, None)
+        if pending.future is None:
+            self._media_waiting.remove(pending)
+            self._release_admission_slot()
+        else:
+            # A running CPU operation is not interruptible. Keep its slot until
+            # completion, even though the client receives its terminal event now.
+            pending.future.cancel()
+        if error is not None:
+            self._publish_error(pending.submission, message=error)
+        else:
+            assert reason is not None
+            self._finish_unadmitted(
+                pending.submission,
+                reason=reason,
+                engine_request_id=pending.engine_request_id,
+            )
+
+    def _admit_prepared(self, engine: ServingEngine) -> None:
+        pending = self._preparing
+        if pending is None or pending.future is None or not pending.future.done():
+            return
+        if self._stop_requested.is_set():
+            self._discard_preparation(pending, reason="shutdown")
+        self._preparing = None
+        if pending.discarded:
+            self._release_admission_slot()
+            return
+        self._pending_media.pop(pending.submission.request.request_id)
+        try:
+            prepared = pending.future.result()
+        except BaseException as exc:
+            self._publish_error(pending.submission, message=f"{type(exc).__name__}: {exc}")
+            self._release_admission_slot()
+            return
+        self._submit_to_engine(engine, pending.submission, prepared=prepared)
+
+    def _drain_ingress(self, engine: ServingEngine) -> None:
+        # A finite snapshot lets Decode advance even when submissions continue.
+        for _ in range(self._ingress.qsize()):
+            if self._stop_requested.is_set():
+                return
             try:
                 submission = self._ingress.get_nowait()
             except queue.Empty:
-                return admitted_any
+                return
             self._admit(engine, submission)
-            admitted_any = True
 
     def _finish_active(
         self,
@@ -437,11 +548,15 @@ class ServingRuntime:
         self._forget_request_id(active.request.request_id)
 
     def _apply_cancellations(self, engine: ServingEngine) -> None:
-        while True:
+        for _ in range(self._cancellations.qsize()):
             try:
                 request_id = self._cancellations.get_nowait()
             except queue.Empty:
                 return
+            pending = self._pending_media.get(request_id)
+            if pending is not None:
+                self._discard_preparation(pending, reason="cancelled")
+                continue
             active = self._active_by_external.get(request_id)
             if active is None:
                 with self._state_lock:
@@ -499,13 +614,6 @@ class ServingRuntime:
                 finish_reason=output.finish_reason,
             )
 
-    def _wait_for_submission(self, engine: ServingEngine) -> None:
-        try:
-            submission = self._ingress.get(timeout=self._idle_poll_seconds)
-        except queue.Empty:
-            return
-        self._admit(engine, submission)
-
     def _cancel_all_active(self, engine: ServingEngine) -> None:
         for active in tuple(self._active_by_external.values()):
             engine.cancel_request(active.engine_request_id)
@@ -515,19 +623,15 @@ class ServingRuntime:
                 token_ids=tuple(active.token_ids),
                 finish_reason="shutdown",
             )
+        for pending in tuple(self._pending_media.values()):
+            self._discard_preparation(pending, reason="shutdown")
         while True:
             try:
                 submission = self._ingress.get_nowait()
             except queue.Empty:
                 return
-            submission.handle.publish(
-                ServingEvent(
-                    request_id=submission.request.request_id,
-                    kind=EventKind.DONE,
-                    finish_reason="shutdown",
-                )
-            )
-            self._forget_request_id(submission.request.request_id)
+            self._finish_unadmitted(submission, reason="shutdown")
+            self._release_admission_slot()
 
     def _fail_all(self, failure: BaseException) -> None:
         message = f"serving runtime failed: {type(failure).__name__}: {failure}"
@@ -543,22 +647,28 @@ class ServingRuntime:
             self._forget_request_id(active.request.request_id)
         self._active_by_external.clear()
         self._external_by_engine.clear()
+        for pending in tuple(self._pending_media.values()):
+            self._discard_preparation(pending, error=message)
         while True:
             try:
                 submission = self._ingress.get_nowait()
             except queue.Empty:
                 return
             self._publish_error(submission, message=message)
+            self._release_admission_slot()
 
     def _run_engine(self, engine: ServingEngine) -> None:
         while not self._stop_requested.is_set():
+            self._wake_owner.clear()
             self._apply_cancellations(engine)
-            admitted = self._drain_ingress(engine)
+            self._admit_prepared(engine)
+            self._drain_ingress(engine)
+            self._start_preparation(engine)
             self._apply_cancellations(engine)
             if not engine.is_finished():
                 self._execute_step(engine)
-            elif not admitted:
-                self._wait_for_submission(engine)
+            else:
+                self._wake_owner.wait(timeout=self._idle_poll_seconds)
         self._cancel_all_active(engine)
 
     def _thread_main(self) -> None:
@@ -566,6 +676,10 @@ class ServingRuntime:
         try:
             engine = self._engine_factory()
             self._engine = engine
+            self._preprocessor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="prism-media-preparation",
+            )
             self._ready.set()
             self._run_engine(engine)
         except BaseException as exc:
@@ -573,6 +687,14 @@ class ServingRuntime:
             self._ready.set()
             self._fail_all(exc)
         finally:
+            if self._preprocessor is not None:
+                # CPU preparation may still read processor/cache state. Let it
+                # finish before engine teardown; discarded results never admit.
+                self._preprocessor.shutdown(wait=True, cancel_futures=True)
+                self._preprocessor = None
+                if self._preparing is not None:
+                    self._preparing = None
+                    self._release_admission_slot()
             if engine is not None:
                 try:
                     engine.exit()

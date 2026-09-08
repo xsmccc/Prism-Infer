@@ -10,6 +10,7 @@ from transformers import Qwen3VLForConditionalGeneration
 
 from prism_infer import LLM
 from prism_infer.engine.llm_engine import LLMEngine
+from prism_infer.engine.media_preprocessing import MediaPreprocessingCache, _cache_namespace
 from prism_infer.engine.scheduler import Scheduler
 from prism_infer.sampling_params import SamplingParams
 
@@ -43,6 +44,7 @@ def _make_minimal_engine() -> LLMEngine:
         trust_remote_code=True,
         local_files_only=True,
     )
+    engine._media_preprocess_cache = MediaPreprocessingCache(_cache_namespace(engine))
     engine.model_runner = SimpleNamespace(is_vl_model=True)
     engine.scheduler = Scheduler(engine.config)
     return engine
@@ -106,6 +108,34 @@ def test_add_vl_request_builds_multi_image_sequence():
     assert list(seq.rope_delta.shape) == [1, 1]
     assert seq.image_token_count == 392
     print("LLMEngine add_vl_request multi image: PASS")
+
+
+def test_cached_changed_question_matches_fresh_hf_processor():
+    """Real HF token expansion and M-RoPE stay correct when only the question changes."""
+    engine = _make_minimal_engine()
+    images = [
+        Image.new("RGB", (448, 448), color=(100, 150, 200)),
+        Image.new("RGB", (224, 448), color=(200, 120, 80)),
+    ]
+    sampling = SamplingParams(temperature=0.0, max_tokens=2)
+    try:
+        engine._prepare_media_request(
+            "images", "Describe both images.", images, sampling, request_id=0
+        )
+        question = "Which image has the brighter background?"
+        cached = engine._prepare_media_request("images", question, images, sampling, request_id=1)
+        fresh_inputs = engine._process_image_inputs(question, images)
+        fresh = engine._prepare_image_sequence(fresh_inputs, sampling, request_id=2)
+        assert cached.prompt_token_ids == fresh.prompt_token_ids
+        assert torch.equal(cached.pixel_values, fresh.pixel_values)
+        assert torch.equal(cached.image_grid_thw, fresh.image_grid_thw)
+        assert torch.equal(cached.position_ids, fresh.position_ids)
+        assert torch.equal(cached.rope_delta, fresh.rope_delta)
+        assert cached.multimodal_media_token_hashes == fresh.multimodal_media_token_hashes
+        assert engine.media_preprocess_cache_metadata()["prompt_rebind_hits"] == 1
+    finally:
+        for image in images:
+            image.close()
 
 
 def _demo_video_frames() -> list[Image.Image]:

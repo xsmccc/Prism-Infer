@@ -1,0 +1,5823 @@
+{
+  "label": "trace",
+  "base_url": "http://127.0.0.1:27791",
+  "requests": [
+    {
+      "phase": "warmup",
+      "request_id": "trace-0",
+      "prompt": "Describe the main color of the first image. Answer with one color word.",
+      "max_tokens": 16,
+      "media_group": 0,
+      "token_ids": [
+        6033,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "token_arrival_ns": [
+        3070444200160187,
+        3070444212947156,
+        3070444224502865,
+        3070444236041017,
+        3070444247565831,
+        3070444259090392,
+        3070444270564178,
+        3070444282051364,
+        3070444293480536,
+        3070444305037898,
+        3070444316667189,
+        3070444328317793,
+        3070444339975925,
+        3070444351660409,
+        3070444363315923,
+        3070444374828421
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3070443539741424,
+          "bytes": 89,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "accepted",
+              "engine_request_id": 0
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444200160187,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 6033,
+              "token_text": "Red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444212947156,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444224502865,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444236041017,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444247565831,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444259090392,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444270564178,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444282051364,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444293480536,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444305037898,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444316667189,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444328317793,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444339975925,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444351660409,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444363315923,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444374828421,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "token",
+              "engine_request_id": 0,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444375023589,
+          "bytes": 239,
+          "events": [
+            {
+              "request_id": "trace-0",
+              "event": "done",
+              "engine_request_id": 0,
+              "text": "Red\n\n\n\n",
+              "finish_reason": "length",
+              "token_ids": [
+                6033,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3070443297772048,
+      "client_finish_ns": 3070444375023589,
+      "final_token_ids": [
+        6033,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        12.786969,
+        11.555709,
+        11.538152,
+        11.524814,
+        11.524561,
+        11.473786,
+        11.487186,
+        11.429172,
+        11.557362,
+        11.629291,
+        11.650604,
+        11.658132,
+        11.684484,
+        11.655514,
+        11.512498
+      ],
+      "ttft_ms": 902.388139,
+      "e2e_ms": 1077.251541,
+      "tpot_ms": 11.644548933333333,
+      "max_itl_ms": 12.786969,
+      "p95_itl_ms": 12.015229499999998,
+      "stream_matches_final_ids": true
+    },
+    {
+      "phase": "hot_changed_question",
+      "request_id": "trace-1",
+      "prompt": "Describe the main color of image 2. Answer with one color word.",
+      "max_tokens": 16,
+      "media_group": 0,
+      "token_ids": [
+        19576,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "token_arrival_ns": [
+        3070444522022767,
+        3070444534211103,
+        3070444545791628,
+        3070444557468778,
+        3070444568893528,
+        3070444582577090,
+        3070444594177907,
+        3070444605765378,
+        3070444617230604,
+        3070444628745945,
+        3070444640226190,
+        3070444651736415,
+        3070444663189737,
+        3070444674714268,
+        3070444686242319,
+        3070444697733650
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3070444409514568,
+          "bytes": 89,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "accepted",
+              "engine_request_id": 1
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444522022767,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 19576,
+              "token_text": "Green"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444534211103,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444545791628,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444557468778,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444568893528,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444582577090,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444594177907,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444605765378,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444617230604,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444628745945,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444640226190,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444651736415,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444663189737,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444674714268,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444686242319,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444697733650,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "token",
+              "engine_request_id": 1,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444697863642,
+          "bytes": 242,
+          "events": [
+            {
+              "request_id": "trace-1",
+              "event": "done",
+              "engine_request_id": 1,
+              "text": "Green\n\n\n\n",
+              "finish_reason": "length",
+              "token_ids": [
+                19576,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3070444376031080,
+      "client_finish_ns": 3070444697863642,
+      "final_token_ids": [
+        19576,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        12.188336,
+        11.580525,
+        11.67715,
+        11.42475,
+        13.683562,
+        11.600817,
+        11.587471,
+        11.465226,
+        11.515341,
+        11.480245,
+        11.510225,
+        11.453322,
+        11.524531,
+        11.528051,
+        11.491331
+      ],
+      "ttft_ms": 145.991687,
+      "e2e_ms": 321.832562,
+      "tpot_ms": 11.714058866666667,
+      "max_itl_ms": 13.683562,
+      "p95_itl_ms": 12.636903799999999,
+      "stream_matches_final_ids": true
+    },
+    {
+      "phase": "decode_alone",
+      "request_id": "trace-2",
+      "prompt": "Describe each image and compare all their colors in detail.",
+      "max_tokens": 128,
+      "media_group": 0,
+      "token_ids": [
+        785,
+        3897,
+        5335,
+        525,
+        264,
+        738,
+        315,
+        8063,
+        6437,
+        57722,
+        31340,
+        11,
+        1817,
+        71180,
+        1181,
+        1828,
+        4034,
+        13,
+        2619,
+        525,
+        902,
+        6171,
+        11,
+        12624,
+        11,
+        476,
+        52149,
+        2293,
+        4250,
+        264,
+        3175,
+        11,
+        13794,
+        1894,
+        21274,
+        1817,
+        2168,
+        13,
+        21193,
+        374,
+        264,
+        11682,
+        4008,
+        315,
+        1817,
+        2168,
+        323,
+        264,
+        15817,
+        12313,
+        315,
+        862,
+        7987,
+        382,
+        44364,
+        334,
+        1906,
+        3874,
+        24685,
+        25,
+        56177,
+        16,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        16,
+        66963,
+        362,
+        6437,
+        11,
+        32976,
+        2518,
+        13,
+        1084,
+        374,
+        264,
+        8205,
+        11,
+        49485,
+        39040,
+        11,
+        54985,
+        315,
+        264,
+        5538,
+        96019,
+        476,
+        24837,
+        2518,
+        13,
+        576,
+        1894,
+        374,
+        9080,
+        323,
+        13939,
+        11,
+        64340,
+        6529,
+        382,
+        17,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        17,
+        66963,
+        362,
+        6437,
+        11,
+        9906,
+        6176,
+        13,
+        1084,
+        374,
+        264,
+        42020,
+        11,
+        4558,
+        9072,
+        27501,
+        11,
+        4428,
+        311,
+        264
+      ],
+      "token_arrival_ns": [
+        3070444892784634,
+        3070444905615657,
+        3070444917504933,
+        3070444929309807,
+        3070444941168044,
+        3070444952883357,
+        3070444965019883,
+        3070444976996798,
+        3070444988751326,
+        3070445000942740,
+        3070445012721736,
+        3070445024523620,
+        3070445036400449,
+        3070445048190389,
+        3070445059942007,
+        3070445071917193,
+        3070445083736614,
+        3070445095421504,
+        3070445107300148,
+        3070445119168871,
+        3070445130970784,
+        3070445142843173,
+        3070445154575539,
+        3070445166424010,
+        3070445178216657,
+        3070445189974698,
+        3070445201811052,
+        3070445213536125,
+        3070445225236219,
+        3070445237326904,
+        3070445249055603,
+        3070445260598518,
+        3070445272389875,
+        3070445284255752,
+        3070445296085972,
+        3070445307917552,
+        3070445319876191,
+        3070445331639176,
+        3070445343452325,
+        3070445355414226,
+        3070445367080178,
+        3070445378987891,
+        3070445390655054,
+        3070445402482618,
+        3070445414302210,
+        3070445426260136,
+        3070445438209870,
+        3070445450495586,
+        3070445462251634,
+        3070445474015784,
+        3070445485874226,
+        3070445497767091,
+        3070445509350861,
+        3070445521270645,
+        3070445533162923,
+        3070445544882353,
+        3070445556828510,
+        3070445568645753,
+        3070445580336688,
+        3070445592249588,
+        3070445603904570,
+        3070445615910809,
+        3070445627841142,
+        3070445639359736,
+        3070445651188119,
+        3070445662926838,
+        3070445674851973,
+        3070445686485733,
+        3070445698294759,
+        3070445710240459,
+        3070445723727802,
+        3070445735207852,
+        3070445747007265,
+        3070445758801535,
+        3070445770635172,
+        3070445782424388,
+        3070445794681005,
+        3070445806093072,
+        3070445817923912,
+        3070445829726029,
+        3070445841563891,
+        3070445853435230,
+        3070445865209639,
+        3070445877545291,
+        3070445889300300,
+        3070445901179410,
+        3070445913102932,
+        3070445925009458,
+        3070445936689132,
+        3070445948558449,
+        3070445960247594,
+        3070445972113054,
+        3070445983899074,
+        3070445995771583,
+        3070446007649067,
+        3070446019384742,
+        3070446031370435,
+        3070446043186672,
+        3070446054933695,
+        3070446066708926,
+        3070446078393340,
+        3070446090179285,
+        3070446101921305,
+        3070446113735585,
+        3070446125529454,
+        3070446137436980,
+        3070446149294095,
+        3070446161011510,
+        3070446172834930,
+        3070446184943083,
+        3070446196454922,
+        3070446208318953,
+        3070446220145168,
+        3070446232076214,
+        3070446243945705,
+        3070446255799464,
+        3070446267592427,
+        3070446279091745,
+        3070446290642969,
+        3070446302343141,
+        3070446313919789,
+        3070446325456766,
+        3070446336963261,
+        3070446348452004,
+        3070446359881986,
+        3070446371548507,
+        3070446382780355,
+        3070446394315825
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3070444733211515,
+          "bytes": 89,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "accepted",
+              "engine_request_id": 2
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444892784634,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 785,
+              "token_text": "The"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444905615657,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3897,
+              "token_text": " provided"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444917504933,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 5335,
+              "token_text": " images"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444929309807,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 525,
+              "token_text": " are"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444941168044,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444952883357,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 738,
+              "token_text": " set"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444965019883,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444976996798,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 8063,
+              "token_text": " eight"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070444988751326,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445000942740,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 57722,
+              "token_text": "-colored"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445012721736,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 31340,
+              "token_text": " squares"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445024523620,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445036400449,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445048190389,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 71180,
+              "token_text": " occupying"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445059942007,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1181,
+              "token_text": " its"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445071917193,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1828,
+              "token_text": " own"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445083736614,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4034,
+              "token_text": " frame"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445095421504,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445107300148,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2619,
+              "token_text": " There"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445119168871,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 525,
+              "token_text": " are"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445130970784,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 902,
+              "token_text": " no"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445142843173,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6171,
+              "token_text": " objects"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445154575539,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445166424010,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 12624,
+              "token_text": " patterns"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445178216657,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445189974698,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 476,
+              "token_text": " or"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445201811052,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 52149,
+              "token_text": " gradients"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445213536125,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2293,
+              "token_text": "—"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445225236219,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4250,
+              "token_text": "just"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445237326904,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445249055603,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3175,
+              "token_text": " single"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445260598518,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445272389875,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13794,
+              "token_text": " uniform"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445284255752,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1894,
+              "token_text": " color"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445296085972,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 21274,
+              "token_text": " filling"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445307917552,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445319876191,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2168,
+              "token_text": " image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445331639176,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445343452325,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 21193,
+              "token_text": " Below"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445355414226,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445367080178,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445378987891,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11682,
+              "token_text": " detailed"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445390655054,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4008,
+              "token_text": " description"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445402482618,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445414302210,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445426260136,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2168,
+              "token_text": " image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445438209870,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 323,
+              "token_text": " and"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445450495586,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445462251634,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 15817,
+              "token_text": " comprehensive"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445474015784,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 12313,
+              "token_text": " comparison"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445485874226,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445497767091,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 862,
+              "token_text": " their"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445509350861,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 7987,
+              "token_text": " colors"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445521270645,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 382,
+              "token_text": ".\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445533162923,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 44364,
+              "token_text": "---\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445544882353,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 334,
+              "token_text": "**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445556828510,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445568645753,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3874,
+              "token_text": " Des"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445580336688,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 24685,
+              "token_text": "criptions"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445592249588,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 25,
+              "token_text": ":"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445603904570,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 56177,
+              "token_text": "**\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445615910809,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 16,
+              "token_text": "1"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445627841142,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445639359736,
+          "bytes": 115,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445651188119,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3070,
+              "token_text": " **"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445662926838,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445674851973,
+          "bytes": 115,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445686485733,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 16,
+              "token_text": "1"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445698294759,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 66963,
+              "token_text": ":**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445710240459,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 362,
+              "token_text": " A"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445723727802,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445735207852,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445747007265,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 32976,
+              "token_text": " vibrant"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445758801535,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2518,
+              "token_text": " red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445770635172,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445782424388,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1084,
+              "token_text": " It"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445794681005,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445806093072,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445817923912,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 8205,
+              "token_text": " warm"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445829726029,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445841563891,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 49485,
+              "token_text": " saturated"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445853435230,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 39040,
+              "token_text": " hue"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445865209639,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445877545291,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 54985,
+              "token_text": " reminiscent"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445889300300,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445901179410,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445913102932,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 5538,
+              "token_text": " deep"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445925009458,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 96019,
+              "token_text": " crimson"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445936689132,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 476,
+              "token_text": " or"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445948558449,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 24837,
+              "token_text": " brick"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445960247594,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 2518,
+              "token_text": " red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445972113054,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445983899074,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 576,
+              "token_text": " The"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070445995771583,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1894,
+              "token_text": " color"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446007649067,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446019384742,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 9080,
+              "token_text": " rich"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446031370435,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 323,
+              "token_text": " and"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446043186672,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13939,
+              "token_text": " bold"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446054933695,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446066708926,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 64340,
+              "token_text": " commanding"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446078393340,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6529,
+              "token_text": " attention"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446090179285,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 382,
+              "token_text": ".\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446101921305,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 17,
+              "token_text": "2"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446113735585,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446125529454,
+          "bytes": 115,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446137436980,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 3070,
+              "token_text": " **"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446149294095,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446161011510,
+          "bytes": 115,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446172834930,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 17,
+              "token_text": "2"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446184943083,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 66963,
+              "token_text": ":**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446196454922,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 362,
+              "token_text": " A"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446208318953,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446220145168,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446232076214,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 9906,
+              "token_text": " bright"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446243945705,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 6176,
+              "token_text": " green"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446255799464,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446267592427,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 1084,
+              "token_text": " It"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446279091745,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446290642969,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446302343141,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 42020,
+              "token_text": " vivid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446313919789,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446325456766,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4558,
+              "token_text": " almost"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446336963261,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 9072,
+              "token_text": " electric"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446348452004,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 27501,
+              "token_text": " shade"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446359881986,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446371548507,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 4428,
+              "token_text": " similar"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446382780355,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 311,
+              "token_text": " to"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446394315825,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "token",
+              "engine_request_id": 2,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446394461021,
+          "bytes": 1287,
+          "events": [
+            {
+              "request_id": "trace-2",
+              "event": "done",
+              "engine_request_id": 2,
+              "text": "The provided images are a set of eight solid-colored squares, each occupying its own frame. There are no objects, patterns, or gradients—just a single, uniform color filling each image. Below is a detailed description of each image and a comprehensive comparison of their colors.\n\n---\n\n**Image Descriptions:**\n\n1.  **Image 1:** A solid, vibrant red. It is a warm, saturated hue, reminiscent of a deep crimson or brick red. The color is rich and bold, commanding attention.\n\n2.  **Image 2:** A solid, bright green. It is a vivid, almost electric shade, similar to a",
+              "finish_reason": "length",
+              "token_ids": [
+                785,
+                3897,
+                5335,
+                525,
+                264,
+                738,
+                315,
+                8063,
+                6437,
+                57722,
+                31340,
+                11,
+                1817,
+                71180,
+                1181,
+                1828,
+                4034,
+                13,
+                2619,
+                525,
+                902,
+                6171,
+                11,
+                12624,
+                11,
+                476,
+                52149,
+                2293,
+                4250,
+                264,
+                3175,
+                11,
+                13794,
+                1894,
+                21274,
+                1817,
+                2168,
+                13,
+                21193,
+                374,
+                264,
+                11682,
+                4008,
+                315,
+                1817,
+                2168,
+                323,
+                264,
+                15817,
+                12313,
+                315,
+                862,
+                7987,
+                382,
+                44364,
+                334,
+                1906,
+                3874,
+                24685,
+                25,
+                56177,
+                16,
+                13,
+                220,
+                3070,
+                1906,
+                220,
+                16,
+                66963,
+                362,
+                6437,
+                11,
+                32976,
+                2518,
+                13,
+                1084,
+                374,
+                264,
+                8205,
+                11,
+                49485,
+                39040,
+                11,
+                54985,
+                315,
+                264,
+                5538,
+                96019,
+                476,
+                24837,
+                2518,
+                13,
+                576,
+                1894,
+                374,
+                9080,
+                323,
+                13939,
+                11,
+                64340,
+                6529,
+                382,
+                17,
+                13,
+                220,
+                3070,
+                1906,
+                220,
+                17,
+                66963,
+                362,
+                6437,
+                11,
+                9906,
+                6176,
+                13,
+                1084,
+                374,
+                264,
+                42020,
+                11,
+                4558,
+                9072,
+                27501,
+                11,
+                4428,
+                311,
+                264
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3070444699531882,
+      "client_finish_ns": 3070446394461021,
+      "final_token_ids": [
+        785,
+        3897,
+        5335,
+        525,
+        264,
+        738,
+        315,
+        8063,
+        6437,
+        57722,
+        31340,
+        11,
+        1817,
+        71180,
+        1181,
+        1828,
+        4034,
+        13,
+        2619,
+        525,
+        902,
+        6171,
+        11,
+        12624,
+        11,
+        476,
+        52149,
+        2293,
+        4250,
+        264,
+        3175,
+        11,
+        13794,
+        1894,
+        21274,
+        1817,
+        2168,
+        13,
+        21193,
+        374,
+        264,
+        11682,
+        4008,
+        315,
+        1817,
+        2168,
+        323,
+        264,
+        15817,
+        12313,
+        315,
+        862,
+        7987,
+        382,
+        44364,
+        334,
+        1906,
+        3874,
+        24685,
+        25,
+        56177,
+        16,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        16,
+        66963,
+        362,
+        6437,
+        11,
+        32976,
+        2518,
+        13,
+        1084,
+        374,
+        264,
+        8205,
+        11,
+        49485,
+        39040,
+        11,
+        54985,
+        315,
+        264,
+        5538,
+        96019,
+        476,
+        24837,
+        2518,
+        13,
+        576,
+        1894,
+        374,
+        9080,
+        323,
+        13939,
+        11,
+        64340,
+        6529,
+        382,
+        17,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        17,
+        66963,
+        362,
+        6437,
+        11,
+        9906,
+        6176,
+        13,
+        1084,
+        374,
+        264,
+        42020,
+        11,
+        4558,
+        9072,
+        27501,
+        11,
+        4428,
+        311,
+        264
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        12.831023,
+        11.889276,
+        11.804874,
+        11.858237,
+        11.715313,
+        12.136526,
+        11.976915,
+        11.754528,
+        12.191414,
+        11.778996,
+        11.801884,
+        11.876829,
+        11.78994,
+        11.751618,
+        11.975186,
+        11.819421,
+        11.68489,
+        11.878644,
+        11.868723,
+        11.801913,
+        11.872389,
+        11.732366,
+        11.848471,
+        11.792647,
+        11.758041,
+        11.836354,
+        11.725073,
+        11.700094,
+        12.090685,
+        11.728699,
+        11.542915,
+        11.791357,
+        11.865877,
+        11.83022,
+        11.83158,
+        11.958639,
+        11.762985,
+        11.813149,
+        11.961901,
+        11.665952,
+        11.907713,
+        11.667163,
+        11.827564,
+        11.819592,
+        11.957926,
+        11.949734,
+        12.285716,
+        11.756048,
+        11.76415,
+        11.858442,
+        11.892865,
+        11.58377,
+        11.919784,
+        11.892278,
+        11.71943,
+        11.946157,
+        11.817243,
+        11.690935,
+        11.9129,
+        11.654982,
+        12.006239,
+        11.930333,
+        11.518594,
+        11.828383,
+        11.738719,
+        11.925135,
+        11.63376,
+        11.809026,
+        11.9457,
+        13.487343,
+        11.48005,
+        11.799413,
+        11.79427,
+        11.833637,
+        11.789216,
+        12.256617,
+        11.412067,
+        11.83084,
+        11.802117,
+        11.837862,
+        11.871339,
+        11.774409,
+        12.335652,
+        11.755009,
+        11.87911,
+        11.923522,
+        11.906526,
+        11.679674,
+        11.869317,
+        11.689145,
+        11.86546,
+        11.78602,
+        11.872509,
+        11.877484,
+        11.735675,
+        11.985693,
+        11.816237,
+        11.747023,
+        11.775231,
+        11.684414,
+        11.785945,
+        11.74202,
+        11.81428,
+        11.793869,
+        11.907526,
+        11.857115,
+        11.717415,
+        11.82342,
+        12.108153,
+        11.511839,
+        11.864031,
+        11.826215,
+        11.931046,
+        11.869491,
+        11.853759,
+        11.792963,
+        11.499318,
+        11.551224,
+        11.700172,
+        11.576648,
+        11.536977,
+        11.506495,
+        11.488743,
+        11.429982,
+        11.666521,
+        11.231848,
+        11.53547
+      ],
+      "ttft_ms": 193.252752,
+      "e2e_ms": 1694.929139,
+      "tpot_ms": 11.823080244094488,
+      "max_itl_ms": 13.487343,
+      "p95_itl_ms": 12.1280141,
+      "stream_matches_final_ids": true
+    },
+    {
+      "phase": "decode_with_cold_image",
+      "request_id": "trace-3",
+      "prompt": "Describe each image and compare all their colors in detail.",
+      "max_tokens": 128,
+      "media_group": 0,
+      "token_ids": [
+        785,
+        3897,
+        5335,
+        525,
+        264,
+        738,
+        315,
+        8063,
+        6437,
+        57722,
+        31340,
+        11,
+        1817,
+        71180,
+        1181,
+        1828,
+        4034,
+        13,
+        2619,
+        525,
+        902,
+        6171,
+        11,
+        12624,
+        11,
+        476,
+        52149,
+        2293,
+        4250,
+        264,
+        3175,
+        11,
+        13794,
+        1894,
+        21274,
+        1817,
+        2168,
+        13,
+        21193,
+        374,
+        264,
+        11682,
+        4008,
+        315,
+        1817,
+        2168,
+        323,
+        264,
+        15817,
+        12313,
+        315,
+        862,
+        7987,
+        382,
+        44364,
+        334,
+        1906,
+        3874,
+        24685,
+        25,
+        56177,
+        16,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        16,
+        66963,
+        362,
+        6437,
+        11,
+        32976,
+        2518,
+        13,
+        1084,
+        374,
+        264,
+        8205,
+        11,
+        49485,
+        39040,
+        11,
+        54985,
+        315,
+        264,
+        5538,
+        96019,
+        476,
+        24837,
+        2518,
+        13,
+        576,
+        1894,
+        374,
+        9080,
+        323,
+        13939,
+        11,
+        64340,
+        6529,
+        382,
+        17,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        17,
+        66963,
+        362,
+        6437,
+        11,
+        9906,
+        6176,
+        13,
+        1084,
+        374,
+        264,
+        42020,
+        11,
+        4558,
+        9072,
+        27501,
+        11,
+        4428,
+        311,
+        264
+      ],
+      "token_arrival_ns": [
+        3070446630403455,
+        3070446642622717,
+        3070446654082110,
+        3070446680469908,
+        3070446680469908,
+        3070446689394465,
+        3070446701056015,
+        3070446713424129,
+        3070446724853870,
+        3070446736516146,
+        3070446748372131,
+        3070446764383682,
+        3070446771607930,
+        3070446783733313,
+        3070446795669494,
+        3070446807567413,
+        3070446819903429,
+        3070446831649038,
+        3070446843439916,
+        3070446855238329,
+        3070446867037202,
+        3070446878889700,
+        3070446890727611,
+        3070446902537516,
+        3070446914240885,
+        3070447219048305,
+        3070447232426061,
+        3070447245866134,
+        3070447258738142,
+        3070447271698065,
+        3070447285101276,
+        3070447298097900,
+        3070447311337447,
+        3070447324195622,
+        3070447337363342,
+        3070447350336726,
+        3070447363356452,
+        3070447376105202,
+        3070447389300776,
+        3070447402323603,
+        3070447414260672,
+        3070447425890822,
+        3070447437493489,
+        3070447449131238,
+        3070447461072572,
+        3070447473123845,
+        3070447485123205,
+        3070447498795650,
+        3070447510606704,
+        3070447522141394,
+        3070447533657293,
+        3070447545124366,
+        3070447556644610,
+        3070447568111068,
+        3070447579710097,
+        3070447591329751,
+        3070447602878275,
+        3070447614379501,
+        3070447625887649,
+        3070447637371949,
+        3070447648892500,
+        3070447660354777,
+        3070447671922906,
+        3070447683424921,
+        3070447694971497,
+        3070447706364888,
+        3070447717875570,
+        3070447729401870,
+        3070447740948406,
+        3070447752441694,
+        3070447763955288,
+        3070447775476926,
+        3070447787051713,
+        3070447798618480,
+        3070447810150121,
+        3070447821614062,
+        3070447833161499,
+        3070447844623031,
+        3070447856175661,
+        3070447867633648,
+        3070447879146943,
+        3070447890601235,
+        3070447902157131,
+        3070447913720187,
+        3070447925255205,
+        3070447936677465,
+        3070447948212801,
+        3070447960403097,
+        3070447971937209,
+        3070447983486662,
+        3070447995010729,
+        3070448006493013,
+        3070448018103512,
+        3070448029654471,
+        3070448041222285,
+        3070448052650935,
+        3070448064201715,
+        3070448075704731,
+        3070448087296502,
+        3070448098815852,
+        3070448110377831,
+        3070448121892592,
+        3070448133460414,
+        3070448145047296,
+        3070448156626642,
+        3070448168144078,
+        3070448179748995,
+        3070448191349426,
+        3070448202949875,
+        3070448214462032,
+        3070448226041438,
+        3070448237569920,
+        3070448249151578,
+        3070448260649047,
+        3070448272255808,
+        3070448283754492,
+        3070448295275583,
+        3070448306790941,
+        3070448318363843,
+        3070448329923240,
+        3070448341483408,
+        3070448353010688,
+        3070448364590154,
+        3070448376135130,
+        3070448387750624,
+        3070448399284964,
+        3070448410796545,
+        3070448422387986
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3070446462697149,
+          "bytes": 89,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "accepted",
+              "engine_request_id": 3
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446630403455,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 785,
+              "token_text": "The"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446642622717,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3897,
+              "token_text": " provided"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446654082110,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 5335,
+              "token_text": " images"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446680469908,
+          "bytes": 234,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 525,
+              "token_text": " are"
+            },
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446689394465,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 738,
+              "token_text": " set"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446701056015,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446713424129,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 8063,
+              "token_text": " eight"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446724853870,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446736516146,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 57722,
+              "token_text": "-colored"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446748372131,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 31340,
+              "token_text": " squares"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446764383682,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446771607930,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446783733313,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 71180,
+              "token_text": " occupying"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446795669494,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1181,
+              "token_text": " its"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446807567413,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1828,
+              "token_text": " own"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446819903429,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4034,
+              "token_text": " frame"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446831649038,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446843439916,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2619,
+              "token_text": " There"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446855238329,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 525,
+              "token_text": " are"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446867037202,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 902,
+              "token_text": " no"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446878889700,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6171,
+              "token_text": " objects"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446890727611,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446902537516,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 12624,
+              "token_text": " patterns"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070446914240885,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447219048305,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 476,
+              "token_text": " or"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447232426061,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 52149,
+              "token_text": " gradients"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447245866134,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2293,
+              "token_text": "—"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447258738142,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4250,
+              "token_text": "just"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447271698065,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447285101276,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3175,
+              "token_text": " single"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447298097900,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447311337447,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13794,
+              "token_text": " uniform"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447324195622,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1894,
+              "token_text": " color"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447337363342,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 21274,
+              "token_text": " filling"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447350336726,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447363356452,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2168,
+              "token_text": " image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447376105202,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447389300776,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 21193,
+              "token_text": " Below"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447402323603,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447414260672,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447425890822,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11682,
+              "token_text": " detailed"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447437493489,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4008,
+              "token_text": " description"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447449131238,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447461072572,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1817,
+              "token_text": " each"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447473123845,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2168,
+              "token_text": " image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447485123205,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 323,
+              "token_text": " and"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447498795650,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447510606704,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 15817,
+              "token_text": " comprehensive"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447522141394,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 12313,
+              "token_text": " comparison"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447533657293,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447545124366,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 862,
+              "token_text": " their"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447556644610,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 7987,
+              "token_text": " colors"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447568111068,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 382,
+              "token_text": ".\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447579710097,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 44364,
+              "token_text": "---\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447591329751,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 334,
+              "token_text": "**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447602878275,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447614379501,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3874,
+              "token_text": " Des"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447625887649,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 24685,
+              "token_text": "criptions"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447637371949,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 25,
+              "token_text": ":"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447648892500,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 56177,
+              "token_text": "**\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447660354777,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 16,
+              "token_text": "1"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447671922906,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447683424921,
+          "bytes": 115,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447694971497,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3070,
+              "token_text": " **"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447706364888,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447717875570,
+          "bytes": 115,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447729401870,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 16,
+              "token_text": "1"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447740948406,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 66963,
+              "token_text": ":**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447752441694,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 362,
+              "token_text": " A"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447763955288,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447775476926,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447787051713,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 32976,
+              "token_text": " vibrant"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447798618480,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2518,
+              "token_text": " red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447810150121,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447821614062,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1084,
+              "token_text": " It"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447833161499,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447844623031,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447856175661,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 8205,
+              "token_text": " warm"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447867633648,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447879146943,
+          "bytes": 126,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 49485,
+              "token_text": " saturated"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447890601235,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 39040,
+              "token_text": " hue"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447902157131,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447913720187,
+          "bytes": 128,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 54985,
+              "token_text": " reminiscent"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447925255205,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 315,
+              "token_text": " of"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447936677465,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447948212801,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 5538,
+              "token_text": " deep"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447960403097,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 96019,
+              "token_text": " crimson"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447971937209,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 476,
+              "token_text": " or"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447983486662,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 24837,
+              "token_text": " brick"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447995010729,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 2518,
+              "token_text": " red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448006493013,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448018103512,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 576,
+              "token_text": " The"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448029654471,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1894,
+              "token_text": " color"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448041222285,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448052650935,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 9080,
+              "token_text": " rich"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448064201715,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 323,
+              "token_text": " and"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448075704731,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13939,
+              "token_text": " bold"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448087296502,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448098815852,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 64340,
+              "token_text": " commanding"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448110377831,
+          "bytes": 125,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6529,
+              "token_text": " attention"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448121892592,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 382,
+              "token_text": ".\n\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448133460414,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 17,
+              "token_text": "2"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448145047296,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448156626642,
+          "bytes": 115,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448168144078,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 3070,
+              "token_text": " **"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448179748995,
+          "bytes": 120,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1906,
+              "token_text": "Image"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448191349426,
+          "bytes": 115,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 220,
+              "token_text": " "
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448202949875,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 17,
+              "token_text": "2"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448214462032,
+          "bytes": 119,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 66963,
+              "token_text": ":**"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448226041438,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 362,
+              "token_text": " A"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448237569920,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6437,
+              "token_text": " solid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448249151578,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448260649047,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 9906,
+              "token_text": " bright"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448272255808,
+          "bytes": 121,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 6176,
+              "token_text": " green"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448283754492,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 13,
+              "token_text": "."
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448295275583,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 1084,
+              "token_text": " It"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448306790941,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 374,
+              "token_text": " is"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448318363843,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448329923240,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 42020,
+              "token_text": " vivid"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448341483408,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448353010688,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4558,
+              "token_text": " almost"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448364590154,
+          "bytes": 124,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 9072,
+              "token_text": " electric"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448376135130,
+          "bytes": 122,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 27501,
+              "token_text": " shade"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448387750624,
+          "bytes": 114,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 11,
+              "token_text": ","
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448399284964,
+          "bytes": 123,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 4428,
+              "token_text": " similar"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448410796545,
+          "bytes": 117,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 311,
+              "token_text": " to"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448422387986,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "token",
+              "engine_request_id": 3,
+              "token_id": 264,
+              "token_text": " a"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070448422489117,
+          "bytes": 1287,
+          "events": [
+            {
+              "request_id": "trace-3",
+              "event": "done",
+              "engine_request_id": 3,
+              "text": "The provided images are a set of eight solid-colored squares, each occupying its own frame. There are no objects, patterns, or gradients—just a single, uniform color filling each image. Below is a detailed description of each image and a comprehensive comparison of their colors.\n\n---\n\n**Image Descriptions:**\n\n1.  **Image 1:** A solid, vibrant red. It is a warm, saturated hue, reminiscent of a deep crimson or brick red. The color is rich and bold, commanding attention.\n\n2.  **Image 2:** A solid, bright green. It is a vivid, almost electric shade, similar to a",
+              "finish_reason": "length",
+              "token_ids": [
+                785,
+                3897,
+                5335,
+                525,
+                264,
+                738,
+                315,
+                8063,
+                6437,
+                57722,
+                31340,
+                11,
+                1817,
+                71180,
+                1181,
+                1828,
+                4034,
+                13,
+                2619,
+                525,
+                902,
+                6171,
+                11,
+                12624,
+                11,
+                476,
+                52149,
+                2293,
+                4250,
+                264,
+                3175,
+                11,
+                13794,
+                1894,
+                21274,
+                1817,
+                2168,
+                13,
+                21193,
+                374,
+                264,
+                11682,
+                4008,
+                315,
+                1817,
+                2168,
+                323,
+                264,
+                15817,
+                12313,
+                315,
+                862,
+                7987,
+                382,
+                44364,
+                334,
+                1906,
+                3874,
+                24685,
+                25,
+                56177,
+                16,
+                13,
+                220,
+                3070,
+                1906,
+                220,
+                16,
+                66963,
+                362,
+                6437,
+                11,
+                32976,
+                2518,
+                13,
+                1084,
+                374,
+                264,
+                8205,
+                11,
+                49485,
+                39040,
+                11,
+                54985,
+                315,
+                264,
+                5538,
+                96019,
+                476,
+                24837,
+                2518,
+                13,
+                576,
+                1894,
+                374,
+                9080,
+                323,
+                13939,
+                11,
+                64340,
+                6529,
+                382,
+                17,
+                13,
+                220,
+                3070,
+                1906,
+                220,
+                17,
+                66963,
+                362,
+                6437,
+                11,
+                9906,
+                6176,
+                13,
+                1084,
+                374,
+                264,
+                42020,
+                11,
+                4558,
+                9072,
+                27501,
+                11,
+                4428,
+                311,
+                264
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3070446398038183,
+      "client_finish_ns": 3070448422489117,
+      "final_token_ids": [
+        785,
+        3897,
+        5335,
+        525,
+        264,
+        738,
+        315,
+        8063,
+        6437,
+        57722,
+        31340,
+        11,
+        1817,
+        71180,
+        1181,
+        1828,
+        4034,
+        13,
+        2619,
+        525,
+        902,
+        6171,
+        11,
+        12624,
+        11,
+        476,
+        52149,
+        2293,
+        4250,
+        264,
+        3175,
+        11,
+        13794,
+        1894,
+        21274,
+        1817,
+        2168,
+        13,
+        21193,
+        374,
+        264,
+        11682,
+        4008,
+        315,
+        1817,
+        2168,
+        323,
+        264,
+        15817,
+        12313,
+        315,
+        862,
+        7987,
+        382,
+        44364,
+        334,
+        1906,
+        3874,
+        24685,
+        25,
+        56177,
+        16,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        16,
+        66963,
+        362,
+        6437,
+        11,
+        32976,
+        2518,
+        13,
+        1084,
+        374,
+        264,
+        8205,
+        11,
+        49485,
+        39040,
+        11,
+        54985,
+        315,
+        264,
+        5538,
+        96019,
+        476,
+        24837,
+        2518,
+        13,
+        576,
+        1894,
+        374,
+        9080,
+        323,
+        13939,
+        11,
+        64340,
+        6529,
+        382,
+        17,
+        13,
+        220,
+        3070,
+        1906,
+        220,
+        17,
+        66963,
+        362,
+        6437,
+        11,
+        9906,
+        6176,
+        13,
+        1084,
+        374,
+        264,
+        42020,
+        11,
+        4558,
+        9072,
+        27501,
+        11,
+        4428,
+        311,
+        264
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        12.219262,
+        11.459393,
+        26.387798,
+        0.0,
+        8.924557,
+        11.66155,
+        12.368114,
+        11.429741,
+        11.662276,
+        11.855985,
+        16.011551,
+        7.224248,
+        12.125383,
+        11.936181,
+        11.897919,
+        12.336016,
+        11.745609,
+        11.790878,
+        11.798413,
+        11.798873,
+        11.852498,
+        11.837911,
+        11.809905,
+        11.703369,
+        304.80742,
+        13.377756,
+        13.440073,
+        12.872008,
+        12.959923,
+        13.403211,
+        12.996624,
+        13.239547,
+        12.858175,
+        13.16772,
+        12.973384,
+        13.019726,
+        12.74875,
+        13.195574,
+        13.022827,
+        11.937069,
+        11.63015,
+        11.602667,
+        11.637749,
+        11.941334,
+        12.051273,
+        11.99936,
+        13.672445,
+        11.811054,
+        11.53469,
+        11.515899,
+        11.467073,
+        11.520244,
+        11.466458,
+        11.599029,
+        11.619654,
+        11.548524,
+        11.501226,
+        11.508148,
+        11.4843,
+        11.520551,
+        11.462277,
+        11.568129,
+        11.502015,
+        11.546576,
+        11.393391,
+        11.510682,
+        11.5263,
+        11.546536,
+        11.493288,
+        11.513594,
+        11.521638,
+        11.574787,
+        11.566767,
+        11.531641,
+        11.463941,
+        11.547437,
+        11.461532,
+        11.55263,
+        11.457987,
+        11.513295,
+        11.454292,
+        11.555896,
+        11.563056,
+        11.535018,
+        11.42226,
+        11.535336,
+        12.190296,
+        11.534112,
+        11.549453,
+        11.524067,
+        11.482284,
+        11.610499,
+        11.550959,
+        11.567814,
+        11.42865,
+        11.55078,
+        11.503016,
+        11.591771,
+        11.51935,
+        11.561979,
+        11.514761,
+        11.567822,
+        11.586882,
+        11.579346,
+        11.517436,
+        11.604917,
+        11.600431,
+        11.600449,
+        11.512157,
+        11.579406,
+        11.528482,
+        11.581658,
+        11.497469,
+        11.606761,
+        11.498684,
+        11.521091,
+        11.515358,
+        11.572902,
+        11.559397,
+        11.560168,
+        11.52728,
+        11.579466,
+        11.544976,
+        11.615494,
+        11.53434,
+        11.511581,
+        11.591441
+      ],
+      "ttft_ms": 232.365272,
+      "e2e_ms": 2024.450934,
+      "tpot_ms": 14.110114417322835,
+      "max_itl_ms": 304.80742,
+      "p95_itl_ms": 13.336293299999998,
+      "stream_matches_final_ids": true
+    },
+    {
+      "phase": "injected_cold_image",
+      "request_id": "trace-4",
+      "prompt": "Describe the main color of the first image. Answer with one color word.",
+      "max_tokens": 16,
+      "media_group": 1,
+      "long_request_id": "trace-3",
+      "long_tokens_observed_at_submit": 3,
+      "long_already_finished_at_submit": false,
+      "token_ids": [
+        6033,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "token_arrival_ns": [
+        3070447204206461,
+        3070447219246015,
+        3070447232623868,
+        3070447246018117,
+        3070447258865630,
+        3070447271823335,
+        3070447285192121,
+        3070447298179767,
+        3070447311433413,
+        3070447324315095,
+        3070447337434355,
+        3070447350412030,
+        3070447363452322,
+        3070447376207237,
+        3070447389499542,
+        3070447402391792
+      ],
+      "network_chunks": [
+        {
+          "arrival_ns": 3070446917159901,
+          "bytes": 89,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "accepted",
+              "engine_request_id": 4
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447204206461,
+          "bytes": 118,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 6033,
+              "token_text": "Red"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447219246015,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447232623868,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447246018117,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447258865630,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447271823335,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447285192121,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447298179767,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447311433413,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447324315095,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447337434355,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447350412030,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447363452322,
+          "bytes": 129,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151644,
+              "token_text": "<|im_start|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447376207237,
+          "bytes": 127,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151645,
+              "token_text": "<|im_end|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447389499542,
+          "bytes": 116,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 198,
+              "token_text": "\n"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447402391792,
+          "bytes": 130,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "token",
+              "engine_request_id": 4,
+              "token_id": 151643,
+              "token_text": "<|endoftext|>"
+            }
+          ]
+        },
+        {
+          "arrival_ns": 3070447402458622,
+          "bytes": 239,
+          "events": [
+            {
+              "request_id": "trace-4",
+              "event": "done",
+              "engine_request_id": 4,
+              "text": "Red\n\n\n\n",
+              "finish_reason": "length",
+              "token_ids": [
+                6033,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643,
+                151644,
+                151645,
+                198,
+                151643
+              ]
+            }
+          ]
+        }
+      ],
+      "status": "finished",
+      "client_start_ns": 3070446654403015,
+      "client_finish_ns": 3070447402458622,
+      "final_token_ids": [
+        6033,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643,
+        151644,
+        151645,
+        198,
+        151643
+      ],
+      "finish_reason": "length",
+      "itl_ms": [
+        15.039554,
+        13.377853,
+        13.394249,
+        12.847513,
+        12.957705,
+        13.368786,
+        12.987646,
+        13.253646,
+        12.881682,
+        13.11926,
+        12.977675,
+        13.040292,
+        12.754915,
+        13.292305,
+        12.89225
+      ],
+      "ttft_ms": 549.803446,
+      "e2e_ms": 748.055607,
+      "tpot_ms": 13.2123554,
+      "max_itl_ms": 15.039554,
+      "p95_itl_ms": 13.8878405,
+      "stream_matches_final_ids": true
+    }
+  ],
+  "status": "complete",
+  "protocol": {
+    "fixture": "eight 448x448 solid RGB images; colors shifted by 17 per cold group",
+    "colors": [
+      [
+        220,
+        50,
+        50
+      ],
+      [
+        50,
+        180,
+        80
+      ],
+      [
+        60,
+        100,
+        220
+      ],
+      [
+        220,
+        180,
+        40
+      ],
+      [
+        170,
+        70,
+        200
+      ],
+      [
+        40,
+        190,
+        190
+      ],
+      [
+        230,
+        120,
+        40
+      ],
+      [
+        120,
+        120,
+        120
+      ]
+    ],
+    "repeat": 1,
+    "long_tokens": 128,
+    "timing": "HTTP client; JSON upload, server image decode, preprocessing, queueing included",
+    "token_time": "observed network read completing each SSE event; no interpolation",
+    "cold_injection": "after at least 3 observed tokens of a live long decode"
+  },
+  "phase_summaries": {
+    "warmup": {
+      "ttft_ms": 902.388139,
+      "e2e_ms": 1077.251541,
+      "tpot_ms": 11.644548933333333,
+      "max_itl_ms": 12.786969,
+      "p95_itl_ms": 12.015229499999998
+    },
+    "hot_changed_question": {
+      "ttft_ms": 145.991687,
+      "e2e_ms": 321.832562,
+      "tpot_ms": 11.714058866666667,
+      "max_itl_ms": 13.683562,
+      "p95_itl_ms": 12.636903799999999
+    },
+    "decode_alone": {
+      "ttft_ms": 193.252752,
+      "e2e_ms": 1694.929139,
+      "tpot_ms": 11.823080244094488,
+      "max_itl_ms": 13.487343,
+      "p95_itl_ms": 12.1280141
+    },
+    "decode_with_cold_image": {
+      "ttft_ms": 232.365272,
+      "e2e_ms": 2024.450934,
+      "tpot_ms": 14.110114417322835,
+      "max_itl_ms": 304.80742,
+      "p95_itl_ms": 13.336293299999998
+    },
+    "injected_cold_image": {
+      "ttft_ms": 549.803446,
+      "e2e_ms": 748.055607,
+      "tpot_ms": 13.2123554,
+      "max_itl_ms": 15.039554,
+      "p95_itl_ms": 13.8878405
+    }
+  }
+}

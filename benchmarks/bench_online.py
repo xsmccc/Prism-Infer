@@ -1225,7 +1225,7 @@ def main() -> None:
                     if args.enable_cooperative_prefill
                     else None
                 ),
-                "online_media_preprocess": "single_worker_async",
+                "online_media_preprocess": "thread_pool_async_engine_shared_cache",
                 "online_cpu_intraop_threads": torch.get_num_threads(),
                 "media_preprocess_in_ttft": True,
             },

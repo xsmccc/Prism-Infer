@@ -13,6 +13,7 @@ from prism_infer.analysis.online_serving import (
 )
 from prism_infer.engine.contracts import ExecutionResult
 from prism_infer.engine.llm_engine import LLMEngine
+from prism_infer.engine.media_preprocessing import MediaPreprocessingCache
 from prism_infer.engine.metrics import EngineMetrics
 from prism_infer.engine.online import OnlineRequest, OnlineServingSession
 from prism_infer.engine.scheduler import Scheduler
@@ -74,6 +75,7 @@ def _engine(
     engine.scheduler = Scheduler(config, clock_ns=clock)
     engine.executor = _DeterministicExecutor(clock)
     engine.metrics = EngineMetrics()
+    engine._media_preprocess_cache = MediaPreprocessingCache("test-online")
     return engine
 
 
@@ -147,10 +149,10 @@ def test_online_media_processor_cache_reuses_equal_content_across_objects() -> N
         processor_calls.append(image)
         content_value = sum(image)
         return SimpleNamespace(
-            pixel_values=(torch.arange(8, dtype=torch.float32).reshape(2, 4) + content_value),
+            pixel_values=(torch.arange(16, dtype=torch.float32).reshape(4, 4) + content_value),
             image_grid_thw=torch.tensor([[1, 2, 2]]),
             image_token_id=42,
-            image_token_count=2,
+            image_token_count=1,
         )
 
     engine = SimpleNamespace(
@@ -162,12 +164,17 @@ def test_online_media_processor_cache_reuses_equal_content_across_objects() -> N
         ),
         vl_processor=None,
         _process_image_inputs=process_image,
-        _prepare_image_sequence=lambda inputs, _sampling, request_id: SimpleNamespace(
-            inputs=inputs,
-            request_id=request_id,
-            visual_embedding_cache_key=None,
+        _prepare_image_sequence=lambda inputs, _sampling, request_id, media_identity: (
+            SimpleNamespace(
+                inputs=inputs,
+                request_id=request_id,
+                visual_embedding_cache_key=media_identity[0],
+                multimodal_prefix_cache_key=media_identity[0],
+            )
         ),
+        _media_preprocess_cache=MediaPreprocessingCache("test-online"),
     )
+    engine._prepare_media_request = LLMEngine._prepare_media_request.__get__(engine)
     session = OnlineServingSession(engine)
     first_request = OnlineRequest(
         request_key="same-image",
@@ -217,8 +224,8 @@ def test_online_media_processor_cache_reuses_equal_content_across_objects() -> N
     assert first.visual_embedding_cache_key == second.visual_embedding_cache_key
     assert first.visual_embedding_cache_key == third.visual_embedding_cache_key
     assert first.visual_embedding_cache_key != fourth.visual_embedding_cache_key
-    assert session._media_preprocess_cache_hits == 1
-    assert session._media_preprocess_cache_misses == 3
+    assert engine._media_preprocess_cache.metadata()["hits"] == 1
+    assert engine._media_preprocess_cache.metadata()["misses"] == 3
 
 
 def test_online_interleaved_images_use_marker_aware_processor() -> None:
@@ -233,10 +240,10 @@ def test_online_interleaved_images_use_marker_aware_processor() -> None:
     ) -> object:
         processor_calls.append((prompt, media, image_marker))
         return SimpleNamespace(
-            pixel_values=torch.arange(16, dtype=torch.float32).reshape(4, 4),
+            pixel_values=torch.arange(32, dtype=torch.float32).reshape(8, 4),
             image_grid_thw=torch.tensor([[1, 2, 2], [1, 2, 2]]),
             image_token_id=42,
-            image_token_count=4,
+            image_token_count=2,
         )
 
     engine = SimpleNamespace(
@@ -248,12 +255,17 @@ def test_online_interleaved_images_use_marker_aware_processor() -> None:
         ),
         vl_processor=None,
         _process_interleaved_image_inputs=process_interleaved,
-        _prepare_image_sequence=lambda inputs, _sampling, request_id: SimpleNamespace(
-            inputs=inputs,
-            request_id=request_id,
-            visual_embedding_cache_key=None,
+        _prepare_image_sequence=lambda inputs, _sampling, request_id, media_identity: (
+            SimpleNamespace(
+                inputs=inputs,
+                request_id=request_id,
+                visual_embedding_cache_key=media_identity[0],
+                multimodal_prefix_cache_key=media_identity[0],
+            )
         ),
+        _media_preprocess_cache=MediaPreprocessingCache("test-online"),
     )
+    engine._prepare_media_request = LLMEngine._prepare_media_request.__get__(engine)
     request = OnlineRequest(
         request_key="labeled-images",
         arrival_offset_s=0.0,
